@@ -43,7 +43,7 @@ const config = await loadLocalPlaneOrSkip('verify/diff-trees.mjs（两树包级�
 `tools/local-config.example.mjs`；**新增字段时必须同步登记那个示例**，否则下一个人不知道该填什么。
 
 ⚠️ **缺席与损坏是两件事**：`.local/` 整个不在 → 跳过（正常）；`.local/` 在但配置缺失或装载失败
-→ **红**（配置坏了）。不分开的话，开发机上误删一次配置文件就会让所有本机判据静默变绿。
+→ **红**（红＝测试失败；这里是配置坏了）。不分开的话，开发机上误删一次配置文件就会让所有本机判据静默变绿（绿＝测试通过）。
 
 ### 文档自包含
 
@@ -70,7 +70,7 @@ $env:DSAT_HOST_MODULES = "C:\dsh\node_modules"
 # C) 或把宿主装成普通依赖（CI 用这条）
 npm install --ignore-scripts @deepseek-ai/dsh@0.2.0-rc.2
 
-npm run test:inproc   # 全量电池（推荐）
+npm run test:inproc   # 完整测试套件（推荐）
 npm run test:offline  # 同一套用例的离线形态：接线类用例自动跳过并打印理由
 npm run check:public-surface
 ```
@@ -86,8 +86,8 @@ BOM。同理不要用内联 `node -e` 处理带反引号或中文引号的文本
 新增一条判据就要有对应的变异证明，并登记进 `README.md` 的变异索引表
 （`tools/check-mutate-index.mjs` 会双向核对那张表与盘上的文件）。
 
-**三、写完交付文档后必须复跑全量电池再提交**，读数如实标注取数时刻。
-**交付文档本身会让检查器变红**（新的路径引用、新的裸文件名），所以电池要跑在文档之后。
+**三、写完交付文档后必须复跑完整测试套件再提交**，读数如实标注取数时刻。
+**交付文档本身会让检查器变红**（新的路径引用、新的裸文件名），所以测试套件要跑在文档之后。
 
 ## 四、新增一条判据时
 

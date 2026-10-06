@@ -58,7 +58,7 @@ tools/
 - 六个都是强制依赖：任一缺席时本插件进入等待而非启动。语义出处是 cordis 自己的 `inject` 实现
   （`[@deepseek-ai/cordis@~4.0.4] src/fiber.ts:611-623` 的 `_refresh` 逐个查实现、`:597-609` 的 `_checkImpl`），
   错误文案见 `[@deepseek-ai/cordis@~4.0.4] lib/index.js:676`。**`timer` 是真机补出的**：
-  假件测试的 `ctx.timer` 是替身自己造的，漏声明也全绿。
+  假件测试的 `ctx.timer` 是替身自己造的，漏声明也全绿（绿＝测试通过）。
 - `ctx.get('sandboxPolicy')` 是**可选**服务，按 cordis 惯例走 `ctx.get` 而不是 `inject`。
 
 ---
@@ -402,7 +402,7 @@ export function watchUserInterrupt(ctx, agent) { … }
 | `agent.test.mjs` | **立返形状**（status/agent_id/note 含可复制调用与生效数字；**输出 schema 经 checkedTool 校验**）、`startContinuable` 恰一次且 request 逐字段（不含透传键）、**零前台**（假件 `start` 哨兵：调用即记录并抛可读错误）、**零等待原语**（timer/on 记录器零调用）、三错误态互区分且不派生、`subagentProvider` 设置改名的行为差异、描述 `currently: <名>` 随设置改名刷新（§18.5 全表） | R13/R10/R5 |
 | `interrupt.test.mjs` | `source.kind` 过滤、**next-step/next-turn 落点判定（R12：排队不打断、插话打断、inbox 不可读不打断）**、**非 user 的 next-step 消息不打断（deferContext 上下文消息恰落 next-step，变异 M3 守卫）**、disposer 被调用、多路竞速的优先级 | R4/R12 |
 | `output.test.mjs` | 头尾截断（字符口径）、句柄文案数字取自配置、终态竞态的提示句 | R5 |
-| `index.test.mjs` | **真 cordis 最小 Context**：`inject` 恰为七个服务、按 `config.toolName` 注册、卸载后注销；`lib/` 里每个 `ctx.<服务>` 访问都在 `inject` 里（漏声明即变红） | R4/R6 |
+| `index.test.mjs` | **真 cordis 最小 Context**：`inject` 恰为七个服务、按 `config.toolName` 注册、卸载后注销；`lib/` 里每个 `ctx.<服务>` 访问都在 `inject` 里（漏声明即变红，红＝测试失败） | R4/R6 |
 
 **测试替身**：`jobs` / `shell` / `shellEnv` / `subagents` / `ctx.on` / `ctx.timer` 全部用最小假件（不启动真实进程、不依赖 dsh 宿主）。
 但假件**要什么有什么**，所以两类缺口必须由别的手段兜住：
@@ -1071,7 +1071,7 @@ kill/wait/remove`——`get`（存在性屏障）与 `list` 不用换名。
 ## 23. 依赖与 peer 校验申报（R15）
 
 照抄上游形态（`[@deepseek-ai/dsh-tools@0.2.0-rc.2] package.json`：运行时服务契约全放 peerDependencies
-精确锁 **`0.2.0-rc.2`**（R38 §37.1 升锁、R44 换钉；上游同款精确锁惯例见
+精确锁 **`0.2.0-rc.2`**（R38 §37.1 升锁、R44 更换锁定版本；上游同款精确锁惯例见
 `[@deepseek-ai/dsh-tool-jobs@0.2.0-rc.2] package.json:32-39`），只有叶子库进 dependencies；peer 校验只看
 `@deepseek-ai/dsh` 与 `dsh-*` 条目，cordis/cosmokit 不查）：
 
@@ -1104,8 +1104,8 @@ peer**，尽管它一行都不 import `dsh-jobs`——换取代际核查覆盖�
 | dsh-shell | **服务**（`ctx.shell`） | 同上口径 |
 | dsh-shell-env | **服务**（`ctx.shellEnv`） | 同上口径：`lib/index.js` 的 inject 声明 `shellEnv`、`lib/jobs.js` 调 `ctx.shellEnv.collect`（"零服务消费"误判） |
 | dsh-subagent | **服务**（`ctx.subagents`） | 同上口径 |
-| dsh-typert-protocol | **import**（`TypertRemoteService`/`Remote`，`lib/ask-takeover.js`，R30/§32.6） | 直接代码依赖，精确锁 `0.2.0-rc.2`（R38 升锁、R44 换钉） |
-| dsh-llm | **import**（`createUserMessage`，`lib/ask-takeover.js`，R30/§32.5） | 直接代码依赖，精确锁 `0.2.0-rc.2`（R38 升锁、R44 换钉） |
+| dsh-typert-protocol | **import**（`TypertRemoteService`/`Remote`，`lib/ask-takeover.js`，R30/§32.6） | 直接代码依赖，精确锁 `0.2.0-rc.2`（R38 升锁、R44 更换锁定版本） |
+| dsh-llm | **import**（`createUserMessage`，`lib/ask-takeover.js`，R30/§32.5） | 直接代码依赖，精确锁 `0.2.0-rc.2`（R38 升锁、R44 更换锁定版本） |
 | cordis / timer | 运行时 | `~` 上游同款（timer 1.1.4→1.1.6 的工具注册面逐字未变） |
 
 - **为什么 dsh-* 用精确版**：让强制 peer 校验"为本包工作"——宿主代际不对时本行
@@ -1369,7 +1369,7 @@ peer**，尽管它一行都不 import `dsh-jobs`——换取代际核查覆盖�
 代价（已接受；R35 起两预设同形）：两预设内都失去全功能委托参数面（fork、`toolFilter`、
 `maxDepth`、`reasoning_effort`）——需要这些时翻活对应行（连带 persona 锚句与判据一起改，
 见下）。`tool-subagent-control` / `tool-subagent-list-agents`（管理面，非派生入口）与
-`workflow-ptc`（引擎服务行，R34 供电）保持在场；`tool-workflow` 行 R35-b 起禁用（编排
+`workflow-ptc`（R34 的引擎服务行）保持在场；`tool-workflow` 行 R35-b 起禁用（编排
 统一走 `async_workflow`，§35.1-2）。
 
 不得再改：翻回 `subagent` 系属新一轮设计裁决，必须连 persona 锚句与
@@ -2014,7 +2014,7 @@ README 的偏离清单一起改。
 > 不做真机复现：四条件判定与渲染由单测判据 2/4/5/6/9/10 覆盖，锚对真实性有受限沙箱
 > 真机复现背书（锚对两枚实测在案）。
 
-> **行为判据的电池噪声治理（实测）**：c 段无转录通道，判据靠
+> **行为判据的测试噪声治理（实测）**：c 段无转录通道，判据靠
 > 固定格式问答的判别子。实测存在噪声：同会话主判别子（AVKILL+MEANS）全对、语言子却
 > 答 none 的**矛盾读数**（`4294967295` 不可猜，答得出即证明块在场），以及 standard 会话
 > 整轮漏答（两轮间不稳定）。处置：**在场断言**走 `askBatteryConsistent` 自洽重采样——
@@ -2295,7 +2295,7 @@ catch { return undefined; }
 
 ### 31.7 g 暴露面登记（裁决 R29-g）
 
-README 新增"信息暴露面"一节，纯登记不改行为：(1) 随请求下发给子进程的 `DSH_*` 变量
+README 新增"信息暴露范围"一节，纯登记不改行为：(1) 随请求下发给子进程的 `DSH_*` 变量
 清单——来源是 `ctx.shellEnv.collect(exec)` 的实际键集（`lib/jobs.js:551-554`，实现轮
 枚举登记；"`DSH_WEB_URL` 不含令牌"是实测结论，全量清单以 collect 实测为准，不得冒引）；(2) spill 落点为系统临时目录**绝对路径**（N5 取舍原文引用）；
 (3) 注册失败 detail 的 500 字符截断上界（完整原文只进操作者日志）。验收 = 文档核对
@@ -2320,7 +2320,7 @@ README 新增"信息暴露面"一节，纯登记不改行为：(1) 随请求下�
 | `lib/text.js` | 词典 | `error.queryFailed`、`render.readFailed`、`via.textFallback`（zh/en 成对） |
 | `lib/wait-job.js` 注释 / `docs/design.md` §22.3 | `:203` / `:1077` | 复查快照措辞随 `list()` 基同步（审查 L3） |
 | `tools/_host-resolve.mjs` / `tools/validate-preset.mjs` / `tools/check-alias-tokens.mjs` | `:49` / `:48`+`:50` / `:28` | 删硬编码候选、补 APPDATA 推导、统一走 `_host-resolve`；`_host-resolve` 新增锚点目录推导导出（L5） |
-| `README.md` | 预算节 + 新节 | wait_ms 覆盖口径；"信息暴露面"一节 |
+| `README.md` | 预算节 + 新节 | wait_ms 覆盖口径；"信息暴露范围"一节 |
 | `test/*` | 新增 | 见 31.9 |
 
 ### 31.9 判据
@@ -2386,7 +2386,7 @@ README 新增"信息暴露面"一节，纯登记不改行为：(1) 随请求下�
 
 ### 31.10 使用文档与回滚
 
-- README：预算节补七字段上界表与 `pollIntervalMs ≤ maxWaitMs` 联动；"信息暴露面"新节
+- README：预算节补七字段上界表与 `pollIntervalMs ≤ maxWaitMs` 联动；"信息暴露范围"新节
   （g）；wait_ms 覆盖口径句（与工具描述同一份措辞）。
 - 当轮交付记录：R29 轮次条目；开发机 `DSAT_HOST_MODULES` 的一次性设置说明；静态钉子用途。
   （新增宿主事实登记于轮次报告：schemastery 上界拒绝面与消息、设置写路径无值校验 +
@@ -3211,7 +3211,7 @@ R30「可验证」逐条对齐：
    （`dsh-async-create.patch.yml` 已是此形态——§28.1 裁决 A 的既有形态即
    成例，本条对它零改动。）
 
-**保留行**（R35-d）：`workflow-ptc`（引擎服务行，R34 供电；在场且启用、
+**保留行**（R35-d）：`workflow-ptc`（R34 的引擎服务行；在场且启用、
 `provider: spawn`）、`tool-subagent-control` / `tool-subagent-list-agents`
 （检查/管理面：`list_agents` / `interrupt_agent` / `send_message` 均非阻塞，
 返回即确认）。两份补丁头部手术注释同步增记（含 R35-e 功能损失一句）。
@@ -3366,7 +3366,7 @@ R30「可验证」逐条对齐：
 | ctx.shell / shellEnv / jobs / subagents(listChildren·startContinuable·getProvider) / events(agent·workflow·loader/volatile-update) / settings·configEditor 表单通道 | **逐字节相同** | 两树字节对比 | 无 |
 | dsh-jobs-local cap 语义、workflow-ptc 引擎（档位解析/五钩子/错误码） | 相同 | 同上 | 无 |
 | 预设基线（shipped standard/cordis patch）+ web-app 组合面 | 相同；宿主 cordis.patch.yml 增删行与本包行位无交集 | 两树对比 | `validate-preset` 期望集零改；行位判据照旧 |
-| peer 钉版 | 上游全体精确锁 0.2.0-rc.2 | 上游 package.json 亲读 | **九个 dsh* peer 现锁 `0.2.0-rc.2`**（R38 升 rc.1、R44 换钉 rc.2——§23 JSON 块随线）；cordis/timer 不动 |
+| peer 版本锁定 | 上游全体精确锁 0.2.0-rc.2 | 上游 package.json 亲读 | **九个 dsh* peer 现锁 `0.2.0-rc.2`**（R38 升 rc.1、R44 更换锁定版本到 rc.2——§23 JSON 块随线）；cordis/timer 不动 |
 | subagent `listDescendants` | 重写为 catalog 遍历（本包不消费） | 两树 diff | 无（e2e 对 list-agents 工具顺带观察） |
 | sandbox 提权面 | displayReason 新增、拒绝文本加长、新导出 | 两树 diff | 无（理由前缀 `escalate sandbox to <mode>` 逐字保留；测试锚复核） |
 | permission-presets auto 档 | approval never→ask | 两树 diff | 探针纪律：e2e 一律 danger-full-access 档（升径不变） |
@@ -3376,12 +3376,12 @@ R30「可验证」逐条对齐：
 
 **代码改动清单（全部落在仓库内，宿主树零改动）**：
 
-1. `package.json`：九个 `@deepseek-ai/dsh*` peer `0.1.7-rc.1` → `0.2.0-rc.1`（R38-4；§23 表逐项依据沿用，dsh-llm/dsh-typert-protocol 同步升）。（现行 rc.2——R44 换钉，§39.3-A1）
+1. `package.json`：九个 `@deepseek-ai/dsh*` peer `0.1.7-rc.1` → `0.2.0-rc.1`（R38-4；§23 表逐项依据沿用，dsh-llm/dsh-typert-protocol 同步升）。（现行 rc.2——R44 更换锁定版本，§39.3-A1）
 2. 开发树 `node_modules` **六条 junction 重锚** 0.2.0 树（服务的 0.2.0 安装树 `node_modules\@deepseek-ai\<pkg>`）：`cordis`、`dsh-jobs`、`dsh-sandbox`、`dsh-subagent`、`dsh-tools`、`schemastery`——清偿四条指向全局 0.1.5 树的挂账（R37 接线完备性判据点名项），两条 0.1.7 树锚随线平移。（**实体接线清单不同**：按 §37.3-2，多 `cosmokit`、`schemastery` 走实拷贝。）核验工具 `verify/check-junctions.mjs`。（R44 起七条 junction 翻锚运行树 `dsh-0.2.0-rc.2`——§39.0/§39.3-A4）
 3. `test/preset.test.mjs`：`EVIDENCE_TREE` 指向 0.2.0 树（判据「缺树即红」文案随路径更新；两树文件字节相同故期望集零改）。（R44 翻新树——§39.3-B4）
 4. `tools/_host-resolve.mjs`：头注改为 0.2.0 口径（peer 锁 0.2.0-rc.1；`DSAT_HOST_MODULES` 指 0.2.0 树；`.volatile is not a function` 仍为错锚诚实信号）。代码零改（解析逻辑与锚点无关）。（现行 rc.2/运行树——R44，§39.3-B6）
 5. `verify/check-facts-anchors.mjs`：新增 `[0.2.0]` 前缀 → `DEFAULT_TREE_020`；CLI 加 `--tree020`；`mutate-facts-anchors.mjs` 补一条新前缀变异（证明新路径能红）。
-6. 文档：design §20/§21/§22/§23/§28 行号锚重锚（§37.5 表）；主题别名表补 0.2.0 口径注记；本节。（R44 又一轮换钉：§39.3-C 组）
+6. 文档：design §20/§21/§22/§23/§28 行号锚重锚（§37.5 表）；主题别名表补 0.2.0 口径注记；本节。（R44 又一轮更换锁定版本：§39.3-C 组）
 
 **测试锚切换**：单测/接线层一律 `DSAT_HOST_MODULES` 指向服务的 0.2.0-rc.2 运行树 `node_modules`（R44 起运行树，design §39.3-B7；R15 验收判据 1 的 0.2.0 形态——`npm ls` 代际核查由锚点核查取代：junction 目标版本串必须 0.2.0-rc.2，见判据 A2）。
 
@@ -3439,14 +3439,14 @@ R30「可验证」逐条对齐：
 
 | 风险 | 处置 |
 | --- | --- |
-| 0.2.0-rc.2 → 正式版/rc.3 再升（R44 已兑现 rc.1→rc.2 换钉） | peer 精确锁随线升；本节判据 A2/A3 + §39.4 三腿是换代红信号；换树先读 `AppParameters` 认树（§39.0/§39.7——服务树路径不写死） |
+| 0.2.0-rc.2 → 正式版/rc.3 再升（R44 已兑现 rc.1→rc.2 更换锁定版本） | peer 精确锁随线升；本节判据 A2/A3 + §39.4 三腿是换代红信号；换树先读 `AppParameters` 认树（§39.0/§39.7——服务树路径不写死） |
 | e2e 探针遇 auto 档审批（0.2.0 面） | 探针会话一律 danger-full-access（GUI 升档纪律） |
 | 实体 junction 指向 0.2.0 树 = 与宿主同物理目录 | 正是单实例要求（0.1.7 时代双实例教训，R37 接线完备性判据）；E1 是总闸 |
 | 验证实例是共享实例 | 只动 web profile 三件 + 自建探针会话；重启走三闸；他人会话/设置零触碰 |
 
 ## 38. R40：入口接管形态下的会话模型选择策略（0.2.0 线，用户裁定）
 
-> 需求：`docs/requirements.md` R40（裁定记录：用户 2026-10-02 裁定**恢复指定路由能力**，
+> 需求：`docs/requirements.md` R40（裁定记录：用户裁定**恢复指定路由能力**，
 > 按缺陷立项）。三线均不改宿主源码。
 
 ### 38.0 需求与事实锚
@@ -3473,7 +3473,7 @@ R35 手术（§35）禁用两预设的宿主 `tool-subagent`/`-fork` 行后，�
   按序号读单事件，与 `snapshotEvents`/`ownEvents` 同列**弃用名单**（「禁止新增生产
   调用」）——但宿主现行 `selectForSession` 的 freshSession 判定仍用它
   （`dsh-tool-subagent/lib/index.js:589`）。本包复制同款调用（`eventAt(0)` 判
-  `session/end-seed`），由钉版看守锚住宿主源：宿主迁移读法 ⇒ 看守红 ⇒ 跟版。
+  `session/end-seed`），由版本锚定看守锚住宿主源：宿主迁移读法 ⇒ 看守红 ⇒ 跟版。
 - **投影注册表同键注册按 `stateVersion` 合并计数**（同版 refs+1，最后卸载
   才消失；异版拒共享抛错）——插件侧与宿主行同键共存是注册表的公开语义
   （`dsh-session-projection/lib/index.js:39-42, :81-101`）。
@@ -3496,7 +3496,7 @@ R35 手术（§35）禁用两预设的宿主 `tool-subagent`/`-fork` 行后，�
 | 路线 | 裁定 | 依据 |
 | --- | --- | --- |
 | A 宿主行装载不注册工具 | **弃** | 无受支持形态（宿主行 apply 无条件注册投影与工具）。标准形态（`modelSelectionSettings: true`）带回宿主 `subagent`/`subagent_fork` 工具 ⇒ 重开 R35「结构性唯一入口」裁决并连锁翻 §28/§35 判据链；absent-provider 变形泄漏 `list_subagent_models` 进工具面（face 相位 27 工具计数必红，R4 隔离面）且骑「provider 永不出现」的未定义行为。「不改宿主源码」约束下 A 无受支持落地形态 |
-| B 插件侧同键自注册投影 | **选** | 语义与宿主形态逐点等价（§38.2 表）；零工具注册（R4 面计数不变、R35 裁决不动）；接线仅**新增 zod 一条 junction**——投影 `stateSchema` 的注册表契约是 zod `.parse`（宿主双库并用：schemastery 给 Config、zod 给投影 schema；注册表 checkpoint/restore 路径直接调 `stateSchema.parse`，schemastery 无该方法，且同键合并**先到先得 def**——本包 def 先入则全实例该键都是本包的 schema——D1）；zod 在 0.2.0 树顶层平铺（`node_modules\zod`）；`SessionSeq` brand 运行时擦除免导入；作用域分发免 dsh-scope import。代价 = 宿主内部耦合，以钉版看守显式管理（§38.4） |
+| B 插件侧同键自注册投影 | **选** | 语义与宿主形态逐点等价（§38.2 表）；零工具注册（R4 面计数不变、R35 裁决不动）；接线仅**新增 zod 一条 junction**——投影 `stateSchema` 的注册表契约是 zod `.parse`（宿主双库并用：schemastery 给 Config、zod 给投影 schema；注册表 checkpoint/restore 路径直接调 `stateSchema.parse`，schemastery 无该方法，且同键合并**先到先得 def**——本包 def 先入则全实例该键都是本包的 schema——D1）；zod 在 0.2.0 树顶层平铺（`node_modules\zod`）；`SessionSeq` brand 运行时擦除免导入；作用域分发免 dsh-scope import。代价 = 宿主内部耦合，以版本锚定看守显式管理（§38.4） |
 | C 直读全局白名单自任裁定 | **弃** | 语义漂移四条（根源都在宿主「创建时定格」采样语义）：调用时活值 ≠ 会话创建时采样；无持久记录（宿主客户端/UI 读投影看不到）；无父会话继承复刻；事后关白名单**会**收紧既有会话（宿主创建时定格、事后编辑不收紧——方向恰反）。四条都与「无 policy 会话不暴露模型参数」的宿主管控口径（§22.4）相逆。补「读后照记持久事件」即收敛为 B |
 
 落点裁决（编号沿用本节）：
@@ -3529,7 +3529,7 @@ R35 手术（§35）禁用两预设的宿主 `tool-subagent`/`-fork` 行后，�
 ### 38.2 机制设计（`lib/agent-policy.js`）
 
 ```
-常量（钉版看守互锚，§38.4）：
+常量（版本锚定看守互锚，§38.4）：
   POLICY_KEY = 'subagentModelSelectionPolicy'   // 与宿主同键（同键合并计数语义）
   POLICY_STATE_VERSION = 1                      // 宿主现行值；宿主升版 ⇒ 看守红
   POLICY_EVENT = 'subagent/model-selection-policy'
@@ -3603,7 +3603,7 @@ eager drive 收不到，第二个采样方（混合预设的宿主行）与重�
 - HMR/行卸载中间态：行不在场期间新建的会话不采样（无事件、无 policy、拒绝保持）——
   与宿主行卸载行为一致，登记为已知边界（§38.7）。
 
-### 38.4 宿主耦合的钉版看守
+### 38.4 宿主耦合的版本锚定看守
 
 耦合面是**有意的设计选择**（B 路线的代价），用看守显式管理而不是假装没有：
 
@@ -3678,16 +3678,16 @@ E2 与本节两处一致化；model-text 对 `lib/agent-policy.js` 的 8 处红�
 
 | 风险 | 处置 |
 | --- | --- |
-| 宿主升版改投影定义/fold/schema/采样链 | 钉版看守红 = 设计预期信号（§38.4 ③ 整段互锚）；跟版流程 = 对照宿主新源更新副本与看守锚（注册表异版拒共享会在装载期先炸——看守让它在静态期先红） |
+| 宿主升版改投影定义/fold/schema/采样链 | 版本锚定看守红 = 设计预期信号（§38.4 ③ 整段互锚）；跟版流程 = 对照宿主新源更新副本与看守锚（注册表异版拒共享会在装载期先炸——看守让它在静态期先红） |
 | zod junction 锚 0.2.0 树顶层包 | 与宿主同一物理实例、零版本漂移；宿主升 zod 大版 ⇒ 装载期 `stateVersion`/parse 行为面先暴露（看守 ③ 的 zod 锚同步红） |
 | `eventAt` 弃用面与宿主读法迁移 | 本包调用与宿主 `selectForSession` 逐字同形，看守锚宿主源；宿主迁移 ⇒ 看守红 ⇒ 同步换读法 |
 | 行卸载/HMR 窗口新建会话无采样 | 已知边界（同宿主行卸载行为），§38.3 登记；窗口后新会话恢复采样，旧会话策略不受影响（持久事件仍在） |
 | 混合预设双采样竞态 | 同键幂等（注册表合并计数 + 宿主采样链语义）：两边同源同值，先到先记；单测覆盖幂等腿 |
 | 全局坏配置（enabled+空名单）阻断会话创建 | 裁决 R40-2：与宿主 standing 行同姿态（响亮失败）；README R40 段说明 |
 
-## 39. R44：宿主 0.2.0-rc.2 换钉（同窗机械轮，消费面零变化）
+## 39. R44：宿主 0.2.0-rc.2 更换锁定版本（同窗机械轮，消费面零变化）
 
-> 需求 `docs/requirements.md` R44（同窗五步：树→钉→电池→0.2.2 实体→真机核销）；
+> 需求 `docs/requirements.md` R44（同窗五步：树→锁定版本→测试套件→0.2.2 实体→真机核销）；
 > 调研档案与事实登记按 dev-delivery 流程入轮次账本。九阶段按 dev-delivery-workflow，
 > 设计审查发现 D-1–D-11 已全部并入本节文字：四应修 =
 > 需求步骤 1 现况注记 C13、等同等同触发处置 §39.2-5/C14、路径常量红腿 A5/腿 C、
@@ -3721,16 +3721,16 @@ rc.2 亲读），服务 Running，最新启动段两插件（本包 `dsh-async-t
 
 ### 39.1 范围与非目标（R44）
 
-- 换钉对象 = 调研登记的换钉清单 **＋翻锚增量**（`dsh-0.2.0` → `dsh-0.2.0-rc.2` 的
+- 更换锁定版本的对象 = 调研登记的换锁清单 **＋翻锚增量**（`dsh-0.2.0` → `dsh-0.2.0-rc.2` 的
   全部落点，§39.3 全表）；`lib/` 零代码改动（九 peer+伞包 rc.1→rc.2 逐包 diff
   证明消费面零行为变化）；预设补丁两件零改（树基线 + §39.4 的 check:preset 覆盖）。
 - 非目标（R44 原文）重申：不搭载任何功能改动；不预判 0.2.0 正式版；开发实例、v017 实体、
   `v0.1.7` tag、0.1.7 树零触碰不重测。**新增边界两条**：① 同 profile 参考插件的
-  rc.2 换钉属使用者另一包线，本仓零动作——重启后其 skip 行持续在场，本包激活判据按
+  rc.2 换锁属使用者另一包线，本仓零动作——重启后其 skip 行持续在场，本包激活判据按
   **bundle 名作用域**读数（§39.6-2）；② 旧树 `dsh-0.2.0` 不升级、不删除、不改写
   （@v0.2.1 实体 junction 锚它——R40 回滚位的物理基础，§39.7）。
 
-### 39.2 运行树矩阵核查（钉版事实重跑；R44 判据 1 前半）
+### 39.2 运行树矩阵核查（版本锁定事实重跑；R44 判据 1 前半）
 
 对新树 `dsh-0.2.0-rc.2\node_modules\@deepseek-ai` 全量枚举（非抽样）：
 
@@ -3740,10 +3740,10 @@ rc.2 亲读），服务 Running，最新启动段两插件（本包 `dsh-async-t
 3. 平台包不动：cordis 4.0.4、cosmokit 1.8.5、schemastery 3.18.4、
    cordis-plugin-timer 1.1.6、cordis-plugin-loader 1.0.5、group/include 同版；zod
    顶层 4.6.5（check-junctions 第七条期望）；
-4. 上游钉版惯例抽核：家族包 peerDependencies 里 dsh* 精确锁 `0.2.0-rc.2`（如
+4. 上游版本锁定惯例抽核：家族包 peerDependencies 里 dsh* 精确锁 `0.2.0-rc.2`（如
    dsh-tool-jobs，同款锚惯例）。
 
-产出：钉版矩阵改写（现行值换新树 rc.2 + 包集合零增删注记）＋矩阵读数归档
+产出：版本锁定矩阵改写（现行值换新树 rc.2 + 包集合零增删注记）＋矩阵读数归档
 （当轮交付 R44 节）。任一不符 → 停窗（§39.7），先走应急支再议回退。
 5. **等同等同新配对重跑**：等同比对事实的更新入口「0.2.0 树升级时重跑
    `verify/diff-trees.mjs`」触发条件已满足——B5 翻 B 常量后用正式工具跑点名
@@ -3760,7 +3760,7 @@ rc.2 亲读），服务 Running，最新启动段两插件（本包 `dsh-async-t
    配对声明（等同与客户端槽面）随读数注记；行为面交 §39.6 五相位回归（E5 看守
    api-gateway/plugin-manager 变更面）。窗口按此复窗，未触发回退。
 
-### 39.3 仓内换钉锚全表（R44 步骤 2；grep `0\.2\.0-rc\.1` 与 `dsh-0\.2\.0\\` 双扫核对）
+### 39.3 仓内换锁锚全表（R44 步骤 2；grep `0\.2\.0-rc\.1` 与 `dsh-0\.2\.0\\` 双扫核对）
 
 **A. 红信号锚（改串即红/被守）**：
 
@@ -3768,8 +3768,8 @@ rc.2 亲读），服务 Running，最新启动段两插件（本包 `dsh-async-t
 | --- | --- | --- |
 | A1 | `package.json:78-86` | 九个 `@deepseek-ai/dsh*` peer → `0.2.0-rc.2`（T15 守） |
 | A2 | `test/index.test.mjs:566-573` | T15 标题、注释、`DSH_LINE` → rc.2；注释换代条款改写为「rc.2 → 正式版/rc.3 再升时本用例先红」（§37.6 风险表第一行同款语义）；**新增 `version` 断言**（`pkg.version === '0.2.2'`——version 由此获得 tag 前红信号，不再只靠切换穿指读兜底） |
-| A3 | `verify/check-junctions.mjs:34-40` | `EXPECTED` 四串（dsh-jobs/sandbox/subagent/tools）→ rc.2 + 头注 `:6` 口径 + 钉版矩阵引 |
-| A4 | 开发树七 junction（物理） | `node_modules\@deepseek-ai\{cordis,dsh-jobs,dsh-sandbox,dsh-subagent,dsh-tools,schemastery}` + 顶层 `zod` → 逐条重建指新树；**次序**：先翻 junction 后改 A3 表——中间态跑本器必红（WRONG-TREE/VERSION），即换钉红信号实弹（§39.4-3 腿 B 的前身读数） |
+| A3 | `verify/check-junctions.mjs:34-40` | `EXPECTED` 四串（dsh-jobs/sandbox/subagent/tools）→ rc.2 + 头注 `:6` 口径 + 版本锁定矩阵引 |
+| A4 | 开发树七 junction（物理） | `node_modules\@deepseek-ai\{cordis,dsh-jobs,dsh-sandbox,dsh-subagent,dsh-tools,schemastery}` + 顶层 `zod` → 逐条重建指新树；**次序**：先翻 junction 后改 A3 表——中间态跑本器必红（WRONG-TREE/VERSION），即换锁红信号实弹（§39.4-3 腿 B 的前身读数） |
 | A5 | `verify/check-junctions.mjs` 增**一致性对账段** | 五处树根常量——`check-facts-anchors.mjs` 的 `DEFAULT_TREE_020`、`check-agent-policy.mjs` 的 `DEFAULT_HOST`、`mutate-agent-policy.mjs` 的 `HOST_PATH`、`preset.test.mjs` 的 `EVIDENCE_TREE`（取其上溯树根）、`diff-trees.mjs` 的 B——与本器 `TREE` 根逐条对账（读源文件抽常量，大小写不敏感），任一不同步必红：B 组翻锚后「漏改/回退任一处」从全绿盲区（两树文件几乎一致，消费面判定表）变为可检出；变异腿 C（§39.4-3）证其能红 |
 
 **B. 路径翻锚（`dsh-0.2.0` → `dsh-0.2.0-rc.2`；代码零逻辑改动）**：
@@ -3790,18 +3790,18 @@ rc.2 亲读），服务 Running，最新启动段两插件（本包 `dsh-async-t
 
 | # | 落点 | 内容 |
 | --- | --- | --- |
-| C1 | design.md §23（:1079 表、:1087-1095 JSON、:1111/:1112 逐项表） | 精确锁串 → rc.2（注记 R44 换钉；上游惯例锚 `dsh-tool-jobs/package.json:32-39` 同号——rc.2 仅版本串变，消费面判定表） |
+| C1 | design.md §23（:1079 表、:1087-1095 JSON、:1111/:1112 逐项表） | 精确锁串 → rc.2（注记 R44 更换锁定版本；上游惯例锚 `dsh-tool-jobs/package.json:32-39` 同号——rc.2 仅版本串变，消费面判定表） |
 | C2 | design.md :709、:2703 | 「R38 起钉 0.2.0 线精确锁」现行串 → rc.2（R44 注记） |
-| C3 | design.md §37 活判据 :3385/:3402/:3411(A2)/:3412(A3) | 版本串与树路径口径 → rc.2/新树（判据是活的，每轮电池都跑） |
-| C4 | design.md §37 历史行 :3395/:3396/:3397/:3398/:3400/:3451 | **不改写历史叙述**，行尾加注「（现行 rc.2/新树——R44 换钉）」；§37.6/:3458 换代条款更新为「rc.2 → 正式版/rc.3 再升」同款 |
+| C3 | design.md §37 活判据 :3385/:3402/:3411(A2)/:3412(A3) | 版本串与树路径口径 → rc.2/新树（判据是活的，每轮测试都跑） |
+| C4 | design.md §37 历史行 :3395/:3396/:3397/:3398/:3400/:3451 | **不改写历史叙述**，行尾加注「（现行 rc.2/新树——R44 更换锁定版本）」；§37.6/:3458 换代条款更新为「rc.2 → 正式版/rc.3 再升」同款 |
 | C5 | 事实账本 :11 导航行 | 上游 0.2.0 线行：安装树=新树（内含 rc.2）、AppParameters 现指新树、旧树保留注记 |
 | C6 | 事实账本 :15 前缀定义段 | `[0.2.0]` 前缀 = 0.2.0 线**运行树**（现 `dsh-0.2.0-rc.2`） |
 | C7 | 宿主树事实（本机运行树） | 现行值补「本机运行树已 rc.2（使用者迁树+切服，R44 窗实录）」；核销日期更新 |
-| C8 | 上游钉版矩阵 | §39.2 矩阵改写（现行值/依据/核销日期三字段随读数更新） |
+| C8 | 上游版本锁定矩阵 | §39.2 矩阵改写（现行值/依据/核销日期三字段随读数更新） |
 | C9 | 服务认家事实 | 现行值补 AppParameters 现指新树 + 迁树实录（认家程序不变：动验证实例前先读本键） |
 | C10 | 消费面判定事实 | 「更新入口」的树升级前置条件已满足——注记核销（rc.2 树面由使用者完成） |
 | C11 | `verify/README.md` | junction 器行（rc.2 + 新树 + 七条口径 + **A5 一致性对账段**）；diff-trees 行树口径改「0.1.7 / 0.2.0 线运行树（现 rc.2）」；check-facts-anchors 行树口径随 C6 前缀重定义更新；**新增 `check-agent-policy.mjs` / `mutate-agent-policy.mjs` 两行**（文件表 R40 起就缺这两行——「唯一脚本清单」的既有漂移，本轮清偿；含宿主源常量指新树与 11 变异口径） |
-| C12 | 当轮交付记录 | R44 节（交付记录：裁定、矩阵读数、电池读数、红信号实弹、切换、核销）——**写完后复跑全量电池，读数标注取数时刻（README 纪律三）** |
+| C12 | 当轮交付记录 | R44 节（交付记录：裁定、矩阵读数、测试读数、红信号实弹、切换、核销）——**写完后复跑完整测试套件，读数标注取数时刻（README 纪律三）** |
 | C13 | `docs/requirements.md` R44 步骤 1 | 行尾加现况注记（形态同 :46「执行基线」）：「（执行时点现况 2026-10-02：步骤 1 已由使用者以新树形态完成，旧树不升级、`npm install` 退役应急支——见 design §39.0）」——保留原裁决史、阻断按需求原文对旧树执行 npm install（该动作会静默改写 @v0.2.1 回滚位的宿主线） |
 | C14 | 等同事实 | 现行值加日期化注记：等同清单系 0.1.7×rc.1 配对读数；rc.2 配对读数（§39.2-5 重跑）去向当轮交付 R44 节；更新入口注明已触发已处置 |
 | C15 | `tools/check-docs.mjs` ARCHIVES | 登记当轮审查档案（设计审查/实现审查及修正档若出）→ 档案数随册 |
@@ -3815,9 +3815,9 @@ rc.2 亲读），服务 Running，最新启动段两插件（本包 `dsh-async-t
 T15 不查本包版本，登记在当轮交付）；tag `v0.2.2` **附注**（§37.3-1 机制口径；
 v0.2.1 轻量形态系 R40 建tag 时偏差——不复制该偏差）。
 
-### 39.4 电池与换代红信号（R44 步骤 3；判据 4）
+### 39.4 测试套件与换代红信号（R44 步骤 3；判据 4）
 
-1. **全量电池**：`npm run test:inproc` 全绿零跳过（读数取于全部文档写完之后——README
+1. **完整测试套件**：`npm run test:inproc` 全绿零跳过（读数取于全部文档写完之后——README
    纪律三）；**`package.json` `version` 读数 = 0.2.2（T15 断言——拦在 tag
    之前）**；十器全 0（名单 = §38.5 十件：check:preset ①–⑪ ×2、encoding、docs、
    alias-tokens、agent-policy、junctions、facts-anchors、model-text、bare、doc-paths）；
@@ -3858,15 +3858,15 @@ v0.2.1 轻量形态系 R40 建tag 时偏差——不复制该偏差）。
    package.json` version，§39.2 已核）+ **可执行读数**：对新树入口跑
    `node <新树>\@deepseek-ai\dsh\lib\bin.js --version`（执行 AppParameters 所指同一
    入口文件，打印其自报版本——兜底程序，不依赖任何条件句）+ 日志活体佐证
-   （同 profile 参考插件未换钉期间其 skip 行印 `dsh 0.2.0-rc.2`——邻位观察；若使用者已将
-   其换钉致该行缺席，前两读数已足，缺席本身记入邻位观察注记）。
+   （同 profile 参考插件未换锁期间其 skip 行印 `dsh 0.2.0-rc.2`——邻位观察；若使用者已将
+   其换锁致该行缺席，前两读数已足，缺席本身记入邻位观察注记）。
 2. **本包激活**：新启动段（字节游标增量）按 bundle 名作用域——`dsh-async-tools` 无
    `skipping profile bundle`/`failed to import`/`did not activate`；参考插件的
    skip 行**不在本判据内**（§39.1-①边界），作邻位观察单独登记。
 3. **五相位回归 R40 基线不回归**：face 7/7（27 工具计数不变）/control 2/2/behavior
    12/12/settings 5/5（语言档程序按当轮交付「语言档注记」：zh→临时 en→复测→复原
    zh 回读全等）/agent 6/6（zh 档直跑，判据双语锚）。
-4. **电池十器**：§39.4 读数（取数时刻登记）即本判据证据；切换后开发树侧不重跑
+4. **测试套件＋十器**：§39.4 读数（取数时刻登记）即本判据证据；切换后开发树侧不重跑
    （实体内容 = tag 树逐字节，无第二来源）。
 5. **0.1.7 线零触碰**：v017 实体/`v0.1.7` tag/0.1.7 树/开发实例无写动作（本轮动作清单
    全量枚举核对）+ 开发实例服务 PID 前后一致（交付纪律 3）。
@@ -3877,7 +3877,7 @@ v0.2.1 轻量形态系 R40 建tag 时偏差——不复制该偏差）。
 | --- | --- |
 | 新树矩阵不符（缺件/版本参差/包集合增删） | 停窗 → **告知使用者并呈报矩阵读数**（新树是使用者资产，任何写入前先告知）→ 应急支：新树根 `npm install`（`--cache` 工作区缓存）；不可修 → 上报使用者（服务树是使用者资产，本仓不代改服务参数）；干预动作与读数登记当轮交付 R44 节 |
 | `[0.2.0]` 行号锚在新树越界（rc.2 全家族未逐包 diff） | check-facts-anchors 红即停窗 → 逐锚重盘点（「行号稳定」是判定不是保证——本器就是判据）；改锚须带新读数依据 |
-| 电池任一红 | 停窗；插件保持 skip 中间态（§37.4：peer 拒载是安全态——服务面无崩溃、无数据面），不就地改实体 peer、不加版本豁免；重盘点后重走 §39.4 |
+| 测试套件任一红 | 停窗；插件保持 skip 中间态（§37.4：peer 拒载是安全态——服务面无崩溃、无数据面），不就地改实体 peer、不加版本豁免；重盘点后重走 §39.4 |
 | 「回退 @v0.2.1」的现实形态 | 仓面：link+junction 翻回 `@v0.2.1`（其 junction 锚旧树 rc.1，实体原样）；但运行时已 rc.2——完整回 R40 基线需使用者把 `AppParameters` 翻回旧树并重启（使用者侧动作，本仓登记边界不代执行） |
 | 兄弟仓 approve-for-me 的 skip 行持续在场 | 邻位观察（§39.6-2），使用者包线自处；E1 类判据一律按 bundle 名作用域读数 |
 | 正式版再升时的双树漂移 | §37.6 换代条款（R44 版）：锚「服务现行树」——动手前先读 `AppParameters` 认树（认家程序），不默认任何固定路径 |
@@ -3943,9 +3943,7 @@ v0.2.1 轻量形态系 R40 建tag 时偏差——不复制该偏差）。
 路径溜进来的一批。豁免名单很短，每条带理由，并且**登记了却不再命中的条目按红处理**，
 名单因此不会只增不减。
 
-三族都能失败，由 `verify/mutate-public-surface.mjs` 证明（8 条变异全中，外加三条**假阳性
-守卫**：上游公开包名与 URL 不得被误判——本机服务名那条规则一度按**子串**匹配，
-把带同样前缀的上游**公开包名**成片误伤了）。
+三族都能失败，由 `verify/mutate-public-surface.mjs` 证明（10 条变异全中，外加基线与四条**假阳性守卫**：上游公开包名与 URL 不得被误判）。
 
 ### 40.4 实施这条线时踩过的坑（实测）
 

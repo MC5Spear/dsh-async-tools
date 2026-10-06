@@ -14,7 +14,7 @@
 
 **两样都没有时会怎样**：脚本打一行 `SKIP …` 并以 0 退出。这不是失败，是**文档化跳过**
 ——这类判据只对"有一台活体实例的开发机"有意义，CI 与外部 clone 上本来就没有可连的东西。
-反过来，`.local/` 在、而配置文件缺失或装载失败，按**红**处理：那是配置坏了，不是缺席。
+反过来，`.local/` 在、而配置文件缺失或装载失败，按**红**（红＝测试失败）处理：那是配置坏了，不是缺席。
 
 **证据落点**也在配置里：`evidenceDir`（缺省 `.local/evidence/`）。转录、DOM 转储、判定
 报告与截图都写在那里——它们是**运行产物**，不是源码，所以与配置、语料同属不被跟踪的本机平面。
@@ -35,7 +35,7 @@ node verify/probe-r28-silent-failure.mjs # R28：三防线真机 1–4、6（真
 node verify/_visual/probe-card-visual.mjs      # 设置卡片的样式与折叠（无头浏览器）
 node verify/_visual/probe-r24-bundle-config.mjs # R24：插件页设置区 DOM + 保存往返（无头浏览器）
 node verify/acceptance-017.mjs r24-ui          # R24：注入表把本包 client.js 列进 preload 行
-node verify/acceptance-017.mjs behavior        # §26.3 让出/等待/插话电池
+node verify/acceptance-017.mjs behavior        # §26.3 让出/等待/插话测试集
 node verify/acceptance-017.mjs agent           # §26.3.9 指定路由真机判据
 ```
 
@@ -48,7 +48,7 @@ node verify/acceptance-017.mjs agent           # §26.3.9 指定路由真机判�
 默认权限下直接跑，读数 11/11。
 
 **预设生命周期判据的旧形态已整体退役**：预设改由随包 patch 的插件行声明、生命周期归
-loader/fiber，"往用户预设根写目录 + 所有权判据"的 e2e 探针、判据模块与兜底卸载命令
+loader/fiber，"往用户预设根写目录 + 所有权判据"的 e2e 探针、判据模块与备用卸载命令
 一并删除。"装上出现 / 卸载消失"改由 §26.3.9 的"移除包名重启后无残留"端到端判据承接。
 
 ### 这些脚本会改真实实例的状态，跑之前知道自己要什么
@@ -99,7 +99,7 @@ loader/fiber，"往用户预设根写目录 + 所有权判据"的 e2e 探针、�
 | 纯函数型，**不需要子进程**（只在内存里改写源码文本或喂合成读数给判据，不落盘、不 spawn） | `mutate-mutate-index.mjs`、`mutate-doc-paths.mjs`、`mutate-bare-filenames.mjs`、`mutate-facts-anchors.mjs`、`mutate-r24-ui.mjs`、`mutate-config-slot.mjs`、`mutate-lang.mjs`、`mutate-model-text.mjs`、`mutate-agent-policy.mjs`、`mutate-public-surface.mjs` | ✅ 直接跑。**十个逐个实跑过的读数**：2/2、2/2、1/1、4/4＋基线、**30/30**、7/7、12/12、11/11、11/11、8/8＋基线＋3 条假阳性守卫——全部退 0 |
 | 会跑 `node --test` 测试文件 | `mutate-list-children-shape.mjs`、`mutate-card-theme.mjs`、`mutate-escalation-removed.mjs`、`mutate-escalation-order.mjs`、`mutate-yield-example.mjs`、`mutate-agent.mjs`、`mutate-steering.mjs`、`mutate-r27-form.mjs`、`mutate-alias-tokens.mjs` | ⚠️ 默认权限下**拒绝运行**：逐个实跑过，多数报 `BASELINE-RED`（`mutate-steering` 报 `BASELINE-DIDNT-RUN`，它显式认出了 spawn EPERM）、退出码 2，**没有一个谎报 CAUGHT**；要拿结论须**提权**跑 |
 
-> ⚠️ **这些脚本不在电池里，会静默腐烂。** `npm run test:inproc` 够不到 `verify/`，
+> ⚠️ **这些脚本不在测试套件里，会静默腐烂。** `npm run test:inproc` 够不到 `verify/`，
 > 所以一条变异脚本可能在"锚点失配""文件搬走""被调函数换了签名"之后**照样躺在那里**，
 > 而没人知道。**实测抓到过 4 处**：`mutate-doc-paths` 与 `mutate-facts-anchors` 在读一个
 > 已经搬进本机平面的**事实登记簿**（每次跑都 ENOENT）；`mutate-mutate-index` 的锚点
@@ -170,7 +170,7 @@ Node 的 ESM 缓存按 resolved URL 键控，`import('…/被测源码.js?v=2')`
 | `lang-judgements.mjs` | **R25 双开关判据的纯函数**（`cjkCount` / `judgeLangIndependence` / `judgeLangRestored`）：判据由 `mutate-lang.mjs` 证明能红，取数由 `probe-lang-independence.mjs` 在真机上取 |
 | `probe-lang-independence.mjs` | **R25 的真机判据**：先复位到 `auto`/`en`，再①只改 `agentLang`→`zh`（描述必须换中文、表单文案必须逐字不变）②只改 `uiLang`→`en`（走页面下拉 + 保存，表单文案必须换英文、字段身份不变、工具描述必须逐字不变）③复原并回读比对 |
 | `mutate-lang.mjs` | **R25 判据的变异证明**（12 条：两档没换语言、中文档半译、英文档混中文、改 agentLang 顺带动界面文案、uiLang 没生效、字段身份被换、字段数不足、收尾没复原…），任一没红即 UNCAUGHT 退出 1 |
-| `_r28-helpers.mjs` | **R28 真机判据的公共件**：锚句常量（与 `lib/text.js` 逐字一致，单一登记点）、固定格式问答电池、会话驱动。c 段（系统提示纪律段）无转录通道，取证走**行为判据**——判别子是纪律段独有的退出码（不可猜），问题文本不得含锚句与该数（防问答泄漏）。`askBatteryConsistent` 是**在场断言**的自洽重采样；缺席断言单发不重抽 |
+| `_r28-helpers.mjs` | **R28 真机判据的公共件**：锚句常量（与 `lib/text.js` 逐字一致，单一登记点）、固定格式问答测试集、会话驱动。c 段（系统提示纪律段）无转录通道，取证走**行为判据**——判别子是纪律段独有的退出码（不可猜），问题文本不得含锚句与该数（防问答泄漏）。`askBatteryConsistent` 是**在场断言**的自洽重采样；缺席断言单发不重抽 |
 | `probe-r28-silent-failure.mjs` | **R28 的真机判据（真机 1–4、6）**：OFF 基线（三面缺席）→ 页面 Switch 翻转 + 保存 → ON 三面在场 → 签名 2 管道形双档 → 关回三面消失 → `agentLang=zh` 纪律段换中文。良性误发面只用内建 cmdlet（空目录 `Get-ChildItem 2>&1`）。收尾**故意留 guard=true** 给重启探针 |
 | `probe-r28-restart-persistence.mjs` | **R28 真机 5（重启保持）**：不进批量清单——两条探针之间要人工过安全门并重启实例，等端口回来后本进程以**新 token** 起跑。判据：guard 仍 true（持久化非内存态）+ 三防线逐面复核，收尾复原 guard=false |
 | `probe-r29-robustness.mjs` | **R29 的真机判据**（卡片/提交两层拒绝 + 等待总时长）：卡片层单字段越界 → 保存禁用 + 带上界数字的原因文案；卡片层配对（pollInterval > maxWait）；提交层 RPC 直写越界 → 落盘值照旧 + 服务错误日志增量含可读拒绝；等待总时长——长跑的进程内命令 + `async_wait_job` → running 且实际等待落在预算区间。结尾回正配置 |

@@ -53,8 +53,8 @@
 
 ## 环境要求
 
-- **dsh `0.2.0-rc.2`**（九个 `@deepseek-ai/dsh*` 包精确钉版；`cordis ~4.0.4`、
-  `cordis-plugin-timer ~1.1.6`）。版本不符时装载会先红，不会静默错版。
+- **dsh `0.2.0-rc.2`**（九个 `@deepseek-ai/dsh*` 包精确锁定版本；`cordis ~4.0.4`、
+  `cordis-plugin-timer ~1.1.6`）。版本不符时装载会直接失败（下文用"红"指测试或检查不通过），不会静默错版。
 - Node ≥ 20。
 - 本包**不从 npm 分发**：主安装路径是 dsh 原生形态
   `dsh plugin --profile web add github:MC5Spear/dsh-async-tools`（见下）；
@@ -74,8 +74,8 @@
 
 ### 工具不限于这两个预设——任何预设都能加
 
-本包交付两个预设模板：**`dsh-async`（异步模式）** 基于 shipped standard——通用编码工作；
-**`dsh-async-create`（异步创造模式）** 基于 shipped 创造模式——插件/预设创作工作，
+本包交付两个预设模板：**`dsh-async`（异步模式）** 基于宿主自带的 standard 预设——通用编码工作；
+**`dsh-async-create`（异步创造模式）** 基于宿主自带的创造模式预设——插件/预设创作工作，
 其派生入口唯一化为 `async_agent`（宿主 `subagent`/`subagent_fork` 行保留但禁用，
 取回走 `async_wait_agent`）。两个模板都替你把行写好了，新会话选一个就能用。
 但**包本身不限制任何预设**——想在自己的预设里用这些工具，加同样的行就行：
@@ -113,7 +113,7 @@
 
 **⚠️ 在别的预设里加这几行，环境与 `dsh-async` 预设不同**：本预设为了让"命令不再钉死会话"
 这件事成立，**刻意不挂 `@deepseek-ai/dsh-tool-pwsh`**（同步 shell，用 `async_run` 替代它）；
-`tool-bash` 行保留但**无条件禁用**（两个平台的同步 shell 工具面一致为空）。
+`tool-bash` 行保留但**无条件禁用**（两个平台的同步 shell 工具清单一致为空）。
 你自己的预设如果本就提供同步 shell，那么加完这些行之后是**同步命令 + 异步工具并存**——
 这通常是你要的，但**两个都能跑命令**，预算与并发要自己掂量。
 
@@ -139,7 +139,7 @@ D:\src\dsh-async-tools\              ← 唯一的包（两副角色都在这里
 
 > **形态**：预设随本包的 patch 数组交付（`package.json` 的 `dsh.bundle.patch` 是
 > `cordis.patch.yml` + `presets/dsh-async.patch.yml` + `presets/dsh-async-create.patch.yml`
-> 三项），**不向用户预设根落任何文件**，也没有兜底卸载命令。预设的生命周期归宿主的
+> 三项），**不向用户预设根落任何文件**，也没有备用卸载命令。预设的生命周期归宿主的
 > loader/fiber：包进了 bundles 就在，出了就不在。
 >
 > 上图是**备选路径**（clone + 链接，见下节）的形态；主路径（`dsh plugin add`）没有独立
@@ -155,7 +155,7 @@ dsh plugin --profile web add github:MC5Spear/dsh-async-tools
 
 - `dsh plugin` 把参数**原样转发**给 profile 目录里的 pnpm（profile 首次使用时会初始化）；
   `github:owner/repo` 是 pnpm 原生支持的 git 源形态，spec 后面还可以接 `#` 加 ref 或标签
-  钉到某个版本。
+  锁定到某个版本。
 - **GUI 同款**：插件管理页的安装对话框里粘贴同一个 spec 即可——与 CLI 同一安装引擎，
   对话框先 inspect 再安装，包管理器的输出折叠可见。
 - 装完**重启一次实例**（组合树在启动时构建一次）。
@@ -207,7 +207,7 @@ cmd /c mklink /J "$dshProfile\node_modules\dsh-async-tools" "D:\src\dsh-async-to
 ### 两条平面约束（都是实测，不是偏好）
 
 **① 工具行不能进宿主平面。** 宿主平面的插件注册的工具会进**全局工具层**：`standard` 预设的
-会话里会同时出现内置 `pwsh` 与本包的工具，其他预设的工具面貌全被改动。
+会话里会同时出现内置 `pwsh` 与本包的工具，其他预设的工具集全被改动。
 
 **② 宿主行的行名必须是平名。** 宿主只把**平名**包纳入客户端模块图：`dsh-client-modules` 的
 `exactPackageSpecifier` 只接受不带 `/` 的平名或 `@scope/name` 两段式
@@ -228,7 +228,7 @@ cmd /c mklink /J "$dshProfile\node_modules\dsh-async-tools" "D:\src\dsh-async-to
 
 - 白名单开 + 路由在名单内 → 指定路由可用；名单外的路由被可读拒绝。
 - 白名单关 → 新会话无策略，指定路由得到可读拒绝；免路由派生不受影响。
-- **坏配置在创建时响亮失败**：白名单开启且名单为空或非法时，新会话创建直接被拒绝
+- **坏配置在创建时直接报错且原因可读**：白名单开启且名单为空或非法时，新会话创建直接被拒绝
   （与宿主 standing 行同姿态，不静默降级）。修正设置后即可恢复。
 - 策略是**创建时定格**：事后关白名单不收紧既有会话；事后编辑名单也不追加到既有会话。
 
@@ -333,7 +333,7 @@ schema 默认值  <  宿主行 config（cordis.patch.yml 宿主行的 config: �
 ```
 
 设置卡片直接编辑宿主行 Config 上标了 `.volatile()` 的字段，loader **就地提交**（fiber 不重启）
-→ 宿主行重物化快照 → 通知工具行就地改写描述。
+→ 宿主行重建快照 → 通知工具行就地改写描述。
 
 **关键一条：预设工具行的 `config` 不参与这条层叠。** 工具行里的 `config` 只带
 `toolName`（决定该行注册哪个工具）。预算字段写在工具行 `config` 里不会被读到——
@@ -347,7 +347,7 @@ schema 默认值  <  宿主行 config（cordis.patch.yml 宿主行的 config: �
 | --- | --- | --- |
 | 让出/等待预算、轮询间隔、输出上限、作业 kind、子代理后端 | **插件设置表单**（宿主行的 volatile 字段） | 保存即生效（volatile 就地提交，无需重启） |
 | 设置表单语言、模型面文案语言 | **同一个表单里的两个下拉**：`uiLang` 与 `agentLang` | 保存即生效：`uiLang` 当场换表单文案，`agentLang` 在下一次工具描述刷新时换模型收到的描述 |
-| 静默失败防线 | **同一个表单里的开关**：`silentFailureGuard` | 保存即生效（结算诊断、描述警告段、系统提示纪律段三面同换） |
+| 静默失败防线 | **同一个表单里的开关**：`silentFailureGuard` | 保存即生效（结算诊断、描述警告段、系统提示纪律段三处同换） |
 | 该插件在所有部署里的出厂值 | 本包 `cordis.patch.yml` 宿主行加 `config:`（**只准预算字段与 `subagentProvider`，禁止 `toolName`**） | 需要重启（组合树在启动时构建一次） |
 | 某个预设用哪个工具（`async_run` / `async_wait_job` / `async_wait_agent` / `async_agent`；`async_workflow` 的行必须在 delegation 组内） | 预设补丁那一行的 `config.toolName` | 下次会话挂载该预设时生效 |
 
@@ -370,7 +370,7 @@ schema 默认值  <  宿主行 config（cordis.patch.yml 宿主行的 config: �
 3. **系统提示纪律段**：宿主行注入一条上下文——**所有会话可见，不挑预设**，给模型两条纪律
    （空捕获 = 没跑；防杀退出码 4294967295）。
 
-误发面（良性空输出捕获形也会被提示）是**有意的取舍**：宁可信其有。
+误报范围（良性空输出的捕获形也会被提示）是**有意的取舍**：宁可误报，也不漏报。
 
 ### 提问接管（默认关）
 
@@ -391,7 +391,7 @@ schema 默认值  <  宿主行 config（cordis.patch.yml 宿主行的 config: �
    **整批领取**，不串行开回合）。等待中的 `async_wait_*` 由**插件事件**（作答到达即刻发出）
    提前唤醒，工具返回「仍在运行」句柄 + 提示，不是打断。
 
-R30 新增的三个设置字段都在设置卡片上（与 `silentFailureGuard` 同一张表单）：
+这几个设置字段都在设置卡片上（与 `silentFailureGuard` 同一张表单）：
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
@@ -403,7 +403,7 @@ R30 新增的三个设置字段都在设置卡片上（与 `silentFailureGuard` 
 **边界（这几样不碰）**：计划评审卡、审批链、`standard` 等其他预设的提问——接管只认
 两个随包预设根 Agent 的非计划评审提问。
 
-### 生效的数字
+### 参数默认值与上界
 
 | 参数 | 默认值 | 上界 | 说明 |
 | --- | --- | --- | --- |
@@ -449,7 +449,7 @@ R30 新增的三个设置字段都在设置卡片上（与 `silentFailureGuard` 
   继续按旧值运行、stderr 告警说明哪次提交没生效，设置卡片显示的是原始值；下次重启时宿主行
   忽略这份持久化的非法设置、按出厂默认运行并在 stderr 说明（行保持激活，改正保存即恢复）。
 
-### 信息暴露面（模型可控文本的去向与子进程环境）
+### 信息暴露范围（模型可控文本的去向与子进程环境）
 
 - **日志插值**：模型可控的字符串（`description`、job_id、agent_id）进操作者日志行前一律
   单行化。注册失败时宿主原文**单行化 + 500 字符截断**后才进模型可见的错误（完整原文含换行
@@ -457,11 +457,11 @@ R30 新增的三个设置字段都在设置卡片上（与 `silentFailureGuard` 
 - **子进程环境**：`async_run` 传给命令的环境变量就是宿主 `ctx.shellEnv.collect(exec)` 的
   返回值（内建键 + 贡献键）。本包**不自造、不追加、不改键集**。贡献键按部署增减——
   枚举以 `collect()` 现读为准。
-- **输出落盘（spill）**：后台输出超内存上限时宿主把溢出写到**系统临时目录**，读面给出
+- **输出落盘（spill）**：后台输出超内存上限时宿主把溢出写到**系统临时目录**，读取结果里给出
   `spillPath`。那是找回被丢弃输出的**唯一线索**——`async_wait_job` 的渲染必须带它，
   与"部分输出被丢弃"的说明一起进模型可见文本。
 
-描述里的数字随设置变化——宿主行收到 volatile 提交通知后重物化快照，经同进程的模块级登记表
+描述里的数字随设置变化——宿主行收到 volatile 提交通知后重建快照，经同进程的模块级登记表
 通知预设平面的工具就地改写描述（跨平面走 `lib/refresh-bus.js`）。
 
 `toolName` 是**唯一**只在预设行里有意义的配置项：一个包被预设引用四次，靠它决定那一行注册
@@ -472,7 +472,7 @@ R30 新增的三个设置字段都在设置卡片上（与 `silentFailureGuard` 
 包内自检（不碰真机、不起进程）：
 
 ```powershell
-npm run test:inproc   # 全量电池（推荐）：单元 + 接线测试 + 输出 schema 校验 + inject 静态扫描
+npm run test:inproc   # 完整测试套件（推荐）：单元 + 接线测试 + 输出 schema 校验 + inject 静态扫描
 npm run check         # 语法检查（lib/ + test/ + tools/）
 npm run check:preset      # 预设 YAML 校验：行头三元组、基线行集合逐项按序、五行 async-tools、
                           #   无 tool-pwsh、persona 锚句、派生入口结构性禁用、provider 形态、无护栏
@@ -481,7 +481,7 @@ npm run check:encoding    # 编码体检：非法字节 / 双重编码 / CRLF（
 npm run check:docs        # 文档结构 + 现行文档的历史叙述词归零
 npm run check:model-text  # 模型面文案四层判据（en 零 CJK / zh 每键含中文 / 两档键集相等 / 硬编码与运行时兜底）
 npm run check:alias-tokens  # 主题别名：`client.js` 引用的 `--dsw-alias-*` 必须在主题定义表内
-npm run check:agent-policy  # 钉版看守：本包的会话模型选择策略与宿主源整段互锚（宿主改形而本包未跟即红）
+npm run check:agent-policy  # 版本锚定看守：本包的会话模型选择策略与宿主源整段互锚（宿主改形而本包未跟即红）
 ```
 
 另有 `npm run test`（不强制进程内隔离，CI 与本地都可用）与 `npm run test:offline`
@@ -502,8 +502,7 @@ npm install --ignore-scripts @deepseek-ai/dsh@0.2.0-rc.2
 ```
 
 测不到宿主锚时，接线类用例**自动跳过并打印理由**（不是静默放过）；`npm run test:offline`
-是同一套用例的离线形态。**注意**：宿主锚不只是测试的事——`npm run check:preset` 的 P14
-还要拿本包的预设补丁与**宿主树里的基线补丁**逐行对账，缺锚会显式红并点名。
+是同一套用例的离线形态。**注意**：宿主锚不只是测试的事——`npm run check:preset` 还要拿本包的预设补丁与**宿主树里的基线补丁**逐行比对，缺锚会显式失败并点名。
 
 **端到端必须在真机实例上跑**，不能拿单测的结论替代。脚本清单、各自的前提（哪个会开会话、
 哪个会改设置、哪个会起浏览器）与"跑完要确认什么"见 [`verify/README.md`](verify/README.md)。
@@ -511,7 +510,7 @@ npm install --ignore-scripts @deepseek-ai/dsh@0.2.0-rc.2
 
 ## 两条守着的强制约束
 
-两条都是"测试全绿、真机一跑就废"的形态——**绿不代表对**，所以要专门的断言来看住。
+两条都是"测试全过、真机一跑就废"的形态——**全过不代表对**，所以要专门的断言来看住。
 
 1. **假件测试证明不了 `inject` 声明完整。** `async_wait_job` 与 `async_wait_agent` 的截止与
    轮询定时器走 `ctx.timer.timeout` / `ctx.timer.interval`；假件里的 `ctx.timer` 是测试自己造的
@@ -524,10 +523,9 @@ npm install --ignore-scripts @deepseek-ai/dsh@0.2.0-rc.2
    `ctx.get('字面量')` 这种第二种写法也必须
    被看见，例外只有 `OPTIONAL_SERVICE_READS` 里那几个——每个都必须在测试里写明
    **为什么它可以缺席**。
-2. **输出 schema 要在测试里真的喂一遍。** `async_run` 的完成分支曾无条件写
-   `exit_code: proc.exitCode ?? null`，而该 DSL 的 `type` 只接受**单个**类型串
-   （写不出"可空"），于是完成分支**匹配 0 支**，宿主抛 `returned invalid output`——
-   **任何没让出的 `async_run` 调用 100% 失败**。看住它的是 `test/_helpers.mjs` 的
+2. **输出 schema 要在测试里真的喂一遍。** 该 DSL 的 `type` 只接受**单个**类型串
+   （写不出"可空"）：若完成分支写出 schema 声明之外的可空值，**匹配 0 支**，宿主抛
+   `returned invalid output`，任何没让出的 `async_run` 调用都会失败。看住它的是 `test/_helpers.mjs` 的
    `assertOutputShape` / `checkedTool`：把"返回值符合自己声明的 `output.schema`"变成每条
    用例的固定动作。
 
@@ -549,9 +547,9 @@ BOM。同理，**不要用内联 `node -e` 处理带反引号或中文引号的�
 | `verify/mutate-steering.mjs` | `test/interrupt.test.mjs` | 插话判定三个方向：落点判定拿掉（queue 也打断）/ 恒 false（插话也不打断）/ kind 过滤拿掉 |
 | `verify/mutate-escalation-order.mjs` | `test/escalation.test.mjs` | 审批顺序倒置（挪到 `shell.resolve` 之后） |
 | `verify/mutate-card-theme.mjs` | `test/two-planes.test.mjs` | 卡片样式写死颜色 |
-| `verify/mutate-agent.mjs` | `test/agent.test.mjs` | 前台形态回潮（`startContinuable`→`start`，哨兵必红）；删 persona 硬规则段（另跑 `tools/validate-preset.mjs` 校预设补丁，锚句必红） |
+| `verify/mutate-agent.mjs` | `test/agent.test.mjs` | 前台形态回潮（`startContinuable`→`start`，哨兵必红）；删 persona 强制规则段（另跑 `tools/validate-preset.mjs` 校预设补丁，锚句必红） |
 | `verify/mutate-yield-example.mjs` | `test/output.test.mjs` | `yieldNote` 示例写死 `wait_ms` |
-| `verify/mutate-config-slot.mjs` | `test/two-planes.test.mjs` | 设置卡接线七向：挂回 `plugins.item` / 退回组件行子页 / 槽键改错 / 注册整段废掉 / 去掉守卫 / 表单改读 `props.form` / 不订阅模型的快照店 |
+| `verify/mutate-config-slot.mjs` | `test/two-planes.test.mjs` | 设置卡接线七向：挂回 `plugins.item` / 退回组件行子页 / 槽键改错 / 注册整段废掉 / 去掉守卫 / 表单改读 `props.form` / 不订阅模型的快照 store |
 | `verify/mutate-r27-form.mjs` | `test/two-planes.test.mjs` | 官方表单形态判据十向：值字段换回自绘 input / 恢复默认换成即时写 / 数字 parse 恒放行 / 空暂存也发 mutate / failed 恒假 / shell 退化成常量 / 输入读数接生效值 / 只读时藏读数 / 删空文本分支 / onDiscard 传 noop |
 | `verify/mutate-lang.mjs` | `test/two-planes.test.mjs` | 双开关判据十二向（进程内、喂 `verify/lang-judgements.mjs` 的判据）：agentLang 没生效 / 中文档半译 / 英文档混中文 / 改一个顺带动了另一个 / 字段身份被换 / 字段数不足 / 收尾没复原 |
 | `verify/mutate-list-children-shape.mjs` | `test/wait-agent.test.mjs` | 子代理行形状退化三向：屏障只认一种 kind / 纠错清单按 kind 过滤（清单恒空）/ 不排除诊断行 |
@@ -568,21 +566,20 @@ BOM。同理，**不要用内联 `node -e` 处理带反引号或中文引号的�
 | `verify/mutate-r24-ui.mjs` | R24/R27 的界面判据（五个纯函数）都能失败：下发字节挂错槽 / 字段身份错位 / 秒数读数缺失或挂错字段 / 设置区不在插件页 / 两段读数不跟快照 / 字段没回生效值（30 条变异，任一条没红即 UNCAUGHT） |
 | `verify/mutate-model-text.mjs` | `tools/check-model-text.mjs` 的硬编码文案层能失败 |
 | `verify/mutate-alias-tokens.mjs` | `tools/check-alias-tokens.mjs` 能拦住未定义的主题别名引用 |
-| `verify/mutate-agent-policy.mjs` | 钉版看守（宿主锚与本包锚整段互锚）能失败 |
+| `verify/mutate-agent-policy.mjs` | 版本锚定看守（宿主锚与本包锚整段互锚）能失败 |
 | `verify/mutate-public-surface.mjs` | `tools/check-public-surface.mjs` 的三类判据（结构 / 本机指纹 / 内部引用）都能失败，外加四条**假阳性守卫**（上游包名、URL 与兄弟仓公开地址不得被误判） |
 
-> ⚠️ **上表必须与盘上的文件一致。** 它一度列了三个当时就已经删掉的脚本，
-> 接手的人按图索骥全落空。现在由 `tools/check-mutate-index.mjs` **自动核对两头**
-> （表里列的不存在 / 盘上有却没登记），并挂进电池——所以漂移会在跑测试时立刻红。
+> ⚠️ **上表必须与盘上的文件一致**，由 `tools/check-mutate-index.mjs` **自动核对两头**
+> （表里列的不存在 / 盘上有却没登记），并挂进测试套件——漂移会在跑测试时立刻失败。
 
 **还有一个更阴的坑**：双重编码的字节**完全合法**、`U+FFFD` 计数为 **0**——只查非法字节的
 扫描器会对一份彻底报废的文档报"全部正常"。所以 `npm run check:encoding` 的判据是**常用字
 占比**（正常中文 > 0.85，双重编码 < 0.3），不是去找具体的乱码字。别把它换成"只查 `U+FFFD`"
 的版本。
 
-**三、写完交付文档后必须复跑全量电池再提交**（`npm run test:inproc` + 全部检查器），
+**三、写完交付文档后必须复跑完整测试套件再提交**（`npm run test:inproc` + 全部检查器），
 读数如实标注取数时刻——不得把写文档之前的旧读数当提交时读数。**交付文档本身会让检查器变红**
-（新加的路径引用、新的裸文件名），所以电池必须跑在文档之后。
+（新加的路径引用、新的裸文件名），所以测试套件必须跑在文档之后。
 
 ## 文档地图
 
@@ -610,7 +607,7 @@ BOM。同理，**不要用内联 `node -e` 处理带反引号或中文引号的�
 
 **本包是第三方插件，与 DeepSeek 官方无隶属关系。** 它只通过宿主公开的插件接口接入
 （`ctx.*` 服务、bundle patch、keyed 槽），**不改动、不重打包宿主的任何代码**——
-`@deepseek-ai/dsh*` 是它的 **peer 依赖**，按版本精确钉版，装错版本会在装载时先红而不是静默错版。
+`@deepseek-ai/dsh*` 是它的 **peer 依赖**，按版本精确锁定，装错版本会在装载时先红而不是静默错版。
 宿主的许可与出处见那些包自身。
 
 **参与方式**：本仓**不接受外部 PR**；issue 可提，但**不保证维护**（不承诺响应、修复或
