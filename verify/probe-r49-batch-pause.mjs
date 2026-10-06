@@ -210,14 +210,20 @@ async function main() {
     `批 2 照表计时（倒计时数字 + 开关显「暂停计时」）：${b2Text.slice(0, 100)}`);
   await screenshot(page, `${SHOT_DIR}\\r49-batch-pause-b2-counting.png`);
 
-  // 墙钟越过全额窗口 → 照表合成放行。
+  // 墙钟越过全额窗口 → 照表合成放行。锚句出现后客户端面板要等下一拍轮询（500 ms
+  // 级）才翻过期态——徽标用有界等待，不用瞬时读（r36 首跑竞速教训的同类）。
   marks.b2SettledBy = marks.b2Seen + PAST_WINDOW_MS;
   let b2Released = false;
   while (Date.now() < marks.b2SettledBy + 20000) {
     if (await released(sA)) { b2Released = true; break; }
     await sleep(2000);
   }
-  const b2ExpiredBadge = await evaluate(page, `(() => { const g = ${groupExpr(sA)}; return g !== null && g.querySelector('.ats-ask-expired') !== null; })()`);
+  let b2ExpiredBadge = false;
+  if (b2Released) {
+    b2ExpiredBadge = await waitFor(page,
+      `(() => { const g = ${groupExpr(sA)}; return g !== null && g.querySelector('.ats-ask-expired') !== null; })()`,
+      (v) => v === true, 8000);
+  }
   marks.b2ReleasedAt = Date.now();
   record('c-4-batch2-released', b2Released && b2ExpiredBadge === true,
     `批 2 越全额窗口照表放行（转录超时锚句=${String(b2Released)}、已超时徽标=${String(b2ExpiredBadge)}）`);
@@ -267,10 +273,13 @@ async function main() {
   await sleep(2500);
   const aAfterResume = await groupTextOf(page, sIsoA);
   const bAfterResume = await groupTextOf(page, sIsoB);
-  const bBadge = await evaluate(page, `(() => { const g = ${groupExpr(sIsoB)}; return g !== null && g.querySelector('.ats-ask-expired') !== null; })()`);
+  // B 的徽标同样用有界等待（瞬时读在重渲拍上抖过一次——与 c-4 同族竞态）。
+  const bBadge = await waitFor(page,
+    `(() => { const g = ${groupExpr(sIsoB)}; return g !== null && g.querySelector('.ats-ask-expired') !== null; })()`,
+    (v) => v === true, 8000);
   record('d-4-resume-isolated', resumeA === 'clicked' && COUNTING.test(aAfterResume)
     && bBadge === true && !COUNTING.test(bAfterResume) && PAUSED_TEXT.test(bAfterResume) === false,
-    `A 恢复回数字倒计时；B 保持已超时态（无新倒计时、未被平移重挂）：A=${aAfterResume.slice(0, 60)} ‖ B=${bAfterResume.slice(0, 60)}`);
+    `A 恢复回数字倒计时；B 保持已超时态（无新倒计时、未被平移重挂；resume=${String(resumeA)}、badge=${String(bBadge)}）：A=${aAfterResume.slice(0, 60)} ‖ B=${bAfterResume.slice(0, 60)}`);
   await screenshot(page, `${SHOT_DIR}\\r49-batch-pause-iso-a-resumed.png`);
 
   // A 按剩余平移放行（收尾对照：恢复后照表到期——不被恢复重置成全窗口）。
