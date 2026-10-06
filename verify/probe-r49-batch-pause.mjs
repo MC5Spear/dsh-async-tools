@@ -13,7 +13,8 @@
  *   不出现新倒计时）；A 恢复后按剩余平移放行。
  *
  * GUI 面（Edge/Chrome CDP）：找不到浏览器时如实 FAIL 'cdp-missing'，不冒充通过。
- * 用法：node verify/probe-r49-batch-pause.mjs
+ * 用法：node verify/probe-r49-batch-pause.mjs（默认自起无头 Edge；环境spawn 被安全
+ * 软件拦截时可设 R49_CDP_ATTACH_PORT=<port> 连用户侧预起的常驻实例，见 main() 注释）。
  * 证据落本机证据目录 logs/r49-batch-pause.json + shots/r49-batch-pause-*.png。
  *
  * @module verify/probe-r49-batch-pause
@@ -139,12 +140,23 @@ async function released(sessionId) {
 }
 
 async function main() {
-  const browserPath = await findBrowser();
-  if (browserPath === null || browserPath === undefined) {
-    record('setup', false, 'cdp-missing：无浏览器可连（GUI 面判据不可取证）');
-    return null;
+  // Attach 模式（R49 e2e 环境适应）：会话内 spawn 无头 Edge 因提权令牌在 mojo 通道
+  // 创建处被拒（chrome_debug.log FATAL 0x5，platform_channel.cc）时，可由用户侧终端
+  // 预起一个常驻无头实例（--remote-debugging-port），探针只连不启、结束不杀——
+  // 环境变量 R49_CDP_ATTACH_PORT 门控；不设则维持自启自清的既有路径，零行为变化。
+  // 断言正则本就 zh/en 双档，attach 实例的语言不影响判据。
+  const attachPort = Number(process.env.R49_CDP_ATTACH_PORT ?? 0);
+  let browser;
+  if (attachPort > 0) {
+    browser = { port: attachPort, close: () => {} };
+  } else {
+    const browserPath = await findBrowser();
+    if (browserPath === null || browserPath === undefined) {
+      record('setup', false, 'cdp-missing：无浏览器可连（GUI 面判据不可取证）');
+      return null;
+    }
+    browser = await launch(browserPath, ['--lang=zh-CN']);
   }
-  const browser = await launch(browserPath, ['--lang=zh-CN']);
   const URL_LINE = readFileSync(localConfig.tokenFile, 'utf8').trim();
   const APP_URL = URL_LINE.slice(URL_LINE.indexOf('http'));
   const page = await openPage(browser.port, 'about:blank');
