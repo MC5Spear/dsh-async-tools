@@ -1196,7 +1196,7 @@ workflowEngine**，不重写引擎。
   `async_workflow` 行必红）；隔离对照：standard/创造等其他预设的 workflow / subagent
   面貌零变化。
 
-### R36 提问接管的会话级暂停计时（不可裁剪，用户裁定）
+### R36 提问接管的待答暂停计时（不可裁剪，用户裁定；作用面与寿命 R49 修订为批级）
 
 现行缺口：超时窗口是固定倒计时（R30-b，默认 60 s、10–600 s 可配）——用户已在读题但
 剩余时间不足时，只能眼看超时放行、真实作答降级为迟到注入（R30-d）。「用户不在」与
@@ -1472,7 +1472,7 @@ R39 管的是**上传前那一次**清理；这一条管的是**此后一直成�
 | D15 | R31 0.2.0 适配线（独立包线 + peer 重钉 + 挂载隔离） | 独立目录的适配包（形态由设计定稿；调研留档不随公开仓走） |
 | D16 | R32/R33：执行即注册与可打断的首次等待、label=命令 | `lib/jobs.js` 及相关文案（`lib/output.js`、`lib/text.js`）、`test/*.test.mjs` |
 | D17 | R34/R35：编排工具与预设定向修改 | `lib/` 新模块（名称设计轮定）、两份 `presets/*.patch.yml`、`tools/validate-preset.mjs`、`test/*.test.mjs` |
-| D18 | R36：待答会话级暂停 | `lib/ask-takeover.js`（暂停机械与远端方法）、`client.js` 待答界面两座位、`test/*.test.mjs` |
+| D18 | R36：待答暂停计时（R49 修订为批级作用面与寿命） | `lib/ask-takeover.js`（暂停机械与远端方法）、`client.js` 待答界面两座位、`test/*.test.mjs` |
 
 ## 5. 约束与既有数字（不得自创）
 - `MAX_WAIT_MS = 600000`：对齐 dsh 既有的 `maxWaitTimeoutMs` 与 `maxTimeoutMs`（两者默认均为 600000）。

@@ -1475,7 +1475,7 @@ hostTest('J22-⑧：补醒观察期 inbox 不可读 → 观察失败防护（不
   assert.equal(reminder.source.form, 'reminder', '补醒条 form:reminder（不冒充答案）');
 });
 
-// ═══════════════════ R36：会话级暂停/恢复（§36.5，判据 K1–K9）═══════════════════
+// ═══════════════════ R36/R49：暂停/恢复（§36.5，判据 K1–K11；R49 批级作用面与寿命）═══════════════════
 //
 // | 判据 | 挡的缺陷形态 |
 // |---|---|
@@ -1483,11 +1483,13 @@ hostTest('J22-⑧：补醒观察期 inbox 不可读 → 观察失败防护（不
 // | K2 pause 幂等（二次不重记剩余） | 重复点按钮把剩余越点越少 |
 // | K3 resume 按剩余重挂 + 平移到期点 | 恢复即瞬间到期 / 计时凭空续满 |
 // | K4 resume 剩余≤0 → 立即到期 | 暂停名义下静默吞批或永久悬死 |
-// | K5 expire 入口防御 | 误挂 timer 在暂停期放行（竞态窗口） |
-// | K6 暂停中 take 新批自动暂停 | 连续提问第一条暂停、第二条照跑 |
-// | K7 暂停批作答照常结清 | 暂停被误解成禁答 |
-// | K8 disposeAll/forgetSession 清暂停集 | 卸载/会话收尾后新批永暂停 |
+// | K5 expire 入口防御（读批级标记） | 误挂 timer 在暂停期放行（竞态窗口） |
+// | K6 新批独立（R49） | 同组暂停批传染新批 ⇒ 新批自动暂停不计时 |
+// | K7 暂停批作答照常结清 + 齐答后无暂停残留（R49） | 暂停被误解成禁答；标志跨批存活 ⇒ 新批永暂停 |
+// | K8 forgetSession 清单会话各批标记 / disposeAll 清空批次 | 卸载/会话收尾后新批永暂停 |
 // | K9 服务面 pause/resume（wire 对账 + 幂等回执） | 载荷/参数名漂移 ⇒ 宿主收双包裹 |
+// | K10 跨会话隔离（R49） | 会话 A 的暂停/恢复冻住或平移会话 B 的批次 |
+// | K11 出窗路径对照（R49） | 任一路径（中止/超时放行）残留暂停态 ⇒ 新批不计时 |
 
 /**  中止形状断言（plain object，非 Error——按 code 判）。 */
 const isAskAborted = (error) => error?.name === 'UserQuestionError' && error?.code === 'ASK_ABORTED';
@@ -1564,7 +1566,7 @@ hostTest('K4：resume 时剩余已耗尽 → 立即到期（不悬死也不静�
   assert.equal(item.phase, 'expired', 'expired 批留列供迟到作答');
 });
 
-hostTest('K5：expire 入口防御——暂停会话的到期回调哑火', async () => {
+hostTest('K5：expire 入口防御——暂停批的误挂到期回调哑火（读批级标记，R49）', async () => {
   const { registry, timer } = makeRegistry({ timeoutMs: 5000 });
   const agent = fakeAgent();
   const pending = registry.take(makeRequest(agent, [Q('q1')]), agent);
@@ -1581,36 +1583,64 @@ hostTest('K5：expire 入口防御——暂停会话的到期回调哑火', asyn
   await assert.rejects(pending, isAskAborted);
 });
 
-hostTest('K6/K7：暂停中 take 新批自动暂停；暂停批作答照常结清', async () => {
+hostTest('K6：同组暂停批在场时新批接管照表计时——挂 timer、全额窗口、paused=false（R49 批级独立）', async () => {
   const clock = makeClock();
   const { registry, timer } = makeRegistry({ timeoutMs: 5000, clock: clock.now });
   const agent = fakeAgent();
-  registry.pause(agent.id);
+  const pending1 = registry.take(makeRequest(agent, [Q('q1')]), agent);
+  clock.advance(1000);
+  assert.equal(registry.pause(agent.id), 'paused');
+  const batch1 = [...registry.batches.values()][0];
+  assert.equal(batch1.paused, true, '设置：批 1 已暂停（R36 机械面）');
+  // R49：新批一律从计时开始——不因同组存在暂停批而自动暂停。改回「新批自动
+  // 暂停」实现（让新批继承同组暂停态）本用例必红（§41.2 变异口径）。
   const armedBefore = timer.armed.length;
+  const pending2 = registry.take(makeRequest(agent, [Q('q2')]), agent);
+  const batch2 = [...registry.batches.values()].find((b) => b.questions.has('q2'));
+  assert.equal(timer.armed.length, armedBefore + 1, '新批挂 timer（全额窗口）');
+  assert.equal(batch2.paused, false, '新批暂停标记 false（批级独立）');
+  assert.equal(typeof batch2.cancelTimer, 'function', '新批 timer 在走');
+  const firstPoll = registry.stateItems().items.find((item) => item.questionId === 'q2');
+  assert.equal(firstPoll.paused, false, '首轮轮询 paused=false');
+  assert.equal(firstPoll.expiresAt, batch2.receivedAt + 5000, '新批全额窗口（不记剩余、不冻结）');
+  // 墙钟越过全额窗口 → 新批照表合成放行；同组暂停批仍冻结（不被牵连放行）。
+  clock.advance(6000);
+  timer.armed[timer.armed.length - 1].fn();
+  const answers2 = await pending2;
+  assert.equal(answers2.answers[0].selected.length, 0, '新批照表到期合成放行（不代答）');
+  assert.equal(batch1.paused, true, '同组暂停批仍冻结（新批放行不牵连）');
+  assert.equal([...registry.batches.values()].some((b) => b.questions.has('q1')), true, '暂停批仍在列等待');
+  // 收尾：作答结清暂停批，避免悬挂 pending。
+  assert.equal(registry.submitAnswer({ batchId: batch1.batchId, questionId: 'q1', selected: ['选项一'] }), 'delivered');
+  await pending1;
+});
+
+hostTest('K7：暂停批作答照常结清；齐答出窗后无暂停残留（R49 翻转面）', async () => {
+  const clock = makeClock();
+  const { registry, timer } = makeRegistry({ timeoutMs: 5000, clock: clock.now });
+  const agent = fakeAgent();
   const pending = registry.take(makeRequest(agent, [Q('q1')]), agent);
   const batch = [...registry.batches.values()][0];
-  assert.equal(timer.armed.length, armedBefore, '暂停会话的新批不挂 timer');
-  assert.equal(batch.paused, true, '新批自动暂停');
-  assert.equal(batch.remainingMs, 5000, '全额窗口记为剩余');
-  // K7：暂停只是冻结计时——作答通道照常。
+  registry.pause(agent.id);
+  assert.equal(batch.paused, true, '设置：已暂停');
+  // R36-e：暂停只是冻结计时——作答通道照常。
   assert.equal(registry.submitAnswer({ batchId: batch.batchId, questionId: 'q1', selected: ['选项一'] }), 'delivered');
   const answers = await pending;
   assert.deepEqual(answers.answers[0].selected, ['选项一'], '暂停中的作答原样回流');
-  // K7-b：齐答清空批次**不清标志**——下一批自动暂停（R36-d 连续提问持续有效；
-  // 变异「#settleFull 误删 paused」在此必红；实现审查 I-7）。
+  // K7-b（R49 翻转）：齐答清空批次后**无暂停残留**——下一批照常计时。R36 原
+  // 「标志跨批次存活」断言随 R49 翻转为反面；变异「新批继承暂停态」在此必红。
   assert.equal(registry.batches.size, 0, '旧批已清空');
-  assert.equal(registry.paused.has(agent.id), true, '标志跨批次存活');
+  const armedBefore = timer.armed.length;
   const pending2 = registry.take(makeRequest(agent, [Q('q2')]), agent);
   const batch2 = [...registry.batches.values()][0];
-  assert.equal(batch2.paused, true, '齐答后的新批自动暂停（不清标志的落地面）');
-  assert.equal(batch2.remainingMs, 5000, '新批全额窗口');
-  // 收尾：作答结清 + 复原，避免悬挂 pending。
+  assert.equal(timer.armed.length, armedBefore + 1, '齐答结清后的新批挂 timer');
+  assert.equal(batch2.paused, false, '无暂停残留（新批从计时开始）');
+  // 收尾：作答结清，避免悬挂 pending。
   assert.equal(registry.submitAnswer({ batchId: batch2.batchId, questionId: 'q2', selected: ['选项一'] }), 'delivered');
   await pending2;
-  registry.resume(agent.id);
 });
 
-hostTest('K8：disposeAll 清暂停集；forgetSession 清单会话', async () => {
+hostTest('K8：forgetSession 清单会话各批标记、他会话不受影响；disposeAll 清空全部批次', async () => {
   const clock = makeClock();
   const { registry } = makeRegistry({ timeoutMs: 5000, clock: clock.now });
   const a1 = fakeAgent('session-pauseA');
@@ -1619,30 +1649,116 @@ hostTest('K8：disposeAll 清暂停集；forgetSession 清单会话', async () =
   const pending2 = registry.take(makeRequest(a2, [Q('q2')]), a2);
   registry.pause(a1.id);
   registry.pause(a2.id);
+  const batchOf = (agent) => [...registry.batches.values()].find((b) => b.sessionId === agent.id);
+  assert.equal(batchOf(a1).paused, true, '设置：两会话批次各已暂停');
   registry.forgetSession(a1.id);
-  assert.equal(registry.paused.has(a1.id), false, 'forgetSession 清单会话');
-  assert.equal(registry.paused.has(a2.id), true, '他会话不受影响');
+  assert.equal(batchOf(a1).paused, false, 'forgetSession 清单会话各批暂停标记');
+  assert.equal(batchOf(a2).paused, true, '他会话不受影响');
   registry.disposeAll();
-  assert.equal(registry.paused.size, 0, 'disposeAll 清空暂停集（卸载后新装载从零开始）');
+  assert.equal(registry.batches.size, 0, 'disposeAll 清空全部批次（暂停状态随批记录消失——R49 无会话级集）');
   // disposeAll 对未结批 reject askAborted——收尾必须接住，否则 unhandledRejection
   // 顶掉进程退出码（实现审查 I-1）。
   await assert.rejects(pending1, isAskAborted);
   await assert.rejects(pending2, isAskAborted);
 });
 
-hostTest('K9：服务面 pause/resume——单层包裹 + 幂等回执 + 行为面', async () => {
+hostTest('K9：服务面 pause/resume——单层包裹 + 幂等回执 + 行为面（批级作用面）', async () => {
   const clock = makeClock();
   const rig = makeRegistry({ timeoutMs: 5000, clock: clock.now });
   const fakeReflectCtx = { reflect: { provide() {} } };
   const service = new AskTakeoverService(fakeReflectCtx, rig.registry);
   const agent = fakeAgent('session-k9');
   const pending = rig.registry.take(makeRequest(agent, [Q('q1')]), agent);
-  // 行为面：pause/resume 载荷 {sessionId}，回执 {outcome}（与 answer/ignore 同形）。
+  // 行为面：pause/resume 载荷 {sessionId}（组键），回执 {outcome}（与 answer/ignore 同形）。
   assert.deepEqual(await service.pause({ sessionId: agent.id }), { outcome: 'paused' });
   assert.equal(rig.timer.armed[0].cancelled, true, 'pause 真的撤了 timer');
   assert.deepEqual(await service.pause({ sessionId: agent.id }), { outcome: 'paused' }, '幂等回执');
+  assert.equal([...rig.registry.batches.values()][0].paused, true, '批级标记置位（R49）');
   assert.deepEqual(await service.resume({ sessionId: agent.id }), { outcome: 'resumed' });
   assert.equal([...rig.registry.batches.values()][0].paused, false, 'resume 真的恢复');
   rig.registry.disposeAll();
   await assert.rejects(pending, isAskAborted);
+});
+
+hostTest('K10：跨会话隔离——A 暂停在窗批时 B 照表走到期合成放行；A 的 pause/resume 不触碰 B（R49-4 新增）', async () => {
+  const clock = makeClock();
+  const { registry, timer } = makeRegistry({ timeoutMs: 5000, clock: clock.now });
+  const agentA = fakeAgent('session-isoA');
+  const agentB = fakeAgent('session-isoB');
+  const pendingA = registry.take(makeRequest(agentA, [Q('qa')]), agentA);
+  const pendingB = registry.take(makeRequest(agentB, [Q('qb')]), agentB);
+  clock.advance(1000); // 两会话各烧 1 s，剩 4 s
+  // A 暂停自家在窗批——B 的批次三面（标记/timer/到期点）不得受影响。
+  assert.equal(registry.pause(agentA.id), 'paused');
+  const batchA = [...registry.batches.values()].find((b) => b.sessionId === agentA.id);
+  const batchB = [...registry.batches.values()].find((b) => b.sessionId === agentB.id);
+  assert.equal(batchA.paused, true, 'A 已暂停');
+  assert.equal(batchB.paused, false, 'A 的 pause 不触碰 B 的暂停标记');
+  assert.equal(typeof batchB.cancelTimer, 'function', 'B 的 timer 仍在挂');
+  const bExpiresAt = batchB.expiresAt;
+  const armedAtPause = timer.armed.length;
+  // A 的恢复动作同样只作用于 A——B 不被平移、不被重挂。
+  clock.advance(500);
+  assert.equal(registry.resume(agentA.id), 'resumed');
+  assert.equal(batchB.paused, false, 'A 的 resume 不置位 B');
+  assert.equal(batchB.expiresAt, bExpiresAt, 'A 的 resume 不平移 B 的到期点');
+  assert.equal(timer.armed.length, armedAtPause + 1, '重挂的只有 A 的 timer（B 未被重挂）');
+  // A 再暂停（对照态）；B 照表走到期 → 合成放行。A 重挂的误触发到期点哑火。
+  registry.pause(agentA.id);
+  clock.advance(6000); // 墙钟越过两会话全额窗口
+  timer.armed[timer.armed.length - 1].fn(); // A 重挂 timer 的到期回调（已再暂停 → 防御哑火）
+  assert.equal([...registry.batches.values()].find((b) => b.sessionId === agentA.id).phase, 'open',
+    'A 的误挂到期点仍哑火（批级防御）');
+  timer.fire(1); // B 的初始 timer（armed[1]）——照表放行
+  const answersB = await pendingB;
+  assert.equal(answersB.answers[0].selected.length, 0, 'B 照表到期合成放行（不被 A 的暂停冻住）');
+  const itemA = registry.stateItems().items.find((item) => item.questionId === 'qa');
+  assert.equal(itemA.paused, true, 'A 仍暂停在场（B 放行不牵连 A）');
+  // 收尾：作答结清 A（暂停批作答照常）。
+  assert.equal(registry.submitAnswer({ batchId: batchA.batchId, questionId: 'qa', selected: ['选项一'] }), 'delivered');
+  await pendingA;
+});
+
+hostTest('K11：出窗路径对照——暂停批经中止/超时放行出窗后，新批照常计时（R49-2）', async () => {
+  const clock = makeClock();
+  // 路径一：中止——暂停批经 signal abort 出列 → 新批照常计时。
+  {
+    const { registry, timer } = makeRegistry({ timeoutMs: 5000, clock: clock.now });
+    const agent = fakeAgent('session-leave-abort');
+    const controller = new AbortController();
+    const pending = registry.take(makeRequest(agent, [Q('q1')], { signal: controller.signal }), agent);
+    registry.pause(agent.id);
+    controller.abort();
+    await assert.rejects(pending, isAskAborted, '暂停中中止形状不变');
+    assert.equal(registry.batches.size, 0, '批出列（暂停状态随批记录消失）');
+    const armedBefore = timer.armed.length;
+    const pending2 = registry.take(makeRequest(agent, [Q('q2')]), agent);
+    const batch2 = [...registry.batches.values()][0];
+    assert.equal(timer.armed.length, armedBefore + 1, '中止出窗后的新批挂 timer');
+    assert.equal(batch2.paused, false, '无暂停残留（任何路径残留即红）');
+    assert.equal(registry.submitAnswer({ batchId: batch2.batchId, questionId: 'q2', selected: ['选项一'] }), 'delivered');
+    await pending2;
+  }
+  // 路径二：超时放行——暂停批经 resume 剩余≤0 到期出窗（expired 相）→ 新批照常计时。
+  {
+    const { registry, timer } = makeRegistry({ timeoutMs: 5000, clock: clock.now });
+    const agent = fakeAgent('session-leave-expire');
+    const pending = registry.take(makeRequest(agent, [Q('q1')]), agent);
+    clock.advance(60_000); // 越过到期点（真实形态：pause 与到期回调同拍）
+    registry.pause(agent.id);
+    assert.equal([...registry.batches.values()][0].remainingMs, 0, '过期后暂停 → 剩余记 0');
+    assert.equal(registry.resume(agent.id), 'resumed');
+    const answers = await pending;
+    assert.equal(answers.answers[0].selected.length, 0, '暂停批经超时放行出窗（合成）');
+    const expiredBatch = [...registry.batches.values()].find((b) => b.questions.has('q1'));
+    assert.equal(expiredBatch.phase, 'expired', 'expired 批留列供迟到作答');
+    assert.equal(expiredBatch.paused, false, '放行路径清暂停标记（expired 相无计时——R49）');
+    const armedBefore = timer.armed.length;
+    const pending2 = registry.take(makeRequest(agent, [Q('q2')]), agent);
+    const batch2 = [...registry.batches.values()].find((b) => b.phase === 'open');
+    assert.equal(timer.armed.length, armedBefore + 1, '超时放行出窗后的新批挂 timer');
+    assert.equal(batch2.paused, false, '无暂停残留');
+    assert.equal(registry.submitAnswer({ batchId: batch2.batchId, questionId: 'q2', selected: ['选项一'] }), 'delivered');
+    await pending2;
+  }
 });

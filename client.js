@@ -1001,8 +1001,9 @@ function createAskModel(ctx, remote) {
     jump: function (sessionId) {
       ctx.uiWorkspace.openSession(sessionId);
     },
-    /** R36-c：会话级暂停/恢复——回执 {outcome:'paused'|'resumed'}；成功后立即补一次
-     * 轮询（items 的 paused 标记与冻结的 expiresAt 来自服务端，本地不猜）。 */
+    /** R36-c（R49 批级作用面）：组级暂停/恢复——回执 {outcome:'paused'|'resumed'}；
+     * 成功后立即补一次轮询（items 的批级 paused 标记与冻结的 expiresAt 来自
+     * 服务端，本地不猜）。 */
     pauseSession: function (sessionId, onDone) {
       if (remote === undefined) { if (onDone) onDone(false); return; }
       remote.pause({ sessionId: sessionId }).then(function (result) {
@@ -1136,8 +1137,8 @@ function AskItem(props) {
   var busyRef = React.useRef(false);
   var rerender = React.useState(0)[1];
   var skew = props.serverNow === 0 ? 0 : props.serverNow - props.fetchedAt;
-  // R36：暂停项冻结倒计时并示「已暂停」——不做 serverNow 折算（expiresAt 是暂停
-  // 时刻冻结的到期点，恢复平移后才恢复推进）。
+  // R36（R49 批级口径）：暂停项冻结倒计时并示「已暂停」——不做 serverNow
+  // 折算（expiresAt 是暂停时刻冻结的到期点，恢复平移后才恢复推进）。
   var leftMs = item.paused === true ? Infinity : item.expiresAt - (Date.now() + skew);
   var leftText = item.paused === true
     ? t("ask.paused")
@@ -1203,7 +1204,9 @@ function AskList(props) {
   }
   var nodes = [];
   groups.forEach(function (items, sessionId) {
-    // R36：组级暂停态取组内条目的一致标记（服务端按会话置位/清除）。
+    // R36（R49-5 并存态口径）：组级开关的暂停态取组内条目的批级标记——存在
+    // 暂停批（不论是否与计时批并存）→ 显「恢复计时」（点击只作用于暂停批）；
+    // 全部计时批 → 显「暂停计时」（点击作用于全部在窗批）。
     var groupPaused = items.some(function (item) { return item.paused === true; });
     nodes.push(React.createElement("div", { key: sessionId, className: "ats-ask-group" },
       React.createElement("div", { className: "ats-ask-grouphead" },

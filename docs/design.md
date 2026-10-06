@@ -3217,38 +3217,46 @@ R30「可验证」逐条对齐：
 | 禁行的 config 被误删或漂移 | validator 逐字判据 + 删键必红变异 |
 | R26 旧判据面漂移（可验证④触发条件不再成立） | R35-f 同步清单逐项落实；复审对照交付面貌行与 design §28 |
 
-## 36. R36：提问接管的会话级暂停计时
+## 36. R36：提问接管的暂停计时（作用面与寿命 R49 修订为批级）
 
-> 需求权威：R36-a…e。事实依据：超时合成形状、state 通道、
-> expiresAt + timer.timeout 机械、async-tools-ask 远端面。
-> R30 的判定/通道/迟到作答语义零改动（R36-e）。
+> 需求权威：R36-a…e（作用面与寿命经 R49 修订：暂停以批为独立单位、会话间严格
+> 隔离）。事实依据：超时合成形状、state 通道、expiresAt + timer.timeout 机械、
+> async-tools-ask 远端面。R30 的判定/通道/迟到作答语义零改动（R36-e）。
 
-### 36.1 机械（R36-b）
+### 36.1 机械（R36-b，R49 批级口径）
 
-注册表增会话级暂停集 `paused: Set<sessionId>`（内存态，R36-d）。
+暂停状态是**批级布尔**（`batch.paused` + 首记剩余 `batch.remainingMs`，内存态，
+R36-d）——注册表**无会话级暂停集**（R49 修订：R36 原会话级集废止——暂停不跨批
+存续、会话不保留任何暂停残留）。
 
-- **pause(sessionId)**：置位；遍历该会话 `open` 批——`batch.cancelTimer()`
-  撤定时器（`#teardown` 不用：不摘 signal 监听），`batch.remainingMs =
-  expiresAt - now()` 记剩余，`cancelTimer` 置 undefined，`batch.paused = true`。
-- **resume(sessionId)**：删位；遍历该会话 `open` 批——`remainingMs > 0` →
-  重挂 `timer.timeout(() => expire(batch), remainingMs)` 且
+- **pause(sessionId)**：组开关一次作用于该组**当下在窗**（`phase === 'open'`）的
+  全部批次——`batch.cancelTimer()` 撤定时器（`#teardown` 不用：不摘 signal
+  监听）、`batch.remainingMs = max(0, expiresAt - now())` 首记剩余（`cancelTimer`
+  已撤的批不重记——二次 pause 幂等，同批剩余保持首记值）、`cancelTimer` 置
+  undefined、`batch.paused = true`。组内无在窗批时无任何落点（幂等返回
+  'paused'，不报错）。
+- **resume(sessionId)**：作用于该组全部暂停批——`remainingMs > 0` → 重挂
+  `timer.timeout(() => expire(batch), remainingMs)` 且
   `expiresAt = now() + remainingMs`（平移，同款 timer 机械）、`paused = false`；
   `remainingMs <= 0` → 立即 `expire(batch)`（防御闭合：恢复时刻已越界按 0
   到期——诚实，不静默吞）。
-- **新批次（`take`）**：登记时 `paused.has(sessionId)` → **不挂 timer**、
-  `remainingMs = timeoutMs`、`paused = true`（`expiresAt` 记
-  `receivedAt + timeoutMs` 原值——语义为「暂停时刻冻结的到期点」，见 36.2
-  载荷）；不暂停批照旧（现行零变化）。
-- **`expire()` 入口防御**：`if (this.paused.has(batch.sessionId)) return`——
-  即使误挂了 timer，到期点也不放行（判据原文「含误挂 timer 的到期点」）。
-- **生命周期（R36-d）**：批次清空/齐答**不清**标志（连续提问持续有效）；
-  `disposeAll()` 清空集合（插件卸载）；会话结束——挂钩
-  `ctx.on('agent/disposed', ({agent}) => this.paused.delete(agent.id))` 尽力
-  清理（事件存在于 dsh-agent runtime-types.d.ts:240-242，payload `{agent}`，
-  「after driver quiescence … before session detachment」；本插件宿主行作用域
-  按 events 语义可收到），web 会话常驻下不必然随会话结束触发——
-  **残留兜底保留**（键为字符串、量级=会话数，随插件生命周期兜底），登记
-  §36.6。
+- **新批次（`take`）一律从计时开始**（R49-3）：接管即挂 timer、全额窗口、
+  `paused = false`——**不因同组存在暂停批而自动暂停**（批级独立保护；改回
+  「新批自动暂停」实现必须被单元判据抓红）。
+- **`expire()` 入口防御**：`if (batch.paused === true) return`——**读批级暂停
+  标记**（R49）：即使误挂了 timer，暂停批的到期点也不放行；放行路径本体清
+  `paused`（批出窗即失效——expired 相无计时、不保留暂停残留）。
+- **批级寿命（R49-1）**：批以任何路径出窗——齐答/忽略齐结清（出列删除）、中止
+  （出列删除）、超时放行（`phase='expired'` 且 `paused=false`、无计时）——
+  暂停状态随之消失；连续提问下每批从计时开始，不继承同会话前批的暂停态。
+- **生命周期（R36-d/R49）**：`disposeAll()` 清空全部批次——暂停状态随批记录
+  消失（无独立集可清）；会话收尾 `forgetSession(sessionId)` 清该会话各批的
+  暂停标记（尽力清理：agent/disposed 后面板不再显已暂停；不重挂计时，批仍可
+  作答/忽略结清），挂钩 `ctx.on('agent/disposed', ({agent}) => …)` 保留（事件
+  存在于 dsh-agent runtime-types.d.ts:240-242，payload `{agent}`，「after
+  driver quiescence … before session detachment」；本插件宿主行作用域按
+  events 语义可收到）。web 会话常驻下不必然随会话结束触发——批级口径下无
+  会话级残留集，标志量级＝在窗批数、随批出窗自然消失，无兜底问题（§36.6）。
 
 ### 36.2 载荷与远端面（R36-c）
 
@@ -3256,9 +3264,10 @@ R30「可验证」逐条对齐：
   `expiresAt` 暂停期冻结为暂停时刻值——客户端遇 `paused` 不做倒计时折算。
 - `AskTakeoverService`：`markRemote` 增 `'pause'` / `'resume'`；两方法参数
   名 `submission`（与 answer/ignore 同形，「参数名即 wire 名」对账口径），
-  载荷 `{sessionId}`；返回 `{outcome: 'paused' | 'resumed'}`（幂等：已暂停再
-  pause 返回 `'paused'`，对未知会话同样置位/清除——幂等面不报错，会话有无
-  批次不改变标志语义）。
+  载荷 `{sessionId}`（**组键**：一次作用于该组当下在窗/暂停的批次——R49 批级
+  作用面，非会话级标志置位）；返回 `{outcome: 'paused' | 'resumed'}`（幂等：
+  重复 pause/resume 同形回执、不报错——组内无在窗批时 pause 无落点、resume
+  无对象，均为无操作）。
 
 ### 36.3 客户端（两座位）
 
@@ -3267,6 +3276,11 @@ R30「可验证」逐条对齐：
   `AskList`/`AskItem`，client.js:1234/:1241/:1146/:1075——实名锚）。
 - `item.paused === true` → 该组倒计时显示冻结并示「已暂停」态
   （`serverNow` 折算跳过 paused 项）。
+- **开关显示口径（R49-5 并存态，设计轮裁定）**：组级开关的暂停态取组内条目
+  标记——组内**存在暂停批**（不论是否同时有计时批并存）→ 开关显示「恢复计时」，
+  点击只作用于暂停批；组内全部计时批 → 「暂停计时」，点击作用于全部在窗批。
+  并存态一键只做一个动作（按当前显示态先恢复），连点两下可到任一目标态——
+  不设混合态第三文案。
 - 开关随 R30 统一开关（`state.enabled`）：座位不在场则无开关（构造保证，
   R36-e）。
 
@@ -3282,33 +3296,39 @@ R30「可验证」逐条对齐：
 
 | 组 | 判据（都能红） |
 | --- | --- |
-| pause 机械 | 撤 timer（假 timer 收 cancel）+ `remainingMs` 记录 + `paused` 标记置位 |
-| 越界不放行 | 假时钟推过原 `expiresAt` → 无合成答案（waterfall resolve 零调用、phase 仍 open、转录面零合成形状锚）；手动触发误挂 timer 的到期回调 → 仍不放行（expire 入口防御） |
+| pause 机械 | 撤 timer（假 timer 收 cancel）+ `remainingMs` 首记 + 批级 `paused` 标记置位 |
+| 越界不放行 | 假时钟推过原 `expiresAt` → 无合成答案（waterfall resolve 零调用、phase 仍 open、转录面零合成形状锚）；手动触发误挂 timer 的到期回调 → 仍不放行（expire 入口防御，读批级标记） |
 | resume 平移 | `expiresAt = 恢复时刻 + remaining`（假时钟断言）+ 到点正常放行（合成形状锚） |
-| 新到批次 | paused 会话 `take` → 不挂 timer（假 timer 零创建）；首次 `stateItems` 即 `paused: true`；恢复前全额窗口越界无放行 |
+| 新批独立（R49） | 同组存在暂停批时 `take` 新批 → 挂 timer、全额窗口、`paused=false`；新批照表到期合成放行、同组暂停批仍冻结（改回「新批自动暂停」实现必红） |
+| 出窗即失效（R49） | 暂停批经齐答/中止/超时放行任一路径出窗 → 后续新批照常计时（任何路径残留暂停态即红） |
+| 跨会话隔离（R49） | 会话 A 存在暂停在窗批时，会话 B 在窗批照表走到期合成放行、`paused=false`；A 的 pause/resume 不触碰 B 的任何批次 |
 | 作答不受暂停影响 | paused 批 `submitAnswer` → delivered |
-| 标志生命周期 | 齐答清空批次后标志仍在（新批自动暂停）；`disposeAll` 清空 |
+| 标志生命周期 | 齐答清空批次后**无暂停残留**（新批照常计时——R36 原「标志跨批存活」判据随 R49 翻转为反面）；`disposeAll` 清空批次；`forgetSession` 清单会话各批标记、他会话不受影响 |
 | 远端面 | pause/resume 的 wire 名与客户端手写 descriptor 逐字一致（J-15 对账同款）；两方法在 `markRemote` 名单 |
 
-真机（验证实例，探针并入 ask 既有探针或新 `probe-r36-ask-pause.mjs`）：
+真机（验证实例，探针 `verify/probe-r49-batch-pause.mjs`；`probe-r36-ask-pause.mjs`
+保留机械面回归——暂停冻结/恢复平移/幂等三断言不受 R49 影响）：
 
 - (a) 暂停冻结：待答窗口内 pause → 面板「已暂停」+ 墙钟越过原 `expiresAt`
   无超时合成（转录零合成形状锚）。
 - (b) 恢复平移：resume 后 `expiresAt` 平移（面板剩余时间重排）且到点正常
   放行。
-- (c) 暂停期新批：暂停中触发新提问 → 首次轮询即带暂停标记，恢复前全额窗口
-  越界无放行。
-- (d) 开关随 R30：接管关闭时两座位无暂停开关。
-- (e) 两座位同款：overlay / sidebar 各取证一次（askUiSeat 切换）。
+- (c) 时序判据（R49-1）：批 1 暂停 → 齐答结清 → 模型发批 2 接管 → 首轮轮询
+  `paused=false`、倒计时数字形态 → 墙钟越过全额窗口照表合成放行（完整时序
+  取证；R36 原「暂停期新批自动暂停」腿随 R49 翻转）。
+- (d) 双会话隔离对照（R49-4）：会话 A 暂停在窗批、会话 B 在窗批照表走到期
+  合成放行；A 的恢复动作不触碰 B（B 按原窗口放行，不被 A 的动作冻结/平移）。
+- (e) 开关随 R30：接管关闭时两座位无暂停开关。
 
 ### 36.6 风险
 
 | 风险 | 处置 |
 | --- | --- |
-| `agent/disposed` 不必然随会话结束触发（web 会话常驻）→ `paused` 条目残留 | 挂钩尽力清理（S-1）+ 残留兜底（键量级=会话数，插件生命周期兜底） |
+| `agent/disposed` 不必然随会话结束触发（web 会话常驻）→ 暂停批残留面板 | 批级口径下残留＝在窗批本身（量级=在窗批数，随批出窗消失）；组开关可恢复、作答可结清——无会话级集兜底问题 |
 | `expiresAt` 冻结语义与旧客户端折算冲突 | items 带 `paused` 标记后新客户端不算倒计时；旧客户端显示冻结剩余——视觉即暂停，可接受 |
-| 误挂 timer（resume 竞态） | `expire` 入口防御（36.1）+ 单元「误挂 timer 到期点」用例 |
+| 误挂 timer（resume 竞态） | `expire` 入口防御（36.1，读批级标记）+ 单元「误挂 timer 到期点」用例 |
 | 暂停无限期 → 模型无限等待 | 用户裁定接受（R36-a）；两座位常显已暂停态；原生 ask 本无超时（风险表既有行） |
+| R49 废止跨批自动暂停：用户暂停批 1 期间离场、批 1 结清后新批 2 全额窗口走完合成空答放行 | 用户裁定接受（需求风险表 R49 行）；窗口可经 `askTimeoutMs` 调大（10–600 s）；迟到作答通道保留（R30-d，批放行后仍可补答）；回场可对在窗批再暂停 |
 
 ---
 
@@ -3366,7 +3386,7 @@ R30「可验证」逐条对齐：
 | E1 | 新启动段（字节游标增量）无 `failed to import`、无 `did not activate`、无 `skipping profile bundle`（宿主行文产出链） | 装回 0.1.7 peer 的旧实体 → E1 红（R38-2 实测形态） |
 | E2 | `dsh-async` 预设新建会话工具面：async_run / async_wait_job / async_wait_agent / async_agent / async_workflow 在列；tool-subagent/-fork/workflow 不在 | 预设行丢失 → E2 红 |
 | E3 | async_run 冒烟：让出转后台（job_id 句柄）+ async_wait_job 取回；引擎档位按现行（danger-full-access 档下 workflow 引擎可用；auto 档遇审批弹层按 0.2.0 面解释） | 断开 jobs 服务接线 → E3 红 |
-| E4 | async_wait_agent 屏障：子代理 settle 后即返（catalog 遍历口径）；ask-takeover 暂停/恢复＝R36 探针复跑（暂停冻结/恢复平移/暂停期新批三断言，不降级为抽查） | 摘 preset 行重跑探针 → 接管不生效（E4 红） |
+| E4 | async_wait_agent 屏障：子代理 settle 后即返（catalog 遍历口径）；ask-takeover 暂停/恢复＝R36 探针复跑（暂停冻结/恢复平移/暂停期新批三断言，不降级为抽查） | 摘 preset 行重跑探针 → 接管不生效（E4 红）。（R49 起机械面前两断言不变；「暂停期新批」腿随批级口径翻转为「新批照表计时」，取证走 `probe-r49-batch-pause.mjs`——§41.3） |
 | E5 | 设置卡片：插件页可开、字段可改可存（volatile 提交后工具描述/快照刷新，槽位等同） | 槽键失配 → 卡片不渲染（E5 红） |
 | E6 | 提权路径：workspace-write 档 async_run 沙箱拒绝 → 同轮提示 sandbox_permissions 出路（0.2.0 拒绝文本锚复核） | 摘 `escalationHintMarker` 提示行重跑 → 同轮提示消失（E6 红） |
 | E7 | 0.1.7 冻结件不动、不重测：0.1.7 实体树与本仓 `v0.1.7` tag 的内容哈希在切换前后各取一次、逐字节一致；开发实例线零触碰 | 哈希对账不等 → E7 红（对账脚本即变异看守） |
@@ -3912,4 +3932,54 @@ v0.2.1 轻量形态系 R40 建tag 时偏差——不复制该偏差）。
   `Move-Item` 遇到**已存在**的目标目录是"移进去"而不是替换，随后的清理会连它一起删掉，
   而且 `Remove-Item` 不进回收站。
 
+---
+
+## 41. R49：待答暂停计时的批级独立（修订 R36 的作用面与寿命）
+
+> 需求权威：`docs/requirements.md` §2 R49（用户裁定：暂停以批为独立单位、会话
+> 之间严格隔离；批 2 走全额窗口的代价已在风险表接受）。本节是**修订轮记录**：
+> 机械本体归 §36（现行批级口径），此处只记翻转落点、判据映射与变异口径。
+
+### 41.1 翻转面（实现与测试两侧）
+
+| 面 | R36 原口径（会话级） | R49 现口径（批级） |
+| --- | --- | --- |
+| 状态载体 | 注册表会话级集 `paused: Set<sessionId>` | 批级布尔 `batch.paused`（+首记剩余 `remainingMs`）；**无会话级集** |
+| 新批登记 | 暂停会话的新批自动暂停（不挂 timer、全额窗口记为剩余） | 一律挂 timer、全额窗口、`paused=false`——不因同组存在暂停批而自动暂停 |
+| expire 防御 | 读会话集 `paused.has(sessionId)` | 读批级标记 `batch.paused === true`；放行路径清标记（expired 相无计时） |
+| 标志寿命 | 齐答不清标志（连续提问持续有效）；`agent/disposed`/`disposeAll` 清会话集 | 批出窗（齐答/中止/超时放行）即消失；`disposeAll` 随批清空；`forgetSession` 清该会话各批标记（尽力清理，不重挂计时） |
+| K6/K7-b 判据 | 「暂停中 take 新批自动暂停」「标志跨批次存活」 | 翻转为「同组暂停批在场新批照表计时」「齐答后无暂停残留」——删掉批级独立保护（让新批继承暂停态）必须红 |
+| 客户端组开关 | 会话级置位/清除口径注释 | 组内条目标记（`some(paused)`）——并存态显示口径见 §36.3（存在暂停批→「恢复计时」） |
+
+零变化面：R36-b 计时机械（撤 timer/剩余首记/到期点冻结、按剩余重挂/平移、幂等、
+防御闭合）、R30 判定/超时合成/迟到作答语义、远端面 wire 形状（`{sessionId}`
+组键，两方法与回执形状不变）、按钮随 R30 统一开关、两座位渲染。
+
+### 41.2 判据 → 测试映射（需求 §2 R49 五判据）
+
+| 需求判据 | 单元落点（`test/ask-takeover.test.mjs`） |
+| --- | --- |
+| 1 会话内顺序批（暂停→齐答→新批照表放行） | K6 翻转体：同组暂停批在场 `take` 新批 → timer 挂、全额窗口、`paused=false`；墙钟越全额窗口合成放行、暂停批仍冻结 |
+| 2 出窗路径对照（中止/超时放行出窗后新批照常计时） | K11：暂停批经 abort 与 resume 剩余≤0 两路径出窗 → 新批照常计时、无残留 |
+| 3 跨会话隔离（新增用例） | K10：会话 A 暂停在窗批，会话 B 在窗批照表到期合成放行且 `paused=false`；A 的 pause/resume 不触碰 B（`paused` 标记、timer 武装数、到期点三面） |
+| 4 R36 机械不回归 | K1–K5、K8、K9 翻转后原样断言（冻结/平移/幂等/批级防御哑火/清理/远端面） |
+| 5 R36-e 边界不动 | K7（暂停批作答 delivered）+ J1/J19（接管关＝面板与按钮整体不在场） |
+
+变异口径（可失败证明）：临时改 `take` 让新批继承同组暂停态（恢复 R36「新批
+自动暂停」形状）→ K6/K10 的批级独立断言红；恢复实现 → 全绿。变异运行与
+复原记录进轮次报告（`.local/docs`，不进公开面）。
+
+### 41.3 真机取证（验证实例）
+
+探针 `verify/probe-r49-batch-pause.mjs`（§36.5 真机 (c)/(d)）：
+
+- **时序判据**：批 1 暂停 → 齐答结清 → 模型发批 2 接管 → 首轮轮询
+  `paused=false`（倒计时数字形态、组开关显「暂停计时」）→ 墙钟越过全额窗口
+  照表合成放行（转录出现超时锚句）。
+- **双会话隔离对照**：会话 A 暂停在窗批、会话 B 在窗批照表走到期合成放行
+  （B 的放行时刻 ≈ 其全额窗口，不被 A 的暂停冻结）；A 的恢复动作不触碰 B
+  （B 放行后 A 的组仍冻结在场、恢复后按剩余平移放行）。
+
+取证实例排序约束同 R32 条（需求风险表 R31 行：验证实例取证，或升级已成
+事实则按该行口径处置）。
 
