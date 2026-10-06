@@ -89,8 +89,9 @@ function fakeTimer() {
       return () => { entry.cancelled = true; };
     },
     armed,
-    /** 触发 armed 下标 index 处的定时器（默认 0；不跳过已撤销项——调用方需
-     *  按武装次序自己拿对下标，现两处调用 K6/K10 均按该语义索引）。 */
+    /** 触发 armed 下标 index 处的定时器（默认 0；不跳过已撤销项——调用方按武装
+     *  次序自己拿对下标，散见 J/K 各用例；K6 等处不经本方法、按 armed 项 .fn()
+     *  直发）。 */
     fire(index = 0) {
       const entry = armed[index];
       assert.ok(entry !== undefined, '定时器必须已武装');
@@ -1762,4 +1763,55 @@ hostTest('K11：出窗路径对照——暂停批经中止/超时放行出窗后
     assert.equal(registry.submitAnswer({ batchId: batch2.batchId, questionId: 'q2', selected: ['选项一'] }), 'delivered');
     await pending2;
   }
+});
+
+test('K12：R49-5 并存态组开关——同组暂停批+计时批并存显「恢复计时」且点击只发 resume；恢复后翻「暂停计时」发 pause（test-review-r50 F2 补）', async () => {
+  const react = makeMiniReact();
+  const product = await loadClientProduct(react, { setInterval: () => 0, clearInterval: () => {} });
+  // J19 同款骨架：关门构造（跳过构造期首询）→ 开门注入 → 直接渲染 AskList。
+  let snap = { status: 'ready', value: {}, user: {} };
+  let scopeListener = null;
+  const scope = {
+    getSnapshot: () => snap,
+    subscribe: (fn) => { scopeListener = fn; return () => {}; },
+    mutate: async () => true
+  };
+  const ctx = { configForms: { get: () => scope }, remote: {}, uiWorkspace: { openSession() {} } };
+  const model = product.createAskModel(ctx, {});
+  snap = { status: 'ready', value: { askTakeover: true, askUiSeat: 'overlay' }, user: {} };
+  scopeListener();
+  // 并存态注入：同会话 s-mix 两批——P 暂停（expiresAt 冻结）、C 计时（组级
+  // some(paused) 口径的判别面：混合组不得按「全部计时」渲染，client.js:1210）。
+  const live = model.store.getSnapshot();
+  live.items = [
+    { batchId: 'P', sessionId: 's-mix', questionId: 'qP', question: 'p', options: [], multiSelect: false, receivedAt: 0, expiresAt: 1000, phase: 'open', paused: true },
+    { batchId: 'C', sessionId: 's-mix', questionId: 'qC', question: 'c', options: [], multiSelect: false, receivedAt: 5000, expiresAt: 10000, phase: 'open', paused: false }
+  ];
+  const calls = [];
+  model.actions.pauseSession = (sid) => { calls.push(['pause', sid]); };
+  model.actions.resumeSession = (sid) => { calls.push(['resume', sid]); };
+  const renderComp = (fn) => react.render(fn);
+
+  // ① 并存态：一组两条 AskItem；组开关显「恢复计时」（类名 + aria-label 双面）。
+  const panel1 = renderComp(() => product.AskList({ ask: model }));
+  const group1 = panel1.children.find((child) => child?.props?.className === 'ats-ask-group');
+  assert.ok(group1 !== undefined, '并存组上屏（同会话两批合组）');
+  assert.equal(group1.children.filter((child) => child?.type === product.AskItem).length, 2, '组内两条 AskItem（暂停批+计时批并存）');
+  const head1 = group1.children.find((child) => child?.props?.className === 'ats-ask-grouphead');
+  const toggle1 = head1.children.find((child) => child?.props?.className === 'ats-ask-resume' || child?.props?.className === 'ats-ask-pause');
+  assert.equal(toggle1.props.className, 'ats-ask-resume', '并存态组开关显「恢复计时」（存在暂停批即恢复语义，不设混合第三态）');
+  assert.equal(toggle1.props['aria-label'], product.DICTIONARIES.en['ask.resume'], 'aria-label 同步恢复语义（无障碍面）');
+  // ② 并存态点击只发 resume（作用于暂停批）——一键一动作口径。
+  toggle1.props.onClick();
+  assert.deepEqual(calls, [['resume', 's-mix']], '并存态点击只发 resume（组键=session）');
+  // ③ 恢复后全组计时 → 翻「暂停计时」，点击发 pause（作用于全部在窗批）。
+  live.items = live.items.map((item) => ({ ...item, paused: false }));
+  const panel2 = renderComp(() => product.AskList({ ask: model }));
+  const group2 = panel2.children.find((child) => child?.props?.className === 'ats-ask-group');
+  const head2 = group2.children.find((child) => child?.props?.className === 'ats-ask-grouphead');
+  const toggle2 = head2.children.find((child) => child?.props?.className === 'ats-ask-resume' || child?.props?.className === 'ats-ask-pause');
+  assert.equal(toggle2.props.className, 'ats-ask-pause', '恢复后组开关翻「暂停计时」（全部计时批口径）');
+  toggle2.props.onClick();
+  assert.deepEqual(calls, [['resume', 's-mix'], ['pause', 's-mix']], '计时态点击发 pause（连点两下可到任一目标态）');
+  model.dispose();
 });

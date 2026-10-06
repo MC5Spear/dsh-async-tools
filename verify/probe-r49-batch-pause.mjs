@@ -301,6 +301,9 @@ async function main() {
 
 let restore = null;
 let openedBrowser = null;
+// 设置复原留痕（test-review-r50 F1）：attempted/ok/attempts 进证据 json；复原
+// 失败必须打进退出码——「判据全绿但实例设置没复原」不是绿跑。
+const settingsRestore = { attempted: false, ok: null, attempts: 0 };
 try {
   const setup = await setupTakeover();
   restore = setup.restore;
@@ -310,18 +313,22 @@ try {
 } finally {
   if (openedBrowser !== null && openedBrowser !== undefined) openedBrowser.close();
   if (restore !== null) {
+    settingsRestore.attempted = true;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
+      settingsRestore.attempts = attempt;
       const ok = await restore().then(() => true, (error) => {
         console.log(`restore 第 ${String(attempt)} 次失败：${String(error?.message ?? error)}`);
         return false;
       });
-      if (ok) break;
+      if (ok) { settingsRestore.ok = true; break; }
+      settingsRestore.ok = false;
       await sleep(2000);
     }
   }
 }
 const path = `${LOG_DIR}\\r49-batch-pause.json`;
-writeFileSync(path, JSON.stringify({ results, marks, at: new Date().toISOString() }, null, 2), 'utf8');
+writeFileSync(path, JSON.stringify({ results, marks, settingsRestore, at: new Date().toISOString() }, null, 2), 'utf8');
 const failed = results.filter((r) => !r.ok).length;
-console.log(`\n探针结束：${String(results.length - failed)}/${String(results.length)} 通过；证据 ${path}`);
-process.exit(failed === 0 ? 0 : 1);
+const exitOk = failed === 0 && settingsRestore.ok !== false;
+console.log(`\n探针结束：${String(results.length - failed)}/${String(results.length)} 通过；设置复原=${settingsRestore.ok === true ? 'ok' : String(settingsRestore.ok)}；证据 ${path}`);
+process.exit(exitOk ? 0 : 1);
