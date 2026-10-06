@@ -1,0 +1,264 @@
+/**
+ * R13/R14 的真机端到端证据（验证实例，设计 §18.5"端到端"行 + 部署任务第 9 项）。
+ *
+ * ⚠️ **起跑块是 0.1.5 API，验证实例升级 0.1.7 后跑之前必须先改写**（r19-N7）：
+ * `readSettings()`/归位用的 `settings/describe`（namespaces 数组 + ns=async-tools）
+ * 与 `settings/update({ns, patch})` 在 0.1.7 下已不存在（设置面改为宿主行
+ * `async-tools-host` 的 volatile 表单：describe 返回 forms、写走 mutate）。改法见
+ * `verify/probe-settings-behavior-full.mjs` 头注的同款标注——阶段二（§26.3）动它。
+ * 三节取证本体（转录读回）不依赖 settings API，升级后照用。
+ *
+ * 三件事，全部从**真实会话转录**读回，不碰验证实例以外的任何实例：
+ *  1. 模型用 `async_agent` 派生子代理：调用参数只有 description+prompt（没有
+ *     run_in_background——后台是结构保证，R14 的机制半边），结果**立返** started+agent_id，
+ *     note 里带可照抄的 async_wait_agent 调用；随后模型用 async_wait_agent 等到 settled，
+ *     子代理的最终回答作为**独立消息**出现在会话里（不是塞在等待返回值里）。
+ *  2. persona 硬规则（§18.4）的**行为判据**：固定格式四问，值全部定向
+ *     （FALSE_ALLOWED=no 是 persona 独有的"无条件禁止"——宿主 subagent 工具描述是
+ *     "需要前台时**可以**传 false"的条件允许，只学工具描述的模型会答 yes）。
+ *     该轮断言零 tool/call，防止模型现读仓库里的模板污染来源。
+ *     ⚠️ 口径边界（r17 审查 r17-1 裁定）：转录的 `request/header` 不含 systemPrompt，
+ *     "规则段真的在系统提示里"这半边**真机不可直接取证**——由模板侧看守：
+ *     validate-preset 五锚句 + `test/preset.test.mjs` + `verify/mutate-agent.mjs` M2。
+ *  3. 隔离对照：standard 预设的会话里四个 async 工具**一个都没有**（R7-7）。
+ *
+ * 用法：node verify/probe-agent-e2e.mjs；全过退出码 0，证据落盘到本机证据目录的 logs/agent-e2e.json。
+ */
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { rpc, transcriptOf, localConfig } from './_rpc.mjs';
+import { CHILD_SETTLED } from './message-markers.mjs';
+
+// 探针驱动子代理的工作目录取仓根的上一级（原为写死的盘上目录，现从工作目录派生）。
+const CWD = dirname(localConfig.workspaceDir);
+const LOG_DIR = join(localConfig.evidenceDir, 'logs');
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+const checks = [];
+function record(name, passed, detail) {
+  checks.push({ name, passed, detail });
+  console.log(`${passed ? 'PASS' : 'FAIL'}  ${name}${detail === undefined ? '' : `  — ${detail}`}`);
+}
+
+// ── 起跑基线：设置写回出厂默认并读回核对（每个真机脚本自己保证起跑状态） ──────────
+// 残留窄 `maxWaitMs` 会让 async_wait_agent 早返"仍在运行"，settled 判据假红——
+// 这正是 verify/README 记录过两次的事故形态（r17 审查 r17-3）。
+const FACTORY_DEFAULTS = {
+  defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
+  defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000,
+  pollIntervalMs: 500, maxResultChars: 30000, jobKind: 'async-command',
+  subagentProvider: 'spawn'
+};
+const SETTINGS_NS = 'async-tools';
+
+async function readSettings() {
+  const described = await rpc('settings/describe', {});
+  const ns = (described.namespaces ?? []).find((candidate) => candidate.ns === SETTINGS_NS);
+  if (ns === undefined) throw new Error(`settings/describe 里没有命名空间 ${SETTINGS_NS}`);
+  return ns.value ?? ns.resolved ?? {};
+}
+
+{
+  const before = await readSettings();
+  const drifted = Object.keys(FACTORY_DEFAULTS).filter((k) => before[k] !== FACTORY_DEFAULTS[k]);
+  if (drifted.length > 0) {
+    console.log(`起跑前发现设置漂移，先归位：${drifted.map((k) => `${k}=${String(before[k])}`).join(' ')}`);
+    await rpc('settings/update', { ns: SETTINGS_NS, patch: FACTORY_DEFAULTS });
+  }
+  const after = await readSettings();
+  const stillDrifted = Object.keys(FACTORY_DEFAULTS).filter((k) => after[k] !== FACTORY_DEFAULTS[k]);
+  if (stillDrifted.length > 0) {
+    // 带着脏设置跑出来的红是假红，比不跑更糟——直接停（final-acceptance 同款纪律）。
+    throw new Error(`起跑基线写不进去，拒绝继续：${stillDrifted.join(', ')}`);
+  }
+  console.log(`起跑基线：设置全部等于出厂默认值（${drifted.length > 0 ? `本次归位了 ${String(drifted.length)} 项` : '本来就干净'}）。`);
+}
+
+async function newSession(preset) {
+  const created = await rpc('session/create', { request: { cwd: CWD, agentPreset: preset } });
+  if (created.agentPreset !== preset) throw new Error(`预设回退：要 ${preset}，得到 ${String(created.agentPreset)}`);
+  return created.sessionId;
+}
+
+async function ask(sessionId, text, timeoutMs = 360000) {
+  await rpc('session/prompt', {
+    request: {
+      requestId: `req-${Math.random().toString(36).slice(2, 10)}`,
+      sessionId, mode: 'queue',
+      content: [{ type: 'text', text }],
+      clientTimeZone: 'Asia/Shanghai'
+    }
+  });
+  const startedAt = Date.now();
+  let sawRunning = false;
+  for (;;) {
+    await sleep(2000);
+    const listing = await rpc('session/list', { _request: {} });
+    const row = listing.items.find((item) => item.sessionId === sessionId);
+    if (row === undefined) throw new Error('会话消失');
+    if (row.running === true) sawRunning = true;
+    if (sawRunning && row.running === false) return;
+    if (Date.now() - startedAt > timeoutMs) return;
+  }
+}
+
+/** 当前 asOfSeq——用作"这一问之后新增记录"的水位线。 */
+async function seqOf(sessionId) {
+  const listing = await rpc('session/list', { _request: {} });
+  const row = listing.items.find((item) => item.sessionId === sessionId);
+  if (row === undefined) throw new Error('会话消失');
+  return row.projections.asOfSeq;
+}
+
+/** 按事件类型收集：tool/call、tool/result 文本、assistant 文本，以及**子代理中继消息**
+ * （子代理的最终回答以 `user/message` 事件到达，`source.kind` 是 agent-message /
+ * subagent-settled——只扫 assistant/message 会一无所获，2026-09-18 实测）。 */
+function parse(page, afterSeq = -1) {
+  const calls = [];
+  const results = [];
+  const assistantTexts = [];
+  const childMessages = [];
+  for (const record of page.records ?? []) {
+    const event = record.event;
+    if (typeof event?.seq === 'number' && event.seq <= afterSeq) continue;
+    if (event?.type === 'tool/call') calls.push({ name: String(event.data.name), args: String(event.data.arguments) });
+    else if (event?.type === 'tool/result') {
+      for (const block of (event.data.message?.content ?? [])) {
+        if (block.type === 'tool-result') results.push((block.content ?? []).map((p) => p.text ?? '').join(''));
+      }
+    } else if (event?.type === 'assistant/message') {
+      const text = (event.data.message?.content ?? []).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('');
+      if (text.trim() !== '') assistantTexts.push(text);
+    } else if (event?.type === 'user/message') {
+      const source = event.data.source ?? {};
+      if (source.kind === 'agent-message' || source.kind === 'subagent-settled') {
+        childMessages.push({ kind: source.kind, text: (event.data.content ?? []).map((b) => b.text ?? '').join('') });
+      }
+    }
+  }
+  return { calls, results, assistantTexts, childMessages };
+}
+
+mkdirSync(LOG_DIR, { recursive: true });
+const evidence = { at: new Date().toISOString(), sections: {} };
+
+// ── 1) async_agent 立返 + async_wait_agent 等到 settled + 独立消息 ────────────────
+console.log('=== 1) async_agent 派生 → 立返 → 等待 → 独立回答（R13） ===');
+const sid = await newSession('dsh-async');
+evidence.asyncSessionId = sid;
+await ask(sid,
+  '请严格按以下步骤执行，不要多做别的：'
+  + '1) 调用 async_agent，参数 description="算术验证"，prompt="回答一个问题：3 乘 7 等于多少？'
+  + '只回答一行，格式为 ANSWER=<数字>。"；'
+  + '2) 拿到返回的 agent_id 后立即调用 async_wait_agent 等它（wait_ms=180000）；'
+  + '3) 等待结束后，不要复述子代理内容，只输出一行 DONE。');
+{
+  const { calls, results, assistantTexts, childMessages } = parse(await transcriptOf(sid));
+  evidence.sections.s1 = { calls, results, assistantTexts, childMessages };
+
+  const spawnCallIndex = calls.findIndex((c) => c.name === 'async_agent');
+  const spawnCall = calls[spawnCallIndex];
+  record('模型调用了 async_agent（而不是 subagent/subagent_fork）', spawnCall !== undefined,
+    spawnCall === undefined ? `调用清单=${calls.map((c) => c.name).join(',')}` : '调用形参见转录');
+
+  let spawnArgs = {};
+  try { spawnArgs = JSON.parse(spawnCall?.args ?? '{}'); } catch { /* 保持空对象，走下面的断言 */ }
+  record('调用参数恰好是 description+prompt（没有 run_in_background）',
+    spawnCall !== undefined
+    && Object.keys(spawnArgs).sort().join(',') === 'description,prompt',
+    `实得键=${Object.keys(spawnArgs).join(',')}`);
+
+  // 立返结果按调用序对齐（spawn 是第 spawnCallIndex 个调用，其结果也在同序位置）。
+  const spawnResultText = results[spawnCallIndex] ?? '';
+  const agentId = /agent_id[=: ]+"?([A-Za-z0-9-]+)"?/.exec(spawnResultText)?.[1];
+  record('async_agent 立返 started + agent_id', /started/.test(spawnResultText) && agentId !== undefined,
+    `片段=${spawnResultText.slice(0, 120).replace(/\n/g, ' ')}`);
+  record('立返结果带可照抄的 async_wait_agent 调用', /async_wait_agent\(agent_id="/.test(spawnResultText));
+
+  const waitCallIndex = calls.findIndex((c) => c.name === 'async_wait_agent');
+  const waitCall = calls[waitCallIndex];
+  record('模型用 async_wait_agent 等待（bounded wait_ms）', waitCall !== undefined
+    && /"wait_ms"\s*:\s*\d+/.test(waitCall?.args ?? ''), (waitCall?.args ?? '').slice(0, 80));
+
+  // 结局判据：CHILD_SETTLED 三选一，且**对齐到 async_wait_agent 那次调用**——在全量
+  // results 里找会"断言等待收尾、证据却来自别处"（r17 审查 r17-6）。等待文案是中文，
+  // 盯 "settled" 字样永远抓不住（2026-09-18 第一版实测）。
+  const waitResultText = waitCallIndex >= 0 ? (results[waitCallIndex] ?? '') : '';
+  record('等待以 settled 收尾（markers 三选一命中，且对齐该次调用）',
+    CHILD_SETTLED.some((m) => m.test(waitResultText)),
+    `片段=${waitResultText.slice(0, 100).replace(/\n/g, ' ')}`);
+
+  // 子代理的最终回答以**独立消息**（user/message，source=agent-message/subagent-settled）
+  // 到达——不是塞在等待返回值里。`(?!\d)` 防 ANSWER=215 这类误中（r17 审查 r17-7）。
+  const childAnswer = childMessages.find((m) => /ANSWER\s*=\s*21(?!\d)/.test(m.text));
+  record('子代理最终回答作为独立消息出现（ANSWER=21）', childAnswer !== undefined,
+    childAnswer === undefined
+      ? `中继消息=${childMessages.map((m) => `${m.kind}:${m.text.slice(0, 30)}`).join(' | ') || '(无)'}`
+      : `source.kind=${childAnswer.kind}`);
+}
+
+// ── 2) persona 硬规则的行为判据（R14） ─────────────────────────────────────────
+console.log('');
+console.log('=== 2) persona 硬规则的行为判据（R14） ===');
+{
+  // 固定格式四问 + 定向断言。区分点在 FALSE_ALLOWED：persona 是**无条件**禁止
+  // run_in_background:false；宿主 subagent/subagent_fork 的工具描述是"需要前台时可以传
+  // false"的**条件允许**（dsh-tool-subagent lib/index.js:400/:428/:579）——只学到工具
+  // 描述的模型会答 yes。该轮零 tool/call（会话 cwd 就在本仓工作树里，模型现读仓库模板即可
+  // 污染来源，r17 审查 r17-1）。系统提示原文不可从转录取证（request/header 无
+  // systemPrompt），"规则段在系统提示里"的半边由模板侧看守（见文件头注）。
+  const watermark = await seqOf(sid);
+  await ask(sid, '不要调用任何工具（本轮一次工具都不许调）。只输出下面四行，每行严格按 `键=值` 格式，'
+    + '值只能从各自括号里选一个：\n'
+    + 'FALSE_ALLOWED=yes|no （在任何情况下，给 subagent 或 subagent_fork 传 run_in_background:false '
+    + '是否被你的委派规则允许？）\n'
+    + 'AGENT_FOREGROUND=yes|no （你的委派规则里 async_agent 是否有前台模式？）\n'
+    + 'WAIT_TOOL=<工具名> （等待后台子代理的结果应该用哪个工具？）\n'
+    + 'POLLING_ALLOWED=yes|no （你的委派规则是否允许用轮询循环的方式等待？）');
+  const { calls, assistantTexts } = parse(await transcriptOf(sid), watermark);
+  const answer = (assistantTexts.at(-1) ?? '').replace(/\s+/g, ' ');
+  evidence.sections.s2 = { zeroToolCalls: calls.length === 0, callsAfterWatermark: calls, answer };
+  const pick = (key) => new RegExp(`${key}\\s*=\\s*([^\\s]+)`).exec(answer)?.[1];
+
+  record('问答轮零工具调用（防现读模板污染来源）', calls.length === 0,
+    calls.length === 0 ? '水位线后无 tool/call' : `意外调用=${calls.map((c) => c.name).join(',')}`);
+  record('FALSE_ALLOWED=no（persona 独有的无条件禁止；只学工具描述会答 yes）', pick('FALSE_ALLOWED') === 'no',
+    `实答=${String(pick('FALSE_ALLOWED'))}`);
+  record('AGENT_FOREGROUND=no（async_agent 无前台模式）', pick('AGENT_FOREGROUND') === 'no',
+    `实答=${String(pick('AGENT_FOREGROUND'))}`);
+  record('WAIT_TOOL=async_wait_agent', pick('WAIT_TOOL') === 'async_wait_agent',
+    `实答=${String(pick('WAIT_TOOL'))}`);
+  record('POLLING_ALLOWED=no（不许轮询循环）', pick('POLLING_ALLOWED') === 'no',
+    `实答=${String(pick('POLLING_ALLOWED'))}`);
+  record('模型按 persona 硬规则作答（四问定向全中）', answer.includes('FALSE_ALLOWED=no')
+    && answer.includes('AGENT_FOREGROUND=no') && answer.includes('WAIT_TOOL=async_wait_agent')
+    && answer.includes('POLLING_ALLOWED=no'), `回答=${answer.slice(0, 160)}`);
+}
+
+// ── 3) 隔离对照：standard 四个 async 工具都没有（R7-7） ──────────────────────────
+console.log('');
+console.log('=== 3) 隔离：standard 预设不含四个 async 工具（R7-7） ===');
+{
+  const std = await newSession('standard');
+  evidence.standardSessionId = std;
+  await ask(std, '不要调用任何工具。把你这一轮实际可调用的全部工具名按字母序用英文逗号连接，'
+    + '输出成单独一行，格式严格为 `TOOLS=name1,name2,...`。不要解释。');
+  const { assistantTexts } = parse(await transcriptOf(std));
+  const line = (assistantTexts.at(-1) ?? '').match(/TOOLS=([^\n`]+)/)?.[1] ?? '';
+  const names = line.split(',').map((s) => s.trim()).filter(Boolean);
+  evidence.sections.s3 = { toolsLine: line, names };
+  const ASYNC_TOOLS = ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent'];
+  const leaked = ASYNC_TOOLS.filter((t) => names.includes(t));
+  record('standard 有 pwsh 且四个 async 工具一个都没有（未泄漏到全局工具层）',
+    names.includes('pwsh') && leaked.length === 0,
+    `工具数=${String(names.length)}；泄漏=${leaked.join(',') || '无'}`);
+}
+
+// ── 汇总 ─────────────────────────────────────────────────────────────────────
+console.log('');
+const failed = checks.filter((c) => !c.passed).length;
+writeFileSync(`${LOG_DIR}agent-e2e.json`, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
+writeFileSync(`${LOG_DIR}agent-e2e-summary.json`,
+  `${JSON.stringify({ at: evidence.at, sessionIds: { async: sid, standard: evidence.standardSessionId }, checks }, null, 2)}\n`,
+  'utf8');
+console.log(`总判定：${String(checks.length - failed)}/${String(checks.length)} 通过`);
+if (failed > 0) process.exitCode = 1;

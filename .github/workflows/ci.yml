@@ -1,0 +1,126 @@
+# CI：两个作业，两种"宿主锚"形态
+#
+# 为什么是**两个**作业而不是一个：本包的九个 `@deepseek-ai/dsh*` 是 peer，而"有没有那棵树"
+# 是两种真实的使用形态——贡献者多半装了 DSH，外部读者多半没装。只测一种的话，
+# 另一种会在别人机器上第一次跑就红。
+#
+# - `with-host`：装出宿主树当锚，跑**全量**电池与全部检查器。
+# - `offline`：**故意不装**宿主，跑离线形态——接线类用例必须**自跳过并打印理由**，
+#   而不是整片崩掉。这条曾经真的崩过（`lib/ask-takeover.js` 的宿主 import 在加载期
+#   就让四个测试文件 `ERR_MODULE_NOT_FOUND`），所以它是一个**回归钉子**。
+#
+# ⚠️ **`--legacy-peer-deps` 是离线作业的要害，别删。**
+# 本包的九个 `@deepseek-ai/dsh*` 是 `peerDependencies`，而 **npm 7+ 默认自动安装 peer**：
+# 实测一条 `npm install` 就把整棵宿主树（**230+ 个包**）拉进 `node_modules`。
+# 不加这个开关，"离线作业"根本不离线——两个作业会退化成同一件事，而这一点**从绿上看不出来**。
+# 加了之后实测只装 **4 个包**（schemastery / zod / @standard-schema / 一个只含 schemastery 的
+# `@deepseek-ai`），`node_modules/@deepseek-ai/dsh-tools` 确实不在。
+#
+# 两个作业都在跑测试**之前**断言自己的前提（见各自的「断言」步骤）——
+# 前提是要验的，不是假定的：少了它，宿主锚缺席时接线用例会全部自跳过，
+# 作业照样绿，而它其实什么都没测。
+#
+# 为什么用 windows-latest：本包的行为面里有 Windows 特有的部分（沙箱提权键、
+# 捕获形命令的静默失败、PowerShell 的行尾与编码），那些判据在 Linux 上不成立。
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  with-host:
+    name: 全量电池（宿主锚 ${{ matrix.node }}）
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # 一条 `npm install` 就把宿主树一起装进来了——九个 peer 由 npm 自动安装，
+      # 而它们各自又拖着整个 DSH 依赖图。`--ignore-scripts` 跳过依赖的 postinstall
+      # （本仓不需要它们，且更快）。
+      - name: 装依赖（含 peer 带来的宿主树）
+        run: npm install --ignore-scripts
+
+      - name: 断言宿主锚在场且版本对
+        shell: pwsh
+        run: |
+          $anchor = 'node_modules/@deepseek-ai/dsh-tools/package.json'
+          if (-not (Test-Path $anchor)) {
+            throw "宿主锚缺席（$anchor）——接线用例会全部自跳过，这个作业就白跑了"
+          }
+          $dsh = Get-Content 'node_modules/@deepseek-ai/dsh/package.json' -Raw | ConvertFrom-Json
+          if ($dsh.version -ne '0.2.0-rc.2') {
+            throw "宿主版本不是 0.2.0-rc.2，而是 $($dsh.version)"
+          }
+          Write-Host "宿主锚在场 ✔ dsh@$($dsh.version)"
+
+      # 解析钩子按 DSAT_HOST_MODULES 找锚。这里用 Actions 的 env 给，
+      # **不要**用 --env-file：Node 的 --env-file 不覆盖已存在的同名环境变量。
+      - name: 电池（全量）
+        run: npm run test:inproc
+        env:
+          DSAT_HOST_MODULES: ${{ github.workspace }}/node_modules
+
+      - name: 检查器
+        env:
+          DSAT_HOST_MODULES: ${{ github.workspace }}/node_modules
+        run: |
+          npm run check
+          npm run check:public-surface
+          npm run check:preset
+          npm run check:encoding
+          npm run check:docs
+          npm run check:alias-tokens
+          npm run check:agent-policy
+          npm run check:model-text
+
+  offline:
+    name: 离线形态（无宿主锚 ${{ matrix.node }}）
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # `--legacy-peer-deps` 见文件头的说明：不加它，peer 会被自动装进来，
+      # 这个作业就不是离线作业了。
+      - name: 装本包依赖（**不装 peer**）
+        run: npm install --ignore-scripts --legacy-peer-deps
+
+      - name: 断言宿主锚确实不在场
+        shell: pwsh
+        run: |
+          if (Test-Path 'node_modules/@deepseek-ai/dsh-tools/package.json') {
+            throw "离线作业的前提被破坏：宿主锚在场（peer 被自动装了？本作业必须带 --legacy-peer-deps）"
+          }
+          Write-Host "宿主锚不在场 ✔ 离线形态成立"
+
+      - name: 电池（离线）
+        run: npm run test:offline
+
+      # 公开面边界与编码体检不依赖宿主，两种形态都要过。
+      - name: 检查器（不需宿主锚的那几个）
+        run: |
+          npm run check:public-surface
+          npm run check:encoding
+          npm run check:docs

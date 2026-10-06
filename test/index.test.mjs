@@ -1,0 +1,596 @@
+/**
+ * 宿主接线冒烟测试（修正清单 §2 T3 + 主会话在验证实例上追加的 T6）。
+ *
+ * 为什么必须有这个文件：其余测试文件的 `ctx` 都是 `test/_helpers.mjs` 自己捏的替身，
+ * **替身要什么有什么**，所以"`inject` 漏声明某个服务"这类缺陷在假件测试里永远绿。
+ * 真机端到端就撞上了：`async_run` 在真实 cordis 上下文里直接抛
+ * `cannot get property "timer" without inject`——三个工具都在用 `ctx.timer`，
+ * 而 `inject` 里从来没有 `'timer'`。
+ *
+ * 本文件做两件事，缺一不可：
+ * 1. **静态扫描** `lib/` 下所有 `.js` 里的 `ctx.<服务>` 访问，断言它们是 `inject` 的子集
+ *    —— 这条在漏声明时立刻变红，是 T6 的核心；
+ * 2. 用**真 `@deepseek-ai/cordis`** 起最小 Context，注册假服务后挂载插件行，
+ *    断言按 `config.toolName` 注册了工具、卸载后注销。
+ *
+ * 宿主包解析不到时（没有本地 `node_modules` 的离线环境）整个文件跳过——
+ * 只吞「`@deepseek-ai/` 解析失败」这一种，语法错误、模块内部抛错、相对文件缺失
+ * 一律让本文件红着，避免"跳过＝通过"的假绿。
+ */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+/** `lib/` 目录的绝对路径。 */
+const LIB_DIR = fileURLToPath(new URL('../lib/', import.meta.url));
+
+/** cordis 的 `FiberState.ACTIVE`（`src/fiber.ts:147-154` 的 const enum，编译后为 2）。 */
+const ACTIVE = 2;
+
+/**
+ * 加载宿主入口；只吞宿主包解析失败。
+ * @returns {Promise<object | undefined>} 模块；宿主包不可解析时为 `undefined`。
+ */
+async function loadHost() {
+  try {
+    return await import('../lib/index.js');
+  } catch (error) {
+    const message = String(error?.message ?? error);
+    if (error?.code === 'ERR_MODULE_NOT_FOUND' && message.includes('@deepseek-ai/')) return undefined;
+    throw error;
+  }
+}
+
+/**
+ * 动态加载真 cordis：静态 `import` 在离线环境会让**整个文件**加载失败，
+ * 连 T6 的静态扫描都跑不成，所以这里退化成一个可判定的 `undefined`。
+ * @returns {Promise<Function | undefined>} `Context` 构造函数。
+ */
+async function loadCordis() {
+  try {
+    const module = await import('@deepseek-ai/cordis');
+    return module.Context;
+  } catch (error) {
+    const message = String(error?.message ?? error);
+    if (error?.code === 'ERR_MODULE_NOT_FOUND' && message.includes('@deepseek-ai/')) return undefined;
+    throw error;
+  }
+}
+
+/** 读出 `lib/` 下所有 `.js` 的源码（含子目录）。 */
+function libSources() {
+  const files = readdirSync(LIB_DIR, { recursive: true }).filter((entry) => String(entry).endsWith('.js'));
+  return files.map((entry) => {
+    const relative = String(entry).replaceAll('\\', '/');
+    return { name: relative, text: readFileSync(new URL(relative, new URL('../lib/', import.meta.url)), 'utf8') };
+  });
+}
+
+/**
+ * 去掉注释与字符串字面量，只留代码。
+ *
+ * 必须去：错误文案里就写着 `ctx.sandboxPolicy`（`lib/jobs.js` 的 fail-fast 消息），
+ * 不去掉的话静态扫描会把"文案里提到的一个服务名"当成真实访问，
+ * 逼着人往 `inject` 里塞一个根本没用到的硬依赖。
+ * @param {string} text - 源码。
+ * @returns {string} 只剩代码的等价文本（长度与位置不保证一致，只用于匹配）。
+ */
+function stripNonCode(text) {
+  let out = '';
+  let index = 0;
+  while (index < text.length) {
+    const ch = text[index];
+    const next = text[index + 1];
+    if (ch === '/' && next === '/') {
+      while (index < text.length && text[index] !== '\n') index += 1;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      index += 2;
+      while (index < text.length && !(text[index] === '*' && text[index + 1] === '/')) index += 1;
+      index += 2;
+      continue;
+    }
+    if (ch === '"' || ch === '\'' || ch === '`') {
+      const quote = ch;
+      index += 1;
+      while (index < text.length) {
+        if (text[index] === '\\') { index += 2; continue; }
+        if (text[index] === quote) { index += 1; break; }
+        index += 1;
+      }
+      out += ' ';
+      continue;
+    }
+    out += ch;
+    index += 1;
+  }
+  return out;
+}
+
+/**
+ * 从源码里抓出所有 `ctx.<标识符>` 访问。
+ *
+ * **先摘掉 `ctx.inject([...], (cb) => {…})` 的回调体**：回调里的 `ctx.settings` 是
+ * 可选等待拿到的服务（等价于 `ctx.get`），不是"必须写进 inject"的硬访问。
+ * 不摘的话，凡是用 `ctx.inject` 等可选服务的地方都会被误报成漏声明——
+ * 而那个写法恰恰是既有插件的成例（`dsh-pwsh-local/lib/index.js:229`）。
+ *
+ * @param {string} text - 源码。
+ * @returns {Set<string>} 标识符集合。
+ */
+function ctxMembers(text) {
+  const found = new Set();
+  const code = stripNonCode(text);
+  // 把 inject 回调体的**参数名**收集起来，逐段剔除形如 `<param>.<name>` 的访问。
+  const callbackParams = new Set();
+  for (const match of code.matchAll(/\bctx\.inject\(\s*\[[^\]]*\]\s*,\s*\(?\s*([A-Za-z_$][\w$]*)/g)) {
+    callbackParams.add(match[1]);
+  }
+  let scannable = code;
+  for (const param of callbackParams) {
+    scannable = scannable.replaceAll(`${param}.`, '\u0000.');
+  }
+  for (const match of scannable.matchAll(/\bctx\.([A-Za-z][A-Za-z0-9_]*)/g)) found.add(match[1]);
+  for (const match of scannable.matchAll(/\u0000\.([A-Za-z][A-Za-z0-9_]*)/g)) found.add(`inject:${match[1]}`);
+  // 上面刻意把 inject 回调里的访问记成 `inject:<name>`：它们**不该**被要求进静态 inject，
+  // 但也不该被无声丢掉（否则改名这类错误就没人看得见）。
+  for (const name of [...found]) {
+    if (name.startsWith('inject:')) found.delete(name);
+  }
+  return found;
+}
+
+/**
+ * 只去掉注释，**保留字符串字面量**。
+ *
+ * 与 `stripNonCode()` 的分工：那个把字符串也抹掉，适合扫 `ctx.<name>`（免得错误文案
+ * 里的 `ctx.sandboxPolicy` 被当成真实访问）；但扫 `ctx.get('<name>')` 必须看见字面量本身，
+ * 所以要另一把刀。
+ *
+ * 实现取向：扫描器宁可**漏报也不猜**——正则字面量里的 `//` 会让状态机提前进入注释态，
+ * 那只会让它少看见几个名字，不会让它编出一个不存在的名字。反向的错（把注释里的
+ * 名字当成真实访问）才是会逼人往 `inject` 里塞垃圾的那种错。
+ * @param {string} text - 源码。
+ * @returns {string} 去注释后的文本。
+ */
+function stripComments(text) {
+  let out = '';
+  let index = 0;
+  while (index < text.length) {
+    const ch = text[index];
+    const next = text[index + 1];
+    if (ch === '/' && next === '/') {
+      while (index < text.length && text[index] !== '\n') index += 1;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      index += 2;
+      while (index < text.length && !(text[index] === '*' && text[index + 1] === '/')) index += 1;
+      index += 2;
+      continue;
+    }
+    if (ch === '"' || ch === '\'' || ch === '`') {
+      const quote = ch;
+      out += ch;
+      index += 1;
+      while (index < text.length) {
+        if (text[index] === '\\') { out += text.slice(index, index + 2); index += 2; continue; }
+        out += text[index];
+        if (text[index] === quote) {
+          index += 1;
+          break;
+        }
+        index += 1;
+      }
+      continue;
+    }
+    out += ch;
+    index += 1;
+  }
+  return out;
+}
+
+/**
+ * 从源码里抓出 `ctx.get('<字面量>')` 这种**第二种服务访问写法**。
+ *
+ * 为什么必须单独抓（R3 审查点名的盲区）：只扫 `ctx.<name>` 会漏掉 `ctx.get('x')`。
+ * 本包已经同时用了两种写法——`lib/jobs.js` 用 `ctx.get('sandboxPolicy')`（可选服务、
+ * 允许缺席），其余服务用 `ctx.<name>`（硬依赖、写进 `inject`）。评审实测：往
+ * `lib/jobs.js` 注入 `ctx.get('someHelper')` 后，只扫 `ctx.<name>` 的那版**输出
+ * `missing=[]`**，也就是说"新增一个漏声明的服务访问"这条路径当时是敞开的。
+ *
+ * 只认**字符串字面量**参数：`ctx.get(variable)` 无法静态判定，不猜（扫描器对不确定的
+ * 东西保持沉默，比猜错后逼人往 `inject` 里塞垃圾好）。
+ *
+ * @param {string} text - 源码。
+ * @returns {Set<string>} 字面量服务名集合。
+ */
+function ctxGetLiterals(text) {
+  const found = new Set();
+  const code = stripComments(text);
+  for (const match of code.matchAll(/\bctx\.get\(\s*(['"])([A-Za-z][A-Za-z0-9_]*)\1\s*\)/g)) found.add(match[2]);
+  return found;
+}
+
+/**
+ * `ctx.get()` 的合法目标白名单：**故意**用可选读取而不是硬依赖的服务。
+ *
+ * - `sandboxPolicy`：只在执行器声明了约束时才存在；取不到要 fail-fast 而不是让插件卡在等待态，
+ *   所以它**不能**进 `inject`（设计 §4.4）。
+ *
+ * - `approval`：`async_run` 单次提权时**问审批**的入口（`ctx.get('approval')`，
+ *   见 `lib/jobs.js` 的 `approveRunEscalation`）。它与内置 `pwsh` / `bash` / `fs`
+ *   完全同口径地**可选**：`dsh-tool-pwsh` 的 `inject` 也不含它。
+ *   写进 `inject` 会让"没装审批服务的部署"整行不激活，把提权这个附加能力
+ *   升级成插件不可用；而缺席的正确行为是**这一次提权请求以可读错误被拒**——
+ *   `approveEscalation` 自己会抛 `requires approval, but no approval service is composed`，
+ *   其余功能完全不受影响。
+ *
+ * - `workflowEngine`：`async_workflow` 工具的编排引擎（R34/设计 §34.2-3）。它是
+ *   **delegation 组内隔离服务**（G-1）：本包的组外行 `ctx.get` 恒 miss——把它写进
+ *   `inject` 会让宿主行与创造预设行整行不激活。现读（execute 内 `ctx.get`）的
+ *   正确行为是：引擎在位（dsh-async 两预设的 delegation 组）→ 编排可用；缺席
+ *   （宿主行/无引擎部署）→ `error.workflowEngineMissing` 可读拒绝，工具仍注册。
+ *
+ * - `subagentModelSelection`：R40 会话模型选择策略的 Host 单例设置服务
+ *   （`@deepseek-ai/dsh-tool-subagent/model-selection-settings`；设计 §38 裁决
+ *   R40-2）。宿主 standing 行对它的缺席是装载期 throw；本包是**预设行**——写进
+ *   `inject` 会让"宿主组合未挂 model-selection-settings 的部署"整行不激活
+ *   （四行工具陪葬）。可选读取的正确行为：缺席 → stderr 通告一次 + 不接线
+ *   采样（对宿主装载 throw 的**有意偏差**，等价表登记在 §38.2）。
+ *
+ * - `sessions`：Session 注册表（R40 父继承分支专用，惰性现读——宿主
+ *   `selectForSession` 同款）。缺席只影响子会话策略继承（跳过 + 通告），顶层
+ *   fresh 采样不读它、照常工作——写进 inject 同样会把缺席升级成整行不激活。
+ *
+ * （历史注：0.1.5 时代这里还有 `settings` 与 `agentPresets` 两条——前者随设置快照链
+ * 取代 `settings.get` 退场，后者随预设生命周期平面退场；两者在 `lib/` 均已无调用点。）
+ *
+ * 除这些以外的任何名字都说明作者要么该写进 `inject`、要么该解释为什么可选——两种情况都要求人来看一眼。
+ */
+const OPTIONAL_SERVICE_READS = new Set(['approval', 'sandboxPolicy', 'workflowEngine', 'subagentModelSelection', 'sessions']);
+
+/** cordis 自带的上下文成员：不是服务，不需要（也不能）写进 `inject`。 */
+const BUILTIN_CTX_MEMBERS = new Set(['effect', 'on', 'emit', 'get', 'logger', 'inject']);
+
+/**
+ * 构造最小 cordis 上下文：注册假服务，并记录工具注册。
+ * @param {Function} Context - 真 cordis 的 `Context`。
+ * @returns {object} 上下文与探针。
+ */
+function makeContext(Context) {
+  const registered = [];
+  const ctx = new Context();
+  ctx.provide('tools', {
+    register(definition) {
+      registered.push(definition);
+      return () => {
+        const index = registered.indexOf(definition);
+        if (index >= 0) registered.splice(index, 1);
+      };
+    }
+  });
+  ctx.provide('jobs', {
+    start: () => 'async-command-1',
+    get: () => ({ status: 'running' }),
+    read: () => ({ text: '' }),
+    wait: async () => ({ status: 'running' }),
+    kill: () => 'requested'
+  });
+  ctx.provide('shell', {
+    resolve: (request) => request,
+    start: () => { throw new Error('接线测试不该启动进程'); }
+  });
+  ctx.provide('shellEnv', { collect: () => Object.freeze({ DSH_HOME: 'x' }) });
+  ctx.provide('subagents', { listChildren: async () => [], interrupt: () => {} });
+  ctx.provide('timer', { timeout: () => () => {}, interval: () => () => {} });
+  // R13 模型选择的第七服务：挂载级假件只需"无 policy"初值形态。
+  // R40：`register` 是 agent-policy 折叠的注册面（async_agent 行装载期调用；
+  // 假件收下即扔——投影行为由 test/agent-policy.test.mjs 专测）。
+  ctx.provide('sessionProjections', { stateOf: () => null, register: () => () => {} });
+  return { ctx, registered };
+}
+
+/**
+ * 等插件 fiber 进入 ACTIVE：cordis 的 `_reload()` 先 `await Promise.resolve()`
+ * 才执行 `apply`（`PKGS/cordis/src/fiber.ts:646-658`），因此推有限的微任务轮次就够，
+ * 不是靠时间蒙。超限直接断言失败，不会静默放过一个没跑起来的插件。
+ * @param {object} fork - `ctx.plugin()` 的返回值。
+ */
+async function activate(fork) {
+  for (let turn = 0; turn < 64 && fork.state !== ACTIVE; turn++) await Promise.resolve();
+  assert.equal(fork.state, ACTIVE, '插件 fiber 未在有限个微任务内激活（apply 没跑？）');
+}
+
+const Context = await loadCordis();
+
+test('T6：lib/ 里访问的每个 ctx.<服务> 都必须在 inject 里声明', async (t) => {
+  const host = await loadHost();
+  if (host === undefined) {
+    t.skip('宿主包不可解析（离线环境），接线测试整体跳过');
+    return;
+  }
+
+  const declared = new Set(host.inject);
+  // 单包两角色：`lib/index.js` 是**唯一入口**（inject 声明六个硬依赖），宿主角色由
+  // 同一入口按"行配置有无 `toolName`"分派到 `lib/host.js`——不再存在"宿主入口
+  // 声明为空数组"的旧形态。所以这里核对的就是这一个入口的声明，
+  // "宿主角色不许把 settings 写成硬依赖"由 test/two-planes.test.mjs 的 T4 守。
+  const entries = await Promise.all(['../lib/index.js', '../lib/host.js'].map(async (relative) => {
+    try {
+      return await import(relative);
+    } catch {
+      return undefined;
+    }
+  }));
+  for (const entry of entries) {
+    for (const name of entry?.inject ?? []) declared.add(name);
+  }
+
+  const needsInject = new Set();
+  for (const source of libSources()) {
+    for (const member of ctxMembers(source.text)) {
+      if (!BUILTIN_CTX_MEMBERS.has(member)) needsInject.add(member);
+    }
+  }
+
+  const missing = [...needsInject].filter((member) => !declared.has(member));
+  assert.deepEqual(
+    missing,
+    [],
+    `这些 ctx.<服务> 访问没写进 inject，真实 cordis 上下文会在加载期抛 `
+    + `cannot get property "<name>" without inject —— 漏的是：${missing.join(', ')}`
+  );
+  // 反向：声明了却没人用，也该清掉（`inject` 是硬依赖，多一个就多一个等待条件）。
+  const unused = [...declared].filter((member) => !needsInject.has(member));
+  assert.deepEqual(unused, [], `inject 里声明了但 lib/ 从未使用：${unused.join(', ')}`);
+});
+
+test('T8：作废措辞"唯一途径"只许出现在标注其作废的上下文里（R4 审查 #3）', () => {
+  // R5 勘误明文作废了"`async_wait_job` 是取回后台输出的唯一途径"，但 `lib/` 里仍有注释把它
+  // 当作**生效需求**引用（R4 审查 §一.2 / #3）。注释不发给模型，却会让维护者把 R5 理解错，
+  // 而下一轮改代码的人正是照注释改的。
+  //
+  // 判据（与报告给的验收口径同形）：出现该措辞的那一行，**同段内**必须出现
+  // "作废 / 勘误 / 旧措辞"之一——也就是"只允许引用作废历史"。
+  const offenders = [];
+  for (const source of libSources()) {
+    source.text.split('\n').forEach((line, index) => {
+      if (!line.includes('唯一途径')) return;
+      if (/作废|勘误|旧措辞|旧表述/.test(line)) return;
+      offenders.push(`${source.name}:${String(index + 1)}: ${line.trim()}`);
+    });
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    '这些行把已作废的"唯一途径"当成生效需求引用了：\n' + offenders.join('\n')
+  );
+});
+
+test('T6b：`ctx.get("<字面量>")` 的第二种写法也要被看见（R3 审查点名的盲区）', async (t) => {
+  const host = await loadHost();
+  if (host === undefined) {
+    t.skip('宿主包不可解析（离线环境），接线测试整体跳过');
+    return;
+  }
+
+  const declared = new Set(host.inject);
+  const reads = new Set();
+  for (const source of libSources()) {
+    for (const name of ctxGetLiterals(source.text)) reads.add(name);
+  }
+
+  // 每个可选读取要么已声明（那就不该用 `ctx.get`）、要么在白名单里。
+  const unexplained = [...reads].filter((name) => !declared.has(name) && !OPTIONAL_SERVICE_READS.has(name));
+  assert.deepEqual(
+    unexplained,
+    [],
+    `这些 ctx.get("<name>") 既不在 inject 里、也不在 OPTIONAL_SERVICE_READS 白名单里：`
+    + `${unexplained.join(', ')}。要么改成硬依赖写进 inject，要么按设计说明它为什么必须可选。`
+  );
+  // 白名单本身不许腐烂：白名单里的名字必须真的还在被读，否则删掉它。
+  const stale = [...OPTIONAL_SERVICE_READS].filter((name) => !reads.has(name));
+  assert.deepEqual(stale, [], `OPTIONAL_SERVICE_READS 里的这些名字已不再被读取，请清掉：${stale.join(', ')}`);
+});
+
+test('T3：inject 恰为七个服务；apply 按 config.toolName 注册工具；卸载后注销', async (t) => {
+  const host = await loadHost();
+  if (host === undefined || Context === undefined) {
+    t.skip('宿主包不可解析（离线环境），接线测试整体跳过');
+    return;
+  }
+
+  assert.deepEqual(
+    host.inject,
+    ['tools', 'jobs', 'shell', 'shellEnv', 'subagents', 'timer', 'sessionProjections'],
+    'inject 是与宿主组合的唯一契约，多一个少一个都是加载期错误'
+  );
+
+  // 第四名 async_agent（§18/R13）：接线级判据——真 cordis 上下文里按名注册成功、
+  // 卸载后注销。构造时不查 provider 注册表（描述里的名字取自配置），所以
+  // makeContext 的假 subagents 不需要 getProvider。
+  for (const toolName of ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent']) {
+    const { ctx, registered } = makeContext(Context);
+    const fork = ctx.plugin(
+      { name: host.name, inject: host.inject, Config: host.Config, apply: host.apply },
+      { toolName }
+    );
+    await activate(fork);
+
+    assert.deepEqual(
+      registered.map((definition) => definition.name),
+      [toolName],
+      `config.toolName=${toolName} 应当且只应当注册这一个工具`
+    );
+    assert.equal(typeof registered[0].execute, 'function');
+    assert.equal(typeof registered[0].output?.render, 'function', '工具必须声明 output.render');
+
+    await fork.dispose();
+    assert.deepEqual(registered, [], 'ctx.effect 的 disposer 必须在 fiber 卸载时注销工具（R4 可逆性）');
+  }
+});
+
+test('T12（0.1.7）：设置快照链的三种故障姿态——首播降级、刷新保旧、卸载清空', async () => {
+  // 0.1.7 取代了 0.1.5 的 attachSettings 分层读取（`settings.get(ns)` 服务面已不存在）。
+  // 新链路：宿主行 `attachSnapshotSource(ctx)` —— 首播快照 + 监听
+  // `loader/volatile-update`。三种姿态各有判据（§21.2 故障姿态表）：
+  //
+  // ① 首播失败 = **降级运行**（不再 fail-fast）：跨字段违例能被设置页保存路径持久化
+  //    （dsh-settings 只做逐字段校验），行若抛错死掉，describe 只收激活行、设置卡片
+  //    整个消失，用户失去应用内修复通道。判据：不抛 + 快照回退出厂默认 + warn 说明
+  //    + degraded 置位；后续合法 volatile 提交必须能自愈（degraded 复位）。
+  // ② 刷新失败 = 用户输入问题（跨字段违例）→ **保旧快照 + warn + stderr 说出来**
+  //    （绝不打掉宿主行，也绝不静默——"保存成功但行为没变且零线索"是 0.1.5 修掉的缺陷形态）；
+  // ③ 宿主行卸载 → disposer 清空快照（R17：插件效应完全跟随插件生命周期）。
+  const { attachSnapshotSource, readSnapshot, clearSnapshot } = await import('../lib/settings.js');
+  clearSnapshot();
+
+  // ① 首播非法（持久化着 min > max）→ 降级而不是抛。
+  //：stderr 通告行也必须有行为断言——只断言 warn 的话，删掉 notice 出口
+  // 全量照样绿。在这里临时捕获 process.stderr（notice.js 的默认出口）。
+  const stderrChunks = [];
+  const realStderrWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (chunk) => { stderrChunks.push(String(chunk)); return true; };
+  const degradeEvents = [];
+  let degradeListener;
+  const degradeCtx = {
+    on: (name, cb) => { degradeListener = cb; return () => { degradeListener = undefined; }; },
+    logger: { warn: (message) => degradeEvents.push(message) }
+  };
+  const badLive = { minWaitMs: 999999, maxWaitMs: 250 };
+  let degradedWiring;
+  try {
+    assert.doesNotThrow(() => { degradedWiring = attachSnapshotSource(degradeCtx, badLive); },
+      '首播非法不许抛——行死了设置卡片就消失，用户没有应用内修复通道');
+  } finally {
+    process.stderr.write = realStderrWrite;
+  }
+  assert.equal(degradedWiring.seeded, true);
+  assert.equal(degradedWiring.degraded, true, '降级状态必须可观察');
+  assert.equal(readSnapshot().minWaitMs, 250, '降级快照 = 出厂默认（minWaitMs）');
+  assert.equal(readSnapshot().maxResultChars, 30000, '降级快照 = 出厂默认（maxResultChars）');
+  assert.ok(degradeEvents.some((message) => /宿主行配置自检失败/.test(String(message)) && /按出厂默认运行/.test(String(message))),
+    '必须 warn 说明"忽略了什么、正在按什么运行"');
+  assert.ok(stderrChunks.some((line) => line.includes('宿主行忽略持久化的非法设置') && line.includes('minWaitMs > maxWaitMs')),
+    'stderr 通告行必须真的写出去且带上违例明细（进程外唯一出口）');
+
+  // ①' 降级后的自愈：同一份活配置被改正（模拟用户在设置页把值改回合法再保存）。
+  badLive.minWaitMs = 250;
+  badLive.maxWaitMs = 600000;
+  badLive.maxResultChars = 4321;
+  degradeListener();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(degradedWiring.degraded, false, '合法提交后降级状态必须复位');
+  assert.equal(readSnapshot().maxResultChars, 4321, '自愈后快照来自重新物化（不是默认值）');
+  degradedWiring.dispose();
+  assert.equal(readSnapshot(), undefined);
+
+  // ② 正常首播 + 刷新失败保旧。liveConfig 就是 apply 第二参（= fiber.config）：
+  //    每次重物化都从**这个对象**现读——cordis 0.1.7 没有 ctx.config 访问面。
+  const events = [];
+  const logger = { warn: (message) => events.push(['warn', message]) };
+  let liveConfig = { maxResultChars: 30000, minWaitMs: 250, maxWaitMs: 600000 };
+  let listener;
+  const hostCtx = {
+    on: (name, cb) => { listener = cb; events.push(['subscribe', name]); return () => { listener = undefined; }; },
+    logger
+  };
+  const wiring = attachSnapshotSource(hostCtx, liveConfig);
+  assert.equal(wiring.seeded, true);
+  assert.equal(readSnapshot().maxResultChars, 30000, '首播快照来自活配置对象的物化解析');
+
+  // volatile 提交后 config 变坏 → 保旧快照 + warn（不打掉、不静默）。
+  // ⚠️ 必须原地改字段：attachSnapshotSource 闭包捕获的是这个对象本身（真实链路里
+  // loader 也是对同一份 fiber.config 原地 `updateVolatile`，对象恒同一）。
+  liveConfig.minWaitMs = 999999;
+  liveConfig.maxWaitMs = 250;
+  listener();
+  await Promise.resolve();
+  assert.equal(readSnapshot().maxResultChars, 30000, '刷新失败必须保住旧快照');
+  assert.ok(events.some(([kind, message]) => kind === 'warn' && /volatile 提交后配置自检失败/.test(String(message))),
+    '必须 warn 说明是哪次提交没生效');
+
+  // 刷新成功路径：config 合法变更 → 快照整体替换。
+  liveConfig.minWaitMs = 250;
+  liveConfig.maxWaitMs = 600000;
+  liveConfig.maxResultChars = 4321;
+  listener();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(readSnapshot().maxResultChars, 4321, '合法提交后快照必须更新');
+
+  // ③ 卸载：disposer 清快照 + 撤监听。
+  wiring.dispose();
+  assert.equal(readSnapshot(), undefined, '宿主行卸载必须清空快照（无跨装载残留）');
+  assert.equal(listener, undefined, '事件监听必须一并撤销');
+});
+
+test('T14：lib/ 的裸包 import 清单 ⊆ package.json 的 deps∪peers——漏声明即红', async () => {
+  // 为什么需要： 把 @deepseek-ai/dsh-shell-env 从 peerDependencies 删掉时
+  // 依据句写的是"零服务消费"，而实际上 lib/jobs.js 一直在调 ctx.shellEnv.collect
+  // （服务消费）。inject/服务访问是动态的，静态扫描管不到；但**直接 import** 是静态
+  // 可判的——任何 lib/ 里 import 了却没进 deps∪peers 的包，代际核查（R15）就覆盖
+  // 不到它。本断言守这一半；服务消费半边由 design §23 的 peer 依据表人工核（表内
+  // 每行注明性质与行号）。
+  const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'));
+  const declared = new Set([
+    ...Object.keys(pkg.dependencies ?? {}),
+    ...Object.keys(pkg.peerDependencies ?? {})
+  ]);
+  assert.ok(declared.has('@deepseek-ai/dsh-shell-env'),
+    ' 的回归锚：dsh-shell-env（ctx.shellEnv.collect 的提供包）必须在 peerDependencies');
+
+  const imported = new Set();
+  for (const name of readdirSync(LIB_DIR)) {
+    if (!name.endsWith('.js')) continue;
+    const source = readFileSync(`${LIB_DIR}${name}`, 'utf8');
+    for (const match of source.matchAll(/from\s+['"]([^'"]+)['"]/g)) {
+      const specifier = match[1];
+      // 只管裸包说明符：相对路径与 node: 内建不算。
+      if (specifier.startsWith('.') || specifier.startsWith('node:') || specifier.startsWith('/')) continue;
+      const pkgName = specifier.startsWith('@')
+        ? specifier.split('/').slice(0, 2).join('/')
+        : specifier.split('/')[0];
+      imported.add(pkgName);
+    }
+  }
+  const undeclared = [...imported].filter((name) => !declared.has(name));
+  assert.deepEqual(undeclared, [],
+    `lib/ import 了未声明的包（R15 代际核查覆盖不到）：${undeclared.join(', ')}`);
+});
+
+test('T15（R38 §37.2-A3；R44 换钉）：peer 钉版整体换代——九个 dsh* 精确锁 0.2.0-rc.2，cordis/timer 不动；本包 version 随窗', async () => {
+  // 为什么需要：peer 校验只看 @deepseek-ai/dsh 与 dsh-* 前缀，精确锁让
+  // 「宿主代际不对 → 行拒载」为本包工作。换钉轮若漏改任一条，在 0.2.0 实例上
+  // 就是 R38-2 中间态（failed to import / skipping profile bundle）——本用例把
+  // 「漏改」在仓库里就地打红，不用等真机。0.2.0-rc.2 → 正式版/rc.3 再升时本用例
+  // 先红，强迫整表同步换代（design §37.6 风险表第一行）。version 断言：
+  // 把「tag 已打而 version 漏改」拦在 tag 之前，不再只靠切换穿指读兜底。
+  const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'));
+  const DSH_LINE = '0.2.0-rc.2';
+  const expected = {
+    '@deepseek-ai/cordis': '~4.0.4',
+    '@deepseek-ai/cordis-plugin-timer': '~1.1.6',
+    '@deepseek-ai/dsh': DSH_LINE,
+    '@deepseek-ai/dsh-jobs': DSH_LINE,
+    '@deepseek-ai/dsh-llm': DSH_LINE,
+    '@deepseek-ai/dsh-sandbox': DSH_LINE,
+    '@deepseek-ai/dsh-shell': DSH_LINE,
+    '@deepseek-ai/dsh-shell-env': DSH_LINE,
+    '@deepseek-ai/dsh-subagent': DSH_LINE,
+    '@deepseek-ai/dsh-typert-protocol': DSH_LINE,
+    '@deepseek-ai/dsh-tools': DSH_LINE
+  };
+  assert.deepEqual(pkg.peerDependencies, expected,
+    `peerDependencies 必须与 design §23 表逐键逐值一致（实际：${JSON.stringify(pkg.peerDependencies)}）`);
+  assert.equal(pkg.dependencies?.['@deepseek-ai/schemastery'], '~3.18.4',
+    'schemastery 叶子依赖形态不变（~3.18.4）');
+  assert.equal(pkg.version, '0.2.2',
+    '本包 version 必须与 R44 换钉窗一致（0.2.2）——漏改会在 tag 之后才被穿指读抓住');
+});
+
+

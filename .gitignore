@@ -1,0 +1,13 @@
+# 本机平面（唯一例外目录）：本机配置、语料、证据、部署脚本与临时产物全部归拢在
+# 此目录下，永不进版本库。公开面里的任何本机事实都必须经配置加载器
+# （tools/_local-config.mjs）从它读取，取不到就按"本机面缺席"文档化跳过。
+.local/
+
+# 依赖：开发机上 node_modules\@deepseek-ai 是指向宿主安装树的目录联接，不含源码，
+# 不该进版本库。复原方式见 README 的安装章节。
+node_modules/
+
+# 编辑器与系统
+.vscode/
+Thumbs.db
+Desktop.ini

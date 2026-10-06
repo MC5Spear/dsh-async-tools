@@ -1,0 +1,222 @@
+/**
+ * `tools/check-docs.mjs` 的判据测试。
+ *
+ * 为什么需要这个文件：这个脚本原来的问题**不是"漏了某个名字"**，而是"打印了却不失败"。
+ * 两轮复审各发现一次同类形态：
+ *   - 白名单默认放行 → 新建一份带「勘误」的现行文档被静默放过、退出 0；
+ *   - `bad` 把已登记档案排除 → 给档案加未闭合围栏只打印 WARN、退出 0。
+ * 两次都是"输出看起来在报问题，退出码却说是好的"。**光靠人读输出发现不了**，
+ * 必须有一条能失败的断言——本文件里的 C1–C8 就是那几条。
+ *
+ * 做法：在包外的一次性副本上跑检查函数。不复制整包（那要几秒），
+ * 只把它的输入（`docs/`、`README.md`、`verify/README.md`、本机平面语料目录）
+ * 铺到一个临时目录里——检查只读这些相对路径，所以沙箱是自洽的。
+ *
+ * ## 进程内调用（§26.4）
+ *
+ * 原来用 `execFileSync` 起子进程跑脚本——沙箱下 spawn EPERM，`error.status ?? 1`
+ * 兜成退出 1、输出为空，C1–C4 全部**假红**（与被检查的文档无关）。脚本因此改成了
+ * 可导入函数（`checkDocs(root)`，CLI 入口只在直接执行时生效），`runChecker` 直接调用它。
+ *
+ * ## 两个平面（单仓双平面重构后）
+ *
+ * 语料（过程稿、事实登记簿、交付索引）从公开面 `docs/` 下沉到了不被跟踪的
+ * `<LOCAL_DIR>/docs/`。检查器因此多了一个"可以整个不在"的输入，本文件的沙箱
+ * 把它铺出来，C7/C8 专门盯它缺席与为空两种形态。
+ */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { LOCAL_DIR } from '../tools/_local-config.mjs';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const SCRIPT = 'tools/check-docs.mjs';
+
+/**
+ * 现行文档清单——**必须与 `tools/check-docs.mjs` 的 `CURRENT_DOCUMENTS` 一致**。
+ *
+ * 这里写第二份而不是 import 脚本的常量：脚本的 CLI 入口会 `process.exit`，
+ * 静态导入有顺带执行整场检查的风险（函数形态只在调用时跑，但双份清单的漂移风险
+ * 本来就是 C5 要盯的）。重复一份的代价是可能漂移，所以 C5 顺便断言这些文件都存在。
+ */
+const CURRENT_DOCS = ['requirements.md', 'design.md'];
+
+/**
+ * `docs/` **之外**的现行文档，同样必须与脚本一致。
+ *
+ * 除 `verify/README.md`（验证目录的唯一脚本清单）外，还有两份社区文件——
+ * 版本变更与参与方式。它们不在 `docs/` 下，所以脚本的"未分类/幽灵"对账
+ * 不覆盖它们——**但沙箱必须把它们也铺进去**，否则脚本会在沙箱里报"现行文档本身不存在"，
+ * 而那条失败与代码无关。
+ */
+const CURRENT_OUTSIDE_DOCS = ['verify/README.md', 'CHANGELOG.md', 'CONTRIBUTING.md'];
+
+/** 沙箱语料里铺的两份合成档案（**不**取真实语料——那是本机平面的数据，且会随轮次改名）。 */
+const SAMPLE_CORPUS = {
+  'impl-review-sample.md': '# 合成审查稿\n\n围栏配对：\n\n```text\nok\n```\n',
+  'research-sample.md': '# 合成调研稿\n\n围栏配对：\n\n```text\nok\n```\n'
+};
+
+/**
+ * 铺一个临时沙箱（检查的全部输入），返回根目录与清理函数；`runChecker` 进程内调用检查函数。
+ *
+ * @param {{ corpus?: boolean }} [options] - `corpus:false` 时不铺语料目录（模拟 CI 与外部 clone）。
+ */
+async function sandbox({ corpus = true } = {}) {
+  const { checkDocs } = await import('../tools/check-docs.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'checkdocs-'));
+  mkdirSync(join(dir, 'tools'), { recursive: true });
+  cpSync(join(ROOT, 'docs'), join(dir, 'docs'), { recursive: true });
+  cpSync(join(ROOT, 'README.md'), join(dir, 'README.md'));
+  for (const rel of CURRENT_OUTSIDE_DOCS) {
+    mkdirSync(join(dir, dirname(rel)), { recursive: true });
+    cpSync(join(ROOT, rel), join(dir, rel));
+  }
+  if (corpus) {
+    const corpusDir = join(dir, LOCAL_DIR, 'docs');
+    mkdirSync(corpusDir, { recursive: true });
+    for (const [name, text] of Object.entries(SAMPLE_CORPUS)) writeFileSync(join(corpusDir, name), text, 'utf8');
+  }
+  return {
+    dir,
+    corpusDir: join(dir, LOCAL_DIR, 'docs'),
+    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+    // 方法名是**跑一次检查器**，与"异步工具"无关——不要叫 `async_run()`：
+    // 那个名字在本仓里专指工具，混用会让人以为这里测的是插件功能。
+    runChecker() {
+      const { code, out } = checkDocs(dir, { quiet: true });
+      return { code, out };
+    }
+  };
+}
+
+test('C1 check-docs：干净时退出 0', async (t) => {
+  const box = await sandbox();
+  t.after(box.cleanup);
+  const { code, out } = box.runChecker();
+  assert.equal(code, 0, `干净的树必须退出 0，实际输出：${out.slice(-300)}`);
+});
+
+test('C2 check-docs：未分类的新文档必须让它退出 1（白名单默认放行的假绿）', async (t) => {
+  const box = await sandbox();
+  t.after(box.cleanup);
+  // 复刻实测：新建一份带「勘误」的现行文档。旧版把它当档案，静默放过、退出 0。
+  writeFileSync(join(box.dir, 'docs', 'PROBE.md'), '# 探针\n\n这是一处勘误。\n', 'utf8');
+  const { code, out } = box.runChecker();
+  assert.equal(code, 1, `未分类的新文档必须让检查失败，实际退出 ${String(code)}`);
+  assert.match(out, /未分类/, `输出必须点名"未分类"，实际：${out.slice(-300)}`);
+});
+
+test('C3 check-docs：语料的结构问题也必须让它退出 1（档案豁免的假绿）', async (t) => {
+  const box = await sandbox();
+  t.after(box.cleanup);
+  // 复刻实测：给一份**档案**加未闭合围栏。旧版 `bad` 把档案排除，于是打印 WARN 却退出 0
+  // ——"打印了却不失败"。现在语料是就地清点的，所以这条判据对每一份语料都成立。
+  const archive = join(box.corpusDir, 'impl-review-sample.md');
+  const before = readFileSync(archive, 'utf8');
+  const fencesBefore = (before.match(/^```/gm) ?? []).length;
+  assert.equal(fencesBefore % 2, 0, '前置：合成档案原本围栏配对');
+  appendFileSync(archive, '```\n', 'utf8');
+
+  const { code, out } = box.runChecker();
+  assert.equal(code, 1, `语料的围栏不配对必须让检查失败，实际退出 ${String(code)}`);
+  assert.match(out, /围栏/, `输出必须点名围栏问题，实际：${out.slice(-300)}`);
+  assert.match(out, /impl-review-sample\.md/, '输出必须点名是哪一份语料');
+});
+
+test('C7 check-docs：语料目录整个不在时必须仍然退出 0（CI 与外部 clone 的正常形态）', async (t) => {
+  const box = await sandbox({ corpus: false });
+  t.after(box.cleanup);
+  assert.ok(!existsSync(box.corpusDir), '前置：沙箱里没有语料目录');
+  const { code, out } = box.runChecker();
+  assert.equal(code, 0, `语料缺席不是失败，实际退出 ${String(code)}：${out.slice(-300)}`);
+  // 但**必须留痕**：静默跳过与"查过了"在输出上要能分辨。
+  assert.match(out, /SKIP\s+语料/, `缺席必须打一行 SKIP，实际：${out.slice(-300)}`);
+});
+
+test('C8 check-docs：语料目录在但一份 .md 都没有时必须退出 1（空转检查器）', async (t) => {
+  const box = await sandbox({ corpus: false });
+  t.after(box.cleanup);
+  mkdirSync(box.corpusDir, { recursive: true });
+  const { code, out } = box.runChecker();
+  assert.equal(code, 1, `空语料目录必须失败，实际退出 ${String(code)}：${out.slice(-300)}`);
+  assert.match(out, /一个 \.md 都没有/, `输出必须说明是空语料，实际：${out.slice(-300)}`);
+});
+
+test('C5 check-docs：只准读那几个相对路径（新增输入必须同步改本文件的 sandbox）', async (t) => {
+  const box = await sandbox();
+  t.after(box.cleanup);
+  // 一次复审指出：真正的盲区不是"测旧版脚本"（每次都现拷），而是**输入契约没写下来**——
+  // `sandbox()` 只铺固定几样，脚本一旦多读一份文件，沙箱里就读不到，
+  // 于是要么假红、要么那条判据在沙箱里失去意义，而**没有人会被提醒**。
+  // 这条断言就是那个提醒：脚本读的字面量路径必须只有 `'docs'`。
+  const source = readFileSync(join(ROOT, SCRIPT), 'utf8');
+  const literalReads = [...source.matchAll(/(?:readFileSync|readdirSync|existsSync)\(([^)]*)\)/g)]
+    .map((match) => match[1].trim())
+    // `file` / `name` 是循环变量（值来自 CURRENT_DOCUMENTS / 语料清点结果），不是新输入。
+    .filter((argument) => argument !== 'file' && argument !== 'name' && argument !== 'abs');
+  const suspicious = literalReads.filter((argument) => argument.startsWith("'") && argument !== "'docs'");
+  assert.deepEqual(suspicious, [],
+    `脚本开始读新的字面量路径了（${suspicious.join('、')}）：`
+    + '请同步更新 test/check-docs.test.mjs 的 sandbox()，否则沙箱里读不到这份文件');
+
+  // 名单里的每一份都必须真的在盘上，否则"扫一份不存在的文件"等于没扫。
+  const docs = readdirSync(join(ROOT, 'docs')).filter((name) => name.endsWith('.md'));
+  for (const name of CURRENT_DOCS) {
+    assert.ok(docs.includes(name), `docs/${name} 必须在盘上（脚本的现行名单里有它）`);
+  }
+  assert.ok(existsSync(join(ROOT, 'README.md')), 'README.md 必须在盘上（脚本的现行名单里有它）');
+  // 公开面 `docs/` 只放需求稿与设计稿：多于现行名单就是有人把过程稿放回来了。
+  assert.equal(docs.length, CURRENT_DOCS.length,
+    `公开面 docs/ 只应剩 ${String(CURRENT_DOCS.length)} 份现行文档，实际 ${String(docs.length)} 份：${docs.join('、')}`);
+  void box;
+});
+
+test('C6 现行文档、测试与工具里引用的探针必须都在盘上（档案豁免）', () => {
+  // 一次复审指出：提交信息里那句"全包扫描确认被引用的 5 个探针全部存在"**与事实不符**——
+  // 当时只扫了子集（现行文档 + 两个测试文件），漏掉了 `tools/` 下的探针自己。
+  //
+  // 口径：**现行范围**（README、现行文档、test/、tools/）里引用的 `tools/probe-*.mjs`
+  // 必须在盘上——引用了不存在的探针，读者按图索骥会扑空。
+  // **档案豁免**：审查/修正/审计/端到端记录写的是**当时**的状态，那时的探针可能已经删了，
+  // 改它们等于篡改历史。
+  //
+  // 注意这里读的是**仓库本身**，不是沙箱：沙箱只铺了公开文档，而本判据要覆盖 test/ 与 tools/。
+  const files = [
+    'README.md',
+    ...CURRENT_DOCS.map((name) => join('docs', name)),
+    // `docs/` 之外的现行文档也在扫描范围内（`verify/README.md` 现在没有 `tools/probe-*`
+    // 引用，但登记了不扫会在下次有人加进去时静默漏掉）。
+    ...CURRENT_OUTSIDE_DOCS,
+    ...readdirSync(join(ROOT, 'test')).filter((n) => n.endsWith('.mjs')).map((n) => join('test', n)),
+    ...readdirSync(join(ROOT, 'tools')).filter((n) => n.endsWith('.mjs')).map((n) => join('tools', n))
+  ];
+
+  const missing = [];
+  for (const relative of files) {
+    const text = readFileSync(join(ROOT, relative), 'utf8');
+    // ⚠️ 只认**本包相对写法** `tools/probe-*.mjs`——它才是"读者会在本仓里找"的那种引用。
+    // 负向后顾排除前面还有路径分隔符或盘符的情形：写全绝对路径指的是**别的仓**里的文件。
+    for (const match of text.matchAll(/(?<![\w\\/:.])tools\/(probe-[a-z0-9-]+\.mjs)/g)) {
+      if (!existsSync(join(ROOT, 'tools', match[1]))) missing.push(`${relative} → ${match[1]}`);
+    }
+  }
+  assert.deepEqual(missing, [],
+    `现行范围里引用了不存在的探针（读者按图索骥会扑空）：\n  ${missing.join('\n  ')}`);
+});
+
+test('C4 check-docs：名单里的文件在盘上不存在时必须报出来', async (t) => {
+  const box = await sandbox();
+  t.after(box.cleanup);
+  // 名单与现实漂了 → 检查会静默失去作用（扫一份不存在的文件，等于没扫）。
+  const victim = join(box.dir, 'docs', 'design.md');
+  assert.ok(existsSync(victim), '前置：该文件在现行名单里');
+  rmSync(victim);
+
+  const { code, out } = box.runChecker();
+  assert.equal(code, 1, '名单指向不存在的文件时必须失败');
+  assert.match(out, /在盘上不存在/, `输出必须说明名单与现实漂了，实际：${out.slice(-300)}`);
+});

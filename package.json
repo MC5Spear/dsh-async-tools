@@ -1,0 +1,96 @@
+{
+  "name": "dsh-async-tools",
+  "version": "0.2.2",
+  "description": "Bounded-yield async execution tools for DSH: `async_run` yields to a background job instead of killing long commands, `async_wait_job` / `async_wait_agent` wait within a required bounded budget and return early when the user speaks, without disturbing the background work.",
+  "license": "MIT",
+  "author": "MC5Spear (https://github.com/MC5Spear)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MC5Spear/dsh-async-tools.git"
+  },
+  "bugs": "https://github.com/MC5Spear/dsh-async-tools/issues",
+  "homepage": "https://github.com/MC5Spear/dsh-async-tools#readme",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "presets",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --import ./tools/_host-hooks.mjs --test \"test/*.test.mjs\"",
+    "test:inproc": "node --import ./tools/_host-hooks.mjs --test --test-isolation=none \"test/*.test.mjs\"",
+    "test:offline": "node --test \"test/*.test.mjs\"",
+    "check": "node tools/check-syntax.mjs",
+    "check:preset": "node --import ./tools/_host-hooks.mjs tools/validate-preset.mjs",
+    "check:public-surface": "node tools/check-public-surface.mjs",
+    "check:encoding": "node tools/check-encoding.mjs",
+    "check:docs": "node tools/check-docs.mjs",
+    "check:alias-tokens": "node tools/check-alias-tokens.mjs",
+    "check:agent-policy": "node verify/check-agent-policy.mjs",
+    "acceptance": "node verify/final-acceptance.mjs",
+    "acceptance:e2e": "node verify/async-e2e.mjs",
+    "acceptance:settings": "node verify/probe-settings-behavior-full.mjs",
+    "check:model-text": "node --import ./tools/_host-hooks.mjs tools/check-model-text.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": [
+        "./cordis.patch.yml",
+        "./presets/dsh-async.patch.yml",
+        "./presets/dsh-async-create.patch.yml"
+      ]
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-plugin-manager",
+        "@deepseek-ai/dsh-api-gateway",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ]
+    }
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "async",
+    "yield",
+    "background-job",
+    "subagent-wait"
+  ],
+  "dependencies": {
+    "@deepseek-ai/schemastery": "~3.18.4",
+    "zod": "~4.6.5"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@deepseek-ai/cordis-plugin-timer": "~1.1.6",
+    "@deepseek-ai/dsh": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-jobs": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-sandbox": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-shell": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-shell-env": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-subagent": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2"
+  }
+}

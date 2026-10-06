@@ -1,0 +1,222 @@
+# The `dsh-async-create` agent preset: the CREATION-side agent (cordis baseline)
+# with an ASYNCHRONOUS shell and a single bounded-wait derivation entry.
+#
+# 0.1.7 交付形态（docs/design.md §20/§28）：本文件是 `dsh.bundle.patch` 数组的第三项——
+# 一条预设声明行（`@deepseek-ai/dsh-agent-preset`），config.plugins 是完整子清单。
+# 预设生命周期由 loader 拥有（F66）：本包从 bundles 移除即预设消失，无清理代码。
+#
+# 基线 = 0.1.7 shipped 创造模式（cordis）预设补丁（F103），对其的手术（§28.2，逐条给依据）：
+#   1. tool-bash 无条件 disabled: true（R20 / F82 / R26「不做同步 shell」）；
+#   2. 不挂 tool-pwsh 行（R6：前台同步 shell 到期杀进程树，与异步语义冲突）；
+#   3. tool-bash 之后连续成组新增四行 dsh-async-tools（toolName 分派，成例 F44）；
+#   4. tool-subagent / tool-subagent-fork 置 disabled: true、config 逐字保留
+#      （§28.1 裁决 A：派生入口唯一 = async_agent，结构性禁用强于提示词约束；
+#      管理面 tool-subagent-control / -list-agents 与引擎服务 workflow-ptc 保持
+#      在场——tool-workflow 行 R35-b 起禁用，见 4b）；
+#   4b. R35 手术：tool-workflow 置 disabled: true（R35-b——编排只走 async_workflow）；
+#      第五行 async_workflow 插 delegation 组内 tool-workflow 行后（R35-a——引擎是
+#      组内隔离服务，组外行取不到，设计 G-1）；workflow-ptc（引擎服务，供电）保留。
+#      功能损失照 R35-e 登记：失去宿主 workflow 工具的脚本编排参数面——出路 =
+#      async_workflow（同引擎、异步语义），或换预设开新会话。
+#   5. tool-plugin-manager 的 disabled 从基线的 !!js 表达式换成布尔 true
+#      （R26 明文「与 dsh-async 补丁一致的手术」）；
+#   6. persona prefix 在基线身份句之上加异步纪律（与 dsh-async 预设逐字同源）+
+#      DELEGATION 硬规则（R26 按 R14 写入、句面适配唯一入口，锚句见 §28.3）；
+#   7. 预设行不带 disabled 护栏（F67，与 dsh-async 补丁同款）；
+#   8. 其余行与基线逐字一致（含组内整段 config、skill-filesystem 的 customSkillDirs
+#      表达式与行序——cordis 的 skill 系行在尾部，不在 tool-jobs 之后）。
+# 创作指导不写回 persona（§28.1 裁决 C）：基线把它交给 skill 系行承载。
+- insert:
+    - id: preset-dsh-async-create
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: dsh-async-create
+        name: 异步创造模式
+        description: 在创造模式基础上改用异步 shell 与后台委托的插件/预设创作 Agent：async_run 的命令超出让出预算不会被杀掉，而是转后台并返回 job_id；子代理一律经 async_agent 后台派生，用 async_wait_agent 有界等待取回；用户插话时等待立即返回且后台工作不受影响。
+        order: 6
+        plugins:
+          # ── identity（手术 6：persona prefix）──
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              suffix: Your working directory is {{cwd}}.
+              prefix: >-
+                You are a coding agent powered by the {{model}} model.
+                This deployment runs commands ASYNCHRONOUSLY. `async_run` returns a job_id
+                instead of blocking when a command outlives its yield budget: when that
+                happens, keep working on other things and call `async_wait_job` later instead
+                of waiting idly or re-running the command. Use `async_wait_agent` (bounded,
+                interruptible) rather than polling when you need a background subagent's
+                outcome. Never treat a returned job_id as a failure.
+                DELEGATION RULES (hard rules, not advice):
+                1) Delegations are ALWAYS background. async_agent is the ONLY delegation
+                entry in this preset — it has no foreground mode. subagent / subagent_fork
+                are disabled here; do not call them.
+                2) When you need a subagent's result, wait with async_wait_agent (bounded
+                wait_ms). Do not poll in a loop; do not re-delegate just to check progress;
+                the final answer arrives as its own message.
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          # ── shell（手术 1/2/3）──
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: true
+          - id: async-run
+            name: dsh-async-tools
+            config:
+              toolName: async_run
+          - id: async-wait-job
+            name: dsh-async-tools
+            config:
+              toolName: async_wait_job
+          - id: async-wait-agent
+            name: dsh-async-tools
+            config:
+              toolName: async_wait_agent
+          - id: async-agent
+            name: dsh-async-tools
+            config:
+              toolName: async_agent
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+          - id: command-goal
+            name: '@deepseek-ai/dsh-command-goal'
+          - id: tool-goal
+            name: '@deepseek-ai/dsh-tool-goal'
+          # ── planning（与基线逐字一致）──
+          - id: planning
+            name: cordis:group
+            group: true
+            isolate:
+              planMode: true
+            config:
+              - id: plan-mode
+                name: '@deepseek-ai/dsh-plan-mode'
+                config:
+                  section: |
+                    You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+
+                    Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
+
+                    The tool catalog stays the same across modes for request-cache stability. These plan-mode rules override any later tool description or guidance that suggests using mutation tools; those tools remain listed to keep the tool catalog unchanged. Do not use todo_write to track this planning phase: it tracks implementation after an approved plan, while the plan itself belongs in exit_plan_mode.
+
+                    Resolve discoverable facts by inspection. Use ask_user_question only for user-owned choices or material ambiguity that inspection cannot answer. Do not ask the user where code lives or how current behavior works when you can find out.
+
+                    Make the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to review but detailed enough that another engineer can implement it without making design decisions.
+
+                    When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose or ask_user_question. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
+          # ── compaction（与基线逐字一致）──
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+          # ── delegation（手术 4：subagent / fork 结构性禁用，config 逐字保留）──
+          - id: delegation
+            name: cordis:group
+            group: true
+            isolate:
+              workflowEngine: true
+            config:
+              - id: tool-subagent-control
+                name: '@deepseek-ai/dsh-tool-subagent-control'
+              - id: tool-subagent-list-agents
+                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+              - id: tool-subagent
+                name: '@deepseek-ai/dsh-tool-subagent'
+                disabled: true
+                config:
+                  provider: spawn
+                  toolName: subagent
+                  modelSelectionSettings: true
+                  backgroundMode: continuable
+              - id: tool-subagent-fork
+                name: '@deepseek-ai/dsh-tool-subagent'
+                disabled: true
+                config:
+                  provider: fork
+                  toolName: subagent_fork
+                  backgroundMode: continuable
+              - id: tool-subagent-codex
+                name: '@deepseek-ai/dsh-tool-subagent'
+                disabled: true
+                config:
+                  provider: codex
+                  toolName: subagent_codex
+                  backgroundMode: one-shot
+                  maxDepth: provider-managed
+              - id: tool-subagent-claude-code
+                name: '@deepseek-ai/dsh-tool-subagent'
+                disabled: true
+                config:
+                  provider: claude-code
+                  toolName: subagent_claude_code
+                  backgroundMode: one-shot
+                  maxDepth: provider-managed
+              - id: workflow-ptc
+                name: '@deepseek-ai/dsh-workflow-ptc'
+                config:
+                  provider: spawn
+              # R35-b：宿主编排工具禁用（编排只走 async_workflow；引擎服务行保留供电）。
+              - id: tool-workflow
+                name: '@deepseek-ai/dsh-tool-workflow'
+                disabled: true
+              # R35-a：第五行 async_workflow 插在 delegation 组内（tool-workflow 行后）——
+              # workflowEngine 是组内隔离服务，组外行 ctx.get 恒 miss（设计 G-1）。
+              - id: async-workflow
+                name: dsh-async-tools
+                config:
+                  toolName: async_workflow
+              - id: tool-ralph
+                name: '@deepseek-ai/dsh-tool-ralph'
+                disabled: true
+                config:
+                  subagentProvider: spawn
+                  maxRounds: 64
+          # ── remaining model-facing rows（与基线逐字一致，含行序）──
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+          - id: tool-cordis
+            name: '@deepseek-ai/dsh-tool-cordis'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+            config:
+              customSkillDirs:
+                - !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')), 'skills')
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+          # ── 手术 5：plugin-manager 布尔禁用 ──
+          - id: tool-plugin-manager
+            name: '@deepseek-ai/dsh-plugin-manager/tools'
+            disabled: true

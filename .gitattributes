@@ -1,0 +1,14 @@
+# 行尾统一为 LF。
+#
+# 为什么必须显式声明：Windows 上 git 的 `core.autocrlf` 默认为 `true`，克隆出来的工作区
+# 会变成 CRLF，而本项目的 `npm run check:encoding` 把 CRLF 判为不合格（编码体检要求 LF）。
+# 不声明的话，"在你机器上通过、在别人机器上失败"，且失败原因看起来像编码损坏。
+#
+# 判定入口：`tools/check-encoding.mjs` 与 `tools/_encoding-core.mjs`。
+* text=auto eol=lf
+
+# 二进制/原样保留
+*.png binary
+*.jpg binary
+*.ico binary
+*.zip binary
