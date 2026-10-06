@@ -4,13 +4,22 @@
  * 前置：验证实例在听；dsh-async 预设；`askTakeover` 开（探针只读设置，不动别人
  * 的档位——共享实例纪律；若开关关，如实 FAIL 'takeover-off'，不擅自打开）。
  *
- * 判据（§36.5，R49 新增两条）：
+ * 判据（§36.5，R49 新增两条；r51 盲审 F1/F4 后时点判据强化）：
  * - (c) 时序判据：批 1 暂停 → 齐答结清 → 模型发批 2 接管 → 首轮轮询
- *   paused=false（倒计时数字形态、组开关显「暂停计时」）→ 墙钟越过全额窗口
- *   照表合成放行（转录出现超时锚句、组内出现已超时徽标）。
+ *   paused=false（倒计时数字形态、组开关显「暂停计时」、**数字 ∈ [18,29] s**＝
+ *   全额窗口的用户可见面——继承/缩短窗口在此必红）→ 墙钟越过全额窗口
+ *   照表合成放行（转录出现超时锚句、组内出现已超时徽标、**放行时刻距首见
+ *   ∈ [20s, 33s]**——早合成必红）。
  * - (d) 双会话隔离对照：会话 A 暂停在窗批、会话 B 在窗批照表走到期合成放行
  *   （B 的放行不被 A 的暂停冻结）；A 的恢复动作不触碰 B（B 组保持已超时态、
  *   不出现新倒计时）；A 恢复后按剩余平移放行。
+ * - (d-6) B 活动计时中的恢复对照（r51 盲审 F4 补腿）：B 仍在倒计时时恢复 A
+ *   ——B 的数字必须**续走原表**（单调递减、不重置不冻结），A 按剩余续走
+ *   （数字 ≤ 28 s——恢复重置成全窗口在此必红）；随后再暂停 A 回到 d-3 前提。
+ *   A 第二次恢复的数字同样 ≤ 28；放行时刻 ≈ 显示剩余 ± 粗容差（显数与兑现
+ *   的一致性——武装 delay 与元数据脱钩的大幅变异在此必红）。
+ * - setup-clean 门（r51 盲审建议）：开工面板必须本就干净（残留 > 0 如实红）；
+ *   收尾清理只动**本次创建会话**的组（共享实例不误伤他人）。
  *
  * GUI 面（Edge/Chrome CDP）：找不到浏览器时如实 FAIL 'cdp-missing'，不冒充通过。
  * 用法：node verify/probe-r49-batch-pause.mjs（默认自起无头 Edge；环境spawn 被安全
@@ -46,6 +55,11 @@ const COUNTING = /剩 \d+ ?s|\d+ ?s left/;
 const PAUSED_TEXT = /已暂停|Paused/;
 /** 已超时徽标（zh「已超时」/ en「Timed out」）。 */
 const EXPIRED_TEXT = /已超时|Timed out/;
+/** 倒计时数字（zh「剩 N s」/ en「N s left」）——时点判据的量化面。 */
+function countdownDigit(text) {
+  const m = /剩 (\d+) ?s|(\d+) ?s left/.exec(String(text));
+  return m === null ? null : Number(m[1] ?? m[2]);
+}
 
 const results = [];
 const marks = {};
@@ -95,17 +109,41 @@ async function answerFirst(page, sessionId) {
   return chip === 'clicked' && submit === 'clicked';
 }
 
-/** 清面板：逐条点「不答」直到空（开工清残留 + 收尾清痕迹两用）。 */
-async function clearPanel(page) {
+/** 清面板：逐条点「不答」直到空。scopeShorts 给定时只动**这些会话的组**
+ *  （r51 盲审建议：共享实例收尾不误伤他人）；null = 全局（开工清残留用——
+ *  断言与点击本就按组头短 id 定位，全局残留不影响判据，清它只是开工惯例）。 */
+async function clearPanel(page, scopeShorts = null) {
+  const scopeExpr = scopeShorts === null ? 'null'
+    : JSON.stringify(scopeShorts.map((sid) => String(sid).replace(/^session-/, '').slice(0, 8)));
   for (let round = 0; round < 10; round += 1) {
     const remaining = await evaluate(page,
-      'document.querySelectorAll(".ats-ask-panel .ats-ask-skip").length');
+      `document.querySelectorAll(".ats-ask-panel .ats-ask-skip").length`);
     if (Number(remaining) === 0) break;
-    await evaluate(page, '(() => { const b = document.querySelector(".ats-ask-panel .ats-ask-skip"); if (b !== null) b.click(); return true; })()');
+    await evaluate(page, `(() => {
+      const buttons = [...document.querySelectorAll(".ats-ask-panel .ats-ask-skip")];
+      const scoped = buttons.filter((b) => {
+        if (${scopeExpr} === null) return true;
+        const g = b.closest('.ats-ask-group');
+        if (g === null) return true;
+        const head = (g.textContent || '');
+        return ${scopeExpr}.some((s) => head.includes(s));
+      });
+      if (scoped.length > 0) scoped[0].click();
+      return true;
+    })()`);
     await sleep(800);
   }
   const leftover = await evaluate(page,
-    'document.querySelectorAll(".ats-ask-panel .ats-ask-skip").length');
+    `(() => {
+      const buttons = [...document.querySelectorAll(".ats-ask-panel .ats-ask-skip")];
+      if (${scopeExpr} === null) return buttons.length;
+      return buttons.filter((b) => {
+        const g = b.closest('.ats-ask-group');
+        if (g === null) return true;
+        const head = (g.textContent || '');
+        return ${scopeExpr}.some((s) => head.includes(s));
+      }).length;
+    })()`);
   return Number(leftover);
 }
 
@@ -159,14 +197,17 @@ async function main() {
   }
   const URL_LINE = readFileSync(localConfig.tokenFile, 'utf8').trim();
   const APP_URL = URL_LINE.slice(URL_LINE.indexOf('http'));
+  try { probeEnv.baseUrl = new URL(APP_URL).origin; } catch { /* 指纹尽力——非法 URL 留 null */ }
   const page = await openPage(browser.port, 'about:blank');
   await page.send('Page.navigate', { url: APP_URL });
   await waitFor(page, 'document.querySelectorAll("#root *").length', (n) => Number(n) > 20, 30000);
   await sleep(2000);
 
   // 开工先清残留：历轮失败跑留下的待答组会让点击与断言打到别人的组上。
+  // r51 盲审门控：面板必须**本就干净**——开工有残留即红（不把「清完」冒充
+  // 「本来就干净」）。
   const leftoverStart = await clearPanel(page);
-  record('setup-clean', true, `开工清残留（剩余 ${String(leftoverStart)} 条）`);
+  record('setup-clean', leftoverStart === 0, `开工面板干净（开工残留 ${String(leftoverStart)} 条——>0 即红）`);
 
   // ══ (c) 时序判据：暂停 → 齐答 → 新批照表放行 ══════════════════════════
   const sA = await newSession(PRESET);
@@ -202,12 +243,17 @@ async function main() {
     record('c-3-batch2', false, '批 2 的待答组未上屏（30 s）');
     return browser;
   }
-  // 首轮轮询形态：倒计时数字（非「已暂停」）+ 组开关显「暂停计时」（.ats-ask-pause 在场）。
+  // 首轮轮询形态：倒计时数字（非「已暂停」）+ 组开关显「暂停计时」（.ats-ask-pause 在场）
+  // + 数字 ∈ [18,29] s（r51 盲审 F1：全额窗口的用户可见量化面——继承剩余/缩短
+  //   窗口的实现数字会明显偏低，此处必红）。
   await sleep(1500); // 轮询链路 1 s 一拍——给首拍留余量
   const b2Text = await groupTextOf(page, sA);
+  const b2Digit = countdownDigit(b2Text);
+  marks.b2FirstDigit = b2Digit;
   const b2PauseBtn = await evaluate(page, `(() => { const g = ${groupExpr(sA)}; return g !== null && g.querySelector('.ats-ask-pause') !== null; })()`);
-  record('c-3-batch2-independent', COUNTING.test(b2Text) && b2PauseBtn === true,
-    `批 2 照表计时（倒计时数字 + 开关显「暂停计时」）：${b2Text.slice(0, 100)}`);
+  record('c-3-batch2-independent', COUNTING.test(b2Text) && b2PauseBtn === true
+    && b2Digit !== null && b2Digit >= 18 && b2Digit <= 29,
+    `批 2 照表计时（倒计时数字 ${String(b2Digit)} s ∈ [18,29] + 开关显「暂停计时」）：${b2Text.slice(0, 100)}`);
   await screenshot(page, `${SHOT_DIR}\\r49-batch-pause-b2-counting.png`);
 
   // 墙钟越过全额窗口 → 照表合成放行。锚句出现后客户端面板要等下一拍轮询（500 ms
@@ -225,8 +271,13 @@ async function main() {
       (v) => v === true, 8000);
   }
   marks.b2ReleasedAt = Date.now();
-  record('c-4-batch2-released', b2Released && b2ExpiredBadge === true,
-    `批 2 越全额窗口照表放行（转录超时锚句=${String(b2Released)}、已超时徽标=${String(b2ExpiredBadge)}）`);
+  const b2RelMs = marks.b2ReleasedAt - marks.b2Seen;
+  marks.b2RelMs = b2RelMs;
+  // r51 盲审 F1：放行时刻窗——距组首见 ∈ [20s, 33s]（全额 30 s 减面板链路时延
+  // 加检测余量）。早合成（如继承剩余直接放行）必红；上限仍守「越界后放行」。
+  record('c-4-batch2-released', b2Released && b2ExpiredBadge === true
+    && b2RelMs >= 20000 && b2RelMs <= 33000,
+    `批 2 越全额窗口照表放行（锚句=${String(b2Released)}、徽标=${String(b2ExpiredBadge)}、放行距首见 ${String(b2RelMs)} ms ∈ [20000,33000]）`);
   await screenshot(page, `${SHOT_DIR}\\r49-batch-pause-b2-expired.png`);
 
   // ══ (d) 双会话隔离对照：A 暂停在窗批，B 照表放行 ═════════════════════
@@ -253,6 +304,29 @@ async function main() {
     `A 已暂停、B 仍数字倒计时（A 的暂停不触碰 B）：A=${textA.slice(0, 60)} ‖ B=${textB.slice(0, 60)}`);
   await screenshot(page, `${SHOT_DIR}\\r49-batch-pause-iso-contrast.png`);
 
+  // ══ (d-6) B 活动计时中的恢复对照（r51 盲审 F4 补腿）════════════════════
+  // B 仍在倒计时时恢复 A——B 的数字必须续走原表（单调递减：重置会跳升、冻结
+  // 会停摆/变文案）；A 按剩余续走（≤ 28 s——恢复重置成全窗口必红）。随后把
+  // A 再暂停回 d-3 的前提（B 放行时 A 冻结在场）。
+  await sleep(6000);
+  const bDigit1 = countdownDigit(await groupTextOf(page, sIsoB));
+  const resumeA1 = await clickInGroup(page, sIsoA, '.ats-ask-resume');
+  await sleep(2500);
+  const aResumedText = await groupTextOf(page, sIsoA);
+  const bDuringText = await groupTextOf(page, sIsoB);
+  const aDigit1 = countdownDigit(aResumedText);
+  const bDigit2 = countdownDigit(bDuringText);
+  marks.d6ADigit = aDigit1; marks.d6BDigit1 = bDigit1; marks.d6BDigit2 = bDigit2;
+  const d6ResumeOk = resumeA1 === 'clicked' && COUNTING.test(aResumedText)
+    && aDigit1 !== null && aDigit1 >= 15 && aDigit1 <= 28
+    && bDigit1 !== null && bDigit2 !== null && bDigit2 < bDigit1 && bDigit2 >= bDigit1 - 8;
+  await screenshot(page, `${SHOT_DIR}\\r49-batch-pause-d6-resume-while-b-counting.png`);
+  const pauseA2 = await clickInGroup(page, sIsoA, '.ats-ask-pause');
+  await sleep(2000);
+  const aRefrozen = await groupTextOf(page, sIsoA);
+  record('d-6-resume-while-b-counting', d6ResumeOk && pauseA2 === 'clicked' && PAUSED_TEXT.test(aRefrozen),
+    `B 计时中恢复 A：A 按剩余续走（剩 ${String(aDigit1)} s ∈ [15,28]——非全窗口）、B 续走原表（${String(bDigit1)}→${String(bDigit2)} s 单调递减不重置不冻结）；恢复后 A 再冻结回前提：A=${aResumedText.slice(0, 45)} ‖ B=${bDuringText.slice(0, 45)}`);
+
   // B 照表走到期合成放行（A 仍暂停中——B 的放行就是「没被冻住」的活体证据）。
   let bRel = false;
   const bDeadline = marks.isoBothSeen + PAST_WINDOW_MS + 20000;
@@ -263,23 +337,31 @@ async function main() {
   marks.isoBReleasedAt = Date.now();
   const aStillFrozen = await groupTextOf(page, sIsoA);
   const aReleasedEarly = await released(sIsoA);
-  const bRelWithin = marks.isoBReleasedAt - marks.isoBothSeen < PAST_WINDOW_MS + 20000;
-  record('d-3-b-released-on-schedule', bRel && bRelWithin && PAUSED_TEXT.test(aStillFrozen) && !aReleasedEarly,
-    `B 照表放行（${String(marks.isoBReleasedAt - marks.isoBothSeen)} ms < 越界余量）且 A 仍冻结未放行`);
+  const bRelMs = marks.isoBReleasedAt - marks.isoBothSeen;
+  marks.isoBRelMs = bRelMs;
+  // 放行时刻窗（r51 盲审 F1）：下界防早合成（继承/缩短必红），上界防平移重挂。
+  record('d-3-b-released-on-schedule', bRel && bRelMs >= 20000 && bRelMs < PAST_WINDOW_MS + 20000
+    && PAUSED_TEXT.test(aStillFrozen) && !aReleasedEarly,
+    `B 照表放行（${String(bRelMs)} ms ∈ [20000,${String(PAST_WINDOW_MS + 20000)}]）且 A 仍冻结未放行`);
   await screenshot(page, `${SHOT_DIR}\\r49-batch-pause-iso-b-released.png`);
 
   // A 恢复——不触碰 B：B 组保持已超时态（不出现新倒计时），A 回数字倒计时。
+  marks.isoAResume2At = Date.now();
   const resumeA = await clickInGroup(page, sIsoA, '.ats-ask-resume');
   await sleep(2500);
   const aAfterResume = await groupTextOf(page, sIsoA);
   const bAfterResume = await groupTextOf(page, sIsoB);
+  const aDigit2 = countdownDigit(aAfterResume);
+  marks.isoADigit2 = aDigit2;
   // B 的徽标同样用有界等待（瞬时读在重渲拍上抖过一次——与 c-4 同族竞态）。
   const bBadge = await waitFor(page,
     `(() => { const g = ${groupExpr(sIsoB)}; return g !== null && g.querySelector('.ats-ask-expired') !== null; })()`,
     (v) => v === true, 8000);
+  // A 的数字 ≤ 28（r51 盲审 F1：第二次恢复同样不得重置成全窗口——显示面即红）。
   record('d-4-resume-isolated', resumeA === 'clicked' && COUNTING.test(aAfterResume)
+    && aDigit2 !== null && aDigit2 >= 15 && aDigit2 <= 28
     && bBadge === true && !COUNTING.test(bAfterResume) && PAUSED_TEXT.test(bAfterResume) === false,
-    `A 恢复回数字倒计时；B 保持已超时态（无新倒计时、未被平移重挂；resume=${String(resumeA)}、badge=${String(bBadge)}）：A=${aAfterResume.slice(0, 60)} ‖ B=${bAfterResume.slice(0, 60)}`);
+    `A 恢复回数字倒计时（剩 ${String(aDigit2)} s ∈ [15,28]）；B 保持已超时态（无新倒计时、未被平移重挂；resume=${String(resumeA)}、badge=${String(bBadge)}）：A=${aAfterResume.slice(0, 60)} ‖ B=${bAfterResume.slice(0, 60)}`);
   await screenshot(page, `${SHOT_DIR}\\r49-batch-pause-iso-a-resumed.png`);
 
   // A 按剩余平移放行（收尾对照：恢复后照表到期——不被恢复重置成全窗口）。
@@ -290,17 +372,35 @@ async function main() {
     await sleep(2000);
   }
   marks.isoAReleasedAt = Date.now();
-  record('d-5-a-released-after-resume', aRel,
-    `A 恢复后照表放行（转录超时锚句出现）`);
+  const aRelMs = marks.isoAReleasedAt - marks.isoAResume2At;
+  marks.isoARelMs = aRelMs;
+  // 一致性窗（r51 盲审 F1）：放行时刻 ≈ 恢复时刻 + 显示剩余 ± 粗容差（数字在
+  // 恢复点击后 ~2.5 s 读得，容差含 2 s 检测粒度）——武装 delay 与 expiresAt
+  // 元数据脱钩的大幅变异在此必红；「重置成全窗口」的精判在 d-4 数字上界。
+  const aRelOk = aRel && aDigit2 !== null
+    && aRelMs >= aDigit2 * 1000 - 5000 && aRelMs <= aDigit2 * 1000 + 8000;
+  record('d-5-a-released-after-resume', aRelOk,
+    `A 恢复后按剩余放行（${String(aRelMs)} ms ≈ 剩余 ${String(aDigit2)} s ± 容差；锚句=${String(aRel)}）`);
 
-  // 收尾清面板。
-  const leftover = await clearPanel(page);
-  record('cleanup', leftover === 0, `面板清空（残留待答 ${String(leftover)} 条）`);
+  // 收尾清面板——只动本次创建会话的组（r51 盲审建议：共享实例不误伤他人）。
+  const own = [sA, sIsoA, sIsoB].filter(Boolean);
+  const leftover = await clearPanel(page, own);
+  record('cleanup', leftover === 0, `本次会话清空（自建组残留待答 ${String(leftover)} 条）`);
   return browser;
 }
 
 let restore = null;
 let openedBrowser = null;
+// 证据指纹（r51 盲审 F4）：baseUrl 只记 origin（令牌绝不落盘）；entityHint 由
+// 部署方在跑前以环境变量注入（实体目录名含 commit）——json 可对上「跑的是哪份
+// 代码」。tokenFile 路径存在性一并记录（不读内容之外的任何秘密）。
+const probeEnv = {
+  baseUrl: null,
+  entityHint: process.env.R49_ENTITY_HINT ?? null,
+  node: process.version,
+  windowMs: WINDOW_MS,
+  pastWindowMs: PAST_WINDOW_MS
+};
 // 设置复原留痕（test-review-r50 F1）：attempted/ok/attempts 进证据 json；复原
 // 失败必须打进退出码——「判据全绿但实例设置没复原」不是绿跑。
 const settingsRestore = { attempted: false, ok: null, attempts: 0 };
@@ -327,7 +427,7 @@ try {
   }
 }
 const path = `${LOG_DIR}\\r49-batch-pause.json`;
-writeFileSync(path, JSON.stringify({ results, marks, settingsRestore, at: new Date().toISOString() }, null, 2), 'utf8');
+writeFileSync(path, JSON.stringify({ results, marks, settingsRestore, env: probeEnv, at: new Date().toISOString() }, null, 2), 'utf8');
 const failed = results.filter((r) => !r.ok).length;
 const exitOk = failed === 0 && settingsRestore.ok !== false;
 console.log(`\n探针结束：${String(results.length - failed)}/${String(results.length)} 通过；设置复原=${settingsRestore.ok === true ? 'ok' : String(settingsRestore.ok)}；证据 ${path}`);

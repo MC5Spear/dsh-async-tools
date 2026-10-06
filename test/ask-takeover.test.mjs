@@ -1502,6 +1502,52 @@ function makeClock(start = 1_000_000) {
   return { now: () => now, advance: (ms) => { now += ms; return now; } };
 }
 
+/**
+ * 时钟调度替身（r51 盲审 F1）：armed 项记 `dueAt = now + ms`，`advance()` 按
+ * 到期序（同拍按武装序）触发**未撤销**项——「到期前不结、到期恰一次合成」两
+ * 边界判据靠它可失败：把 take/resume 的武装 delay 改错（缩短/重置全窗口）而
+ * 保留 expiresAt 元数据时，纯手动 fire 的旧族判据不红，本族必红。旧 `fakeTimer`
+ * + 手动 `fire()` 两保持不动（32 处旧用例零迁移）；`fire()` 在本族也保留（防御
+ * 直发面），两族互不干扰。
+ */
+function makeScheduledClock(start = 1_000_000) {
+  let now = start;
+  let seq = 0;
+  const armed = [];
+  const clock = {
+    now: () => now,
+    advance(ms) {
+      const target = now + ms;
+      for (;;) {
+        const due = armed
+          .filter((e) => !e.cancelled && !e.fired && e.dueAt <= target)
+          .sort((a, b) => a.dueAt - b.dueAt || a.seq - b.seq)[0];
+        if (due === undefined) break;
+        now = due.dueAt; // 回调内 pause/resume 读到的是触发时刻的钟
+        due.fired = true;
+        due.fn();
+      }
+      now = target;
+      return now;
+    }
+  };
+  const timer = {
+    timeout(fn, ms) {
+      const entry = { fn, ms, dueAt: now + ms, cancelled: false, fired: false, seq: seq++ };
+      armed.push(entry);
+      return () => { entry.cancelled = true; };
+    },
+    armed,
+    fire(index = 0) {
+      const entry = armed[index];
+      assert.ok(entry !== undefined, '定时器必须已武装');
+      entry.fired = true;
+      entry.fn();
+    }
+  };
+  return { clock, timer };
+}
+
 hostTest('K1/K2：pause 撤定时器、记剩余、冻结到期点；二次 pause 不重记', async () => {
   const clock = makeClock();
   const { registry, timer } = makeRegistry({ timeoutMs: 5000, clock: clock.now });
@@ -1600,6 +1646,7 @@ hostTest('K6：同组暂停批在场时新批接管照表计时——挂 timer�
   const pending2 = registry.take(makeRequest(agent, [Q('q2')]), agent);
   const batch2 = [...registry.batches.values()].find((b) => b.questions.has('q2'));
   assert.equal(timer.armed.length, armedBefore + 1, '新批挂 timer（全额窗口）');
+  assert.equal(timer.armed[timer.armed.length - 1].ms, 5000, '新批 timer.ms=全额窗口（r51 盲审 F1：武装 delay 与 expiresAt 元数据脱钩的变异在此必红；到期边界由 K13 时钟调度族守）');
   assert.equal(batch2.paused, false, '新批暂停标记 false（批级独立）');
   assert.equal(typeof batch2.cancelTimer, 'function', '新批 timer 在走');
   const firstPoll = registry.stateItems().items.find((item) => item.questionId === 'q2');
@@ -1629,8 +1676,10 @@ hostTest('K7：暂停批作答照常结清；齐答出窗后无暂停残留（R4
   assert.equal(registry.submitAnswer({ batchId: batch.batchId, questionId: 'q1', selected: ['选项一'] }), 'delivered');
   const answers = await pending;
   assert.deepEqual(answers.answers[0].selected, ['选项一'], '暂停中的作答原样回流');
-  // K7-b（R49 翻转）：齐答清空批次后**无暂停残留**——下一批照常计时。R36 原
-  // 「标志跨批次存活」断言随 R49 翻转为反面；变异「新批继承暂停态」在此必红。
+  // K7-b（R49 翻转）：齐答清空批次后**无暂停残留**——下一批照常计时。变异面
+  // 准确口径（r51 盲审 F2）：此处旧批已删，能红的变异是「会话级残留」（独立于
+  // 批表的会话状态让新批带暂停登记）；「仍在表的继承」形状在本用例结构上够不到
+  // ——那一面由 K6 守（同组暂停批在场时接管）。
   assert.equal(registry.batches.size, 0, '旧批已清空');
   const armedBefore = timer.armed.length;
   const pending2 = registry.take(makeRequest(agent, [Q('q2')]), agent);
@@ -1754,7 +1803,11 @@ hostTest('K11：出窗路径对照——暂停批经中止/超时放行出窗后
     assert.equal(answers.answers[0].selected.length, 0, '暂停批经超时放行出窗（合成）');
     const expiredBatch = [...registry.batches.values()].find((b) => b.questions.has('q1'));
     assert.equal(expiredBatch.phase, 'expired', 'expired 批留列供迟到作答');
-    assert.equal(expiredBatch.paused, false, '放行路径清暂停标记（expired 相无计时——R49）');
+    // 结果不变量（r51 盲审 F2 准确口径）：此处 paused=false 由前置路径保证
+    // （resume 已清标记、expire 入口防御使 true 不可达放行）——断言留在作
+    // 状态不变量观察，**不**声称「删 expire 清标记行必红」的独立护栏（那行
+    // 是冗余防御；入口防御护栏在 K5）。
+    assert.equal(expiredBatch.paused, false, 'expired 相无暂停标记（结果不变量，非独立护栏）');
     const armedBefore = timer.armed.length;
     const pending2 = registry.take(makeRequest(agent, [Q('q2')]), agent);
     const batch2 = [...registry.batches.values()].find((b) => b.phase === 'open');
@@ -1814,4 +1867,56 @@ test('K12：R49-5 并存态组开关——同组暂停批+计时批并存显「�
   toggle2.props.onClick();
   assert.deepEqual(calls, [['resume', 's-mix'], ['pause', 's-mix']], '计时态点击发 pause（连点两下可到任一目标态）');
   model.dispose();
+});
+
+hostTest('K13：时钟调度边界——全额窗口与恢复剩余的到期判据（到期前不结、到期恰一次合成；r51 盲审 F1 补）', async () => {
+  const { clock, timer } = makeScheduledClock();
+  const { registry } = makeRegistry({ timeoutMs: 5000, timer, clock: clock.now });
+  const agent = fakeAgent('session-k13');
+  let settles = 0;
+  const track = (pending) => { pending.then(() => { settles += 1; }, () => { settles += 1; }); return pending; };
+
+  // (a) 新批：timer.ms=全额 + 到期边界。武装 delay 缩短（如 1000）而 expiresAt
+  // 元数据照旧时——旧族（手动 fire）判据全绿，本族 advance(4999) 已结 ⇒ 红。
+  const pending1 = track(registry.take(makeRequest(agent, [Q('q1')]), agent));
+  const batch1 = [...registry.batches.values()][0];
+  assert.equal(timer.armed[0].ms, 5000, '新批 timer.ms=5000（全额窗口）');
+  clock.advance(4999);
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(settles, 0, '到期前不结（4999/5000 仍 open——缩短武装必红）');
+  assert.equal(batch1.phase, 'open', '批 1 仍 open');
+  clock.advance(1);
+  const answers1 = await pending1;
+  assert.equal(answers1.answers[0].selected.length, 0, '到期恰一次合成（空答）');
+  assert.equal(batch1.phase, 'expired', '批 1 转 expired');
+  clock.advance(60_000); // 越界后无二次结算
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(settles, 1, '恰一次结算（无二次）');
+
+  // (b) 恢复剩余：烧 2 s 暂停（剩 3 s）→ 暂停中钟照走 1 s → 恢复重挂 ms=剩余
+  // （3000，非全窗口 5000——重置成全窗口的变异在 ms 断言与到期双边界必红）。
+  const pending2 = track(registry.take(makeRequest(agent, [Q('q2')]), agent));
+  const batch2 = [...registry.batches.values()].find((b) => b.questions.has('q2'));
+  clock.advance(2000);
+  assert.equal(registry.pause(agent.id), 'paused');
+  clock.advance(1000); // 暂停中：不折算（expiresAt 冻结）
+  const settlesBeforeResume = settles;
+  const resumeAt = clock.now();
+  assert.equal(registry.resume(agent.id), 'resumed');
+  const rearmed = timer.armed[timer.armed.length - 1];
+  assert.equal(rearmed.ms, 3000, '恢复重挂 ms=剩余 3000（非全窗口 5000）');
+  assert.equal(batch2.expiresAt, resumeAt + 3000, '到期点=恢复时刻+剩余（平移口径）');
+  // 边界双面：2999 不结（重挂更短必红）……恰一次合成（重挂更长/全窗口在 ms 已红，
+  // 此处再验到期点兑现）。
+  clock.advance(2999);
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(settles, settlesBeforeResume, '恢复后到期前不结（2999/3000 仍 open）');
+  assert.equal(batch2.phase, 'open', '批 2 仍 open');
+  clock.advance(1);
+  const answers2 = await pending2;
+  assert.equal(answers2.answers[0].selected.length, 0, '恢复后按剩余到期恰一次合成');
+  assert.equal(batch2.phase, 'expired', '批 2 转 expired');
+  clock.advance(60_000);
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(settles, 2, '全程恰两次结算（两批各恰一次）');
 });
