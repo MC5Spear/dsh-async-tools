@@ -89,7 +89,8 @@ function fakeTimer() {
       return () => { entry.cancelled = true; };
     },
     armed,
-    /** 触发第 index 个未撤销的定时器（默认第一个）。 */
+    /** 触发 armed 下标 index 处的定时器（默认 0；不跳过已撤销项——调用方需
+     *  按武装次序自己拿对下标，现两处调用 K6/K10 均按该语义索引）。 */
     fire(index = 0) {
       const entry = armed[index];
       assert.ok(entry !== undefined, '定时器必须已武装');
