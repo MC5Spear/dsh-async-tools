@@ -197,19 +197,22 @@ clamp(value, def, min, max) => Math.min(Math.max(value ?? def, min), max)
 ### 5.2 执行流程
 
 ```
-1. clamp wait_ms（缺省即报错，见 §3）
-2. 屏障：`jobs.list` 基三分快照（R29-c）——`undefined`（查询失败）→ 抛
+1. 入口短路（R29-b，在 clamp 之前——用户侧信号先于参数校验）：
+     exec.signal 已 aborted → 立即 interrupted(0)——不订阅、不发查询、
+     不武装预算
+2. clamp wait_ms（缺省即报错，见 §3）
+3. 屏障：`jobs.list` 基三分快照（R29-c）——`undefined`（查询失败）→ 抛
    queryFailed（可重试）；`null`（查无/不可见）→ 抛 unknownJob；已终态 →
    直接返回（消除"订阅前已结束"的竞态，完成优先）
-2b. R55 起始检查：扫 agent.inbox.nextStep，已有 user 插话 → 立即返回
+4. R55 起始检查：扫 agent.inbox.nextStep，已有 user 插话 → 立即返回
     interrupted（waited_ms 0；不接线、不创建 waiter、不挂预算定时器）。
     排在屏障终态判定之后——先到插话与已终态并存时完成结果优先（§42）
-3. 竞速（四个通道，每个解析为自带 name 的对象）：
+5. 竞速（四个通道，每个解析为自带 name 的对象）：
      a) 用户插话（source.kind === 'user'）                  → interrupted
      b) jobs.wait(job_id, wait_ms, agent, raceAbort.signal) → 终态或到期
      c) 预算定时器到点                                       → running
      d) 工具自身被取消                                       → 抛错结束等待
-4. finally：
+6. finally：
      - 清理定时器与 inbox 订阅
      - ★ **撤销在途的 jobs.wait**（raceAbort.abort()）
 ```
@@ -342,14 +345,15 @@ export function watchUserInterrupt(ctx, agent) { … }
 - **R55 起始检查的两个同步读**（无订阅、无定时器、无副作用）：
   - `preexistingSteering(agent)`——扫 `agent.inbox.nextStep`，返回第一条
     `source.kind === USER_MESSAGE_SOURCE` 的消息（无则 `null`）。与事件判定
-    **同源**：同常量、同列表、同保守方向（inbox 缺席或 getter 抛错按"无先到
-    插话"——宁可多等，不可错打断）。
+    **同源**：同常量、同列表、同保守方向（inbox 缺席、inbox getter 或
+    `nextStep` 列表 getter 抛错都按"无先到插话"——宁可多等，不可错打断；
+    读与扫整体在保守 `try` 里，需求 R56 条 2）。
   - `unclaimedSettlement(agent, agentId)`——扫 `nextStep` 与 `nextTurn` 两个
     列表，返回第一条 `source.kind === 'subagent-settled'` 且
     `source.senderSessionId` 精确命中的消息（无则 `null`）。只认强证据形态，
     正文回退**不在入口做**（弱证据，等待中通道维持原样）。仅在起始扫描命中
-    插话后作"结束优先于打断"的并存决定（§42.1 R55-B）。inbox 缺席或 getter
-    抛错按"无结算通知"（不升格，按插话打断返回）。
+    插话后作"结束优先于打断"的并存决定（§42.1 R55-B）。inbox 缺席或
+    inbox/任一列表 getter 抛错按"无结算通知"（不升格，按插话打断返回）。
 - 竞速的**每个分支都要自己带 `name`**：`watchUserInterrupt` 的原始信号是 `{ kind }` 形状，
   直接参与 `Promise.race` 会因缺 `name` 落到回退分支。`async_wait_job` 与 `async_wait_agent` 两处都有测试锁定。
 
@@ -3354,8 +3358,9 @@ R36-d）——注册表**无会话级暂停集**（R49 修订：R36 原会话级
 - (d-6) B 活动期恢复对照（复审收紧）：暂停前先烧 ~10 s 并读**首记剩余锚**——
   B 仍在倒计时时恢复 A：A 的数字 ∈ 首记锚−4..0 s（全额重置显示 ~29–30 必红）、
   B 的数字严格下降且降幅 ≤4 s（重置/冻结必红）；B 的放行时刻对「读锚时刻＋锚
-  数字」双侧限界（≥5 s 级平移/重挂必红；粒度=秒级显示＋轮询，更细粒度由单元
-  K13/K3 守）。A 第二次恢复对**二次锚**同口径，放行时刻同锚双侧限界（全额
+  数字」双侧限界（超出 −5/+7 s 容差窗的平移/重挂必红；窗内小幅平移可能被
+  接受——粒度=秒级显示＋2 s 轮询，细粒度隔离由单元 K13/K3 承担）。A 第二次恢复对
+  **二次锚**同口径，放行时刻同锚双侧限界（全额
   重置 ≈30 s 必红——不用恢复后读数自证非全窗口）。
 - (e) 开关随 R30：接管关闭时两座位无暂停开关。
 - 探针纪律（复审收紧）：开工**只读计数**残留（非零即 FAIL 退出，不清场、不点
@@ -4032,12 +4037,15 @@ K10 的 B 批接管发生在 A 暂停之前、结构上够不到继承分支）�
 - **B 活动期恢复对照（复审收紧）**：暂停前烧 ~10 s 读**首记剩余锚**——B 仍在
   倒计时时恢复 A：A 数字 ∈ 首记锚−4..0（全额重置显示 ~29–30 必红）、B 数字严格
   下降且降幅 ≤4（重置/冻结必红）；B 放行时刻对「读锚时刻＋锚数字」双侧限界
-  （≥5 s 级平移/重挂必红）。A 第二次恢复对二次锚同口径，放行时刻同锚双侧限界
-  （全额重置 ≈30 s 必红）。
+  （超出 −5/+7 s 容差窗的平移/重挂必红；窗内小幅平移可能被接受——细粒度
+  隔离由单元 K13/K3 承担，本判据粒度=秒级显示＋2 s 轮询）。A 第二次恢复对
+  二次锚同口径，放行时刻同锚双侧限界（全额重置 ≈30 s 必红）。
 - **取证纪律（复审收紧）**：开工只读计数残留（非零即 FAIL 退出，不清场）；收尾
   清理限定本次会话且无组归属按钮不算自身；证据 json 携带**实测指纹**（link 行、
   junction OS 级解析目标、实体版本+BUILD-STAMP、三文件 sha256、listPlugins 行、
-  /version 尝试）与设置复原结局。
+  /version 尝试）与设置复原结局。指纹的证明边界如实登记（R56）——文件腿只证
+  **磁盘实体**身份：已加载内存模块与磁盘文件的同一性、宿主版本（`/version`
+  非 200 时）未核验；指纹缺席不改变探针退出码。
 
 取证实例排序约束同 R32 条（需求风险表 R31 行：验证实例取证，或升级已成
 事实则按该行口径处置）。
@@ -4060,7 +4068,8 @@ K10 的 B 批接管发生在 A 暂停之前、结构上够不到继承分支）�
 `lib/interrupts.js` 新增两个同步读函数（§7）：`preexistingSteering(agent)` 扫
 `nextStep` 认 `USER_MESSAGE_SOURCE`；`unclaimedSettlement(agent, agentId)` 双列表
 认 `senderSessionId` 精确命中。两者都不订阅、不定时、无副作用；保守方向与
-R12 同向（读不到按"无"——宁可多等，不可错打断）。
+R12 同向——读不到按"无"（含 inbox 缺席与 inbox/任一列表 getter 抛错，
+宁可多等，不可错打断；需求 R56 条 2）。
 
 **R55-B 「结束优先于打断」的入口证据（判据 5）**
 
@@ -4069,7 +4078,7 @@ R12 同向（读不到按"无"——宁可多等，不可错打断）。
 - `async_wait_job`：**屏障快照的终态判定**（既有"完成优先"线）。起始检查排在
   它之后——先到插话与已终态作业并存 → 返回完成结果，免费成立。
 - `async_wait_agent`：**收件箱里未领取的权威结算通知**（`senderSessionId` 命中）。
-  起始扫描一次收件箱同时取两个事实：插话在列 + 结算通知在列 → 返回 settled
+  入口检查的两个同步读各取一次收件箱：先问插话在列、再问结算通知在列——两者都在 → 返回 settled
   （`waited_ms: 0`，note 标明通知先于等待到达）。该通道比列表复查更强——
   "已结算仍驻留"的子代理列表读作 running，而通知是权威信号（R29-c 证据分级）。
 
@@ -4125,7 +4134,8 @@ R12 同向（读不到按"无"——宁可多等，不可错打断）。
 | 判定单元 | `interrupt.test.mjs`：`preexistingSteering` 命中 / 三类非 user 不命中 / `next-turn` 不命中 / inbox 缺席按空 / getter 抛错按空；`unclaimedSettlement` `senderSessionId` 命中 / 他人不命中 / 无 `senderSessionId` 不命中（弱形态不升格）/ 两列表皆可命中 / inbox 缺席与 getter 抛错按"无结算通知"（不升格） |
 
 变异口径（`verify/mutate-r55-entry-scan.mjs`；五变体、基线检查、写回哈希核对，
-纪律同 `verify/mutate-steering.mjs`——三种结局分清，"没跑成"不算 CAUGHT）：
+结局模型自 R56 起为五状态并核验精确红面——见 §43.2，timeout / didnt-run /
+incomplete 统一 fail-closed，"没跑成"与"没证到目标红面"都不算 CAUGHT）：
 
 - **MA 纯事件驱动回潮**：两工具的起始检查调用点替换为注释 → C1a/C1b 红
   （判据 1 的"改回必红"）；同时既有 T2 仍绿（事件通道未动）——红的必须是
@@ -4150,6 +4160,201 @@ R12 同向（读不到按"无"——宁可多等，不可错打断）。
 | `README.md` | 打断语义处补「等待开始前已到达的插话同样立即打断」+ 变异索引表登记新脚本 |
 | 内部事实登记簿 | 对应事实条目按其"更新入口"实现后改写（登记簿不随公开仓走） |
 
-时序注：`docs/design.md` 行在**设计窗**已落（含本轮审查修正）；其余行（lib /
-test / verify / README / 登记簿）在**实现窗**生效——README 的入口检查表述随
-实现代码同窗提交，不单独先行。
+不单独先行。
+
+---
+
+## 43. R56：复审必修项收尾（两份复审报告的必修与条件项）
+
+> 需求权威：`docs/requirements.md` §2 R56。两份输入报告是过程档案
+> （`.local/docs/`，不随公开仓走）。本节只做验收设施与文档声明收口，
+> R55 生产语义零变化。
+
+### 43.1 取舍表
+
+| 取舍 | 选择 | 理由 |
+| --- | --- | --- |
+| 变异结果怎么读 | TAP 结构化解析（`--test-reporter=tap`，逐文件各跑一次） | spec 输出无结构保证；TAP 行自带测试名——按实测版本形状核对（node v24.x，跑法口径见 `verify/README.md`；多文件平铺无文件归属，逐文件跑才有 `{file, name}` 精确匹配），跨版本格式漂移由 incomplete 分支 fail-closed 承接（R56） |
+| 红面判定强度 | 失败集合与期望集合**双向相等** | 「恰 N 条红」只有集合相等能兑现；单向包含会把级联红当证据（R56-1） |
+| 超时击杀 | 独立「未完成」状态，无 CAUGHT 资格 | 超时输出不完整，证明不了目标断言红过；挂起护栏（250 ms 标记）保证正常路径红得快（R56-1） |
+| 夹具清理 | `afterEach` 兜底＋保留既有尾行 | 模块级共享 fixture 的失败路径清理——`afterEach` 清空 `agent.inbox.nextStep` 与 `nextTurn` **两个列表**（夹具残留两类都有）；显式尾行保留可读性，两者幂等（R56-1） |
+| 兜底范围 | 读＋扫整体进保守 `try` | 「读不到按无」要覆盖 inbox 与**列表**两层 getter；扫描对象虽是已到手的普通数组，整包让扫描侧未来演进仍保守（需求 R56 条 2） |
+| ③变异形态 | 自绘 spec 整体替换 `boundedNumberSpec` 装配行 | 与旧变异同构——打掉官方 parse 的非法通道，红面落判据 4 与 R29-d 越界判据（需求 R56 条 3） |
+| ⑤变异形态 | 传给官方表单的 `state` 投影强置 `failed:false` | 现行 failed 经 state 投影传递（`client.js` 装配段），等价旧「failed 恒置假」，红面落判据 6（需求 R56 条 3） |
+| R49-T1 | 收窄声明，不收紧容差 | 真机粒度=秒级显示＋2 s 轮询，收紧下界会引入假红；细粒度隔离已由单元 K13/K3 承担（R56-4） |
+| R49-T2 | 如实登记证据局限，不做运行时同一性核验 | 内存实体同一性核验需宿主自证通道，超出本轮授权（R56 非目标）；如实声明不冒充（R56-6） |
+
+### 43.2 变异核验兑现：状态机与精确红面（`verify/mutate-r55-entry-scan.mjs`）
+
+`runTests` 参数加 `--test-reporter=tap`，**不加** `--test-isolation` 旗标，
+且**三个测试文件逐个各跑一次**（实现窗实测修正：node v24.21.0 的 tap
+reporter 在多文件成功时输出**平铺无文件归属**——全局连续编号、无文件级
+条目；文件级 `# Subtest: <路径>` 条目只在子进程失败形态出现，此前据失败
+形态推断的「文件级缩进 0＋叶子缩进 4」嵌套结构不成立）。逐文件跑让每次
+TAP 自带归属（文件内用例名唯一，本仓测试名带判据编号实测无重名），
+`{file, name}` 精确匹配由此成立；isolation none 下每叶自带 `# Subtest:`
+行同样无归属（仓内 `mutate-r27-form.mjs` 带 `--test-isolation=none` 是
+进程内跑的相反惯例，不得照抄）。解析规则：
+
+- 单文件成功流为顶层平铺：缩进 0 的 `ok|not ok N - <名>` 为叶子用例
+  （剥 ` # SKIP`/` # TODO` 类后缀）；尾部
+  `# tests/pass/fail/skipped/cancelled` 摘要行为完整性依据。子进程失败
+  形态是 1 条顶层 `not ok 1 - <路径>`＋缩水的 `# tests`（恰好落
+  incomplete，不冒充 red）。
+- 状态五分（三态「未完成」统一 fail-closed，不产 CAUGHT 也不产 MISSED）：
+
+| 状态 | 判定 |
+| --- | --- |
+| green | 退出 0 ∧ 摘要齐全 ∧ fail=0 ∧ skipped=0 ∧ cancelled=0（逐文件判定，三文件全绿才 green） |
+| red | 退出非 0 ∧ 摘要齐全 ∧ `# tests` 与该文件基线相等 |
+| timeout | `ETIMEDOUT`/`killed`（超时输出不完整，无 CAUGHT 资格） |
+| didnt-run | spawn 失败（沿用既有 EPERM/ENOENT/EACCES 判定） |
+| incomplete | 其余：摘要缺失、`# tests` 缺额（加载/语法炸掉整个文件） |
+
+- 每变体声明 `expectFail`（`{file, name}` 数组）与 `expectPass`（既有 T2
+  两例——`async_wait_agent（T2）…` 与 `async_wait_job（T2）…`，全名匹配）。
+  `caught ⇔ red ∧ notOk 集与 expectFail 双向相等 ∧ expectPass 全在绿面`；
+  差异三向打印（红面多出 / 缺少 / 应绿却红）。
+- **期望红面名单实测校准后钉死**：先落夹具 `afterEach`，再逐变体临时应用
+  拿真实红面（校准跑），名单入脚本后正式跑校验集合相等。名单内用例必须是
+  该变异所拆守卫的判据用例：MA/MD/ME 沿盲审实测锚定（恰 3 / 1 / 1，既有
+  T2 留绿面）；MB/MC 除读侧与工具级判据用例外，可能含既有的 kind/落点守卫
+  用例（它们同样在拆过滤后必红），以校准跑为准、逐条在脚本注释里说明归属。
+- **锚唯一性计数门**（R49-O1 建议采纳）：`applyVariant` 前置检查由
+  `includes` 升级为**出现次数恰 1**（0 次 or 多次都 SKIP 当失败）——锚串
+  与别的函数撞句时当场暴露，而不是 `replace` 首处替换落错函数。
+
+### 43.3 兜底扩围：两读函数的保守 catch（`lib/interrupts.js`）
+
+- `preexistingSteering` / `unclaimedSettlement`：读与扫整体包 `try`，`catch`
+  返回 `null`——inbox getter 与 `nextStep`/`nextTurn` 列表 getter 任一抛错
+  都按无命中（宁可多等，不可错打断；不升格）。
+- 函数 doc 注释、§7「R55 起始检查的两个同步读」段（本文件 §7）、§42.1
+  R55-A 同步为「inbox 或任一列表 getter 抛错按无」。
+- 变异锚随结构重写（**仅 MB/MC**——MA 的两锚在 `wait-agent.js`/`wait-job.js`、
+  MD/ME 锚同样不在 `lib/interrupts.js`，不受本次重写影响；变异语义不变）。
+  两个新锚的完整字面量（**4 空格缩进**，try 块内）：
+  - MB 锚 `    return nextStep.find((message) => message?.source?.kind === USER_MESSAGE_SOURCE) ?? null;`
+    mutated：`    return nextStep.find((message) => message != null) ?? null; // mutated MB: 拆 kind 过滤`
+  - MC 锚 `    const nextStep = agent?.inbox?.nextStep;`
+    mutated：`    const nextStep = [...(Array.isArray(agent?.inbox?.nextStep) ? agent?.inbox.nextStep : []), ...(Array.isArray(agent?.inbox?.nextTurn) ? agent?.inbox.nextTurn : [])]; // mutated MC: 加扫 next-turn`
+  唯一性说明：`isSteering`（`lib/interrupts.js:80`）有 2 空格缩进的逐字
+  同句——新锚靠 4 空格缩进区分（`replace` 按 4 空格字面量匹配，不会落到
+  2 空格句上），配合 §43.2 的「出现次数恰 1」计数门双保险。
+- 新增读侧用例 ×2（`test/interrupt.test.mjs` R55 段末）：
+  `preexistingSteering` 的 `get nextStep(){throw}` → `null`；
+  `unclaimedSettlement` 的 `get nextTurn(){throw}`（nextStep 正常）与
+  `get nextStep(){throw}`（nextTurn 正常）→ 均 `null`——两个读函数
+  **各自读取的每个列表 getter** 都有抛错用例（`preexistingSteering`
+  不读 `nextTurn`，无需为其造该用例）。撤掉保护则 getter 抛错穿透、
+  用例直接红。
+
+### 43.4 锚点复活（含锚点设门建议）
+
+- `mutate-r27-form` ③：锚取装配行的行尾子串
+  `specs.push(boundedNumberSpec(field.key));`（`client.js`，出现恰一次——
+  行前缀 `else if (isNumericField(field))` 不进锚，等价且唯一）
+  → mutated 自绘 spec（format 直通、parse 恒 `set`，非数字强转 0）。
+- `mutate-r27-form` ⑤：锚 `state: { ...state.shell, invalid: state.shell.invalid === true || pairViolated(state) },`
+  → mutated 同行增补 `failed: false,`。
+- `mutate-steering` M3：锚换现行常量语义行（**6 空格缩进**的完整字面量）
+  `      if (payload?.message?.source?.kind !== USER_MESSAGE_SOURCE) return;`。
+- 三处变异方向与原编号一一对应；`mutate-steering` 头部注释里的旧常量名
+  `USER` 随 M3 修锚同步改为 `USER_MESSAGE_SOURCE`（其余头部描述不动）；
+  锚唯一性沿用两脚本既有机制——`mutate-steering` 的 `includes` 前置检查
+  （找不到锚 = SKIP = 失败）与 `mutate-r27-form` 的 apply 后等值判定
+  （改不动原文 = SKIP = 失败；本轮三处新锚已核唯一）——
+  后续再动这两份脚本的锚时，宜把检查升级为 §43.2 的「出现次数恰 1」同款
+  计数门。
+
+### 43.5 R49-T1：判据声明收窄（五处同步）
+
+- 探针文件头 (d-6) 概述（`verify/probe-r49-batch-pause.mjs` 头注）：删
+  「≥5 s 级变异可判」→「超出 −5/+7 s 容差窗的平移/重挂必红；窗内小幅平移
+  可能被接受——细粒度隔离由单元 K13/K3 承担」。
+- 探针 d-3 段注释与 `record('d-3-b-released-on-schedule', …)` 消息：删
+  「≥5 s 级」表述 → 「超出 −5/+7 s 容差窗的平移/重挂与早放行必红；窗内
+  小幅平移可能被接受——细粒度隔离由单元 K13/K3 承担，本判据粒度=秒级显示
+  ＋2 s 轮询」。
+- design §36.5 (d-6) bullet 与 §41.3「B 活动期恢复对照」bullet：同步收窄
+  （同上口径）。
+- d-4/d-5 段措辞本就与算式一致（全额重置必红、细粒度由单元守），不动。
+
+### 43.6 R49-N1：§5.2 流程块重排
+
+重排为（体例对齐 §6.2 步骤 1a；顺序与 `lib/wait-job.js` 实现逐项一致）：
+
+```text
+1. 入口短路（R29-b，在 clamp 之前——用户侧信号先于参数校验）：
+     exec.signal 已 aborted → 立即 interrupted(0)——不订阅、不发查询、不武装预算
+2. clamp wait_ms（缺省即报错，见 §3）
+3. 屏障：jobs.list 基三分快照（R29-c）…（原步骤 2 全文）
+4. R55 起始检查：…（原步骤 2b 全文）
+5. 竞速：…（原步骤 3 全文）
+6. finally：…（原步骤 4 全文）
+```
+
+实现对照（现行行号）：R29-b `wait-job.js:121` → clamp `:135` → 屏障
+`:141`＋终态 `:161` → R55 起始检查 `:168` → 接线/竞速 → finally。
+
+### 43.7 R49-T2：指纹证据局限如实登记
+
+- `collectFingerprint` 尾部加 `fp.identityLimits` 字符串：文件腿只证磁盘
+  实体身份；已加载内存模块与磁盘文件的同一性、宿主版本（`/version` 非 200
+  时）未核验；指纹缺席不改变探针退出码。
+- 探针头部「证据指纹」注释段与 design §41.3 取证纪律 bullet 各补一句同口径
+  声明。既有证据 JSON 是历史档案，不回改。
+
+### 43.8 顺带（R55 盲审 §7 建议，需求层已追认为 R56 顺带项）
+
+`lib/wait-agent.js` 入口注释与 §42.1 R55-B 的「一次收件箱读同时取两个事实」
+措辞改准（两个同步读各取一次 inbox）——与实现一致，不改变行为。
+
+### 43.9 定向修改清单
+
+| 文件 | 改动 |
+| --- | --- |
+| `verify/mutate-r55-entry-scan.mjs` | TAP 解析＋五状态机＋`expectFail`/`expectPass` 集合相等核验＋锚唯一性计数门＋MB/MC 锚字面量更新（§43.2/§43.3） |
+| `test/wait-agent.test.mjs`、`test/wait-job.test.mjs` | `afterEach` 清空共享 `agent.inbox` 的 `nextStep`/`nextTurn` 两列表（既有尾行保留）；新增 R55 用例不变 |
+| `lib/interrupts.js` | 两读函数整包 `try`；doc 注释同步（§43.3） |
+| `test/interrupt.test.mjs` | +列表 getter 抛错用例 ×2（§43.3） |
+| `verify/mutate-r27-form.mjs` | ③⑤锚点按现行 `client.js` 更新（§43.4） |
+| `verify/mutate-steering.mjs` | M3 锚换 `USER_MESSAGE_SOURCE` 语义行（§43.4） |
+| `verify/probe-r49-batch-pause.mjs` | 文件头 (d-6) 概述、d-3 注释与判据消息按容差窗口径收窄；指纹注释与 `identityLimits` 字段（§43.5/§43.7） |
+| `docs/design.md` | §5.2 流程块重排（§43.6）；§7/§36.5 (d-6)/§41.3/§42.1 同步；§42.2 结局模型句改写指向 §43.2；本节 |
+| `docs/requirements.md` | §2 R56 条目＋§6 验收行（设计窗已落） |
+| `lib/wait-agent.js` | 入口注释措辞改准（§43.8，零行为变化） |
+| `verify/README.md` | 变异脚本跑法钉 Node 版本口径（实测形状 node v24.x；跨版本漂移按 incomplete 处置） |
+
+`README.md` 不动（变异索引相关三行——`mutate-steering`/`mutate-r27-form`/
+`mutate-r55-entry-scan`——的方向描述不变）。
+
+时序注：本清单中 `docs/design.md` 的就地改写（§5.2/§7/§36.5/§41.3/§42.1/
+§42.2）、`verify/probe-r49-batch-pause.mjs` 的声明收窄（文件头、d-3 注释
+与判据消息）与 `verify/README.md` 的三处（TAP 版本口径段、隔离旗标例外
+括注、变异清单补登 `mutate-r55-entry-scan.mjs`）随设计窗审查修正同窗
+生效；其余行（lib / test / verify 脚本（`*.mjs`）/ `lib/wait-agent.js`）
+在**实现窗**生效。
+
+### 43.10 不改与裁决
+
+| 输入建议 | 裁决 | 理由 |
+| --- | --- | --- |
+| R49-O1「对锚唯一性设门」 | **采纳于 `mutate-r55-entry-scan`**（本次重写核验的脚本，§43.2 计数门） | `mutate-steering`/`mutate-r27-form` 的三处新锚本轮已逐一核对唯一，维持 `includes`＋SKIP 失败；后续再动这两份脚本的锚时升级计数门（§43.4 末句） |
+| R55 盲审的建议项：r27 脚本扩「精确红面匹配」 | 不改 | r27 判据映射是多用例家族，任意红口径维持；失修根因在锚点，修锚即恢复能红证据 |
+| R55 §7：timer 创建数/订阅总调用数断言 | 不改 | 现有停点断言已含真调用计数（`listChildren` 零调用、`jobs.wait` 零调用）；inbox 监听器余额断言较弱（先订阅后立即 dispose 仍绿），但其强化要改造 `freezeTimers` 基建，收益边际 |
+
+### 43.11 测试设计与交付
+
+- 新增用例仅 §43.3 两条（撤保护必红）；`afterEach` 落地后全电池零跳过；
+  MB 级联红消除由变异校准跑证明（红面收敛进名单）。
+- 判据 1 的可失败证明：实现窗做一次「期望红面故意错置」实验（多列/少列
+  各一）→ 脚本非零退出且不打印 CAUGHT；实验记录进实现窗报告，错置版本
+  不落盘。实验与正式跑**同在可写环境取证**——默认沙箱跑不起测试时不得以
+  fail-closed 之名跳过实验（那等于判据 1 空转），带 `sandbox_permissions`
+  重试或换宽松环境补做。
+- 变异脚本实跑：受限沙箱杀 node→node spawn 时按「没跑成不算 CAUGHT」
+  fail-closed，带 `sandbox_permissions` 重试同一条命令取证。
+- 提交策略沿用 R55 轮：内容锚定 blob 组装（HEAD 内容＋本轮字面 hunk），
+  排除用户术语清扫窗 hunks；单提交可整体 revert 回退。
+

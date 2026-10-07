@@ -18,7 +18,8 @@
  *   以**暂停前读得的数字为首记剩余锚**——恢复后 A 的数字必须落在首记锚
  *   −4..0 s 内（全额重置会显示 ~30，必红）；B 的数字续走原表（严格下降且
  *   降幅 ≤4 s；重置跳升/冻结停摆必红）。B 的放行时刻对**读锚时刻＋锚数字**
- *   双侧限界（大幅平移/重挂必红；粒度=秒级显示＋轮询，≥5 s 级变异可判）。
+ *   双侧限界（超出 −5/+7 s 容差窗的平移/重挂必红；窗内小幅平移可能被接受
+ *   ——粒度=秒级显示＋2 s 轮询，细粒度隔离由单元 K13/K3 承担）。
  *   A 第二次恢复同锚口径；放行时刻对「第二次暂停前锚」双侧限界（全额重置
  *   ≈30 s 必红——不再用恢复后读数当非全窗口证据）。
  * - setup-clean 门（复审 N2 收紧）：开工**只读计数**，非零立即 FAIL 退出——
@@ -376,7 +377,8 @@ async function main() {
 
   // B 照表走到期合成放行（A 仍暂停中——B 的放行就是「没被冻住」的活体证据）。
   // 复审 N4：放行时刻对「读锚时刻＋锚数字」双侧限界——期望 ≈ bAnchorAt +
-  // bDigit1 秒；大幅平移/重挂（≥5 s 级）与早放行必红（粒度=秒级显示＋2 s 轮询）。
+  // bDigit1 秒；超出 −5/+7 s 容差窗的平移/重挂与早放行必红；窗内小幅平移
+  // 可能被接受——细粒度隔离由单元 K13/K3 承担（粒度=秒级显示＋2 s 轮询）。
   let bRel = false;
   const bDeadline = marks.bAnchorAt + marks.bDigit1 * 1000 + 15000;
   while (Date.now() < bDeadline) {
@@ -392,7 +394,7 @@ async function main() {
     && bAnchorMs >= marks.bDigit1 * 1000 - 5000 && bAnchorMs <= marks.bDigit1 * 1000 + 7000;
   record('d-3-b-released-on-schedule', bRel && bWindowOk
     && PAUSED_TEXT.test(aStillFrozen) && !aReleasedEarly,
-    `B 对锚放行（放行−读锚 ${String(bAnchorMs)} ms ≈ 锚 ${String(marks.bDigit1)} s ±[−5,+7] s——大幅平移/重挂/早放必红）且 A 仍冻结未放行`);
+    `B 对锚放行（放行−读锚 ${String(bAnchorMs)} ms ≈ 锚 ${String(marks.bDigit1)} s ±[−5,+7] s——超出容差窗的平移/重挂/早放必红，窗内小幅平移可能被接受（细粒度隔离由单元 K13/K3 承担））且 A 仍冻结未放行`);
   await screenshot(page, `${SHOT_DIR}\\r49-batch-pause-iso-b-released.png`);
 
   // A 第二次恢复——不触碰 B：B 组保持已超时态（不出现新倒计时）；A 数字对
@@ -417,7 +419,7 @@ async function main() {
 
   // A 按剩余平移放行——放行时刻对**二次锚**双侧限界（复审 N1：期望 ≈
   // resume2 + 二次锚秒数；全额重置 ≈30 s，锚 ≤21 s 时上界 ≤28 s ⇒ 必红。
-  // 细粒度（1–4 s 级）由单元 K13/K3 守，此处粒度=秒级显示＋2 s 轮询）。
+  // 细粒度（1–4 s 级）由单元 K13/K3 承担，此处粒度=秒级显示＋2 s 轮询）。
   let aRel = false;
   const aDeadline = Date.now() + marks.aDigitAtPause2 * 1000 + 15000;
   while (Date.now() < aDeadline) {
@@ -446,6 +448,9 @@ let openedBrowser = null;
 // 版本 + BUILD-STAMP + lib/ask-takeover.js / client.js / lib/host.js 的 sha256
 // 前 16 位 + pluginManager/listPlugins 原始行 + /version 尝试。baseUrl 只记 origin
 //（令牌绝不落盘）；R49_ENTITY_HINT 降级为旁注标签，不充当指纹。
+// 证明边界（R56，复审 T2 如实登记）：文件腿只证**磁盘实体**身份——已加载内存
+// 模块与磁盘文件的同一性、宿主版本（/version 非 200 时）不在本探针证明范围；
+// 指纹缺席/采集失败不改变探针退出码（行为判据与实体取证分层，不冒充）。
 const probeEnv = {
   baseUrl: null,
   entityHint: process.env.R49_ENTITY_HINT ?? null,
@@ -490,6 +495,9 @@ async function collectFingerprint(baseUrl) {
     const res = await fetch(new URL('/version', baseUrl), { signal: AbortSignal.timeout(5000) });
     fp.hostVersion = res.ok ? (await res.text()).slice(0, 120) : `http-${String(res.status)}`;
   } catch (error) { fp.hostVersion = `unreachable: ${String(error?.message ?? error)}`; }
+  // 证据自述（R56）：证明边界随指纹落盘，读证据的人不必翻代码即知未覆盖项。
+  fp.identityLimits = '文件腿只证磁盘实体身份；已加载内存模块与磁盘文件的同一性、'
+    + '宿主版本（/version 非 200 时）未核验；指纹缺席不改变探针退出码';
   return fp;
 }
 // 设置复原留痕（test-review-r50 F1）：attempted/ok/attempts 进证据 json；复原

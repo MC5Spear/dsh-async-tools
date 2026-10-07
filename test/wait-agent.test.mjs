@@ -9,7 +9,7 @@
  *   0.1.7 的 `listChildren()` 行没有 `kind`/`activity`，`kind: 'diagnostic'` 的判别联合
  *   是 `listDescendants()` 的形状。
  */
-import test from 'node:test';
+import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createWaitAgentTool as buildWaitAgentTool } from '../lib/wait-agent.js';
 import { resolveConfig } from '../lib/config.js';
@@ -26,6 +26,15 @@ const config = resolveConfig({ toolName: 'async_run' });
 const agent = fakeAgent();
 const exec = { agent, signal: new AbortController().signal };
 const CHILD = 'child-42';
+
+// R56 条 1（R55 盲审 F2）：共享 fixture 兜底清理——起始检查开始读收件箱后，
+// 失败用例经 inboxPayload / R55 用例推入的消息残留会级联污染后续用例的起始读
+// （红面失真）。afterEach 清空两个待处理列表，让失败用例的红收敛到自身断言；
+// 各用例尾部的显式清理行保留（幂等，保可读性）。
+afterEach(() => {
+  agent.inbox.nextStep.length = 0;
+  agent.inbox.nextTurn.length = 0;
+});
 
 /**
  * 装一个**有状态**的子代理列表：`interrupt(id)` 会真的把子代理移出列表并记账。

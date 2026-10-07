@@ -7,7 +7,7 @@
  *   被结算释放的活 waiter 才算 awaited——把 waiter 留着会白吞一条本可免掉的通知）；
  * - 输出要经 `jobs.read` 的 **chunks** 拼接取得（0.1.7 的 JobRead 形状，`jobs.wait` 只给快照）。
  */
-import test from 'node:test';
+import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createWaitJobTool as buildWaitJobTool } from '../lib/wait-job.js';
 import { resolveConfig } from '../lib/config.js';
@@ -23,6 +23,15 @@ const createWaitJobTool = (ctx, config) => checkedTool(buildWaitJobTool(ctx, con
 const config = resolveConfig({ toolName: 'async_run' });
 const agent = fakeAgent();
 const exec = { agent, signal: new AbortController().signal };
+
+// R56 条 1（R55 盲审 F2）：共享 fixture 兜底清理——起始检查开始读收件箱后，
+// 失败用例经 inboxPayload / R55 用例推入的消息残留会级联污染后续用例的起始读
+// （红面失真）。afterEach 清空两个待处理列表，让失败用例的红收敛到自身断言；
+// 各用例尾部的显式清理行保留（幂等，保可读性）。
+afterEach(() => {
+  agent.inbox.nextStep.length = 0;
+  agent.inbox.nextTurn.length = 0;
+});
 
 /**
  * 安装假 jobs 服务，并维护一个**有状态的作业**（0.1.7 形状）。

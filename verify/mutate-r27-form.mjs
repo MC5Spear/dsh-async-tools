@@ -85,10 +85,14 @@ const MUTATIONS = [
   {
     id: '③',
     what: '数字字段的 parse 恒返回 set（非法草稿也放行）',
-    apply: (text) => text.replace('specs.push(P.settingsNumberField(field.key));',
+    // R56 锚更新（R55 盲审 F3）：现行数字字段经 boundedNumberSpec（R29-d）装配，
+    // 旧锚 specs.push(P.settingsNumberField(...)) 已不存在。变异换成自绘 spec
+    // 整体替换——打掉官方 parse 的非法通道（含 R29-d 的越界 undefined）。
+    apply: (text) => text.replace('specs.push(boundedNumberSpec(field.key));',
       'specs.push({ field: field.key, format: function (value) { return typeof value === "number"'
       + ' ? String(value) : ""; }, parse: function (text) { var trimmed = text.trim();'
-      + ' if (trimmed === "") return { kind: "clear" }; return { kind: "set", value: Number(trimmed) }; } });')
+      + ' if (trimmed === "") return { kind: "clear" }; var n = Number(trimmed);'
+      + ' return { kind: "set", value: isNaN(n) ? 0 : n }; } });')
   },
   {
     id: '④',
@@ -99,8 +103,11 @@ const MUTATIONS = [
   {
     id: '⑤',
     what: 'failed 恒置假（失败被吞，页脚失败文案永不出现）',
-    apply: (text) => text.replace('state: state.shell,',
-      'state: Object.assign({}, state.shell, { failed: false }),')
+    // R56 锚更新（R55 盲审 F3）：failed 现经传给官方表单的 state 投影传递
+    // （R29-d 挂法），旧锚 state: state.shell, 已不存在。变异在投影处强置
+    // failed:false——等价旧「Object.assign({}, state.shell, { failed: false })」。
+    apply: (text) => text.replace('state: { ...state.shell, invalid: state.shell.invalid === true || pairViolated(state) },',
+      'state: { ...state.shell, failed: false, invalid: state.shell.invalid === true || pairViolated(state) },')
   },
   {
     id: '⑦',

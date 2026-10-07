@@ -418,3 +418,31 @@ test('unclaimedSettlement（R55）：他人通知、无 senderSessionId 弱形�
   });
   assert.equal(unclaimedSettlement(agent2, CHILD), null, 'getter 抛错按无结算通知（不升格，按插话打断返回）');
 });
+
+// ── R56 条 2（R55 盲审 F1）：列表 getter 抛错的保守兜底 ──
+// inbox getter 抛错的兜底上面的用例已盖；这里补**列表** getter（nextStep /
+// nextTurn 读取本身抛错）——撤掉保守 try 后 getter 抛错会穿透，用例直接红。
+
+test('preexistingSteering（R56）：nextStep 列表 getter 抛错按"无先到插话"（不可读按无）', () => {
+  const agent = fakeAgent();
+  Object.defineProperty(agent.inbox, 'nextStep', {
+    configurable: true,
+    get() { throw new Error('unreadable nextStep'); }
+  });
+  assert.equal(preexistingSteering(agent), null, '列表 getter 抛错按空兜住——宁可多等，不可错打断');
+});
+
+test('unclaimedSettlement（R56）：nextStep / nextTurn 列表 getter 抛错按"无结算通知"（不升格）', () => {
+  const agent = fakeAgent();
+  Object.defineProperty(agent.inbox, 'nextTurn', {
+    configurable: true,
+    get() { throw new Error('unreadable nextTurn'); }
+  });
+  assert.equal(unclaimedSettlement(agent, CHILD), null, 'nextTurn getter 抛错按无结算通知（nextStep 正常读取也不升格）');
+  const agent2 = fakeAgent();
+  Object.defineProperty(agent2.inbox, 'nextStep', {
+    configurable: true,
+    get() { throw new Error('unreadable nextStep'); }
+  });
+  assert.equal(unclaimedSettlement(agent2, CHILD), null, 'nextStep getter 抛错同样按无结算通知');
+});

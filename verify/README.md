@@ -86,16 +86,20 @@ loader/fiber；覆盖判据 = design §26.3 第 3 项的"移除包名重启后�
 - 确实要跑测试的变异，改成**两段式定向修改**（`patch` → 由人/外部命令跑测试 → `restore`），
   见 `verify/probe-late-recheck.mjs`；跑测试时**必须带** `--test-isolation=none`，
   否则 runner 会 spawn 子进程而 EPERM，那是环境不允许、不是判据生效。
+  （例外：`mutate-r55-entry-scan.mjs` 按报告器输出形状解析，且**逐个测试文件
+  各跑一次**取文件归属——多文件时 TAP 平铺无归属（见下文「TAP 解析的版本
+  口径」）；它**不加**该旗标。受限沙箱下它按「没跑成不算 CAUGHT」fail-closed，
+  取证须提权环境。）
 
 **自查方法**：默认沙箱下直接跑一遍该判据，看红绿是否符合预期；凡出现 `status=null`、
 `error.code === 'EPERM'`、`process.exitCode` 空转等形态，先怀疑权限而不是被测对象。
 
-**逐个清理出来的结果（19 个变异脚本）**：
+**逐个清理出来的结果（20 个变异脚本）**：
 
 | 类 | 脚本 | 默认权限下 |
 | --- | --- | --- |
 | 纯函数型，**不需要子进程**（只在内存里改写源码文本或喂合成读数给判据，不落盘、不 spawn） | `mutate-mutate-index.mjs`、`mutate-doc-paths.mjs`、`mutate-bare-filenames.mjs`、`mutate-facts-anchors.mjs`、`mutate-r24-ui.mjs`、`mutate-config-slot.mjs`、`mutate-lang.mjs`、`mutate-model-text.mjs`、`mutate-agent-policy.mjs`、`mutate-public-surface.mjs` | ✅ 直接跑。**十个逐个实跑过的读数**：2/2、2/2、1/1、4/4＋基线、**30/30**、7/7、12/12、11/11、11/11、8/8＋基线＋3 条假阳性守卫——全部退 0 |
-| 会跑 `node --test` 测试文件 | `mutate-list-children-shape.mjs`、`mutate-card-theme.mjs`、`mutate-escalation-removed.mjs`、`mutate-escalation-order.mjs`、`mutate-yield-example.mjs`、`mutate-agent.mjs`、`mutate-steering.mjs`、`mutate-r27-form.mjs`、`mutate-alias-tokens.mjs` | ⚠️ 默认权限下**拒绝运行**：逐个实跑过，多数报 `BASELINE-RED`（`mutate-steering` 报 `BASELINE-DIDNT-RUN`，它显式认出了 spawn EPERM）、退出码 2，**没有一个谎报 CAUGHT**；要拿结论须**提权**跑 |
+| 会跑 `node --test` 测试文件 | `mutate-list-children-shape.mjs`、`mutate-card-theme.mjs`、`mutate-escalation-removed.mjs`、`mutate-escalation-order.mjs`、`mutate-yield-example.mjs`、`mutate-agent.mjs`、`mutate-steering.mjs`、`mutate-r27-form.mjs`、`mutate-r55-entry-scan.mjs`、`mutate-alias-tokens.mjs` | ⚠️ 默认权限下**拒绝运行**：逐个实跑过，多数报 `BASELINE-RED`（`mutate-steering` 报 `BASELINE-DIDNT-RUN`，它显式认出了 spawn EPERM）、退出码 2，**没有一个谎报 CAUGHT**；要拿结论须**提权**跑 |
 
 > ⚠️ **这些脚本不在测试套件里，会静默腐烂。** `npm run test:inproc` 够不到 `verify/`，
 > 所以一条变异脚本可能在"锚点失配""文件搬走""被调函数换了签名"之后**照样躺在那里**，
@@ -111,12 +115,22 @@ loader/fiber；覆盖判据 = design §26.3 第 3 项的"移除包名重启后�
 > node verify/mutate-agent-policy.mjs;   node verify/mutate-public-surface.mjs
 > ```
 >
-> 第二类那九个要提权才能拿结论（见下）。**它们不在 CI 里是有意的**：
+> 第二类那十个要提权才能拿结论（见下）。**它们不在 CI 里是有意的**：
 > 默认权限下它们只会稳定报"跑不起来"，那种红不反映被测对象。
 
 后一类的失败形态是安全的：先跑基线，捕不到子进程输出就拒绝运行（退出码 2），诊断文本已写明
 "若括号里是空的、且以 2 退出，多半是 EPERM 而不是基线坏了"。**但它们的验证结论必须在提权下取得**，
 引用这些结论时要写清"提权下测得"。
+
+**TAP 解析的版本口径（R56，适用于 `mutate-r55-entry-scan.mjs`）**：该脚本按
+`--test-reporter=tap` 的**实测形状**解析，且**逐个测试文件各跑一次**——
+node v24.x 实测核对：单文件成功流为顶层平铺（缩进 0 的 `ok|not ok N - <名>`
+叶子行＋尾部 `# tests/…` 摘要行）；多文件成功时输出平铺**无文件归属**
+（全局连续编号、无文件级条目），同名用例跨文件无法区分——文件级
+`# Subtest: <路径>` 条目只在子进程失败形态出现。Node 官方不保证内置
+reporter 的精确输出跨版本稳定；跨版本漂移会被脚本的 incomplete 分支按
+「未完成」fail-closed 拒收，不产生假 CAUGHT。换 Node 大版本后先跑一次
+基线核对形状。
 
 **为什么后一类没有一起进程内化**：不是"做不到"，而是**尚未做**。可行做法确实存在——
 Node 的 ESM 缓存按 resolved URL 键控，`import('…/被测源码.js?v=2')` 会另立一条模块记录

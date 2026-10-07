@@ -7,7 +7,7 @@
  * - M2 **收窄过头**：`isSteering` 恒 false（谁都不打断）
  *   → 必须红在"插话打断"的正向用例上（挂起的 `await watcher.promise` 本身就是红）。
  *   守的是 R12 **没有顺手杀掉**的旧性质（F10/R2/R3 的插话打断路径）。
- * - M3 **拆掉承重墙**：删掉 `source.kind !== USER` 过滤——它看起来被 isSteering 顺带覆盖，
+ * - M3 **拆掉承重墙**：删掉 `source.kind !== USER_MESSAGE_SOURCE` 过滤——它看起来被 isSteering 顺带覆盖，
  *   但真机上 deferContext 的上下文消息（工具结果、subagent-settled 结算通知）恰恰落
  *   **next-step**（`dsh-agent-loop:1118`），删过滤 ⇒ 等待被自己的通知打断。
  *   → 必须红在"非 user 的 next-step 消息不打断（F10×R12）"上（r12 审查 N1 补的用例）。
@@ -101,7 +101,8 @@ const M1_MUTATED = '      /* mutated M1: 旧实现回潮——不看落点，一
 const M2_ANCHOR = '  return nextStep.some((message) => message?.id === messageId);';
 const M2_MUTATED = '  return false; // mutated M2: 收窄过头——谁都不打断';
 // M3 的锚点：kind 过滤行（F10 的承重墙，r12 审查 N1 之前无守卫）。
-const M3_ANCHOR = '      if (payload?.message?.source?.kind !== USER) return;';
+// 现行实现用 USER_MESSAGE_SOURCE 常量（lib/interrupts.js 的 watchUserInterrupt）。
+const M3_ANCHOR = '      if (payload?.message?.source?.kind !== USER_MESSAGE_SOURCE) return;';
 const M3_MUTATED = '      /* mutated M3: 拆掉 kind 过滤——非 user 的 next-step 消息（结算通知等）也会打断 */';
 
 const baseline = runTests(120000);
