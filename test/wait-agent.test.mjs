@@ -307,6 +307,7 @@ test('async_wait_agent（T2）：用户插话 → interrupted，子代理一次�
   f.ctx.subagents.interrupt(CHILD);
   assert.deepEqual(state.interrupted, [CHILD]);
   assert.deepEqual(await f.ctx.subagents.listChildren(agent.id), []);
+  agent.inbox.nextStep.length = 0; // 还原共享 fixture（R55 起等待入口会读它）
 });
 
 test('async_wait_agent（R30-d 唤醒分支）：等待中迟到作答通知 → 运行句柄 + note，非 interrupted 非 settled', async () => {
@@ -795,4 +796,91 @@ test('R29-d（判据 9b·屏障段半边）：重试路径下屏障睡也计入�
   const bound = waitMs + 3 * poll + tolerance;
   assert.ok(elapsed <= bound,
     `总时长 ${String(elapsed)} ms 不得超过 waitMs + 3×pollIntervalMs + 容差 = ${String(bound)} ms——屏障睡加重（如 +2000ms）时此处必红`);
+});
+
+// ── R55 起始检查（设计 §42.2；需求 §2 R55 五判据的工具级落点） ──
+
+/** 挂起护栏：起始检查被拆掉（纯事件驱动回潮）时用例必须红得快，不是挂死套件。 */
+const HANG_MARKER = { status: '__test-hang__' };
+function withHangGuard(pending) {
+  return Promise.race([
+    pending,
+    new Promise((resolve) => { setTimeout(() => resolve(HANG_MARKER), 250); })
+  ]);
+}
+
+test('R55（判据 1）：等待开始时 next-step 已有 user 插话 → 立即 interrupted，不订阅不进屏障', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  const { state, calls } = installChildren(f, { children: [runningChild()] });
+  // 先到插话：等待开始前已落 next-step（事件早已发过，纯事件驱动实现收不到）。
+  agent.inbox.nextStep.push({ id: 'steer-1', source: { kind: 'user' } });
+  const tool = createWaitAgentTool(f.ctx, config);
+
+  const result = await withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec));
+  assert.notEqual(result.status, '__test-hang__', '起始检查必须立即返回——纯事件驱动回潮（挂到预算耗尽）本身就是红');
+  assert.equal(result.status, 'interrupted');
+  assert.equal(result.waited_ms, 0, '预算从未武装');
+  assert.match(result.note, /Wait not started: a user message had already arrived/, 'note 按起始命中措辞（到达时点在等待开始前）');
+  assert.match(result.note, /still running in the background and is completely unaffected/);
+  assert.match(result.note, /async_wait_agent/);
+
+  // 停点断言（§42.1 R55-C）：不订阅、不进存在屏障。
+  assert.equal(f.count('agent/inbox/inserted'), 0, '起始命中路径不得挂任何 inbox 监听器');
+  assert.equal(calls.length, 0, '起始命中路径不得进存在屏障（listChildren 零调用）');
+  assert.deepEqual(state.interrupted, [], '打断等待 ≠ 打断子代理');
+  agent.inbox.nextStep.length = 0; // 还原共享 fixture
+});
+
+test('R55（判据 2·负面对照一）：next-step 滞留的是转达/结算/迟到作答 → 不打断，迟到作答照旧唤醒', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  installChildren(f, { children: [runningChild()] });
+  agent.inbox.nextStep.push(
+    { id: 'relay-1', source: { kind: 'agent-message', form: 'relay' } },
+    { id: 'settle-1', source: { kind: 'subagent-settled', form: 'notice', senderSessionId: CHILD } },
+    { id: 'late-1', source: { kind: 'async-tools-late-answer', form: 'notice', summary: 'Late answer for color: red', questionId: 'color' } }
+  );
+  const tool = createWaitAgentTool(f.ctx, config);
+
+  const result = await tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec);
+  assert.equal(result.status, 'running', '三类非 user 消息都不命中起始检查——等待照常开（迟到作答起始检查立即唤醒）');
+  assert.match(result.note, /A late answer has arrived/, '迟到作答照旧走其唤醒分支（R30-d 不回归）');
+  agent.inbox.nextStep.length = 0; // 还原共享 fixture
+});
+
+test('R55（判据 3·负面对照二）：next-turn 排队 user 消息、next-step 干净 → 不打断（R12 不回归）', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  installChildren(f, { children: [runningChild()] });
+  agent.inbox.nextTurn.push({ id: 'queued-1', source: { kind: 'user' } });
+  const tool = createWaitAgentTool(f.ctx, config);
+
+  const pending = tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  // 等待已照常武装：发结算通知事件驱动到 settled 结局——排队消息全程不得打断。
+  f.emit('agent/inbox/inserted', settledNotice());
+  const result = await pending;
+  assert.equal(result.status, 'settled', '排队消息不打断；等待由结算通道正常收场');
+  agent.inbox.nextTurn.length = 0; // 还原共享 fixture
+});
+
+test('R55（判据 5）：先到插话与未领取结算通知并存 → settled（结束优先于打断，入口侧）', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  const { calls } = installChildren(f, { children: [runningChild()] });
+  agent.inbox.nextStep.push(
+    { id: 'steer-1', source: { kind: 'user' } },
+    { id: 'settle-1', source: { kind: 'subagent-settled', form: 'notice', senderSessionId: CHILD } }
+  );
+  const tool = createWaitAgentTool(f.ctx, config);
+
+  const result = await withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec));
+  assert.notEqual(result.status, '__test-hang__');
+  assert.equal(result.status, 'settled', '权威结算通知可证已结束 → settled，不让插话压过结束（口径同竞速收敛复查）');
+  assert.equal(result.waited_ms, 0);
+  assert.match(result.note, /had already arrived before the wait started/, 'note 标明通知先于等待到达（via.noticePreexisting）');
+  assert.match(result.note, /separate message/, 'settledNote 既有文案保留（最终回答不在本返回值）');
+  assert.equal(calls.length, 0, '并存决定也走入口早退——不进存在屏障');
+  agent.inbox.nextStep.length = 0; // 还原共享 fixture
 });

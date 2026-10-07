@@ -18,8 +18,8 @@
 | 工具 | 一句话 |
 | --- | --- |
 | `async_run` | 跑命令。让出预算内结束就返回完整输出；**超出预算不杀进程**，转后台并返回 `job_id`。让出期间用户插话或停止本轮**只结束等待，命令不受影响**。 |
-| `async_wait_job` | 有界等待某个后台作业。可被用户插话打断，**打断不影响作业**。 |
-| `async_wait_agent` | 有界等待某个后台子代理。可被用户插话打断，**打断不影响子代理**。 |
+| `async_wait_job` | 有界等待某个后台作业。可被用户插话打断，**打断不影响作业**；等待开始前已到达的插话同样立即打断（入口检查）。 |
+| `async_wait_agent` | 有界等待某个后台子代理。可被用户插话打断，**打断不影响子代理**；等待开始前已到达的插话同样立即打断（入口检查）。 |
 | `async_agent` | **永远后台**的子代理派生：立返 `agent_id`，不等待不轮询（没有 `run_in_background` 参数——后台是结构保证）。 |
 | `async_workflow` | 后台多代理编排（JS 脚本编排子代理）。默认让出预算内结算就带回结果；超出转后台，完成通知是恢复通道。**仅在大规模编排时用；一两个委托走 `async_agent`**。只在两预设的 delegation 组内行注册。 |
 
@@ -284,7 +284,7 @@ CALL   async_wait_job {"job_id":"async-command-7","wait_ms":90000}             �
 ```
 
 **368 ms 返回，60 秒的作业既没被取消也没丢输出。** 排队（queue）的消息**不会**打断等待——
-它在当前轮次彻底结束后才被投递。
+它在当前轮次彻底结束后才被投递。入口检查扫一次收件箱即返 interrupted（`async_run` 的让出窗口不在此列）。
 
 `async_run` 自己的让出窗口（首次返回前）同样可打断：
 
@@ -565,6 +565,7 @@ BOM。同理，**不要用内联 `node -e` 处理带反引号或中文引号的�
 | `verify/mutate-r27-form.mjs` | `test/two-planes.test.mjs` | 官方表单形态判据十向：值字段换回自绘 input / 恢复默认换成即时写 / 数字 parse 恒放行 / 空暂存也发 mutate / failed 恒假 / shell 退化成常量 / 输入读数接生效值 / 只读时藏读数 / 删空文本分支 / onDiscard 传 noop |
 | `verify/mutate-lang.mjs` | `test/two-planes.test.mjs` | 双开关判据十二向（进程内、喂 `verify/lang-judgements.mjs` 的判据）：agentLang 没生效 / 中文档半译 / 英文档混中文 / 改一个顺带动了另一个 / 字段身份被换 / 字段数不足 / 收尾没复原 |
 | `verify/mutate-list-children-shape.mjs` | `test/wait-agent.test.mjs` | 子代理行形状退化三向：屏障只认一种 kind / 纠错清单按 kind 过滤（清单恒空）/ 不排除诊断行 |
+| `verify/mutate-r55-entry-scan.mjs` | `test/wait-agent.test.mjs` | R55 起始检查五向（另跑 `test/interrupt.test.mjs` 与 `test/wait-job.test.mjs`，两工具的判据各有落点）：纯事件驱动回潮（起始检查拆除，挂起护栏保红得快）/ 拆 kind 过滤 / 加扫 next-turn / wait-agent 去结算并存决定 / wait-job 停点前移 |
 
 另有**检查器自测**，改的不是交付实现、而是检查器本身，因此不进上表
 （它们由 `tools/check-mutate-index.mjs` 的豁免名单登记，名单里也要求"必须真实存在"）：

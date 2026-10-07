@@ -194,11 +194,16 @@ clamp(value, def, min, max) => Math.min(Math.max(value ?? def, min), max)
 { job_id: string(必填), wait_ms: number(必填) }
 ```
 
-### 5.2 执行流程（实现按此重写）
+### 5.2 执行流程
 
 ```
 1. clamp wait_ms（缺省即报错，见 §3）
-2. 屏障：jobs.get(job_id) 已终态 → 直接返回（消除"订阅前已结束"的竞态）
+2. 屏障：`jobs.list` 基三分快照（R29-c）——`undefined`（查询失败）→ 抛
+   queryFailed（可重试）；`null`（查无/不可见）→ 抛 unknownJob；已终态 →
+   直接返回（消除"订阅前已结束"的竞态，完成优先）
+2b. R55 起始检查：扫 agent.inbox.nextStep，已有 user 插话 → 立即返回
+    interrupted（waited_ms 0；不接线、不创建 waiter、不挂预算定时器）。
+    排在屏障终态判定之后——先到插话与已终态并存时完成结果优先（§42）
 3. 竞速（四个通道，每个解析为自带 name 的对象）：
      a) 用户插话（source.kind === 'user'）                  → interrupted
      b) jobs.wait(job_id, wait_ms, agent, raceAbort.signal) → 终态或到期
@@ -214,6 +219,7 @@ clamp(value, def, min, max) => Math.min(Math.max(value ?? def, min), max)
 - **`exec.signal` 的两种接法**：一是并入 `jobs.wait` 的 signal（让等待随工具取消而结束）；二是**单独作为一个竞速通道**——否则工具被取消后本调用仍会挂到预算耗尽。
 - **竞速分支的形状必须是 `{ name }`**：`watchUserInterrupt` 的原始信号是 `{ kind }` 形状，直接参与竞速会因缺 `name` 而落到回退分支。这条对 `async_wait_job` 与 `async_wait_agent` 都成立，两处都要有测试锁定。
 - **完成优先于打断**：若两者同时到达，按风险表——**工作完成优先**：先做一次终态复查，若已终态则返回完成结果并附"（等待期间收到用户消息）"。理由：模型必须知道作业已完成，否则会重复等待。
+- **入口起始检查（R55）**：等待开始前已落入 `next-step` 的插话同样立即打断——入口扫一次收件箱即返，不创建 `jobs.wait` waiter（不吞完成通知）、不挂预算定时器；屏障终态判定在其之前，入口侧同持"完成优先"。停点与判据见 §42。
 
 ### 5.2b 输出从哪里取（R8 的游标语义）
 
@@ -244,12 +250,18 @@ clamp(value, def, min, max) => Math.min(Math.max(value ?? def, min), max)
 **子代理结束的唯一可靠信号是状态转换事件，不是列表快照**：0.1.7 的 `listChildren()` 只返回父会话目录条目（`{ id, createdAt, mode, label? }`——没有 `activity`），列表快照能回答的只有"这个 id 在不在我的目录里"。这里按 `agent/status`（`running → idle`，父 scope 实测可见）与结算通知（`source.kind === 'subagent-settled'`）判结束。
 
 ```
-1. clamp wait_ms；记录 t0
-2. ★ 先订阅、后屏障（顺序不可颠倒）
+1. 入口短路（两道，都在 clamp 之前——用户侧信号先于参数校验）：
+     a) R29-b：exec.signal 已 aborted → 立即 interrupted(0)，不订阅不查询
+     b) R55 起始检查：扫 agent.inbox.nextStep，已有 user 插话 → 先作"结束优先于
+        打断"的并存决定（未领取结算通知在列 → settled），否则立即返回
+        interrupted；两者都不订阅、不进屏障、不武装预算（§42）——先到插话
+        不得为屏障重试排队
+2. clamp wait_ms；记录 t0
+3. ★ 先订阅、后屏障（顺序不可颠倒）
      订阅：用户插话 / 结算通知 / agent/status 转换 / 转达消息
      理由：这三类事件**只发生一次**。若先查状态再订阅，子代理恰好在
            两者之间结束，就再也收不到信号，白等满整个预算。
-3. 屏障（判"存在性"）：
+4. 屏障（判"存在性"）：
      await listChildren(parentId) → 按 `id` 相等找行（**形状自适应**：0.1.7 的
             catalog 行没有 `kind`，判别联合行有；`kind === 'diagnostic'` 一律排除）：
        查询失败（undefined）→ 抛错（不假装结束）
@@ -259,7 +271,7 @@ clamp(value, def, min, max) => Math.min(Math.max(value ?? def, min), max)
        查到               → 行形状带 `activity` 且明确不是 `running` → 立即返回 settled
                               （0.1.7 的 catalog 行不带该字段，这条快速返回
                               因此在真机上不可达，缺口见本节末）
-4. 循环竞速（六个通道，每个解析为自带 name 的对象）：
+5. 循环竞速（六个通道，每个解析为自带 name 的对象）：
      a) 用户插话   source.kind === 'user'                                        → interrupted
      b) 结算通知   source.kind === 'subagent-settled' 且 source.senderSessionId === agent_id → settled
      c) 状态转换   agent/status 的 (agent.id === agent_id && status === 'idle')   → settled
@@ -267,9 +279,9 @@ clamp(value, def, min, max) => Math.min(Math.max(value ?? def, min), max)
                    能证明不活跃才 settled，否则把该通道移出候选集继续等
      e) 备用轮询   每 pollIntervalMs 重查 listChildren，**条目消失（null）** → settled
      f) 预算到期   wait_ms 到点                                                    → running
-5. 竞速收敛后复查一次列表：**能证明不活跃就报 settled**（结束优先于打断/超时），
+6. 竞速收敛后复查一次列表：**能证明不活跃就报 settled**（结束优先于打断/超时），
    报不出来才按 winner 分支返回
-6. finally：清理 inbox 订阅、status 订阅、轮询定时器、exec.signal 监听
+7. finally：清理 inbox 订阅、status 订阅、轮询定时器、exec.signal 监听
 ```
 
 **§6.2 的四条强制约束（全部来自实测事实）**
@@ -286,7 +298,7 @@ clamp(value, def, min, max) => Math.min(Math.max(value ?? def, min), max)
 
 判定收敛在 `lib/wait-agent.js` 的 `inactiveVerdict()` 一处，屏障、转达消息后的重查、竞速收敛后的复查共用它。
 
-**功能缺口（必须写进工具描述）**：三条结束通道都是**一次性事件**；在 0.1.7 上列表快照只能证明"id 在不在目录里"（catalog 行没有 `activity`），所以对"开始等待之前就已经结束"的子代理，本工具**只能等满预算返回 running**（不加私有通道：R8 禁止越界读子代理内部状态）。描述里必须写明这一点并指向 `list_agents`（或提醒模型：结算通知已经在对话里），否则模型会把它当"立即返回"用。
+**功能缺口（必须写进工具描述）**：三条结束通道都是**一次性事件**；在 0.1.7 上列表快照只能证明"id 在不在目录里"（catalog 行没有 `activity`），所以对"开始等待之前就已经结束"的子代理，本工具**只能等满预算返回 running**——例外：入口起始检查命中插话且收件箱里有未领取的结算通知时，立即返回 settled（§42 R55-B）；无插话时缺口维持（不加私有通道：R8 禁止越界读子代理内部状态）。描述里必须写明这一点并指向 `list_agents`（或提醒模型：结算通知已经在对话里），否则模型会把它当"立即返回"用。
 
 **`polled` 的判据只认 `null`**：`undefined`（查询失败）不算"条目消失"——与 `inactiveVerdict` 同口径，混同会凭空报 settled。
 
@@ -327,6 +339,17 @@ export function watchUserInterrupt(ctx, agent) { … }
   `preStep`；等待工具的执行在 step 内部、单 agent 驱动串行，事件到达监听器时消息
   必然还在它被插入的那个列表里。
 - **必须返回 disposer 并保证 `finally` 中调用**（R4 可逆性）。
+- **R55 起始检查的两个同步读**（无订阅、无定时器、无副作用）：
+  - `preexistingSteering(agent)`——扫 `agent.inbox.nextStep`，返回第一条
+    `source.kind === USER_MESSAGE_SOURCE` 的消息（无则 `null`）。与事件判定
+    **同源**：同常量、同列表、同保守方向（inbox 缺席或 getter 抛错按"无先到
+    插话"——宁可多等，不可错打断）。
+  - `unclaimedSettlement(agent, agentId)`——扫 `nextStep` 与 `nextTurn` 两个
+    列表，返回第一条 `source.kind === 'subagent-settled'` 且
+    `source.senderSessionId` 精确命中的消息（无则 `null`）。只认强证据形态，
+    正文回退**不在入口做**（弱证据，等待中通道维持原样）。仅在起始扫描命中
+    插话后作"结束优先于打断"的并存决定（§42.1 R55-B）。inbox 缺席或 getter
+    抛错按"无结算通知"（不升格，按插话打断返回）。
 - 竞速的**每个分支都要自己带 `name`**：`watchUserInterrupt` 的原始信号是 `{ kind }` 形状，
   直接参与 `Promise.race` 会因缺 `name` 落到回退分支。`async_wait_job` 与 `async_wait_agent` 两处都有测试锁定。
 
@@ -4019,3 +4042,114 @@ K10 的 B 批接管发生在 A 暂停之前、结构上够不到继承分支）�
 取证实例排序约束同 R32 条（需求风险表 R31 行：验证实例取证，或升级已成
 事实则按该行口径处置）。
 
+---
+
+## 42. R55：等待工具对先到插话的起始检查（补 R12 打断判定的命中范围）
+
+> 需求权威：`docs/requirements.md` §2 R55（用户决定：先到的插话与等待中到达的
+> 插话同样立即打断——与迟到作答起始检查 R30-d 同构）。事实依据是打断信号
+> 纯事件驱动的空窗（真机实录：先到约半分钟的插话未能打断其后的等待，延迟至
+> 领取点才进模型上下文——时刻与时长按内部登记记录，登记簿不随公开仓走）。
+> 无新增端到端要求——起始检查读宿主公共接口 `agent.inbox`，与 R30-d 起始检查
+> 同一测法（需求 §6 验收行）。
+
+### 42.1 设计决定
+
+**R55-A 载体与同源（`lib/interrupts.js`）**
+
+`lib/interrupts.js` 新增两个同步读函数（§7）：`preexistingSteering(agent)` 扫
+`nextStep` 认 `USER_MESSAGE_SOURCE`；`unclaimedSettlement(agent, agentId)` 双列表
+认 `senderSessionId` 精确命中。两者都不订阅、不定时、无副作用；保守方向与
+R12 同向（读不到按"无"——宁可多等，不可错打断）。
+
+**R55-B 「结束优先于打断」的入口证据（判据 5）**
+
+两工具"可证已结束"的证据通道随各自既有架构，口径同为"结束证据可得时结束优先"：
+
+- `async_wait_job`：**屏障快照的终态判定**（既有"完成优先"线）。起始检查排在
+  它之后——先到插话与已终态作业并存 → 返回完成结果，免费成立。
+- `async_wait_agent`：**收件箱里未领取的权威结算通知**（`senderSessionId` 命中）。
+  起始扫描一次收件箱同时取两个事实：插话在列 + 结算通知在列 → 返回 settled
+  （`waited_ms: 0`，note 标明通知先于等待到达）。该通道比列表复查更强——
+  "已结算仍驻留"的子代理列表读作 running，而通知是权威信号（R29-c 证据分级）。
+
+结束证据不可得（通知未到、已被领取、或不带 `senderSessionId`）时不升格，按
+插话打断返回：插话是更急的信号，模型再等一轮自会得到 not_found 或 settled。
+
+**R55-C 停点（判据只锁「立即返回 + 状态值」，停点为本节决定）**
+
+- `async_wait_agent`：入口 abort 短路（R29-b）之后、`resolveWait` clamp 之前、
+  订阅与存在屏障之前——用户侧信号（已中止 / 先到插话）先于参数校验，与
+  R29-b 同优先级（§6.2 流程步骤 1）。命中即返回——不订阅（inbox 监听器数为
+  0）、不进屏障（`listChildren` 调用数为 0）、不武装预算（`waited_ms: 0`）。
+  理由：该工具的屏障带重试延迟（最多 3×pollIntervalMs），先到插话不得为它排队。
+- `async_wait_job`：屏障与终态判定之后、接线（订阅 / `jobs.wait` / 预算定时器）
+  之前。理由：该工具的屏障是一次同步本地读、零延迟，且承载 unknownJob /
+  queryFailed 错误契约（R29-c）与入口终态判定——起始检查排其后，判据 5 顺带
+  成立、错误契约不动。命中即返回——不创建 waiter（不吞完成通知）、不挂预算
+  定时器（`waited_ms: 0`）。
+
+两工具**规则一致**（判定同源、保守方向同、结束优先同），停点随各自入口架构
+（需求条款 1 已把停点细节授予设计轮）。
+
+**R55-D 返回形状与文案**
+
+- 起始命中：`status: 'interrupted'`、`waited_ms: 0`、note 用新键
+  `note.interruptedPreexisting`——与等待中打断的 `note.interrupted` 同形（subject
+  不受影响 + 重等提示），措辞区分到达时点（"在本次等待开始前已到达"）。
+- 入口结算优先：`status: 'settled'`、`waited_ms: 0`、note 前缀新键
+  `via.noticePreexisting` + `settledNote` 既有文案（不越过 R3-1 口径 A 的措辞）。
+- 工具描述 p3 段补半句：等待开始前已到达的插话同样经入口检查立即打断（模型
+  可见语义与实现一致）。
+- R29-b 入口中止短路的返回（`note.interrupted`、`waited_ms: 0`）不动。
+
+**R55-E 边界**
+
+- 不扩到无插话情形：`unclaimedSettlement` 只在起始扫描命中插话后作并存决定；
+  无插话时入口不查结算通知（"开始等待前就已结束"的功能缺口维持 §6.2 末的
+  登记与描述声明，R55 不收编）。
+- `async_run` 让出窗口的首次等待（R32）不在 R55 范围（D19 只列两等待工具）；
+  要扩另立需求。
+- 不动 R12 事件判定本体（`watchUserInterrupt` 零变化）；不动迟到作答起始检查
+  （`watchLateAnswer` 零变化）；不对排队消息引入打断。
+
+### 42.2 判据 → 测试映射（需求 §2 R55 五判据）
+
+| 需求判据 | 单元落点 |
+| --- | --- |
+| 1 起始命中 → 立即 interrupted | `wait-agent` C1a / `wait-job` C1b：预置 user 插话于 `nextStep` → 直返 interrupted、note 起始命中措辞、`waited_ms: 0`；wait-agent 侧断言 inbox 监听器 0、`listChildren` 调用 0；wait-job 侧断言 `jobs.wait` 未被调用。两用例带**挂起护栏**（真实超时标记与工具返回竞速）——纯事件驱动回潮时红得快、红得明确，不是挂死套件 |
+| 2 负面对照一（转达/结算/迟到作答不命中；迟到作答照旧唤醒） | `wait-agent` C2a / `wait-job` C2b：`nextStep` 预置 `agent-message` + `subagent-settled` + 迟到作答 notice（无 user 插话）→ 不打断；迟到作答起始检查照旧命中 → running + lateArrived note |
+| 3 负面对照二（`next-turn` 排队不打断；R12 不回归） | `wait-agent` C3a / `wait-job` C3b：`nextTurn` 预置 user 排队消息、`nextStep` 干净 → 等待照常武装；wait-agent 侧发结算通知事件 → settled（排队消息全程未触发打断）；wait-job 侧推进作业至终态 → 完成结果 |
+| 4 既有事件判定不回归 | 既有 T2 用例（两工具各一）与 `watchUserInterrupt` 单测组**零改动**通过。零改动范围＝打断判定断言；N3/N11 中钉扎 p6 措辞的描述断言随 p6 修订同步核对——修订保留全部被钉扎短语（`only wait out wait_ms` / `catalog only shows` / `list_agents`），断言本身不动 |
+| 5 结束优先于打断不回归 | `wait-agent` C5a：插话 + 未领取结算通知（`senderSessionId` 命中）并存 → settled + `via.noticePreexisting`；`wait-job` C5b：作业已终态 + 插话并存 → 完成结果（屏障终态线既有行为） |
+| 判定单元 | `interrupt.test.mjs`：`preexistingSteering` 命中 / 三类非 user 不命中 / `next-turn` 不命中 / inbox 缺席按空 / getter 抛错按空；`unclaimedSettlement` `senderSessionId` 命中 / 他人不命中 / 无 `senderSessionId` 不命中（弱形态不升格）/ 两列表皆可命中 / inbox 缺席与 getter 抛错按"无结算通知"（不升格） |
+
+变异口径（`verify/mutate-r55-entry-scan.mjs`；五变体、基线检查、写回哈希核对，
+纪律同 `verify/mutate-steering.mjs`——三种结局分清，"没跑成"不算 CAUGHT）：
+
+- **MA 纯事件驱动回潮**：两工具的起始检查调用点替换为注释 → C1a/C1b 红
+  （判据 1 的"改回必红"）；同时既有 T2 仍绿（事件通道未动）——红的必须是
+  新判据，绿的必须是旧判据，两者合成完整证明；
+- **MB 拆 kind 过滤**：`preexistingSteering` 去掉 kind 判定 → C2a/C2b 红；
+- **MC 加扫 nextTurn**：`preexistingSteering` 连 `nextTurn` 一起扫 → C3a/C3b 红；
+- **MD wait-agent 去掉结算并存决定**（命中即无条件 interrupted）→ C5a 红；
+- **ME wait-job 停点前移**（起始检查挪到屏障终态判定之前）→ C5b 红。
+
+### 42.3 定向修改清单
+
+| 文件 | 改动 |
+| --- | --- |
+| `lib/interrupts.js` | +`preexistingSteering` / +`unclaimedSettlement`（§7 同步） |
+| `lib/wait-agent.js` | 入口起始扫描 + 结算并存决定 + 起始命中早退（R55-C 停点） |
+| `lib/wait-job.js` | 屏障终态判定之后的起始检查早退（R55-C 停点） |
+| `lib/output.js` | +起始命中 note 包装（新 note 键） |
+| `lib/text.js` | +`note.interruptedPreexisting` / +`via.noticePreexisting`（双语）；两工具描述 p3 段补半句；`tool.wait_agent.p6`（双语）加 R55-B 例外从句（保留 N3/N11 钉扎的全部短语） |
+| `test/interrupt.test.mjs`、`test/wait-agent.test.mjs`、`test/wait-job.test.mjs` | §42.2 判据用例（既有断言零改动；既有用例补 3 处共享 fixture 清理行——起始检查开始读收件箱后，旧用例经 `inboxPayload` 推入共享 `agent.inbox` 的残留从无害变成级联污染，清理属前置条件修复，非断言改动） |
+| `verify/mutate-r55-entry-scan.mjs` | 新增（五变异脚本） |
+| `docs/design.md` | §5.2 / §6.2 / §7 就地改写（含 §6.2 末功能缺口声明的 R55-B 例外从句）+ 本节 |
+| `README.md` | 打断语义处补「等待开始前已到达的插话同样立即打断」+ 变异索引表登记新脚本 |
+| 内部事实登记簿 | 对应事实条目按其"更新入口"实现后改写（登记簿不随公开仓走） |
+
+时序注：`docs/design.md` 行在**设计窗**已落（含本轮审查修正）；其余行（lib /
+test / verify / README / 登记簿）在**实现窗**生效——README 的入口检查表述随
+实现代码同窗提交，不单独先行。

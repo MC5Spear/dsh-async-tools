@@ -7,7 +7,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { watchLateAnswer, watchSubagentActivity, watchUserInterrupt, LATE_ANSWER_EVENT, LATE_ANSWER_SOURCE } from '../lib/interrupts.js';
+import { watchLateAnswer, watchSubagentActivity, watchUserInterrupt, preexistingSteering, unclaimedSettlement, LATE_ANSWER_EVENT, LATE_ANSWER_SOURCE } from '../lib/interrupts.js';
 import { fakeAgent, fakeCtx, inboxPayload } from './_helpers.mjs';
 
 const CHILD = 'child-42';
@@ -354,4 +354,67 @@ test('（R30-d 互斥联测，通道轮）四类信号各认各的载体与 kind
   interrupt.dispose();
   activity.dispose();
   late.dispose();
+});
+
+// ── R55 起始检查的读侧单元（设计 §42.2 判定单元行；工具级行为在各工具文件） ──
+
+test('preexistingSteering（R55）：nextStep 已有 user 插话 → 命中该消息', () => {
+  const agent = fakeAgent();
+  agent.inbox.nextStep.push(
+    { id: 'm1', source: { kind: 'agent-message', form: 'relay' } },
+    { id: 'm2', source: { kind: 'user' } }
+  );
+  const hit = preexistingSteering(agent);
+  assert.equal(hit?.id, 'm2', '只认 source.kind === "user" 的那条');
+});
+
+test('preexistingSteering（R55）：转达/结算/迟到作答在 next-step 也不命中（判定与 R12 同源）', () => {
+  const agent = fakeAgent();
+  agent.inbox.nextStep.push(
+    { id: 'm1', source: { kind: 'agent-message', form: 'relay' } },
+    { id: 'm2', source: { kind: 'subagent-settled', form: 'notice', senderSessionId: CHILD } },
+    { id: 'm3', source: { kind: LATE_ANSWER_SOURCE, form: 'notice', summary: 's', questionId: 'q' } }
+  );
+  assert.equal(preexistingSteering(agent), null, '三类非 user 消息都不是先到插话');
+});
+
+test('preexistingSteering（R55）：next-turn 的 user 排队消息不命中（排队不打断，R12 不回归）', () => {
+  const agent = fakeAgent();
+  agent.inbox.nextTurn.push({ id: 'm1', source: { kind: 'user' } });
+  assert.equal(preexistingSteering(agent), null, '只扫 nextStep——排队消息本轮内到不了模型手里');
+});
+
+test('preexistingSteering（R55）：inbox 缺席或 getter 抛错按"无先到插话"（宁可多等，不可错打断）', () => {
+  assert.equal(preexistingSteering({ id: 'session-1' }), null, 'inbox 缺席不抛错、不命中');
+  const agent = fakeAgent();
+  Object.defineProperty(agent, 'inbox', {
+    configurable: true,
+    get() { throw new Error('projection registration is not active'); }
+  });
+  assert.equal(preexistingSteering(agent), null, 'getter 抛错按空兜住');
+});
+
+test('unclaimedSettlement（R55）：senderSessionId 精确命中——两个待处理列表都算未领取账本', () => {
+  const agent = fakeAgent();
+  agent.inbox.nextStep.push({ id: 's1', source: { kind: 'subagent-settled', form: 'notice', senderSessionId: CHILD } });
+  assert.equal(unclaimedSettlement(agent, CHILD)?.id, 's1', 'next-step 在列命中');
+  const agent2 = fakeAgent();
+  agent2.inbox.nextTurn.push({ id: 's2', source: { kind: 'subagent-settled', form: 'notice', senderSessionId: CHILD } });
+  assert.equal(unclaimedSettlement(agent2, CHILD)?.id, 's2', 'next-turn 在列同样命中（双列表口径）');
+});
+
+test('unclaimedSettlement（R55）：他人通知、无 senderSessionId 弱形态、inbox 缺席/抛错都不命中（不升格）', () => {
+  const agent = fakeAgent();
+  agent.inbox.nextStep.push(
+    { id: 'o1', source: { kind: 'subagent-settled', form: 'notice', senderSessionId: 'someone-else' } },
+    { id: 'o2', source: { kind: 'subagent-settled', form: 'notice' } }
+  );
+  assert.equal(unclaimedSettlement(agent, CHILD), null, '他人 senderSessionId 与无该字段的弱形态一律不命中（正文回退不在入口做）');
+  assert.equal(unclaimedSettlement({ id: 'session-1' }, CHILD), null, 'inbox 缺席按无结算通知');
+  const agent2 = fakeAgent();
+  Object.defineProperty(agent2, 'inbox', {
+    configurable: true,
+    get() { throw new Error('projection registration is not active'); }
+  });
+  assert.equal(unclaimedSettlement(agent2, CHILD), null, 'getter 抛错按无结算通知（不升格，按插话打断返回）');
 });

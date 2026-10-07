@@ -261,6 +261,7 @@ test('async_wait_job（T2）：用户插话 → interrupted，作业一次都没
   assert.equal(f.ctx.jobs.kill('j-1'), 'requested');
   assert.equal(probes.killCalls, 1);
   assert.equal(job.status, 'stopping');
+  agent.inbox.nextStep.length = 0; // 还原共享 fixture（R55 起等待入口会读它）
 });
 
 test('async_wait_job（R30-d 唤醒分支）：等待中迟到作答通知 → 运行句柄 + note，非 interrupted 非 settled', async () => {
@@ -340,6 +341,7 @@ test('async_wait_job：完成优先于打断——插话瞬间作业恰好终态
   assert.equal(result.status, 'completed', '终态复查胜过 interrupted——模型不该重复等待一个已完成的作业');
   assert.equal(result.output, 'job output');
   assert.match(result.detail, /a user message arrived during the wait; the job finished in the meantime/);
+  agent.inbox.nextStep.length = 0; // 还原共享 fixture（R55 起等待入口会读它）
 });
 
 test('async_wait_job：等待路径上 wait 被结算释放 → 终态结果', async () => {
@@ -523,4 +525,85 @@ test('R29-a（判据 13·接线段防御）：jobs.wait 同步抛错 → 监听�
   f.ctx.jobs.wait = realWait;
   const result = await tool.execute({ job_id: 'j-1', wait_ms: 5 }, exec);
   assert.equal(result.status, 'running');
+});
+
+// ── R55 起始检查（设计 §42.2；需求 §2 R55 五判据的工具级落点） ──
+
+/** 挂起护栏：起始检查被拆掉（纯事件驱动回潮）时用例必须红得快，不是挂死套件。 */
+const HANG_MARKER = { status: '__test-hang__' };
+function withHangGuard(pending) {
+  return Promise.race([
+    pending,
+    new Promise((resolve) => { setTimeout(() => resolve(HANG_MARKER), 250); })
+  ]);
+}
+
+test('R55（判据 1）：等待开始时 next-step 已有 user 插话 → 立即 interrupted，不接线不创建 waiter', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  const probes = installJobs(f, { status: 'running', waitDelayMs: 0 });
+  agent.inbox.nextStep.push({ id: 'steer-1', source: { kind: 'user' } });
+  const tool = createWaitJobTool(f.ctx, config);
+
+  const result = await withHangGuard(tool.execute({ job_id: 'j-1', wait_ms: 600000 }, exec));
+  assert.notEqual(result.status, '__test-hang__', '起始检查必须立即返回——纯事件驱动回潮（挂到预算耗尽）本身就是红');
+  assert.equal(result.status, 'interrupted');
+  assert.equal(result.waited_ms, 0, '预算从未武装');
+  assert.match(result.note, /Wait not started: a user message had already arrived/, 'note 按起始命中措辞（到达时点在等待开始前）');
+  assert.match(result.note, /still running in the background and is completely unaffected/);
+  assert.match(result.note, /async_wait_job/);
+
+  // 停点断言（§42.1 R55-C）：排在接线之前——不创建 jobs.wait waiter（不吞完成通知）。
+  assert.equal(probes.waitCalls.length, 0, '起始命中路径不得创建 waiter——留着会吞掉本可免掉的完成通知');
+  agent.inbox.nextStep.length = 0; // 还原共享 fixture
+});
+
+test('R55（判据 2·负面对照一）：next-step 滞留的是转达/结算/迟到作答 → 不打断，迟到作答照旧唤醒', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  installJobs(f, { status: 'running', waitDelayMs: 0 });
+  agent.inbox.nextStep.push(
+    { id: 'relay-1', source: { kind: 'agent-message', form: 'relay' } },
+    { id: 'settle-1', source: { kind: 'subagent-settled', form: 'notice', senderSessionId: 'child-9' } },
+    { id: 'late-1', source: { kind: 'async-tools-late-answer', form: 'notice', summary: 'Late answer for color: red', questionId: 'color' } }
+  );
+  const tool = createWaitJobTool(f.ctx, config);
+
+  const result = await tool.execute({ job_id: 'j-1', wait_ms: 600000 }, exec);
+  assert.equal(result.status, 'running', '三类非 user 消息都不命中起始检查——迟到作答起始检查立即唤醒交还');
+  assert.match(result.note, /A late answer has arrived/, '迟到作答照旧走其唤醒分支（R30-d 不回归）');
+  agent.inbox.nextStep.length = 0; // 还原共享 fixture
+});
+
+test('R55（判据 3·负面对照二）：next-turn 排队 user 消息、next-step 干净 → 不打断（R12 不回归）', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  const probes = installJobs(f, { status: 'running', waitDelayMs: 10 });
+  agent.inbox.nextTurn.push({ id: 'queued-1', source: { kind: 'user' } });
+  const tool = createWaitJobTool(f.ctx, config);
+
+  const pending = tool.execute({ job_id: 'j-1', wait_ms: 600000 }, exec);
+  // 接线段在首个 await 前同步完成（jobs.wait 已挂 10 ms 定时器）——此刻同步
+  // 翻终态，早于任何定时器触发（Windows 定时器粗粒度下 sleep-再翻不可靠）。
+  assert.equal(probes.waitCalls.length, 1, '等待照常武装');
+  probes.job.status = 'completed';
+  probes.job.detail = 'exit code: 0';
+  const result = await pending;
+  assert.equal(result.status, 'completed', '排队消息不打断；等待由结算释放正常收场');
+  agent.inbox.nextTurn.length = 0; // 还原共享 fixture
+});
+
+test('R55（判据 5）：作业已终态 + 先到插话并存 → 完成结果（结束优先于打断，入口侧）', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  const probes = installJobs(f, { status: 'completed', waitDelayMs: 0 });
+  probes.job.detail = 'exit code: 0';
+  agent.inbox.nextStep.push({ id: 'steer-1', source: { kind: 'user' } });
+  const tool = createWaitJobTool(f.ctx, config);
+
+  const result = await tool.execute({ job_id: 'j-1', wait_ms: 600000 }, exec);
+  assert.equal(result.status, 'completed', '屏障终态判定先于起始检查——先到插话不得压过已完成的作业');
+  assert.equal(result.output, 'job output');
+  assert.equal(probes.waitCalls.length, 0, '终态走屏障既有线，不接线');
+  agent.inbox.nextStep.length = 0; // 还原共享 fixture
 });
