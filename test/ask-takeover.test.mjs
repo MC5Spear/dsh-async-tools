@@ -1869,7 +1869,7 @@ test('K12：R49-5 并存态组开关——同组暂停批+计时批并存显「�
   model.dispose();
 });
 
-hostTest('K13：时钟调度边界——全额窗口与恢复剩余的到期判据（到期前不结、到期恰一次合成；r51 盲审 F1 补）', async () => {
+hostTest('K13：时钟调度边界——全额窗口与恢复剩余的到期判据（到期前不结、resolve 包计数恰一次＋重复投递哑火；复审 r53 收紧）', async () => {
   const { clock, timer } = makeScheduledClock();
   const { registry } = makeRegistry({ timeoutMs: 5000, timer, clock: clock.now });
   const agent = fakeAgent('session-k13');
@@ -1889,9 +1889,9 @@ hostTest('K13：时钟调度边界——全额窗口与恢复剩余的到期判�
   const answers1 = await pending1;
   assert.equal(answers1.answers[0].selected.length, 0, '到期恰一次合成（空答）');
   assert.equal(batch1.phase, 'expired', '批 1 转 expired');
-  clock.advance(60_000); // 越界后无二次结算
+  clock.advance(60_000); // 越界后无第二次「兑现」（防双结护栏在 (c) 包计数腿）
   await Promise.resolve(); await Promise.resolve();
-  assert.equal(settles, 1, '恰一次结算（无二次）');
+  assert.equal(settles, 1, '恰一次兑现（Promise 最终结算面观察）');
 
   // (b) 恢复剩余：烧 2 s 暂停（剩 3 s）→ 暂停中钟照走 1 s → 恢复重挂 ms=剩余
   // （3000，非全窗口 5000——重置成全窗口的变异在 ms 断言与到期双边界必红）。
@@ -1918,5 +1918,27 @@ hostTest('K13：时钟调度边界——全额窗口与恢复剩余的到期判�
   assert.equal(batch2.phase, 'expired', '批 2 转 expired');
   clock.advance(60_000);
   await Promise.resolve(); await Promise.resolve();
-  assert.equal(settles, 2, '全程恰两次结算（两批各恰一次）');
+  assert.equal(settles, 2, '全程恰两次兑现（两批各一次——Promise 结算面观察；防双结护栏在 (c)）');
+
+  // (c) 防双结护栏（复审 N3）：到期后**主动重复投递**同一到期回调（模拟误挂双
+  // 回调/删 lib expire 已结防御的世界），`batch.resolve` 包计数作可见副作用——
+  // Promise.then 天生单结算，不能当「恰一次」的证据（复审实证两次 resolve 只见
+  // 一次 then）。已结防御必须吞掉第二次 expire（resolve 恰被调一次）。
+  const pending3 = registry.take(makeRequest(agent, [Q('q3')]), agent);
+  const batch3 = [...registry.batches.values()].find((b) => b.questions.has('q3'));
+  let resolveCalls = 0;
+  const realResolve = batch3.resolve;
+  assert.equal(typeof realResolve, 'function', '批上有 resolve 可包计数');
+  batch3.resolve = (value) => { resolveCalls += 1; return realResolve(value); };
+  const entry3 = timer.armed[timer.armed.length - 1];
+  clock.advance(4999);
+  assert.equal(resolveCalls, 0, '到期前零 resolve');
+  clock.advance(1);
+  assert.equal(resolveCalls, 1, '到期恰一次 resolve（包计数——非 Promise 天生单结算）');
+  assert.equal(batch3.phase, 'expired', '批 3 转 expired');
+  entry3.fn(); // 重复投递同一回调（已 fired 项直发——不经过调度器的去重）
+  assert.equal(resolveCalls, 1, '重复投递被已结防御吞掉（删 expire 已结防御必红——K5 守暂停批哑火、此处守已结批哑火）');
+  assert.equal(batch3.phase, 'expired', '重复投递不改批相');
+  const answers3 = await pending3;
+  assert.equal(answers3.answers[0].selected.length, 0, '批 3 空答合成（兑现观察）');
 });

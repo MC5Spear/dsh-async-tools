@@ -1,8 +1,9 @@
 /**
  * R49 真机探针：待答暂停计时的批级独立（设计 §36.5 真机 (c)/(d)、§41.3）。
  *
- * 前置：验证实例在听；dsh-async 预设；`askTakeover` 开（探针只读设置，不动别人
- * 的档位——共享实例纪律；若开关关，如实 FAIL 'takeover-off'，不擅自打开）。
+ * 前置：验证实例在听；dsh-async 预设；`askTakeover` 开（开工只读核档——开关关
+ * 则如实 FAIL 'takeover-off'，不擅自打开。跑期会临时置位 askTimeoutMs/askUiSeat
+ * 三键并在收尾复原到开工快照（settingsRestore 留痕进证据 json；不是全程只读）。
  *
  * 判据（§36.5，R49 新增两条；r51 盲审 F1/F4 后时点判据强化）：
  * - (c) 时序判据：批 1 暂停 → 齐答结清 → 模型发批 2 接管 → 首轮轮询
@@ -13,13 +14,21 @@
  * - (d) 双会话隔离对照：会话 A 暂停在窗批、会话 B 在窗批照表走到期合成放行
  *   （B 的放行不被 A 的暂停冻结）；A 的恢复动作不触碰 B（B 组保持已超时态、
  *   不出现新倒计时）；A 恢复后按剩余平移放行。
- * - (d-6) B 活动计时中的恢复对照（r51 盲审 F4 补腿）：B 仍在倒计时时恢复 A
- *   ——B 的数字必须**续走原表**（单调递减、不重置不冻结），A 按剩余续走
- *   （数字 ≤ 28 s——恢复重置成全窗口在此必红）；随后再暂停 A 回到 d-3 前提。
- *   A 第二次恢复的数字同样 ≤ 28；放行时刻 ≈ 显示剩余 ± 粗容差（显数与兑现
- *   的一致性——武装 delay 与元数据脱钩的大幅变异在此必红）。
- * - setup-clean 门（r51 盲审建议）：开工面板必须本就干净（残留 > 0 如实红）；
- *   收尾清理只动**本次创建会话**的组（共享实例不误伤他人）。
+ * - (d-6) B 活动计时中的恢复对照（复审 N1/N4 收紧）：暂停前先烧 ~10 s 窗口，
+ *   以**暂停前读得的数字为首记剩余锚**——恢复后 A 的数字必须落在首记锚
+ *   −4..0 s 内（全额重置会显示 ~30，必红）；B 的数字续走原表（严格下降且
+ *   降幅 ≤4 s；重置跳升/冻结停摆必红）。B 的放行时刻对**读锚时刻＋锚数字**
+ *   双侧限界（大幅平移/重挂必红；粒度=秒级显示＋轮询，≥5 s 级变异可判）。
+ *   A 第二次恢复同锚口径；放行时刻对「第二次暂停前锚」双侧限界（全额重置
+ *   ≈30 s 必红——不再用恢复后读数当非全窗口证据）。
+ * - setup-clean 门（复审 N2 收紧）：开工**只读计数**，非零立即 FAIL 退出——
+ *   不清场、不点任何他人的题；收尾清理只动本次创建会话的组，且无组归属的
+ *   按钮一律不算自身。
+ * - 指纹（复审 N2/N4）：证据 json 记**实测指纹**——profile link 行、node_modules
+ *   junction 的 OS 级解析目标、实体 package.json 版本、BUILD-STAMP、
+ *   lib/ask-takeover.js + client.js + lib/host.js 的 sha256 前 16 位、
+ *   pluginManager/listPlugins 原始行、/version 尝试读数；环境变量
+ *   R49_ENTITY_HINT 仅作旁注标签，不充当指纹。
  *
  * GUI 面（Edge/Chrome CDP）：找不到浏览器时如实 FAIL 'cdp-missing'，不冒充通过。
  * 用法：node verify/probe-r49-batch-pause.mjs（默认自起无头 Edge；环境spawn 被安全
@@ -30,6 +39,7 @@
  */
 import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { realpathSync } from 'node:fs';
 import { rpc, transcriptOf, localConfig } from './_rpc.mjs';
 import { newSession, prompt, readNs, patchNs, PRESET } from './_r28-helpers.mjs';
 import { findBrowser, launch, openPage, evaluate, waitFor, screenshot } from './_visual/cdp.mjs';
@@ -109,42 +119,46 @@ async function answerFirst(page, sessionId) {
   return chip === 'clicked' && submit === 'clicked';
 }
 
-/** 清面板：逐条点「不答」直到空。scopeShorts 给定时只动**这些会话的组**
- *  （r51 盲审建议：共享实例收尾不误伤他人）；null = 全局（开工清残留用——
- *  断言与点击本就按组头短 id 定位，全局残留不影响判据，清它只是开工惯例）。 */
-async function clearPanel(page, scopeShorts = null) {
-  const scopeExpr = scopeShorts === null ? 'null'
-    : JSON.stringify(scopeShorts.map((sid) => String(sid).replace(/^session-/, '').slice(0, 8)));
+/** 清面板（收尾专用，scopeShorts 必给）：逐条点「不答」直到**本次会话**的组清空。
+ *  复审 N2 收紧：无组归属（g===null）的按钮一律**不算自身**——既不点也不数；
+ *  只匹配组头含本次会话短 id 的组。开工不再调用本函数（开工只读计数）。 */
+async function clearPanel(page, scopeShorts) {
+  const scopeExpr = JSON.stringify(scopeShorts.map((sid) => String(sid).replace(/^session-/, '').slice(0, 8)));
+  const scopedSkipCount = `(() => {
+    const shorts = ${scopeExpr};
+    const buttons = [...document.querySelectorAll(".ats-ask-panel .ats-ask-skip")];
+    const own = buttons.filter((b) => {
+      const g = b.closest('.ats-ask-group');
+      if (g === null) return false; // 无组归属 ≠ 自身（复审 N2）
+      const head = (g.textContent || '');
+      return shorts.some((s) => head.includes(s));
+    });
+    return own.length;
+  })()`;
   for (let round = 0; round < 10; round += 1) {
-    const remaining = await evaluate(page,
-      `document.querySelectorAll(".ats-ask-panel .ats-ask-skip").length`);
-    if (Number(remaining) === 0) break;
+    const remaining = Number(await evaluate(page, scopedSkipCount));
+    if (remaining === 0) break;
     await evaluate(page, `(() => {
+      const shorts = ${scopeExpr};
       const buttons = [...document.querySelectorAll(".ats-ask-panel .ats-ask-skip")];
-      const scoped = buttons.filter((b) => {
-        if (${scopeExpr} === null) return true;
+      const own = buttons.filter((b) => {
         const g = b.closest('.ats-ask-group');
-        if (g === null) return true;
+        if (g === null) return false;
         const head = (g.textContent || '');
-        return ${scopeExpr}.some((s) => head.includes(s));
+        return shorts.some((s) => head.includes(s));
       });
-      if (scoped.length > 0) scoped[0].click();
+      if (own.length > 0) own[0].click();
       return true;
     })()`);
     await sleep(800);
   }
-  const leftover = await evaluate(page,
-    `(() => {
-      const buttons = [...document.querySelectorAll(".ats-ask-panel .ats-ask-skip")];
-      if (${scopeExpr} === null) return buttons.length;
-      return buttons.filter((b) => {
-        const g = b.closest('.ats-ask-group');
-        if (g === null) return true;
-        const head = (g.textContent || '');
-        return ${scopeExpr}.some((s) => head.includes(s));
-      }).length;
-    })()`);
-  return Number(leftover);
+  return Number(await evaluate(page, scopedSkipCount));
+}
+
+/** 只读残留计数（开工门用——不点任何东西；复审 N2：非零即 FAIL 退出）。 */
+function countSkips(page) {
+  return evaluate(page, 'document.querySelectorAll(".ats-ask-panel .ats-ask-skip").length')
+    .then((n) => Number(n));
 }
 
 /** 开工置位 + 返回复原闭包（r30 纪律：复原到开工快照，不动别人的档）。 */
@@ -164,6 +178,18 @@ async function setupTakeover() {
     await patchNs({ askTakeover: original.askTakeover, askTimeoutMs: original.askTimeoutMs, askUiSeat: original.askUiSeat });
   };
   return { restore };
+}
+
+/** 有界等组回到倒计时数字形态后**即读即返**（恢复后首拍渲染竞态——等到那拍
+ *  的文本本身就带数字，读数即锚读数；超时返回末读让断言如实红）。 */
+async function waitForCountingText(page, sessionId, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const text = await groupTextOf(page, sessionId);
+    if (COUNTING.test(text)) return text;
+    if (Date.now() > deadline) return text;
+    await sleep(300);
+  }
 }
 
 /** 让 Agent 提一道单选题（提问后就安静等待——与 r30/r36 探针同款、真机已验形状）。 */
@@ -203,11 +229,16 @@ async function main() {
   await waitFor(page, 'document.querySelectorAll("#root *").length', (n) => Number(n) > 20, 30000);
   await sleep(2000);
 
-  // 开工先清残留：历轮失败跑留下的待答组会让点击与断言打到别人的组上。
-  // r51 盲审门控：面板必须**本就干净**——开工有残留即红（不把「清完」冒充
-  // 「本来就干净」）。
-  const leftoverStart = await clearPanel(page);
-  record('setup-clean', leftoverStart === 0, `开工面板干净（开工残留 ${String(leftoverStart)} 条——>0 即红）`);
+  // 开工门（复审 N2 收紧）：**只读计数**——非零立即 FAIL 退出，不清场、不点
+  // 任何他人的题（残留下次重跑前由人工处置；「清完再宣称本就干净」是假门）。
+  const leftoverStart = await countSkips(page);
+  if (leftoverStart > 0) {
+    record('setup-clean', false, `开工面板有残留 ${String(leftoverStart)} 条（只读计数；不清他人题——人工清后重跑）`);
+    return browser;
+  }
+  record('setup-clean', true, '开工面板干净（只读计数 0，未做任何清理动作）');
+  // 实测指纹（复审 N2/N4）：开工即采——证据 json 与判据同跑同落。
+  probeEnv.fingerprint = await collectFingerprint(new URL(APP_URL).origin);
 
   // ══ (c) 时序判据：暂停 → 齐答 → 新批照表放行 ══════════════════════════
   const sA = await newSession(PRESET);
@@ -295,41 +326,56 @@ async function main() {
     return browser;
   }
   marks.isoBothSeen = Date.now();
+  // 暂停前先烧 ~10 s（复审 N1：首记剩余锚必须离全额窗口足够远——30 s 重置会
+  // 显示 ~29–30，锚落在 ~14–20 s 时「锚−4..0」判据有 ≥9 s 判别裕量）。
+  await sleep(10000);
+  const aPause1Text = await groupTextOf(page, sIsoA);
+  marks.aDigitAtPause1 = countdownDigit(aPause1Text);
   // 只暂停 A——B 必须照表。
   const pauseA = await clickInGroup(page, sIsoA, '.ats-ask-pause');
   await sleep(2000);
   const textA = await groupTextOf(page, sIsoA);
   const textB = await groupTextOf(page, sIsoB);
-  record('d-2-a-paused-b-counting', pauseA === 'clicked' && PAUSED_TEXT.test(textA) && COUNTING.test(textB) && !PAUSED_TEXT.test(textB),
-    `A 已暂停、B 仍数字倒计时（A 的暂停不触碰 B）：A=${textA.slice(0, 60)} ‖ B=${textB.slice(0, 60)}`);
+  record('d-2-a-paused-b-counting', pauseA === 'clicked' && PAUSED_TEXT.test(textA)
+    && COUNTING.test(textB) && !PAUSED_TEXT.test(textB) && marks.aDigitAtPause1 !== null,
+    `A 已暂停（暂停前首记锚 ${String(marks.aDigitAtPause1)} s）、B 仍数字倒计时（A 的暂停不触碰 B）：A=${textA.slice(0, 60)} ‖ B=${textB.slice(0, 60)}`);
   await screenshot(page, `${SHOT_DIR}\\r49-batch-pause-iso-contrast.png`);
 
-  // ══ (d-6) B 活动计时中的恢复对照（r51 盲审 F4 补腿）════════════════════
-  // B 仍在倒计时时恢复 A——B 的数字必须续走原表（单调递减：重置会跳升、冻结
-  // 会停摆/变文案）；A 按剩余续走（≤ 28 s——恢复重置成全窗口必红）。随后把
-  // A 再暂停回 d-3 的前提（B 放行时 A 冻结在场）。
-  await sleep(6000);
-  const bDigit1 = countdownDigit(await groupTextOf(page, sIsoB));
+  // ══ (d-6) B 活动计时中的恢复对照（复审 N1/N4 收紧）═══════════════════
+  // A 的判据对**暂停前首记锚**：恢复后数字 ∈ 锚−4..0（暂停冻结携带的剩余；
+  // 全额重置显示 ~29–30 ⇒ 必红——不再用恢复后读数自身当「非全窗口」证据）。
+  // B 的判据：严格下降且降幅 ≤4（重置跳升/冻结停摆必红；细粒度平移由 d-3 锚窗守）。
+  const bPause1Text = await groupTextOf(page, sIsoB);
+  marks.bAnchorAt = Date.now();
+  marks.bDigit1 = countdownDigit(bPause1Text);
   const resumeA1 = await clickInGroup(page, sIsoA, '.ats-ask-resume');
-  await sleep(2500);
-  const aResumedText = await groupTextOf(page, sIsoA);
+  marks.d6ResumeAt = Date.now();
+  const aResumedText = await waitForCountingText(page, sIsoA, 5000);
   const bDuringText = await groupTextOf(page, sIsoB);
   const aDigit1 = countdownDigit(aResumedText);
   const bDigit2 = countdownDigit(bDuringText);
-  marks.d6ADigit = aDigit1; marks.d6BDigit1 = bDigit1; marks.d6BDigit2 = bDigit2;
-  const d6ResumeOk = resumeA1 === 'clicked' && COUNTING.test(aResumedText)
-    && aDigit1 !== null && aDigit1 >= 15 && aDigit1 <= 28
-    && bDigit1 !== null && bDigit2 !== null && bDigit2 < bDigit1 && bDigit2 >= bDigit1 - 8;
+  marks.d6ADigit = aDigit1; marks.d6BDigit2 = bDigit2;
+  const d6aOk = resumeA1 === 'clicked' && COUNTING.test(aResumedText)
+    && marks.aDigitAtPause1 !== null && aDigit1 !== null
+    && aDigit1 <= marks.aDigitAtPause1 && aDigit1 >= marks.aDigitAtPause1 - 4;
+  const d6bOk = marks.bDigit1 !== null && bDigit2 !== null
+    && bDigit2 < marks.bDigit1 && bDigit2 >= marks.bDigit1 - 4;
   await screenshot(page, `${SHOT_DIR}\\r49-batch-pause-d6-resume-while-b-counting.png`);
+  // 再暂停回 d-3 前提（B 放行时 A 冻结在场）——暂停前读第二次锚（d-4/d-5 同源口径）。
+  const aPause2Text = await groupTextOf(page, sIsoA);
+  marks.aDigitAtPause2 = countdownDigit(aPause2Text);
   const pauseA2 = await clickInGroup(page, sIsoA, '.ats-ask-pause');
   await sleep(2000);
   const aRefrozen = await groupTextOf(page, sIsoA);
-  record('d-6-resume-while-b-counting', d6ResumeOk && pauseA2 === 'clicked' && PAUSED_TEXT.test(aRefrozen),
-    `B 计时中恢复 A：A 按剩余续走（剩 ${String(aDigit1)} s ∈ [15,28]——非全窗口）、B 续走原表（${String(bDigit1)}→${String(bDigit2)} s 单调递减不重置不冻结）；恢复后 A 再冻结回前提：A=${aResumedText.slice(0, 45)} ‖ B=${bDuringText.slice(0, 45)}`);
+  record('d-6-resume-while-b-counting', d6aOk && d6bOk && pauseA2 === 'clicked'
+    && PAUSED_TEXT.test(aRefrozen) && marks.aDigitAtPause2 !== null,
+    `B 计时中恢复 A：A 数字 ${String(marks.aDigitAtPause1)}→${String(aDigit1)} s（∈ 首记锚−4..0——全额重置必红）、B ${String(marks.bDigit1)}→${String(bDigit2)} s（严格下降且降幅≤4）；再暂停前二次锚 ${String(marks.aDigitAtPause2)} s：A=${aResumedText.slice(0, 40)} ‖ B=${bDuringText.slice(0, 40)}`);
 
   // B 照表走到期合成放行（A 仍暂停中——B 的放行就是「没被冻住」的活体证据）。
+  // 复审 N4：放行时刻对「读锚时刻＋锚数字」双侧限界——期望 ≈ bAnchorAt +
+  // bDigit1 秒；大幅平移/重挂（≥5 s 级）与早放行必红（粒度=秒级显示＋2 s 轮询）。
   let bRel = false;
-  const bDeadline = marks.isoBothSeen + PAST_WINDOW_MS + 20000;
+  const bDeadline = marks.bAnchorAt + marks.bDigit1 * 1000 + 15000;
   while (Date.now() < bDeadline) {
     if (await released(sIsoB)) { bRel = true; break; }
     await sleep(2000);
@@ -337,19 +383,20 @@ async function main() {
   marks.isoBReleasedAt = Date.now();
   const aStillFrozen = await groupTextOf(page, sIsoA);
   const aReleasedEarly = await released(sIsoA);
-  const bRelMs = marks.isoBReleasedAt - marks.isoBothSeen;
-  marks.isoBRelMs = bRelMs;
-  // 放行时刻窗（r51 盲审 F1）：下界防早合成（继承/缩短必红），上界防平移重挂。
-  record('d-3-b-released-on-schedule', bRel && bRelMs >= 20000 && bRelMs < PAST_WINDOW_MS + 20000
+  const bAnchorMs = marks.isoBReleasedAt - marks.bAnchorAt;
+  marks.isoBAnchorMs = bAnchorMs;
+  const bWindowOk = marks.bDigit1 !== null
+    && bAnchorMs >= marks.bDigit1 * 1000 - 5000 && bAnchorMs <= marks.bDigit1 * 1000 + 7000;
+  record('d-3-b-released-on-schedule', bRel && bWindowOk
     && PAUSED_TEXT.test(aStillFrozen) && !aReleasedEarly,
-    `B 照表放行（${String(bRelMs)} ms ∈ [20000,${String(PAST_WINDOW_MS + 20000)}]）且 A 仍冻结未放行`);
+    `B 对锚放行（放行−读锚 ${String(bAnchorMs)} ms ≈ 锚 ${String(marks.bDigit1)} s ±[−5,+7] s——大幅平移/重挂/早放必红）且 A 仍冻结未放行`);
   await screenshot(page, `${SHOT_DIR}\\r49-batch-pause-iso-b-released.png`);
 
-  // A 恢复——不触碰 B：B 组保持已超时态（不出现新倒计时），A 回数字倒计时。
+  // A 第二次恢复——不触碰 B：B 组保持已超时态（不出现新倒计时）；A 数字对
+  // **二次锚**口径（复审 N1：全额重置显示 ~29–30 > 锚+4 ⇒ 必红）。
   marks.isoAResume2At = Date.now();
   const resumeA = await clickInGroup(page, sIsoA, '.ats-ask-resume');
-  await sleep(2500);
-  const aAfterResume = await groupTextOf(page, sIsoA);
+  const aAfterResume = await waitForCountingText(page, sIsoA, 5000);
   const bAfterResume = await groupTextOf(page, sIsoB);
   const aDigit2 = countdownDigit(aAfterResume);
   marks.isoADigit2 = aDigit2;
@@ -357,16 +404,19 @@ async function main() {
   const bBadge = await waitFor(page,
     `(() => { const g = ${groupExpr(sIsoB)}; return g !== null && g.querySelector('.ats-ask-expired') !== null; })()`,
     (v) => v === true, 8000);
-  // A 的数字 ≤ 28（r51 盲审 F1：第二次恢复同样不得重置成全窗口——显示面即红）。
-  record('d-4-resume-isolated', resumeA === 'clicked' && COUNTING.test(aAfterResume)
-    && aDigit2 !== null && aDigit2 >= 15 && aDigit2 <= 28
+  const d4aOk = resumeA === 'clicked' && COUNTING.test(aAfterResume)
+    && marks.aDigitAtPause2 !== null && aDigit2 !== null
+    && aDigit2 <= marks.aDigitAtPause2 && aDigit2 >= marks.aDigitAtPause2 - 4;
+  record('d-4-resume-isolated', d4aOk
     && bBadge === true && !COUNTING.test(bAfterResume) && PAUSED_TEXT.test(bAfterResume) === false,
-    `A 恢复回数字倒计时（剩 ${String(aDigit2)} s ∈ [15,28]）；B 保持已超时态（无新倒计时、未被平移重挂；resume=${String(resumeA)}、badge=${String(bBadge)}）：A=${aAfterResume.slice(0, 60)} ‖ B=${bAfterResume.slice(0, 60)}`);
+    `A 恢复数字 ${String(aDigit2)} s ∈ 二次锚 ${String(marks.aDigitAtPause2)} −4..0（全额重置必红）；B 保持已超时态（无新倒计时、未被平移重挂；resume=${String(resumeA)}、badge=${String(bBadge)}）：A=${aAfterResume.slice(0, 50)} ‖ B=${bAfterResume.slice(0, 50)}`);
   await screenshot(page, `${SHOT_DIR}\\r49-batch-pause-iso-a-resumed.png`);
 
-  // A 按剩余平移放行（收尾对照：恢复后照表到期——不被恢复重置成全窗口）。
+  // A 按剩余平移放行——放行时刻对**二次锚**双侧限界（复审 N1：期望 ≈
+  // resume2 + 二次锚秒数；全额重置 ≈30 s，锚 ≤21 s 时上界 ≤28 s ⇒ 必红。
+  // 细粒度（1–4 s 级）由单元 K13/K3 守，此处粒度=秒级显示＋2 s 轮询）。
   let aRel = false;
-  const aDeadline = Date.now() + PAST_WINDOW_MS + 20000;
+  const aDeadline = Date.now() + marks.aDigitAtPause2 * 1000 + 15000;
   while (Date.now() < aDeadline) {
     if (await released(sIsoA)) { aRel = true; break; }
     await sleep(2000);
@@ -374,13 +424,10 @@ async function main() {
   marks.isoAReleasedAt = Date.now();
   const aRelMs = marks.isoAReleasedAt - marks.isoAResume2At;
   marks.isoARelMs = aRelMs;
-  // 一致性窗（r51 盲审 F1）：放行时刻 ≈ 恢复时刻 + 显示剩余 ± 粗容差（数字在
-  // 恢复点击后 ~2.5 s 读得，容差含 2 s 检测粒度）——武装 delay 与 expiresAt
-  // 元数据脱钩的大幅变异在此必红；「重置成全窗口」的精判在 d-4 数字上界。
-  const aRelOk = aRel && aDigit2 !== null
-    && aRelMs >= aDigit2 * 1000 - 5000 && aRelMs <= aDigit2 * 1000 + 8000;
-  record('d-5-a-released-after-resume', aRelOk,
-    `A 恢复后按剩余放行（${String(aRelMs)} ms ≈ 剩余 ${String(aDigit2)} s ± 容差；锚句=${String(aRel)}）`);
+  const aWindowOk = marks.aDigitAtPause2 !== null
+    && aRelMs >= marks.aDigitAtPause2 * 1000 - 5000 && aRelMs <= marks.aDigitAtPause2 * 1000 + 7000;
+  record('d-5-a-released-after-resume', aRel && aWindowOk,
+    `A 恢复后对二次锚放行（${String(aRelMs)} ms ≈ ${String(marks.aDigitAtPause2)} s ±[−5,+7]——全额重置≈30 s 必红；锚句=${String(aRel)}）`);
 
   // 收尾清面板——只动本次创建会话的组（r51 盲审建议：共享实例不误伤他人）。
   const own = [sA, sIsoA, sIsoB].filter(Boolean);
@@ -391,16 +438,57 @@ async function main() {
 
 let restore = null;
 let openedBrowser = null;
-// 证据指纹（r51 盲审 F4）：baseUrl 只记 origin（令牌绝不落盘）；entityHint 由
-// 部署方在跑前以环境变量注入（实体目录名含 commit）——json 可对上「跑的是哪份
-// 代码」。tokenFile 路径存在性一并记录（不读内容之外的任何秘密）。
+// 证据指纹（复审 N2/N4：**实测**，不接受环境自报）：profile link 行 + node_modules
+// junction 的 OS 级解析目标（realpath——装载器解析的真实终点）+ 实体 package.json
+// 版本 + BUILD-STAMP + lib/ask-takeover.js / client.js / lib/host.js 的 sha256
+// 前 16 位 + pluginManager/listPlugins 原始行 + /version 尝试。baseUrl 只记 origin
+//（令牌绝不落盘）；R49_ENTITY_HINT 降级为旁注标签，不充当指纹。
 const probeEnv = {
   baseUrl: null,
   entityHint: process.env.R49_ENTITY_HINT ?? null,
   node: process.version,
   windowMs: WINDOW_MS,
-  pastWindowMs: PAST_WINDOW_MS
+  pastWindowMs: PAST_WINDOW_MS,
+  fingerprint: null
 };
+
+/** 实测指纹采集（每段独立 try——单段缺席留 null/错误串，不炸整跑）。文件腿的
+ *  profile 目录经 `R49_PROFILE_DIR` 传入（实例坐标不进代码——与 _rpc.mjs 的
+ *  本机平面纪律同源；缺席则该段留注记，其余腿照采）。 */
+async function collectFingerprint(baseUrl) {
+  const fp = {};
+  const profDir = process.env.R49_PROFILE_DIR;
+  if (profDir === undefined || profDir === '') {
+    fp.filesNote = 'R49_PROFILE_DIR 未设置——文件腿（link 行/junction 解析/实体版本与哈希）未采；跑取证时由部署命令传入';
+  } else try {
+    const pkgRaw = readFileSync(join(profDir, 'package.json'), 'utf8');
+    const row = /"dsh-async-tools"\s*:\s*"link:([^"]+)"/.exec(pkgRaw);
+    fp.profileLinkRow = row === null ? null : row[1];
+    const resolved = realpathSync(join(profDir, 'node_modules', 'dsh-async-tools'));
+    fp.junctionTarget = resolved;
+    const entPkg = JSON.parse(readFileSync(join(resolved, 'package.json'), 'utf8'));
+    fp.entityVersion = entPkg.version ?? null;
+    try { fp.buildStamp = readFileSync(join(resolved, 'BUILD-STAMP'), 'utf8').trim(); } catch { fp.buildStamp = null; }
+    const { createHash } = await import('node:crypto');
+    const hashOf = (p) => {
+      try { return createHash('sha256').update(readFileSync(p)).digest('hex').slice(0, 16); } catch { return null; }
+    };
+    fp.hashes = {
+      libAskTakeover: hashOf(join(resolved, 'lib', 'ask-takeover.js')),
+      client: hashOf(join(resolved, 'client.js')),
+      libHost: hashOf(join(resolved, 'lib', 'host.js'))
+    };
+  } catch (error) { fp.filesError = String(error?.message ?? error); }
+  try {
+    const plugins = await rpc('pluginManager/listPlugins', {});
+    fp.pluginsRows = plugins.filter?.((x) => JSON.stringify(x).includes('async-tools')) ?? [];
+  } catch (error) { fp.pluginsError = String(error?.message ?? error); }
+  try {
+    const res = await fetch(new URL('/version', baseUrl), { signal: AbortSignal.timeout(5000) });
+    fp.hostVersion = res.ok ? (await res.text()).slice(0, 120) : `http-${String(res.status)}`;
+  } catch (error) { fp.hostVersion = `unreachable: ${String(error?.message ?? error)}`; }
+  return fp;
+}
 // 设置复原留痕（test-review-r50 F1）：attempted/ok/attempts 进证据 json；复原
 // 失败必须打进退出码——「判据全绿但实例设置没复原」不是绿跑。
 const settingsRestore = { attempted: false, ok: null, attempts: 0 };

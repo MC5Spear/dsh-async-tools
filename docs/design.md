@@ -359,7 +359,7 @@ export function watchUserInterrupt(ctx, agent) { … }
   async 行等），蓝本随包走。
 - **不挂 `tool-presentation`**：标准模式本来就没有这一行，走 schema 默认的 native 呈现，四个工具**模型可直接调用**；若基座取 PTC，模型只能直接调用 `run_code`，异步的"跨步骤协作"当场失效（需求 §1.1 的功能性硬论据（决定性））。
 - **`tool-jobs` 行保留**：`job_kill` / `job_list` 仍需要（R8 的收尾路径）；`job_output` 与本插件的 `async_wait_job` 功能重叠，**保留但由人设引导优先用 `async_wait_job`**，避免一步改太多导致难排查。
-- **人设章节**：新增一段工具指引，说明新工作方式（先启动、继续干活、需要时 `async_wait_job` 取回、等待有界、插话会打断等待但工作继续）。人设还有一段**硬规则**（子代理一律后台、结果用 `async_wait_agent` 有界等待，§18.4，R14）。
+- **人设章节**：新增一段工具指引，说明新工作方式（先启动、继续干活、需要时 `async_wait_job` 取回、等待有界、插话会打断等待但工作继续）。人设还有一段**强制规则**（子代理一律后台、结果用 `async_wait_agent` 有界等待，§18.4，R14）。
 - **包名必须进 `dsh.profile.bundles`，但宿主行不得带 `toolName`**：两件事要分开看。**进 bundles** 是宿主半边（设置卡片）能被装载的前提——`dsh-client-modules` 只遍历 Loader entry，预设子树不在其中，不进 bundles 卡片就永远不出现（浏览器半边只认**平名**包：行名带子路径时会被静默跳过，服务端一切正常、只有浏览器不渲染）。**工具不会因此进全局工具层**，因为宿主行没有 `toolName` ⇒ 入口分派到宿主角色 ⇒ **零工具注册**（反向锁死见 `test/two-planes.test.mjs` 的 T5/T12）。工具行只写在预设的组成里。
 - **挂载位置的副作用**：三个行挂在预设的 standing mount scope 下，`agent/status` 才递达得到子代理的状态（已知依赖：事件按 scope 标签派发，监听器标签须是派发键自身或其祖先）；挂到 host 平面会变成"全进程监听"，挂进某个 agent 的 scope 则会静默失聪。
 - **不得修改** shipped 预设目录（shipped 预设随上游包交付，没有"可改的安装目录"；预设由插件行声明，注册表不扫目录、不接受预设路径）。
@@ -372,7 +372,7 @@ export function watchUserInterrupt(ctx, agent) { … }
 - **审计**：本插件不写会话事件（插件无此权限），但**注册作业会在结算时触发 `tool-jobs` 的完成通知**——那是 dsh 既有机制发的，不是本插件写的。它**不是**与 `async_wait_job` 竞争的第二条取输出路径：`async_wait_job` 覆盖结算时通知被自动抑制（结算时有在途等待者 → 事件的 `awaited` 为真），只有模型完全没在等时才发出，起备用唤醒作用。实测与决定见 §4.5。
 - 本插件自己的日志走 `ctx.logger`，前缀统一 `[async-tools]`：每次 `async_run` 的让出决策
   （完成/让出 + 耗时）、每次 `wait_*` 的结束原因（完成/超时/插话/取消）、以及 R9 的
-  对账与清理结论（含"跳过并记原因"）。
+  核对与清理结论（含"跳过并记原因"）。
 - **⚠️ 但只走 `ctx.logger` 的日志在本部署里到不了任何地方。** cordis 的 `LoggerService` 只注册了
   **一个把消息推进内存 buffer 的 exporter**（`bufferSize = 1000`，超出截尾），
   dsh-base / dsh-web-app 都没有挂 stdout / 文件出口，也没有 `--verbose` / `DSH_LOG_LEVEL`
@@ -427,9 +427,9 @@ export function watchUserInterrupt(ctx, agent) { … }
    （等满预算返回 `running`）→ 本轮结束后该消息被宿主领取进新轮次（模型可见并回应）；
    随后另一次等待期间发 **steer** 消息 → 立即返回 `interrupted` 且作业/子代理不受影响
    （`verify/probe-queue-delivery.mjs` 一条脚本取全三项证据）。
-9. **R13/R14（async_agent 立返 + persona 硬规则）**：`async_agent` 调用**同一步**返回
+9. **R13/R14（async_agent 立返 + persona 强制规则）**：`async_agent` 调用**同一步**返回
    `started` + `agent_id`（无等待）→ 随后 `async_wait_agent` 等到 `settled`（立返与可等
-   缺一不可）；预设 system prompt 转录含 `ALWAYS` 硬规则句（§18.4/§18.5）。
+   缺一不可）；预设 system prompt 转录含 `ALWAYS` 强制规则句（§18.4/§18.5）。
 
 ### 11.3 验收口径
 - 单元测试全绿，且**不跳过**（不得把"跳过"当"通过"，对齐既有项目约定）；条数只增不减。
@@ -591,18 +591,18 @@ name: dsh-async-tools`），包名 `dsh-async-tools` 进 `dsh.profile.bundles`�
 
 ---
 
-## 18. `async_agent` 工具与 persona 硬规则（R13/R14）
+## 18. `async_agent` 工具与 persona 强制规则（R13/R14）
 
 ### 18.1 关键取舍
 
 | 取舍 | 选择 | 理由 |
 |---|---|---|
-| 后台形态 | 只走 `ctx.subagents.startContinuable`，**不**走宿主 `jobs.start({kind:'subagent'})` 兜底路径 | `childId` 直接就是 `async_wait_agent` 的等待对象，没有 job↔child 对照要维护；fork/spawn 后端天然支持 continuable。jobs 路径是宿主工具给非 continuable provider 的兜底，不是公共契约的正门 |
+| 后台形态 | 只走 `ctx.subagents.startContinuable`，**不**走宿主 `jobs.start({kind:'subagent'})` 备用路径 | `childId` 直接就是 `async_wait_agent` 的等待对象，没有 job↔child 对照要维护；fork/spawn 后端天然支持 continuable。jobs 路径是宿主工具给非 continuable provider 的兜底，不是公共契约的正门 |
 | 参数面 | `description` + `prompt` + 可选的 `provider`+`model`（成对，模型路由）；**不设** `run_in_background`，不透传 reasoning_effort/persona/toolFilter/maxDepth；**未声明键一律显式报错** | "永远后台"是结构保证不是提示词约束（R13）；模型选择进参数面、经 `request.agentOptions` 真正生效（spawn provider 声明 `capabilities.agentOptions = true`，request 带 `agentOptions` 即可覆盖子代理路由），消灭"传参不生效且无提示"（开放参数 schema 会把多余键静默吞掉的失效形态）；其余委托参数仍走宿主 `subagent` 工具（非目标清单）。显式报错是对静默吞参的对冲 |
 | 后端 provider 选择 | 插件设置 `subagentProvider`（字符串，默认 `'spawn'`，名字沿用 shipped 预设 ralph 行的既有字段名）；与参数面的模型路由 `provider` 是两个概念 | 后端属于部署级选择（哪个后端可用取决于宿主组合），不是每次调用的选择；R10 语义=默认值可配。**不做闭集枚举**：后端注册表在宿主平面且可变，schema 里枚举会过期；无效名字留到执行时报可读错误 |
 | 等待归属 | `async_agent` **不注册任何定时器/监听器/作业**，等待完全归 `async_wait_agent` | 没有等待就没有打断问题——R12 的打断语义不适用于本工具；一次派生、零副作用残留（R4 可逆性） |
 | 中止语义 | `startContinuable` 的 `signal` 用 `exec.signal` | 与宿主 `subagent` 工具同款（宿主同样把 `exec.signal` 传给派生调用）——派生调用本身随本次工具调用取消；`childId` 返回后子代理生命周期与本次调用无关 |
-| 硬规则的载体 | 机制半边=工具形状（R13）；行为半边=persona 条款（R14） | 预设平面能告诉模型"怎么用工具"的地方只有 persona（§9 既有论断）；管住裸 `subagent`/`subagent_fork` 的显式 `run_in_background: false` 只能靠提示词 |
+| 强制规则的载体 | 机制半边=工具形状（R13）；行为半边=persona 条款（R14） | 预设平面能告诉模型"怎么用工具"的地方只有 persona（§9 既有论断）；管住裸 `subagent`/`subagent_fork` 的显式 `run_in_background: false` 只能靠提示词 |
 
 ### 18.2 工具定义（`lib/agent.js`）
 
@@ -751,7 +751,7 @@ model-selection policy); omit both to inherit the parent route`——不含随�
 - 设置行为测试口径：`subagentProvider` 改成别的名字后，**下一次 `async_agent` 调用的错误**
   （或 `getProvider` 的查询对象）跟着变——行为差异证明设置生效（R10 纪律），不停留在"读回新值"。
 
-### 18.4 预设第四行、persona 硬规则与**模板刷新**（R14）
+### 18.4 预设第四行、persona 强制规则与**模板刷新**（R14）
 
 - 预设补丁 `presets/dsh-async.patch.yml` 加第四行：**顶层、紧随 `async-wait-agent` 行之后**
   （与三个 async 行连续成组）——**不得**写进 delegation 组的子行
@@ -759,7 +759,7 @@ model-selection policy); omit both to inherit the parent route`——不含随�
   写进去会改变挂载语义）。行内容：
   `- id: async-agent` / `name: dsh-async-tools` / `config: { toolName: async_agent }`
   （`tool-subagent` 的成例：一个包被引用多次，靠 `toolName` 区分）。
-- persona prefix（模板 `:40-47` 段）追加硬规则段（与现有人设同语言=英文）：
+- persona prefix（模板 `:40-47` 段）追加强制规则段（与现有人设同语言=英文）：
 
   > `DELEGATION RULES (hard rules, not advice):`
   > `1) Delegations are ALWAYS background. Use async_agent (it has no foreground mode), or pass run_in_background: true to subagent / subagent_fork. A foreground delegation blocks the entire tool batch — never pass run_in_background: false.`
@@ -798,7 +798,7 @@ model-selection policy); omit both to inherit the parent route`——不含随�
   | 缺 `prompt` 被拒：`validateJsonSchemaValue(tool.parameters, …)`（dsh-tools defineTool 内部同款入口）点名违规，两键齐全通过（比 validateArgs(spec) 更贴执行层：宿主消费的就是编译后的 schema） | schema 本体 | R13 |
 - **变异**（`verify/mutate-agent.mjs`，入 README 变异表）：
   把 `startContinuable` 换成 `ctx.subagents.start(provider, {...})`（前台形态）→ 上表"零前台/立返"必红；
-  M2 删掉 persona 硬规则段 → `validate-preset` 必红。
+  M2 删掉 persona 强制规则段 → `validate-preset` 必红。
 - **接线**：`test/index.test.mjs` 的 inject 静态扫描自动覆盖 `lib/agent.js`（它只用已注入的
   `subagents`；agent.js 构造时**不查注册表**——描述里的 provider 名取自配置，所以
   makeContext 的假 `subagents`（只有 listChildren/interrupt）不需要 getProvider）；
@@ -808,7 +808,7 @@ model-selection policy); omit both to inherit the parent route`——不含随�
   9. `async_agent` 立返 `agent_id`（转录里**同一步**返回，无等待）→ 随后
      `async_wait_agent(agent_id, wait_ms)` 等到 `settled` 且拿到该子代理的回答要点
      ——立返与可等**缺一不可**；另断言预设 system prompt 转录含
-     `ALWAYS` 硬规则句（R14 真机判据）。
+     `ALWAYS` 强制规则句（R14 真机判据）。
 
 ---
 
@@ -826,7 +826,7 @@ model-selection policy); omit both to inherit the parent route`——不含随�
 
 开发实例未随 0.1.7 升级。同 profile 其他插件
 （兄弟仓 approve-for-me 与两个既有插件）在验证实例升级
-后逐个量它们的工具面貌与设置卡片——这些插件依赖的注册 API 在 0.1.7 已删除（路由类插件依赖的注册 API 已不在，审批类插件读的是 `ctx.settings` 旧面），
+后逐个量它们的工具清单与设置卡片——这些插件依赖的注册 API 在 0.1.7 已删除（路由类插件依赖的注册 API 已不在，审批类插件读的是 `ctx.settings` 旧面），
 属 0.1.7 升级的验收范围、不是本包缺陷。
 
 **升级序列含一次性清场**：现行形态不写 `%DSH_HOME%\.agent-presets\dsh-async\`
@@ -877,7 +877,7 @@ loader/fiber 拥有，**本包不写任何清理代码**，这正是 R17-1 的�
 | 4 | `workflow-worker-thread` 行按基线换成 `workflow-ptc`（config 同基线 `{provider: spawn}`） | 基线事实：旧包 0.1.7 已移除 |
 | 5 | `tool-ralph` 按基线置 `disabled: true` | 基线事实；⚠️ 设计审查须专核（见下） |
 | 6 | `tool-plugin-manager` 行照基线带上（`disabled: true`） | 基线事实（补丁保真；禁用行无行为影响） |
-| 7 | persona `prefix` = 基线文案 + 异步工作纪律 + DELEGATION 硬规则（英文原文承 §18.4，锚句不变） | R5 / R14 |
+| 7 | persona `prefix` = 基线文案 + 异步工作纪律 + DELEGATION 强制规则（英文原文承 §18.4，锚句不变） | R5 / R14 |
 | 8 | 预设行**不带** disabled 护栏 | loader `refresh()` 在服务就绪前求值 `disabled`，`!ctx.get('agentPresets')` 为真时**静默跳过 init**，行永远不导入、审计报 "failed to import"（`[@deepseek-ai/cordis-plugin-loader@~1.0.5] lib/index.js:359-363`；验证实例实测：带护栏行死、摘护栏即活）；等待由 `dsh-agent-preset` 自带 `inject=['agentPresets']` 原生承接，注册失败沿 fiber 抛出时可选行只是启动警告 |
 | 9 | （R35 增）`tool-workflow` 置 `disabled: true`；`async-workflow` 行插 delegation 组内 `tool-workflow` 行后；`tool-subagent` / `tool-subagent-fork` 置 `disabled: true`（config 逐字保留）；persona「唯一入口」锚句替换 R14 双入口旧句 | R35-a/-b/-c（§35.1 组内隔离，行位判据 §35.3）——本表 1–8 为 0.1.7 主线定向修改，9 为 R35 增量 |
 
@@ -892,7 +892,7 @@ loader/fiber 拥有，**本包不写任何清理代码**，这正是 R17-1 的�
 | --- | --- |
 | lib 下的 preset-lifecycle 模块 | `lib/index.js` 的 `emitLifecycleNotice` import 改指 notice 模块（同签名同语义：stderr 可注入出口，§10 的纪律不变）；`lib/host.js` 的动态 import 段整体删除 |
 | lib 下的 preset-ownership 模块 | 无存留引用（仅被生命周期模块与卸载命令引用，随删） |
-| tools 下的 uninstall-preset 命令 | README 的兜底命令段改写为 0.1.7 三步卸载（R17：不得依赖人工兜底命令；"无残留"由机制成立，见 §20.1） |
+| tools 下的 uninstall-preset 命令 | README 的备用命令段改写为 0.1.7 三步卸载（R17：不得依赖人工备用命令；"无残留"由机制成立，见 §20.1） |
 | test 下的 preset-lifecycle 测试 | 随机制删；stderr 审计出口的判据由 `test/index.test.mjs`、`test/two-planes.test.mjs` 承接 |
 | presets 下的 dsh-async 模板目录（两文件） | 内容并入 §20.2 的补丁 `presets/dsh-async.patch.yml`；`files` 数组的 `"presets"` 保留（装新补丁） |
 
@@ -966,7 +966,7 @@ loader/fiber 拥有，**本包不写任何清理代码**，这正是 R17-1 的�
 
 ### 21.4 R21 的秒数读数：**路线 2（卡片内呈现，形态见 §29）**——择路依据
 
-- **路线 1（`.role('ms')` 交给设置面渲染）已被证据否决**：0.1.7 全部客户端里唯一被消费
+- **路线 1（`.role('ms')` 交给设置界面渲染）已被证据否决**：0.1.7 全部客户端里唯一被消费
   的 role 是 `'secret'`（服务端脱敏，`dsh-settings/lib/index.js:24`）；`meta.role` 虽随
   form 传到客户端（`plainSchema` 只删 `meta.volatile`），但**没有任何渲染逻辑**消费它
   （各 client-ui 包 grep 到的 `role` 全是内嵌 schemastery 定义或 ARIA role）。
@@ -1012,7 +1012,7 @@ loader/fiber 拥有，**本包不写任何清理代码**，这正是 R17-1 的�
   链路与姿态：非法提交先落地（raw 持久化、卡片显示原始值、工具快照保旧值 + warn）
   → 下次重启宿主行**降级运行**：回退出厂默认快照 + stderr 说明、**行保持激活**
   （行死了 `describe` 只收 `state === 2` 的行、卡片整个消失，用户就失去应用内
-  修复通道）→ 用户在卡片上改正保存即自愈（volatile-update 重物化接管）。
+  修复通道）→ 用户在卡片上改正保存即自愈（volatile-update 重建快照接管）。
   单测：`test/index.test.mjs` T12-①/①'（降级 + 自愈两拍）。
 
 ---
@@ -1149,7 +1149,7 @@ peer**，尽管它一行都不 import `dsh-jobs`——换取代际核查覆盖�
 
 1. **check-model-text 检查器**（`tools/check-model-text.mjs`，四层）：① `TEXT.en`
    每个键的串零 CJK；② `TEXT.zh` 每个键都含中文（缺译即红）；③ 两档键集相等
-   （少一个键就是少一句提示）；④ 兜底层——源码扫描与硬编码文案层（`lib/*.js`
+   （少一个键就是少一句提示）；④ 备用校验层——源码扫描与硬编码文案层（`lib/*.js`
    剥注释后零 CJK，"像句子的字面量"必须来自 `lib/text.js`，操作者面按逐条给理由的
    白名单放行）与运行时层（两档各构造四个工具，取全部模型可见串比对：en 零 CJK、
    zh 与 en 同位串不同且含 CJK）。运行时取串而不是源码 grep——运行时串正是模型
@@ -1201,7 +1201,7 @@ peer**，尽管它一行都不 import `dsh-jobs`——换取代际核查覆盖�
    **已验（含一处不可复现的缺口，如实记）**：升级、部署与冒烟三段都有验证实例上的证据——
    §26.3.8 `sibling-coexist` 6/6（profile 的 bundles/patch/junction 三件齐、错误日志 `is incompatible with dsh`
    命中 0、宿主命名空间在线、同 profile 的审批类插件有运行期决策日志即"在工作不是只挂载"）、
-   §26.3.1 `face` 7/7（四个 `async_*` 出现在模型实际收到的工具面里）、R17 那一轮还做了
+   §26.3.1 `face` 7/7（四个 `async_*` 出现在模型实际收到的工具清单里）、R17 那一轮还做了
    卸载→重启→复原→重启的完整往返。**"升级前"的那份快照不可复现**：实例早已升到 0.1.7，
    当时的前值没按序列留档；它的判别目的由上面的**升级后**读数承接（"其他插件有没有被打坏"
    已由 `incompatible` 命中 0 + 审批类插件运行中回答）。要补齐完整序列，只能在
@@ -1209,7 +1209,7 @@ peer**，尽管它一行都不 import `dsh-jobs`——换取代际核查覆盖�
 2. **R15**：`npm ls` 同代际核对；启动日志无 `is incompatible with dsh`；本包行未被停用（详§23）。
 3. **R17 卸载无残留**（独立判据）：安装 → 使用 → 卸载 → 重启 → (a) 预设花名册无
    `dsh-async`；(b) 默认预设可解析（`session/create` 不报 `agent-preset/not-found`）；
-   (c) 对照预设工具面貌与安装前逐项一致；(d) `%DSH_HOME%\.agent-presets\dsh-async`
+   (c) 对照预设工具清单与安装前逐项一致；(d) `%DSH_HOME%\.agent-presets\dsh-async`
    目录不存在（升级期一次性清场 + 卸载后均不得残留——新形态从不写它，
    旧安装的残骸在升级序列删除，§19.1）。
    **已取证（四段全中）**：装卸由 `verify/r17-uninstall.ps1`
@@ -1237,7 +1237,7 @@ peer**，尽管它一行都不 import `dsh-jobs`——换取代际核查覆盖�
    登记待补（判据不得当作已验证）。
 7. §11.2 既有 1–9 项在 0.1.7 上重跑（让出/插话/打断/隔离/回滚）。
 8. **第三方插件同 profile 共存**：其他插件升级后逐个量（同 profile 的审批类、子代理路由类、重启类三个插件）
-   的工具面貌与设置卡片。
+   的工具清单与设置卡片。
 9. **R13 模型选择（新代码部署后）**：会话里 `async_agent` 传
    `provider: zai, model: glm-5.3`（该路由在验证实例会话的 model-selection-policy
    白名单内）→ 子代理 descriptor 的 `agentProvider`/`agentModel` 为
@@ -1247,7 +1247,7 @@ peer**，尽管它一行都不 import `dsh-jobs`——换取代际核查覆盖�
    **读子会话转录的寻址形态**：子会话 id 是裸 UUID，且必须用
    `{kind:'subagent', parentSessionId, childSessionId, mode}` 寻址（用 `{kind:'session'}` 会被
    `session/agent-busy` 拒），游标取 `session/projections` 的 `asOfSeq`（`throughSeq:-1` 是空页）。
-10. **R24 界面可用性（设置面迁移的判据；判据必须是注入表或页面 DOM，不用后端返回）**：
+10. **R24 界面可用性（设置界面迁移的判据；判据必须是注入表或页面 DOM，不用后端返回）**：
     ① **注入表**：首页 HTML 的 preload combo 行必须列出 `dsh-async-tools/client.js`，且该行取回的
     **下发字节**（剥掉注释后）里含 `AsyncToolsBundleCard` 与 `plugins.bundle.config`、不含
     `plugins.row.config` 与 `plugins.item`
@@ -1379,7 +1379,7 @@ peer**，尽管它一行都不 import `dsh-jobs`——换取代际核查覆盖�
 cordis=4（本会话现读四份补丁），本包 `dsh-async` 现值 5 ⇒ 6 是下一个空位。
 
 **裁决 C（创作指导不写回 persona）：** 沿 0.1.7 基线——persona 只有一句身份 + 异步纪律 +
-DELEGATION 硬规则；创作指导由 skill 系行承载（`skill-filesystem` 连同其 `customSkillDirs`
+DELEGATION 强制规则；创作指导由 skill 系行承载（`skill-filesystem` 连同其 `customSkillDirs`
 的 `!!js` 表达式**逐字保留**、`tool-skill` 在场）。R26 允许写回但须显式定稿——定稿为不写回
 （与基线一致；cordis 补丁头部注释自述 "the skills own the preset-authoring rules"）。
 
@@ -1398,7 +1398,7 @@ DELEGATION 硬规则；创作指导由 skill 系行承载（`skill-filesystem` �
 | 9 | 其余行与基线**逐字一致**，含组内整段 config 文本与行序 | R26「不得静默缺失」 |
 | 10 | （R35 增）`tool-workflow` 置 `disabled: true`；`async-workflow` 行插 delegation 组内 `tool-workflow` 行后（本预设 persona 已是唯一入口句，无 persona 改动） | R35-a/-b（§35.1-1/2；行位判据 §35.3） |
 
-定向修改后的行集合（与基线**逐项可对账**）：
+定向修改后的行集合（与基线**逐项可核对**）：
 
 - 顶层 23 行 = 基线 20 − `tool-pwsh` + 4 行 async，**按 cordis 的行序**（注意：cordis 的
   `skill-filesystem` / `tool-skill` 在尾部 `tool-cordis` 之后，不在 `tool-jobs` 之后——
@@ -1412,7 +1412,7 @@ DELEGATION 硬规则；创作指导由 skill 系行承载（`skill-filesystem` �
   （预设声明随行进退），本包移除即预设消失；
 - 同步面：`test/two-planes.test.mjs` T5 的 bundle 数组断言改**恰三项**
   （§26.1 已同步）；`README.md` 同步双预设花名册、三项数组与回滚步骤，并在测试一节注明
-  `npm test` 依赖本机 0.1.7 证据树（P14 的对账用例缺树即红）。
+  `npm test` 依赖本机 0.1.7 证据树（P14 的逐条比对用例缺树即红）。
 
 ### 28.3 persona 文本与锚句
 
@@ -1482,7 +1482,7 @@ async_wait_agent`）、不许空转轮询（`Do not poll in a loop`）——全�
 CLI：无参 = 依次校验两份补丁（任一失败即非零退出）；带参 = 只校验那一份。未知 `config.id`
 ⇒ 红（期望集不存在，不允许「套不上就放行」）。
 
-**基线行集合的诚实性**（防快照漂移）：`test/preset.test.mjs` 增一条对账用例——用校验器同款
+**基线行集合的诚实性**（防快照漂移）：`test/preset.test.mjs` 增一条逐条比对用例——用校验器同款
 YAML 方言读取 0.2.0 证据树里真实的 shipped standard 与
 shipped cordis 预设基线补丁（`@deepseek-ai/dsh-web-app` 包内 `presets/` 目录，R38 §37.1 换锚），反推两套
 `baselineTop` / `baselineNested`（真实基线 − pwsh + 4 async = 期望集），不一致即红；证据树
@@ -1492,12 +1492,12 @@ shipped cordis 预设基线补丁（`@deepseek-ai/dsh-web-app` 包内 `presets/`
 实际由全局 0.1.5 树提供）。上游改动创造模式行集合时这条用例先红，
 强迫重建基线；`npm test` 因此绑定本机证据树，README 测试一节注明（§28.2 同步面）。
 
-**config 正文的诚实性**（并入同一条 P14 用例）：行 id 对账之外，定向修改清单
+**config 正文的诚实性**（并入同一条 P14 用例）：行 id 核对之外，定向修改清单
 （`disabledBoolean` ∪ persona ∪ 被删的 pwsh ∪ 新增的 async 行）之外的每个**叶子行**保留
-config 与真实基线深度对账（递归键序规范化后逐字比，`disabled` 是定向修改单列面单独剔除），
+config 与真实基线深度核对（递归键序规范化后逐字比，`disabled` 是定向修改单列面单独剔除），
 组行只比 `id/name/group/isolate`（子行已单独比对）；并以「定向修改外叶子行单字段改写」的
 反向对照证明比较器能红。防回潮理由：只有行 id 比对的判据下，plan-mode 段两处措辞漂移可以
-全绿穿过——id 对账挡不住正文漂移。
+全绿穿过——id 核对挡不住正文漂移。
 
 ### 28.5 测试设计（并入 §11 三层）
 
@@ -1518,9 +1518,9 @@ config 与真实基线深度对账（递归键序规范化后逐字比，`disabl
 | P11 | 活 `tool-subagent` + 删锚句（P4+P6 复合） | ⑦ 互斥判据 |
 | P12 | 删嵌套行 `plan-mode` | ③ 嵌套缺行 |
 | P13 | `toolName` 笔误 | ④ |
-| P14 | 两套 `baselineTop/Nested` 与 0.1.7 证据树对账 + 定向修改集外**叶子行 config 正文**深度对账（反向对照：单字段改写必红） | 诚实性用例 |
+| P14 | 两套 `baselineTop/Nested` 与 0.1.7 证据树核对 + 定向修改集外**叶子行 config 正文**深度核对（反向对照：单字段改写必红） | 诚实性用例 |
 | P15 | `workflow-ptc` 的 `provider: spawn` 改掉 | ⑨（守卫不随参数化丢失） |
-| P16 | 两份补丁的公共异步纪律段（intro 整段）逐字对账：改掉任一份的公共段必红 | §28.3 同源承诺 |
+| P16 | 两份补丁的公共异步纪律段（intro 整段）逐字核对：改掉任一份的公共段必红 | §28.3 同源承诺 |
 | P17 | 组内行重复（两个 id 都在期望集里） | ③ 嵌套行数面 |
 | P18 | 组内行换序 | ③ 嵌套行序面 |
 | — | `two-planes` T5：bundle 数组恰三项、第三项在盘且被 `files` 覆盖（`files` 已含 `presets` 目录） | T5 |
@@ -1534,11 +1534,11 @@ dsh-async 既有 13 条变异保持全绿（判据骨架不变，③ 的行集�
    目录逐项核对：四个 async 工具 + 创造侧**启用行**的工具在场；禁用行的工具不在目录
    （`pwsh`、`bash`、`subagent`、`subagent_fork`、`subagent_codex`、`subagent_claude_code`、
    `run_code`、ralph、插件管理）；禁用行本身由静态判据 ③/⑧ 守护，不在目录核对面上；
-2. system prompt 含 §28.3 的 DELEGATION 硬规则关键句——口径**钉死为 §28.3 的四锚句**
+2. system prompt 含 §28.3 的 DELEGATION 强制规则关键句——口径**钉死为 §28.3 的四锚句**
    （`>-` 折叠后单空格匹配）；部分命中即红，不做宽松包含；
 3. **等待可复现**：一次真实 `async_agent` 派生 → `async_wait_agent` 有界返回其结果；
    等待中用户插话 → 立即返回 `interrupted` 且子代理继续跑（R3/R12 口径）；
-4. 隔离对照：异步模式预设的会话工具面貌不变（`subagent` / `subagent_fork` 仍在其目录）；
+4. 隔离对照：异步模式预设的会话工具清单不变（`subagent` / `subagent_fork` 仍在其目录）；
 5. **回滚演练**：从部署树移除第三项与补丁文件 → 服务外重启 → 花名册回到没有
    本预设、异步模式仍在；再恢复部署 → 两预设齐。
 
@@ -1554,9 +1554,9 @@ R17-1 口径），由判据⑤静态看守；第 3 项"取回其结果"的落点
 
 | 风险 | 处置 |
 | --- | --- |
-| 上游 0.1.8 改创造模式行集合，期望集变旧 | P14 对账用例先红；按新基线随之重建 |
+| 上游 0.1.8 改创造模式行集合，期望集变旧 | P14 逐条比对用例先红；按新基线随之重建 |
 | 模型在创造预设里仍试图调 `subagent`（描述里见过别的预设） | 工具不在目录即不可调；persona 第 1 条明说不许调；e2e 第 1 项核对目录 |
-| 两份补丁 persona 维护漂移 | 公共段=§28.3 的 intro 整段，两份逐字相同，P16 对账断言守护；分叉只发生在 DELEGATION RULES 段（有意为之，锚句各自独立） |
+| 两份补丁 persona 维护漂移 | 公共段=§28.3 的 intro 整段，两份逐字相同，P16 核对断言守护；分叉只发生在 DELEGATION RULES 段（有意为之，锚句各自独立） |
 | `order` 与未来 shipped 预设撞号 | 撞号只影响花名册排序，不影响功能；发现即顺延 |
 
 ---
@@ -1771,7 +1771,7 @@ README 的偏离清单一起改。
   结算值附加诊断）、**b 描述侧警示段**（`async_run` 描述尾部）、**c 常驻纪律段**（宿主面
   system prompt 常驻段）。一个 volatile 布尔开关统一控制，**默认关**（用户裁定）；
   关 = 三防线**因行为差异而不存在**（a 无 note、b 无段落、c 无段），不是"仍然存在但不生效"。
-- 事实依据（均已实测钉锚）：①陷阱 1——外部 EXE 的捕获形命令（`2>&1`、`$(...)`、变量赋值、输出重定向）在受限沙箱下于进程创建层被杀，无输出、无 `[exit code]` 标记；②EN 实测锚文本 `failed to run` + `Access is denied`；③systemPrompt 是 dsh-base 每个模式必挂的宿主行，且宿主有运行时 `ctx.inject` 成例；④陷阱 13——`[exit code: 4294967295]` 且无其他输出 = 整个 pwsh 被本机杀软「隐藏执行PowerShell」规则在进程创建层击杀；⑤ZH 锚文本 `无法运行` + `拒绝访问`（推测形态，仅作附加提示锚）；⑥官方设置面的布尔控件面——`Switch`/`Checkbox` 是导出原语、无布尔字段 spec 工厂、`SettingsFormModel` 暂存是文本制；⑦systemPrompt `context()` 的注册与组稿细节——order 必须有限数、text 函数每次组稿现求、空串 context 在渲染层被过滤。
+- 事实依据（均已实测钉锚）：①陷阱 1——外部 EXE 的捕获形命令（`2>&1`、`$(...)`、变量赋值、输出重定向）在受限沙箱下于进程创建层被杀，无输出、无 `[exit code]` 标记；②EN 实测锚文本 `failed to run` + `Access is denied`；③systemPrompt 是 dsh-base 每个模式必挂的宿主行，且宿主有运行时 `ctx.inject` 成例；④陷阱 13——`[exit code: 4294967295]` 且无其他输出 = 整个 pwsh 被本机杀软「隐藏执行PowerShell」规则在进程创建层击杀；⑤ZH 锚文本 `无法运行` + `拒绝访问`（推测形态，仅作附加提示锚）；⑥官方设置界面的布尔控件面——`Switch`/`Checkbox` 是导出原语、无布尔字段 spec 工厂、`SettingsFormModel` 暂存是文本制；⑦systemPrompt `context()` 的注册与组稿细节——order 必须有限数、text 函数每次组稿现求、空串 context 在渲染层被过滤。
 - 形态沿用：§21 设置承载（volatile 链 + 就地刷新描述）、§24 模型面文案口径（模型面 =
   `lib/text.js` 双语表，人面 = client 词典）、§29 卡片形态（官方控件 + 有限偏离清单）。
 - **非目标**（需求"不做什么"逐条）：不做陷阱 13 的结果侧签名；不动 `async_wait_job` /
@@ -1801,14 +1801,14 @@ README 的偏离清单一起改。
     "true"`；翻回原值 = `plan()` 判干净（文本制暂存的既有语义，免费获得）。
 - **控件本体 = 官方 `P.Switch`**（`@deepseek-ai/dsh-client-ui-primitives` 导出面；
   props `{checked, label, disabled, onChange, title, className}`，`onChange(next)` 收布尔）。
-  官方设置面没有布尔字段导出（无 `settingsBooleanField`），但**布尔行控件本体有官方成例**
+  官方设置界面没有布尔字段导出（无 `settingsBooleanField`），但**布尔行控件本体有官方成例**
   （settings-general 的 DeveloperToolsRow、settings-subagent 的模型选择 toggle 行：可见
   标签 + `Switch` + 说明行）。因此偏离比 R27 枚举更小——**偏离清单第 ③ 项**：布尔字段的
   字段壳与 spec 自绘（照 `EnumField` 同形：label 行 + 「已覆盖」徽标 + 「恢复默认」+ 控件 +
   说明行，同一组 `.ats-enum-*` 类名复用，不新增自有 CSS），控件本体是官方原语 `Switch`。
   `Switch` 的 `label` prop 传同一标签串（无障碍名，照 subagent 成例），可见标签仍在壳上。
 - **生效链 = R10/R21 既有 volatile 链，零新管线**：设置页保存 → loader 就地提交 → 宿主行
-  fiber 收 `loader/volatile-update` → `seedSnapshot` 重物化 → refresh-bus 广播。三个消费点：
+  fiber 收 `loader/volatile-update` → `seedSnapshot` 重建快照 → refresh-bus 广播。三个消费点：
   a 在 `async_run` 结算路径现读 `configView.silentFailureGuard`；b 由
   `refreshToolDescriptions` → `rebuildText` 现读；c 的 text 函数每次组稿现读
   `readSnapshot()`。**三处都是"下一次生效"，不重启**。
@@ -1841,7 +1841,7 @@ README 的偏离清单一起改。
    保证 note 里"带 sandbox_permissions 重试"这条正路**永远合法**（能出 note 的场合两个
    提权参数一定已广告），文案不必再做条件分支。
 
-条件 1 的误发面（用户裁定）：纯 cmdlet `Get-ChildItem 2>&1` 空目录也满足四条件
+条件 1 的误报范围（用户裁定）：纯 cmdlet `Get-ChildItem 2>&1` 空目录也满足四条件
 → note 出现 → **接受**，测试钉死（条件式措辞的成本就是一行提示）。
 
 - **出口两处，与 R11 沙箱标记同位**（模型看得见的地方）：
@@ -1864,7 +1864,7 @@ README 的偏离清单一起改。
   设计先行收录）。**同对两成员都出现**才算命中（单锚不触发）。
 - 门只有两道：总开关 + 锚对命中。**不设**捕获形/空白/受限/执行器之门（需求原文如此；
   语义是**附加提示**不是第二套拒绝判定——不改 status、不判拒绝，只在输出后追加一行）。
-  误发面 = 输出里恰好同现两锚（如 grep 别人的日志）时多一行提示，接受。
+  误报范围 = 输出里恰好同现两锚（如 grep 别人的日志）时多一行提示，接受。
 - 出口与签名 1 相同两处。两签名**互斥于构造**（签名 1 要求输出空白，签名 2 要求输出含
   锚文本），`silentFailureNotes` 一次最多返回一条，不会双发。
 - 文案（`text.js` 新键 `note.silentDenied`）：直陈式（"输出与本部署受限沙箱的可见拒绝
@@ -1977,7 +1977,7 @@ README 的偏离清单一起改。
 12. c 段（假 systemPrompt 服务）：context 以 `async-tools:discipline`、order 130 注册；
     text 函数在 guard 关/快照缺席时 `''`，开时按 `agentLang` 给 en/zh 文本（各一用例）；
     纪律文本含 30.4 的逐字锚句。
-13. 设置面：`FIELDS` 与 spec 键集逐项相等（四组全部字段，现为 16 = 10 预算 + 2 语言
+13. 设置界面：`FIELDS` 与 spec 键集逐项相等（四组全部字段，现为 16 = 10 预算 + 2 语言
     + 2 开关 + 2 提问接管）；`flagFieldSpec` 矩阵
     （`format` true/false/undefined；`parse` "true"/"false"/""/"yes"）；`resolveConfig`
     归一（true→true，缺省→false，垃圾→false）。
@@ -2009,7 +2009,7 @@ README 的偏离清单一起改。
 >   捕获形空目录 → 真空输出且无 note（= 需求「提权跑 → 不产出」的真机证据，单测判据 5
 >   的同形实证）；管道形 → 干净版本输出 + 无 note。
 >
-> **note 阳性渲染**（签名 1 良性误发面本体、签名 2 锚对命中）在验证实例受限面上不可达，
+> **note 阳性渲染**（签名 1 良性误报范围本体、签名 2 锚对命中）在验证实例受限面上不可达，
 > 不做真机复现：四条件判定与渲染由单测判据 2/4/5/6/9/10 覆盖，锚对真实性有受限沙箱
 > 真机复现背书（锚对两枚实测在案）。
 
@@ -2030,7 +2030,7 @@ README 的偏离清单一起改。
    **注**：需求 508–509 行明文"签名 1 不做真机复现（0xC0000142 会弹
    桌面错误框，判据全走单测假件与文案层）"——真机**不跑**任何会触发陷阱 1 的 EXE 捕获形，
    裸调用对照与提权重试的否定断言也**不进真机**（单测判据 2/4/5 承担）。真机上的 a 管线
-   检查只用良性 cmdlet 误发面本体（用户裁定接受的形态：`Get-ChildItem 2>&1` 是内建
+   检查只用良性 cmdlet 误报范围本体（用户裁定接受的形态：`Get-ChildItem 2>&1` 是内建
    cmdlet，进程内执行，无 0xC0000142、无桌面弹窗），验证 execute → 四条件 → note 渲染的
    接线；陷阱本体的行为断言全在单测。
 3. **签名 2 管道形双档**：受限档跑会产生锚文本的命令（`git --version | Select-String git`）
@@ -2059,7 +2059,7 @@ README 的偏离清单一起改。
 | 风险 | 处置 |
 | --- | --- |
 | 火绒规则/锚文本变化 → 纪律文本或签名 2 过时 | 文本只是提示不改行为；过时即按新实测改锚文本与 `text.js`（新裁决轮，不就地热改语义） |
-| 签名 2 误报（输出恰好同现两锚，如 grep 日志） | 一行附加说明的成本，需求原文接受；判据 6 钉死单锚不触发收窄误发面 |
+| 签名 2 误报（输出恰好同现两锚，如 grep 日志） | 一行附加说明的成本，需求原文接受；判据 6 钉死单锚不触发收窄误报范围 |
 | 签名 1 误发（cmdlet 捕获形空输出） | 用户裁定接受；条件式措辞 + 判据 4 钉死 |
 | `Switch` 原语签名/形态变化 | 重读 primitives 导出面；偏离 ③ 重审（判据 13 先红） |
 | 部署缺 systemPrompt → c 静默不生效 | 与 sandbox-policy 同姿态（部署无痕）；a/b 不依赖该服务；真机判据 2 覆盖在位检查 |
@@ -2078,7 +2078,7 @@ README 的偏离清单一起改。
   `pollIntervalMs ≤ maxWaitMs` + `maxResultChars` 上界 + `wait_ms` 覆盖口径成文）、
   **e 前台 killed 分流**（done 胜者先判 `proc.status`）、**f 边界小项**（registerFailed
   单行截断、日志插值单行化、`routes` 先验、`?.` 对齐、`listChildren` 透传 signal、
-  `tools/` 去硬编码路径）、**g 暴露面登记**（README 一节，纯登记）。
+  `tools/` 去硬编码路径）、**g 暴露范围登记**（README 一节，纯登记）。
 - 事实依据（均已实测钉锚）：宿主 installFailLoud 语义下 unhandledRejection = 整实例退出；
   AbortSignal 已中止后挂监听器永不触发；实测 `DSH_WEB_URL` 随请求下发且
   **不含令牌**（`DSH_*` 的全量键集来源是 `lib/jobs.js:551-554` 的
@@ -2233,7 +2233,7 @@ catch { return undefined; }
   3. 上界与配对常量抽到**新文件 `lib/budget-limits.js`**（纯常量模块，无 schemastery
      依赖）：`lib/config.js` 的 `.max()` 接线与 `client.js` 的草稿校验同源。**可达性
      按可达性登记**：`client.js:51` 注释称"客户端模块图只投递平名包"，第一个
-     探针就验证该 import；不可达则 fallback = client 侧内联同一组常量 + 对账单测
+     探针就验证该 import；不可达则 fallback = client 侧内联同一组常量 + 核对单测
      （断言两处常量相等，漂移必红），并回写本节。
 - **提交层（第二道，兜直写路径——API 直调、旧版卡片、外部写文档）**：字段级越界死在
   `resolveConfig`（`lib/config.js:307-333`）里 `Config()` 的 `.max()`（消息可读：
@@ -2292,7 +2292,7 @@ catch { return undefined; }
 | `tools/` 硬编码路径 | `_host-resolve.mjs:49` 删服务家目录候选；`validate-preset.mjs:48` 删盘符字面候选、`:50` 删用户目录字面但**补 APPDATA 推导的同位候选**（保留 Windows 常规布局回退）；`check-alias-tokens.mjs:28` 删字面候选、改走 `_host-resolve` 统一解析——`_host-resolve.mjs` 因此**新增锚点目录推导导出**（现状只导出 resolve 钩子，`:67-73`；check-alias-tokens 要的是目录路径）。开发机一次性 `setx DSAT_HOST_MODULES <服务安装树的 node_modules>`（tools README 登记；`package.json` 不写机器路径）。缺 env 且需要宿主模块时**响亮失败**并给 export 指引——不引入 skip |
 | 静态钉子 | 新单测：只扫**三个定向修改文件**（`_host-resolve.mjs` / `validate-preset.mjs` / `check-alias-tokens.mjs`）源文本，盘符字面（`[A-Za-z]:[\\/]` 出现在字符串字面里）零命中——重引本机路径必红。范围不扩到 `tools/` 全目录：其余文件的存量盘符是测试假件值与白名单映射表（`bench-encoding.mjs:13`、`check-bare-filenames.mjs:49`、`check-doc-paths.mjs:61-86`、probe 假件值），需求 f 未点名，扩大即越权 |
 
-### 31.7 g 暴露面登记（裁决 R29-g）
+### 31.7 g 暴露范围登记（裁决 R29-g）
 
 README 新增"信息暴露范围"一节，纯登记不改行为：(1) 随请求下发给子进程的 `DSH_*` 变量
 清单——来源是 `ctx.shellEnv.collect(exec)` 的实际键集（`lib/jobs.js:551-554`，
@@ -2364,7 +2364,7 @@ README 新增"信息暴露范围"一节，纯登记不改行为：(1) 随请求�
     (b) `pollIntervalMs` 草稿 > `maxWaitMs` 草稿 → 壳层叠加置 invalid 且
     `pollIntervalMs` 字段层有 `invalidPair.pollIntervalMs` 文案。变异拆两条：撤数值
     spec 的上界 parse → (a) 必红；撤壳层叠加 → (b) 必红。常量来自
-    `lib/budget-limits.js`（与 config.js 接线同源；若按 31.4 fallback 内联，则对账
+    `lib/budget-limits.js`（与 config.js 接线同源；若按 31.4 fallback 内联，则核对
     断言两处相等，漂移必红）。
 15. settings 悬空动态 import 的 `.catch`：静态钉（剥注释源码匹配 import 链上的
     `.catch(`）；撤掉 → 必红（T8b，两平面测试文件）。
@@ -2401,7 +2401,7 @@ README 新增"信息暴露范围"一节，纯登记不改行为：(1) 随请求�
 | 只调小 `maxWaitMs`（低于默认 `pollIntervalMs`）会被配对拒绝 | 拒绝消息是**键名对**风格（`lib/config.js:283-285` 现行口径，不升级——升级会改既有两条 pair 的文案）；两值与修法由卡片层 `invalidPair.pollIntervalMs` 原因文案 + README 联动说明承担 |
 | 七字段全封被读成超需求范围 | 31.4 裁决已按机制分档写明（六个堵「setTimeout 2^31-1」真洞、`defaultWaitMs` 统一口径） |
 | 前台 killed 的输出面 | **保留部分输出**（裁决见 §31.5）：让出窗口内已收到的字节进 `output` 字段，与今天信息面等齐、status 如实化；不注册作业的边界不变（完整输出本就只在已注册路径可再取） |
-| 卡片层预校验与官方表单校验并存 | 官方 parse 只验有限性（设置写路径不做值校验）；本包挂法走**官方 parse 通道**（单字段）与壳层 state 叠加（配对），不包 save、不触碰官方模型内部（挂法见 §31.4）；判定常量与 config.js 同源（`lib/budget-limits.js`；不可达时内联 + 对账断言），两处漂移由判据 14 拦住 |
+| 卡片层预校验与官方表单校验并存 | 官方 parse 只验有限性（设置写路径不做值校验）；本包挂法走**官方 parse 通道**（单字段）与壳层 state 叠加（配对），不包 save、不触碰官方模型内部（挂法见 §31.4）；判定常量与 config.js 同源（`lib/budget-limits.js`；不可达时内联 + 核对断言），两处漂移由判据 14 拦住 |
 | killed 带输出使已注册路径 `JobOutcome` 增键（`output`/`truncated`） | 宿主对 JobOutcome 协议的处置面（预期宽容：增键不改既有键语义）；若宿主严格校验则回退为仅前台路径带输出、登记差异。**已确认**：`dsh-jobs-local/lib/index.js` 的 `settle()` 只读取 `status`/`detail`/`result` 三个已知键（`jobs.set(...)` 传整个 outcome，宿主按需取键），多余键被忽略——增键宽容成立，无需回退 |
 | `list()` 三分的全表视图成本 | 本插件作业量级下可忽略；换来不依赖 host 错误消息字符串判别 |
 | 正文回退复查在误报场景多等一轮 | 弱证据换诚实结局，方向与"完成优先"不冲突（复查 inactive 时仍直返 settled）；权威路径零开销（不加复查） |
@@ -2442,7 +2442,7 @@ README 新增"信息暴露范围"一节，纯登记不改行为：(1) 随请求�
 | 字段 | schema | 默认 | 说明 |
 | --- | --- | --- | --- |
 | `askTakeover` | `z.boolean().default(false).loose().volatile()` | `false` | 总开关（照 `silentFailureGuard` 同款：loose 收敛、`resolveConfig` 末端 `=== true` 归一） |
-| `askTimeoutMs` | `z.number().min(10000).max(600000).default(60000).volatile()` | `60000` | 等待窗口。下界 10000 = 在场用户读完题并点选的最短可用窗口（再短则"在场也来不及答"成为常态，接管只剩打扰）；上界 600000 对齐宿主 wait 预算上界量级。`FIELD_MAX.askTimeoutMs = 600000` 进 `lib/budget-limits.js`，客户端镜像同值（T23c 对账） |
+| `askTimeoutMs` | `z.number().min(10000).max(600000).default(60000).volatile()` | `60000` | 等待窗口。下界 10000 = 在场用户读完题并点选的最短可用窗口（再短则"在场也来不及答"成为常态，接管只剩打扰）；上界 600000 对齐宿主 wait 预算上界量级。`FIELD_MAX.askTimeoutMs = 600000` 进 `lib/budget-limits.js`，客户端镜像同值（T23c 核对） |
 | `askUiSeat` | `z.string().default('overlay').volatile()` + 值域校验 | `'overlay'` | 座位枚举 `'overlay' | 'sidebar'`。默认 overlay 的理由：本功能的存在理由是无人值守时刻，侧栏底栏徽标易被忽略，浮框即时可见；切换成本为零（R30 用户裁定两版齐备实测再定去留，默认值属设计内事务） |
 
 - `askTimeoutMs` 的下界也进**卡片层预校验**：`boundedNumberSpec` 扩出 `FIELD_MIN` 表
@@ -2636,7 +2636,7 @@ README 新增"信息暴露范围"一节，纯登记不改行为：(1) 随请求�
   ——`addMarkerInitializer` 由此走官方 `mark()` 路径写 prototype 标记（幂等，多实例安全）。
   网关 SRC 回退按标记 + **方法参数名**对位（`srcDescriptor` 的 `methodParameterNames`），
   因此参数名 `submission` 与客户端 descriptor 的 `wire:'submission'` 必须逐字一致——
-  对账断言进单测（J-15）。
+  核对断言进单测（J-15）。
 - **客户端侧**：手写 strict descriptors（voice-input 同款形态）经 `ctx.remote.$mount`
   挂载后 `ctx.remote['async-tools-ask'].state()` / `.answer(submission)` /
   `.ignore(submission)`——**载荷裸传**（客户端按 descriptor 的 wire 名**逐位组装
@@ -2661,7 +2661,7 @@ README 新增"信息暴露范围"一节，纯登记不改行为：(1) 随请求�
 | 7 | `client.js` | 待答模型 + 两座位注册 + `AskList` 共享组件 + 客户端词典 + strict descriptors + `FIELD_MIN` 卡片层下界 + `FIELDS` 三行（flag/ms/enum）|
 | 8 | `package.json` | peerDependencies 增 typert-protocol / dsh-llm；`dsh.client.inject` 增四项（§32.4） |
 | 9 | `test/ask-takeover.test.mjs`（新） | §32.8 单测判据 |
-| 10 | `test/two-planes.test.mjs` 等 | 字段数 13→16 的对账判据组（T19 键集、T23c 增 `askTimeoutMs` 上界对账、`MS_FIELD_KEYS` 联动） |
+| 10 | `test/two-planes.test.mjs` 等 | 字段数 13→16 的核对判据组（T19 键集、T23c 增 `askTimeoutMs` 上界核对、`MS_FIELD_KEYS` 联动） |
 | 11 | `verify/probe-r30-ask-takeover.mjs`（新） | §32.8 真机判据 |
 
 ### 32.8 测试设计（并入 §11 三层）
@@ -2689,7 +2689,7 @@ R30「可验证」逐条对齐：
   同形。
 - J13 窗口内忽略 → `windowSkip` custom 进 answers。
 - J14 `state()` 载荷形状 + 作答递减、清零出列。
-- J15 wire 对账：服务方法参数名与客户端 descriptor wire 名逐字相等（防重构漂移）；
+- J15 wire 核对：服务方法参数名与客户端 descriptor wire 名逐字相等（防重构漂移）；
   另断言假 RPC 通道里宿主收到的 `submission` 与提交载荷逐字段相等（**单层包裹**——防
   双重包裹漂移）。
 - J16 座位枚举只换呈现层：两座位取值下宿主管道路径判据（J1–J13 的抽样子集）不变。
@@ -2916,7 +2916,7 @@ R30「可验证」逐条对齐：
   结束等待、结算通知恢复」写进 `tool.run.p2` 键——风险表对 abort 恢复通道
   一行的要求；descriptions.js 是无分支组装器，文案落点在 text.js）、
   `README.md` 机制段、测试与探针如 §33.6。
-- 无设置面变化、无预设变化；回滚 = 还原包代码（junction 直读工作树，
+- 无设置界面变化、无预设变化；回滚 = 还原包代码（junction 直读工作树，
   重启验证实例生效），无残留（作业记录随宿主注册表自身生命周期）。
 
 ### 33.8 风险
@@ -3125,7 +3125,7 @@ R30「可验证」逐条对齐：
   `error.workflowEngineMissing` / `tool.workflow.p1/p2`，zh/en）、
   `lib/index.js`（factory 表加一行；inject 不动）、`presets/`（R35）、
   `tools/validate-preset.mjs`、测试与探针如 §34.5、`README.md` 工具清单。
-- 无设置面变化（无新配置键；kind 常量写死模块顶部，宿主同款做法）；回滚 =
+- 无设置界面变化（无新配置键；kind 常量写死模块顶部，宿主同款做法）；回滚 =
   还原包代码（junction 直读工作树），无残留（作业记录随宿主注册表自身生命
   周期）。
 
@@ -3139,7 +3139,7 @@ R30「可验证」逐条对齐：
 | 引擎同步抛与准入拒绝混淆 | 原引用区分（34.2-5）+ 单元两用例（SCRIPT_PARSE 原样抛 / 触顶包装） |
 | 无 signal 的 run 取消面只剩 job_kill | 描述 p2 写明；真机 (b) 证实存活；与宿主后台形态一致 |
 | `async_wait_job` 复合行为未活体实测 | 真机 (a) 的句柄复原经 `async_wait_job` 走通即顺带核销 |
-| 行位/组 isolate 变更 → 引擎不可达，症状与服务缺席同形（行位 isolate 风险） | 消费行钉在 delegation 组内（§35.1-1）+ validator 行位判据；实现轮最小实证（组外跑一次必现 missing、移入组内即通）；真机 (a) 兜底 |
+| 行位/组 isolate 变更 → 引擎不可达，症状与服务缺席同形（行位 isolate 风险） | 消费行钉在 delegation 组内（§35.1-1）+ validator 行位判据；实现轮最小实证（组外跑一次必现 missing、移入组内即通）；真机 (a) 承接 |
 
 ## 35. R35：两份异步预设的定向修改（创建与等待只走异步工具）
 
@@ -3262,14 +3262,14 @@ R36-d）——注册表**无会话级暂停集**（R49 修订：R36 原会话级
   存在于 dsh-agent runtime-types.d.ts:240-242，payload `{agent}`，「after
   driver quiescence … before session detachment」；本插件宿主行作用域按
   events 语义可收到）。web 会话常驻下不必然随会话结束触发——批级口径下无
-  会话级残留集，标志量级＝在窗批数、随批出窗自然消失，无兜底问题（§36.6）。
+  会话级残留集，标志量级＝在窗批数、随批出窗自然消失，无残留积压问题（§36.6）。
 
 ### 36.2 载荷与远端面（R36-c）
 
 - `stateItems()`：item 增 `paused: boolean`（state 通道随行；顶层不增字段）。
   `expiresAt` 暂停期冻结为暂停时刻值——客户端遇 `paused` 不做倒计时折算。
 - `AskTakeoverService`：`markRemote` 增 `'pause'` / `'resume'`；两方法参数
-  名 `submission`（与 answer/ignore 同形，「参数名即 wire 名」对账口径），
+  名 `submission`（与 answer/ignore 同形，「参数名即 wire 名」核对口径），
   载荷 `{sessionId}`（**组键**：一次作用于该组当下在窗/暂停的批次——R49 批级
   作用面，非会话级标志置位）；返回 `{outcome: 'paused' | 'resumed'}`（幂等：
   重复 pause/resume 同形回执、不报错——组内无在窗批时 pause 无落点、resume
@@ -3311,7 +3311,7 @@ R36-d）——注册表**无会话级暂停集**（R49 修订：R36 原会话级
 | 到期边界（r51 补） | 时钟调度替身（armed 记 dueAt、advance 按到期序触发未撤销项）：新批 timer.ms=全额 + 到期前不结（缩短武装必红）+ 到期恰一次合成；恢复重挂 ms=剩余（重置全窗口必红）+ 到期点=恢复时刻+剩余 + 双边界兑现 |
 | 作答不受暂停影响 | paused 批 `submitAnswer` → delivered |
 | 标志生命周期 | 齐答清空批次后**无暂停残留**（新批照常计时——R36 原「标志跨批存活」判据随 R49 翻转为反面）；`disposeAll` 清空批次；`forgetSession` 清单会话各批标记、他会话不受影响 |
-| 远端面 | pause/resume 的 wire 名与客户端手写 descriptor 逐字一致（J-15 对账同款）；两方法在 `markRemote` 名单 |
+| 远端面 | pause/resume 的 wire 名与客户端手写 descriptor 逐字一致（J-15 核对同款）；两方法在 `markRemote` 名单 |
 
 真机（验证实例，探针 `verify/probe-r49-batch-pause.mjs`；`probe-r36-ask-pause.mjs`
 保留机械面回归——暂停冻结/恢复平移/幂等三断言不受 R49 影响）：
@@ -3328,20 +3328,24 @@ R36-d）——注册表**无会话级暂停集**（R49 修订：R36 原会话级
 - (d) 双会话隔离对照（R49-4）：会话 A 暂停在窗批、会话 B 在窗批照表走到期
   合成放行（**B 放行时刻 ∈ 下界窗**——早合成必红）；A 的恢复动作不触碰 B
   （B 按原窗口放行，不被 A 的动作冻结/平移）。
-- (d-6) B 活动期恢复对照（r51 补）：B 仍在倒计时时恢复 A——B 数字**续走原表**
-  （单调递减，不重置不冻结）；A 按剩余续走（数字 ≤ 28 s——恢复重置成全窗口
-  必红）；A 第二次恢复数字同上界，放行时刻 ≈ 显示剩余 ± 粗容差（显数与兑现
-  一致性）。
+- (d-6) B 活动期恢复对照（复审收紧）：暂停前先烧 ~10 s 并读**首记剩余锚**——
+  B 仍在倒计时时恢复 A：A 的数字 ∈ 首记锚−4..0 s（全额重置显示 ~29–30 必红）、
+  B 的数字严格下降且降幅 ≤4 s（重置/冻结必红）；B 的放行时刻对「读锚时刻＋锚
+  数字」双侧限界（≥5 s 级平移/重挂必红；粒度=秒级显示＋轮询，更细粒度由单元
+  K13/K3 守）。A 第二次恢复对**二次锚**同口径，放行时刻同锚双侧限界（全额
+  重置 ≈30 s 必红——不用恢复后读数自证非全窗口）。
 - (e) 开关随 R30：接管关闭时两座位无暂停开关。
-- 探针纪律（r51 补）：开工面板必须本就干净（setup-clean 门）；收尾清理只动
-  本次创建会话的组（共享实例不误伤他人）；证据 json 携带指纹（baseUrl origin、
-  实体提示、探针窗口参数）与设置复原结局。
+- 探针纪律（复审收紧）：开工**只读计数**残留（非零即 FAIL 退出，不清场、不点
+  他人的题）；收尾清理只动本次创建会话的组，无组归属的按钮不算自身；证据 json
+  携带**实测指纹**（profile link 行、junction 的 OS 级解析目标、实体版本 +
+  BUILD-STAMP、lib/client/host 三文件 sha256、listPlugins 原始行、/version 尝试）
+  与设置复原结局。
 
 ### 36.6 风险
 
 | 风险 | 处置 |
 | --- | --- |
-| `agent/disposed` 不必然随会话结束触发（web 会话常驻）→ 暂停批残留面板 | 批级口径下残留＝在窗批本身（量级=在窗批数，随批出窗消失）；组开关可恢复、作答可结清——无会话级集兜底问题 |
+| `agent/disposed` 不必然随会话结束触发（web 会话常驻）→ 暂停批残留面板 | 批级口径下残留＝在窗批本身（量级=在窗批数，随批出窗消失）；组开关可恢复、作答可结清——无会话级残留集问题 |
 | `expiresAt` 冻结语义与旧客户端折算冲突 | items 带 `paused` 标记后新客户端不算倒计时；旧客户端显示冻结剩余——视觉即暂停，可接受 |
 | 误挂 timer（resume 竞态） | `expire` 入口防御（36.1，读批级标记）+ 单元「误挂 timer 到期点」用例 |
 | 暂停无限期 → 模型无限等待 | 用户裁定接受（R36-a）；两座位常显已暂停态；原生 ask 本无超时（风险表既有行） |
@@ -3356,7 +3360,7 @@ R36-d）——注册表**无会话级暂停集**（R49 修订：R36 原会话级
 
 ### 37.1 差异盘点结论与适配面
 
-盘点方法：两安装树（0.1.7 / 0.2.0）全包文件级字节对比 + 本包消费面（`ctx.*` 服务、事件、peer、预设基线、客户端槽）逐项对账。结论矩阵：
+盘点方法：两安装树（0.1.7 / 0.2.0）全包文件级字节对比 + 本包消费面（`ctx.*` 服务、事件、peer、预设基线、客户端槽）逐项核对。结论矩阵：
 
 | 消费面 | 0.2.0 状态 | 依据 | 适配动作 |
 | --- | --- | --- | --- |
@@ -3389,9 +3393,9 @@ R36-d）——注册表**无会话级暂停集**（R49 修订：R36 原会话级
 | # | 判据 | 变异路径（删保护必红） |
 | --- | --- | --- |
 | A1 | 全量单测 334+ 全绿 0 跳过（`--test-isolation=none` 同跑） | 既有变异组（mutate-*）不变 |
-| A2 | 六 junction 目标的 `package.json` version 串全部符合线（dsh* = 0.2.0-rc.2；schemastery 3.18.4 / cordis 4.0.4）——`verify/check-junctions.mjs` 守（缺席/错树/错版本都红，无跳过态；R44 增五常量一致性对账段与 zod 第七条成七条） | 实弹已验：重锚前实测 6/6 WRONG-TREE 红；R44 翻锚中间态实测 7/7 WRONG-TREE 红（§39.3-A4 前身读数）。注意：`.volatile()` 诚实信号只在**指 0.1.5 全局树**时红（0.1.7/0.2.0 两树 schemastery 同 3.18.4，消费面无区分——⑤ 轮 I-1 实测），单测层无从区分两新树，看守全在本判据前半与 A3 |
-| A3 | `package.json` 九 peer 全 `0.2.0-rc.2` 且 cordis/timer 不动；`peerDependencies` 键集与 §23 表一致；`version` 随窗（R44 = 0.2.2） | 改回任一 rc.1 串 → 对账用例红（T15；R44 实弹腿 A） |
-| A4 | `validate-preset` ①–⑪ ×2 全绿；`preset.test.mjs` 对账用例在 0.2.0 证据树通过（缺树显式红） | 删 0.2.0 树预设文件 → 对账用例红（点名路径） |
+| A2 | 六 junction 目标的 `package.json` version 串全部符合线（dsh* = 0.2.0-rc.2；schemastery 3.18.4 / cordis 4.0.4）——`verify/check-junctions.mjs` 守（缺席/错树/错版本都红，无跳过态；R44 增五常量一致性核对段与 zod 第七条成七条） | 实弹已验：重锚前实测 6/6 WRONG-TREE 红；R44 翻锚中间态实测 7/7 WRONG-TREE 红（§39.3-A4 前身读数）。注意：`.volatile()` 诚实信号只在**指 0.1.5 全局树**时红（0.1.7/0.2.0 两树 schemastery 同 3.18.4，消费面无区分——⑤ 轮 I-1 实测），单测层无从区分两新树，看守全在本判据前半与 A3 |
+| A3 | `package.json` 九 peer 全 `0.2.0-rc.2` 且 cordis/timer 不动；`peerDependencies` 键集与 §23 表一致；`version` 随窗（R44 = 0.2.2） | 改回任一 rc.1 串 → 逐条比对用例红（T15；R44 实弹腿 A） |
+| A4 | `validate-preset` ①–⑪ ×2 全绿；`preset.test.mjs` 逐条比对用例在 0.2.0 证据树通过（缺树显式红） | 删 0.2.0 树预设文件 → 逐条比对用例红（点名路径） |
 | A5 | `check-facts-anchors`：`[0.2.0]` 前缀引用**零错误**（判定口径：报告里 `[020]` 标签行为零 MISSING/OUT-OF-RANGE；既有遗留错误单列不计（已登记，非本批引入非本批消）） | mutate-facts-anchors 新前缀变异（`[0.2.0]` 行号越界 → 红） |
 | A6 | `check-alias-tokens` 在 0.2.0 锚下枚举 104 名、本包 42 处引用全落表（42 = R27 的 12 处 + R36 ask 面板新增 30 处） | 引用一个 104 外的名字 → 红（既有变异不变） |
 | A7 | `check-docs` / `check-model-text` / `check-bare-filenames` / encoding / ps1 全绿 | 既有变异组不变 |
@@ -3401,12 +3405,12 @@ R36-d）——注册表**无会话级暂停集**（R49 修订：R36 原会话级
 | # | 判据 | 变异路径 |
 | --- | --- | --- |
 | E1 | 新启动段（字节游标增量）无 `failed to import`、无 `did not activate`、无 `skipping profile bundle`（宿主行文产出链） | 装回 0.1.7 peer 的旧实体 → E1 红（R38-2 实测形态） |
-| E2 | `dsh-async` 预设新建会话工具面：async_run / async_wait_job / async_wait_agent / async_agent / async_workflow 在列；tool-subagent/-fork/workflow 不在 | 预设行丢失 → E2 红 |
+| E2 | `dsh-async` 预设新建会话工具清单：async_run / async_wait_job / async_wait_agent / async_agent / async_workflow 在列；tool-subagent/-fork/workflow 不在 | 预设行丢失 → E2 红 |
 | E3 | async_run 冒烟：让出转后台（job_id 句柄）+ async_wait_job 取回；引擎档位按现行（danger-full-access 档下 workflow 引擎可用；auto 档遇审批弹层按 0.2.0 面解释） | 断开 jobs 服务接线 → E3 红 |
 | E4 | async_wait_agent 屏障：子代理 settle 后即返（catalog 遍历口径）；ask-takeover 暂停/恢复＝R36 探针复跑（暂停冻结/恢复平移/暂停期新批三断言，不降级为抽查） | 摘 preset 行重跑探针 → 接管不生效（E4 红）。（R49 起机械面前两断言不变；「暂停期新批」腿随批级口径翻转为「新批照表计时」，取证走 `probe-r49-batch-pause.mjs`——§41.3） |
 | E5 | 设置卡片：插件页可开、字段可改可存（volatile 提交后工具描述/快照刷新，槽位等同） | 槽键失配 → 卡片不渲染（E5 红） |
 | E6 | 提权路径：workspace-write 档 async_run 沙箱拒绝 → 同轮提示 sandbox_permissions 出路（0.2.0 拒绝文本锚复核） | 摘 `escalationHintMarker` 提示行重跑 → 同轮提示消失（E6 红） |
-| E7 | 0.1.7 冻结件不动、不重测：0.1.7 实体树与本仓 `v0.1.7` tag 的内容哈希在切换前后各取一次、逐字节一致；开发实例线零触碰 | 哈希对账不等 → E7 红（对账脚本即变异看守） |
+| E7 | 0.1.7 冻结件不动、不重测：0.1.7 实体树与本仓 `v0.1.7` tag 的内容哈希在切换前后各取一次、逐字节一致；开发实例线零触碰 | 哈希核对不等 → E7 红（核对脚本即变异看守） |
 
 ### 37.3 实体与切换（R37 机制 × 0.2.0 profile 模型）
 
@@ -3492,7 +3496,7 @@ R35 定向修改（§35）禁用两预设的宿主 `tool-subagent`/`-fork` 行�
 
 | 路线 | 裁定 | 依据 |
 | --- | --- | --- |
-| A 宿主行装载不注册工具 | **弃** | 无受支持形态（宿主行 apply 无条件注册投影与工具）。标准形态（`modelSelectionSettings: true`）带回宿主 `subagent`/`subagent_fork` 工具 ⇒ 重开 R35「结构性唯一入口」裁决并连锁翻 §28/§35 判据链；absent-provider 变形泄漏 `list_subagent_models` 进工具面（face 相位 27 工具计数必红，R4 隔离面）且骑「provider 永不出现」的未定义行为。「不改宿主源码」约束下 A 无受支持落地形态 |
+| A 宿主行装载不注册工具 | **弃** | 无受支持形态（宿主行 apply 无条件注册投影与工具）。标准形态（`modelSelectionSettings: true`）带回宿主 `subagent`/`subagent_fork` 工具 ⇒ 重开 R35「结构性唯一入口」裁决并连锁翻 §28/§35 判据链；absent-provider 变形泄漏 `list_subagent_models` 进工具清单（face 相位 27 工具计数必红，R4 隔离面）且骑「provider 永不出现」的未定义行为。「不改宿主源码」约束下 A 无受支持落地形态 |
 | B 插件侧同键自注册投影 | **选** | 语义与宿主形态逐点等价（§38.2 表）；零工具注册（R4 面计数不变、R35 裁决不动）；接线仅**新增 zod 一条 junction**——投影 `stateSchema` 的注册表契约是 zod `.parse`（宿主双库并用：schemastery 给 Config、zod 给投影 schema；注册表 checkpoint/restore 路径直接调 `stateSchema.parse`，schemastery 无该方法，且同键合并**先到先得 def**——本包 def 先入则全实例该键都是本包的 schema——D1）；zod 在 0.2.0 树顶层平铺（`node_modules\zod`）；`SessionSeq` brand 运行时擦除免导入；作用域分发免 dsh-scope import。代价 = 宿主内部耦合，以版本锚定看守显式管理（§38.4） |
 | C 直读全局白名单自任裁定 | **弃** | 语义漂移四条（根源都在宿主「创建时定格」采样语义）：调用时活值 ≠ 会话创建时采样；无持久记录（宿主客户端/UI 读投影看不到）；无父会话继承复刻；事后关白名单**会**收紧既有会话（宿主创建时定格、事后编辑不收紧——方向恰反）。四条都与「无 policy 会话不暴露模型参数」的宿主管控口径（§22.4）相逆。补「读后照记持久事件」即收敛为 B |
 
@@ -3588,7 +3592,7 @@ eager drive 收不到，第二个采样方（混合预设的宿主行）与重�
 | 事后编辑 | 已记录策略不变（事件持久） | 同 | ✓ |
 | 混合预设双采样 | 串行链 + 已有策略 no-op | 同——幂等可见性靠 `stateOf` 现读（setup 窗口事件不 re-emit） | ✓ |
 | 服务缺席 | settings 缺席 = **装载 throw**（`:586-587`）；sessions 缺席 = 仅继承分支**运行期 throw**（`:594-595`），顶层采样不读 sessions（`:598-601`） | settings 缺席 → 通告 + 不接线采样（**有意偏差**：本包是预设行，装载 throw 拖垮整组合）；sessions 缺席 → 跳过 ②、①③ 照常 | 偏差登记（裁决 R40-2） |
-| 工具面 | — | **零注册**（R4 面计数不变；invariant 不触发） | 增量 |
+| 工具清单 | — | **零注册**（R4 面计数不变；invariant 不触发） | 增量 |
 
 ### 38.3 装载与作用域
 
@@ -3613,7 +3617,7 @@ eager drive 收不到，第二个采样方（混合预设的宿主行）与重�
   `length === 0` throw、`from "zod"` import 串、`.strict()).min(1).nullable()`
   schema 串，与本包 `lib/agent-policy.js` 对应行逐锚（宿主改 fold/schema 而
   key/版本未动 ⇒ 红）；④缺树即红（显式红——同 `test/preset.test.mjs` P14
-  对账口径；检查器绑本机证据树，单测不绑）。
+  核对口径；检查器绑本机证据树，单测不绑）。
 - **变异看守 `verify/mutate-agent-policy.mjs`**：改常量 / 删校验段 / 换事件类型 /
   改 fold 短路 / 删空名单 throw / stateSchema 换 schemastery → 静态看守必红；
   BASELINE-GREEN 未变异时恰绿。
@@ -3631,7 +3635,7 @@ eager drive 收不到，第二个采样方（混合预设的宿主行）与重�
 单元/进程内（§38.4 清单）之外，acceptance-017 agent 相位的 **R40 后形态**（五判据
 全绿 = R40 真机通过）：
 
-1. 前置白名单设置面存在（不变）；
+1. 前置白名单设置界面存在（不变）；
 2. 开白名单（含 zai/glm-5.3）→ 新会话 → requested 调用 → 「note 锚 requested 标记」
    **预期绿**——判据本体正是收紧后的那套（`verify/agent-judgements.mjs` 零改动，
    收紧红利：同一判据先证伪、后在 R40 证真）；
@@ -3757,10 +3761,10 @@ rc.1）不再原地升级，封存为 0.2.0-rc.1 线历史资产（同 0.1.7 树
 | # | 落点 | 换代内容 |
 | --- | --- | --- |
 | A1 | `package.json:78-86` | 九个 `@deepseek-ai/dsh*` peer → `0.2.0-rc.2`（T15 守） |
-| A2 | `test/index.test.mjs:566-573` | T15 标题、注释、`DSH_LINE` → rc.2；注释换代条款改写为「rc.2 → 正式版/rc.3 再升时本用例先红」（§37.6 风险表第一行同款语义）；**新增 `version` 断言**（`pkg.version === '0.2.2'`——version 由此获得 tag 前红信号，不再只靠切换穿指读兜底） |
+| A2 | `test/index.test.mjs:566-573` | T15 标题、注释、`DSH_LINE` → rc.2；注释换代条款改写为「rc.2 → 正式版/rc.3 再升时本用例先红」（§37.6 风险表第一行同款语义）；**新增 `version` 断言**（`pkg.version === '0.2.2'`——version 由此获得 tag 前红信号，不再只靠切换穿指读数这层补漏） |
 | A3 | `verify/check-junctions.mjs:34-40` | `EXPECTED` 四串（dsh-jobs/sandbox/subagent/tools）→ rc.2 + 头注 `:6` 口径 + 版本锁定矩阵引 |
 | A4 | 开发树七 junction（物理） | `node_modules\@deepseek-ai\{cordis,dsh-jobs,dsh-sandbox,dsh-subagent,dsh-tools,schemastery}` + 顶层 `zod` → 逐条重建指新树；**次序**：先翻 junction 后改 A3 表——中间态跑本器必红（WRONG-TREE/VERSION），即换锁红信号实弹（§39.4-3 腿 B 的前身读数） |
-| A5 | `verify/check-junctions.mjs` 增**一致性对账段** | 五处树根常量——`check-facts-anchors.mjs` 的 `DEFAULT_TREE_020`、`check-agent-policy.mjs` 的 `DEFAULT_HOST`、`mutate-agent-policy.mjs` 的 `HOST_PATH`、`preset.test.mjs` 的 `EVIDENCE_TREE`（取其上溯树根）、`diff-trees.mjs` 的 B——与本器 `TREE` 根逐条对账（读源文件抽常量，大小写不敏感），任一不同步必红：B 组翻锚后「漏改/回退任一处」从全绿盲区（两树文件几乎一致，消费面判定表）变为可检出；变异腿 C（§39.4-3）证其能红 |
+| A5 | `verify/check-junctions.mjs` 增**一致性核对段** | 五处树根常量——`check-facts-anchors.mjs` 的 `DEFAULT_TREE_020`、`check-agent-policy.mjs` 的 `DEFAULT_HOST`、`mutate-agent-policy.mjs` 的 `HOST_PATH`、`preset.test.mjs` 的 `EVIDENCE_TREE`（取其上溯树根）、`diff-trees.mjs` 的 B——与本器 `TREE` 根逐条核对（读源文件抽常量，大小写不敏感），任一不同步必红：B 组翻锚后「漏改/回退任一处」从全绿盲区（两树文件几乎一致，消费面判定表）变为可检出；变异腿 C（§39.4-3）证其能红 |
 
 **B. 路径翻锚（`dsh-0.2.0` → `dsh-0.2.0-rc.2`；代码零逻辑改动）**：
 
@@ -3790,7 +3794,7 @@ rc.1）不再原地升级，封存为 0.2.0-rc.1 线历史资产（同 0.1.7 树
 | C8 | 上游版本锁定矩阵 | §39.2 矩阵改写（现行值/依据/核销日期三字段随读数更新） |
 | C9 | 服务认家事实 | 现行值补 AppParameters 现指新树 + 迁树实测记录（认家程序不变：动验证实例前先读本键） |
 | C10 | 消费面判定事实 | 「更新入口」的树升级前置条件已满足——注记核销（rc.2 树面由使用者完成） |
-| C11 | `verify/README.md` | junction 器行（rc.2 + 新树 + 七条口径 + **A5 一致性对账段**）；diff-trees 行树口径改「0.1.7 / 0.2.0 线运行树（现 rc.2）」；check-facts-anchors 行树口径随 C6 前缀重定义更新；**新增 `check-agent-policy.mjs` / `mutate-agent-policy.mjs` 两行**（文件表 R40 起就缺这两行——「唯一脚本清单」的既有漂移，一并核销；含宿主源常量指新树与 11 变异口径） |
+| C11 | `verify/README.md` | junction 器行（rc.2 + 新树 + 七条口径 + **A5 一致性核对段**）；diff-trees 行树口径改「0.1.7 / 0.2.0 线运行树（现 rc.2）」；check-facts-anchors 行树口径随 C6 前缀重定义更新；**新增 `check-agent-policy.mjs` / `mutate-agent-policy.mjs` 两行**（文件表 R40 起就缺这两行——「唯一脚本清单」的既有漂移，一并核销；含宿主源常量指新树与 11 变异口径） |
 | C12 | 交付记录 | R44 节（交付记录：裁定、矩阵读数、测试读数、红信号实弹、切换、核销）——**写完后复跑完整测试套件，读数标注取数时刻（README 纪律三）** |
 | C13 | `docs/requirements.md` R44 步骤 1 | 行尾加现况注记（形态同 :46「现行基线」）：「（现行形态：步骤 1 已由新树形态完成，旧树不升级、`npm install` 仅作应急支——见 design §39.0）」——保留原裁决史、阻断按需求原文对旧树执行 npm install（该动作会静默改写 @v0.2.1 回滚位的宿主线） |
 | C14 | 等同事实 | 现行值加日期化注记：等同清单系 0.1.7×rc.1 配对读数；rc.2 配对读数（§39.2-5 重跑）去向交付记录 R44 节；更新入口注明已触发已处置 |
@@ -3818,7 +3822,7 @@ v0.2.1 轻量形态系 R40 建tag 时偏差——不复制该偏差）。
 3. **换代红信号不弱化（实弹，验后复原回读，读数入交付记录）**：腿 A——`package.json`
    任一 peer 临时回 `0.2.0-rc.1` → T15 必红；腿 B——`check-junctions.mjs` `EXPECTED`
    任一串临时回 rc.1 → 本器必红；**腿 C——B 组任一路径常量临时回旧树
-   （如 `DEFAULT_HOST`）→ 本器 A5 一致性对账段必红**。三腿证明「改回任一 rc.1 串、
+   （如 `DEFAULT_HOST`）→ 本器 A5 一致性核对段必红**。三腿证明「改回任一 rc.1 串、
    锚回任一旧树路径必红」（R44 步骤 3 原文）。
 4. 任一红（非实弹腿）→ 停窗（§39.7）。
 
@@ -3847,7 +3851,7 @@ v0.2.1 轻量形态系 R40 建tag 时偏差——不复制该偏差）。
 1. **运行时版本 = 0.2.0-rc.2**：链读（AppParameters → 新树 → `@deepseek-ai/dsh/
    package.json` version，§39.2 已核）+ **可执行读数**：对新树入口跑
    `node <新树>\@deepseek-ai\dsh\lib\bin.js --version`（执行 AppParameters 所指同一
-   入口文件，打印其自报版本——兜底程序，不依赖任何条件句）+ 日志活体佐证
+   入口文件，打印其自报版本——备用程序，不依赖任何条件句）+ 日志活体佐证
    （同 profile 参考插件未换锁期间其 skip 行印 `dsh 0.2.0-rc.2`——邻位观察；若使用者已将
    其换锁致该行缺席，前两读数已足，缺席本身记入邻位观察注记）。
 2. **本包激活**：新启动段（字节游标增量）按 bundle 名作用域——`dsh-async-tools` 无
@@ -3916,7 +3920,7 @@ v0.2.1 轻量形态系 R40 建tag 时偏差——不复制该偏差）。
 派生字段尽量从既有字段算出来，不要各自独立配置：`evidenceDir` 缺省
 `<root>/.local/evidence`、`tmpDir` 缺省 `<root>/.local/tmp`；而三档事实锚里的
 `evidenceTree['020']` 缺省即 `<hostModules>/@deepseek-ai`——**宿主锚与事实锚因此指向同一棵树**，
-"半翻锚"（两者指向不同代际）从"要靠对账发现"变成**写不出来**。
+"半翻锚"（两者指向不同代际）从"要靠核对发现"变成**写不出来**。
 
 ### 40.3 边界检查器（`tools/check-public-surface.mjs`）
 
@@ -3945,7 +3949,7 @@ v0.2.1 轻量形态系 R40 建tag 时偏差——不复制该偏差）。
 - **指纹规则要防两头**：盘符规则写成"单分隔符"会漏掉 JS 源码里**转义的双反斜杠**形态
   （**假阴性**，等于整类漏检）；服务名规则按**子串**匹配会误伤上游**公开包名**
   （**假阳性**，一次误报几十条）。两条都要有回归钉子。
-- **在 `.local/` 这种没有版本控制兜底的地方做目录移动，先 `Test-Path`**：PowerShell 的
+- **在 `.local/` 这种没有版本控制保护的地方做目录移动，先 `Test-Path`**：PowerShell 的
   `Move-Item` 遇到**已存在**的目标目录是"移进去"而不是替换，随后的清理会连它一起删掉，
   而且 `Remove-Item` 不进回收站。
 
@@ -3980,7 +3984,7 @@ v0.2.1 轻量形态系 R40 建tag 时偏差——不复制该偏差）。
 | 2 出窗路径对照（中止/超时放行出窗后新批照常计时） | K11：暂停批经 abort 与 resume 剩余≤0 两路径出窗 → 新批照常计时、无残留 |
 | 3 跨会话隔离（新增用例） | K10：会话 A 暂停在窗批，会话 B 在窗批照表到期合成放行且 `paused=false`；A 的 pause/resume 不触碰 B（`paused` 标记、timer 武装数、到期点三面） |
 | 4 R36 机械不回归 | K1–K5、K8、K9 翻转后原样断言（冻结/平移/幂等/批级防御哑火/清理/远端面） |
-| 计时边界（审查补档——判据 1/4 的量化面） | K13：时钟调度替身——新批 `timer.ms`=全额、到期前不结且恰一次合成（缩短武装必红）；恢复重挂 `ms`=剩余、到期点=恢复时刻+剩余（重置全窗口必红） |
+| 计时边界（审查补档——判据 1/4 的量化面） | K13：时钟调度替身——新批 `timer.ms`=全额 + 到期前不结（缩短武装必红）+ `resolve` 包计数恰一次（重复投递到期回调被已结防御吞掉——删防双结防御必红；Promise.then 天生单结算不作证据）；恢复重挂 `ms`=剩余、到期点=恢复时刻+剩余（重置全窗口必红） |
 | 5 R36-e 边界不动 | K7（暂停批作答 delivered）+ J1/J19（接管关＝面板与按钮整体不在场） |
 | 需求条目 5（并存态两座位显示——非判据面，映射补档） | K12：真组件 `AskList` 渲染——同组暂停批+计时批并存 → 组开关显「恢复计时」（类名+aria-label 双面）、点击只发 resume；恢复后全组计时翻「暂停计时」、点击发 pause |
 
@@ -4002,11 +4006,15 @@ K10 的 B 批接管发生在 A 暂停之前、结构上够不到继承分支）�
 - **双会话隔离对照**：会话 A 暂停在窗批、会话 B 在窗批照表走到期合成放行
   （B 的放行时刻 ∈ 下界窗，不被 A 的暂停冻结、也不早合成）；A 的恢复动作
   不触碰 B（B 放行后 A 的组仍冻结在场、恢复后按剩余平移放行）。
-- **B 活动期恢复对照（r51 补）**：B 仍在倒计时时恢复 A——B 数字续走原表
-  （单调递减不重置不冻结）；A 按剩余续走（≤ 28 s，非全窗口）；A 第二次恢复
-  后放行时刻 ≈ 显示剩余 ± 粗容差（显数与兑现一致性）。
-- **取证纪律（r51 补）**：开工面板本就干净（门控）；收尾清理限定本次会话；
-  证据 json 携带指纹（baseUrl origin / 实体提示 / 窗口参数）与设置复原结局。
+- **B 活动期恢复对照（复审收紧）**：暂停前烧 ~10 s 读**首记剩余锚**——B 仍在
+  倒计时时恢复 A：A 数字 ∈ 首记锚−4..0（全额重置显示 ~29–30 必红）、B 数字严格
+  下降且降幅 ≤4（重置/冻结必红）；B 放行时刻对「读锚时刻＋锚数字」双侧限界
+  （≥5 s 级平移/重挂必红）。A 第二次恢复对二次锚同口径，放行时刻同锚双侧限界
+  （全额重置 ≈30 s 必红）。
+- **取证纪律（复审收紧）**：开工只读计数残留（非零即 FAIL 退出，不清场）；收尾
+  清理限定本次会话且无组归属按钮不算自身；证据 json 携带**实测指纹**（link 行、
+  junction OS 级解析目标、实体版本+BUILD-STAMP、三文件 sha256、listPlugins 行、
+  /version 尝试）与设置复原结局。
 
 取证实例排序约束同 R32 条（需求风险表 R31 行：验证实例取证，或升级已成
 事实则按该行口径处置）。
