@@ -351,6 +351,9 @@ async function main() {
   const resumeA1 = await clickInGroup(page, sIsoA, '.ats-ask-resume');
   marks.d6ResumeAt = Date.now();
   const aResumedText = await waitForCountingText(page, sIsoA, 5000);
+  // 读数间隔保底 ≥1.5 s（ceil 显示在同一秒窗内不翻牌——活体也会「相等」；
+  // 保证真实流逝后，活体必降 ≥1、冻结世界读数相等 ⇒ 如实红。首跑 18→18 实录）。
+  while (Date.now() - marks.bAnchorAt < 1500) await sleep(200);
   const bDuringText = await groupTextOf(page, sIsoB);
   const aDigit1 = countdownDigit(aResumedText);
   const bDigit2 = countdownDigit(bDuringText);
