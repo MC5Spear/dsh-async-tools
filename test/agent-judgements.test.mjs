@@ -1,11 +1,11 @@
 /**
  * `verify/agent-judgements.mjs`的单测。
  *
- * 三件按 N1「测试覆盖」立的面：
+ * 三件围绕判据健壮性立的用例：
  * 1. **requested note 必绿**：lib/text.js 真渲染的 requested 回执（en/zh）命中；
  * 2. **继承 note 必红**（能红证明）：同样含 `zai/glm-5.3` 路由串的继承回执
- *    **不得**命中 requested 判据——并对照证死旧判据（裸路由串匹配）
- *    确实会命中它们，即被关掉的假绿机制；
+ *    **不得**命中 requested 判据——并以裸路由串匹配作负控：松匹配确实会
+ *    命中它们，正是判据必须排除的假绿机制；
  * 3. **拒绝错误锚必绿**：`error.noPolicy` 的两档真渲染文案命中，且不误吞成功 note。
  *
  * 夹具全部经 `t()` 从 `lib/text.js` 现渲染（不手抄句子）：lib 侧措辞漂移 →
@@ -34,14 +34,14 @@ test('requested note 必绿（en/zh 两档，lib 真渲染回执）', () => {
   assert.equal(requestedRouteNote(requestedZh, 'zai', 'glm-5.3'), true, `zh 夹具：${requestedZh.slice(-80)}`);
 });
 
-test('能红证明：继承 note 必红——旧判据的假绿洞已关', () => {
+test('能红证明：继承 note 必红（裸路由串匹配的假绿洞已排除）', () => {
   // 继承回执（同路由串）与笼统继承形态都必须不命中 requested 判据。
   for (const fixture of [inheritedEn, inheritedZh, inheritsOnlyEn, inheritsOnlyZh]) {
     assert.equal(requestedRouteNote(fixture, 'zai', 'glm-5.3'), false,
       `继承 note 不得命中 requested 判据：…${fixture.slice(-80)}`);
   }
-  // 对照：此前的旧判据（acceptance-017 相位内的裸路由串匹配）确实命中继承 note
-  // ——这就是「requested 被接受」曾被误判为真的机制，在档防回归。
+  // 负控对照：裸路由串匹配（只看路由串是否出现）确实会命中继承 note——
+  // 把继承回执误判成「requested 被接受」的假绿机制就是它，判据必须比它严。
   const legacyLoose = (text) => /zai/.test(text) && /glm-5\.3/.test(text);
   assert.equal(legacyLoose(inheritedEn), true, '对照前提失效：en 继承夹具应含路由串');
   assert.equal(legacyLoose(inheritedZh), true, '对照前提失效：zh 继承夹具应含路由串');
@@ -64,16 +64,16 @@ test('继承标记判据：继承/笼统继承命中，requested 回执不命中
   assert.equal(inheritedRouteNote(requestedZh), false);
 });
 
-test('judgeAgentRouting 汇总：R38 实录形状（先拒、后免路由重试）判 not-ok 且三读数并见', () => {
+test('judgeAgentRouting 汇总：R38 实测记录形状（先拒、后免路由重试）判 not-ok 且三读数并见', () => {
   // verify/logs/acc017-agent.json（0e3fa73 版）的实录形状：
   // results[0] = noPolicy 拒绝错误，results[1] = 免路由重试的继承回执。
   const verdict = judgeAgentRouting([noPolicyZh, inheritedZh], 'zai', 'glm-5.3');
-  assert.equal(verdict.ok, false, '旧判据在这组结果上会绿——新判据必须红');
+  assert.equal(verdict.ok, false, '裸路由串匹配在这组结果上会绿——判据必须红');
   assert.equal(verdict.sawNoPolicy, true);
   assert.equal(verdict.sawInherited, true);
   assert.equal(verdict.sawRequested, false);
   assert.equal(verdict.count, 2);
-  // R40 落地后的期望形状：requested 回执在场 → ok，拒绝锚缺席。
+  // 期望形状：requested 回执在场 → ok，拒绝锚缺席。
   const restored = judgeAgentRouting([noPolicyEn, requestedEn], 'zai', 'glm-5.3');
   assert.equal(restored.ok, true);
   assert.equal(restored.sawRequested, true);

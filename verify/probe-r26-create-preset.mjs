@@ -1,21 +1,22 @@
 #!/usr/bin/env node
 /**
- * probe-r26-create-preset.mjs —— R26「异步创造模式」第二份预设的实机验收探针（验证实例）。
+ * probe-r26-create-preset.mjs —— 「异步创造模式」预设（`dsh-async-create`，需求 §3.1）
+ * 的实机验收探针（验证实例）。
  *
  * 用法：node verify/probe-r26-create-preset.mjs <face|drill|both>
  *   face  —— 部署态全量判据（重启装载第三份 patch 后跑）：
  *            ① 新会话选 dsh-async-create 不回退；② 工具目录（启用行在场/禁用行缺席）；
  *            ③ async_agent→async_wait_agent 有界等待取回；④ 插话打断等待而子代理照跑；
- *            ⑤ 隔离对照（dsh-async 预设面貌不变：subagent 双入口仍在）。
+ *            ⑤ 隔离对照（dsh-async 预设形态不变：subagent 双入口仍在）。
  *   drill —— 回滚态判据（package.json 摘掉第三项并重启后跑）：
  *            dsh-async-create 必须开不出来（报错或回退）；dsh-async 必须仍可用。
  *   both  —— 复原态快查（两项都在花名册上、都能开新会话）。
  *
  * 边界（诚实声明）：
  * - persona 四锚句这半边**不从转录取证**——`request/header` 不含 systemPrompt
- *   （r17 审查 r17-1 裁定，probe-agent-e2e.mjs 头注同款口径），由
- *   `tools/validate-preset.mjs` 判据⑤静态看守；本探针只验「真机上行为与目录」半边。
- * - 断言文案来自真实返回（async-e2e 的教训：不臆造英文 `interrupted`，中文返回里没有）。
+ *   （probe-agent-e2e.mjs 头注同款口径），由
+ *   `tools/validate-preset.mjs` 判据⑤静态看守；本探针只验「实例上行为与目录」半边。
+ * - 断言文案来自真实返回（不臆造英文 `interrupted`，中文返回里没有）。
  * - 证据：本机证据目录 logs/r26-create-<相位>.json（判据逐条 + 关键返回片段 + 会话号）。
  */
 
@@ -111,7 +112,7 @@ async function transcriptOf(sessionId) {
   });
 }
 
-/** 模型实收工具面（第一条 request/header）。 */
+/** 模型实收工具清单（第一条 request/header）。 */
 function faceOf(pageResult) {
   for (const record of pageResult.records ?? []) {
     if (record.event?.type !== 'request/header') continue;
@@ -121,8 +122,8 @@ function faceOf(pageResult) {
   return null;
 }
 
-/** tool/call 的 arguments 兼容取值：可能是对象，也可能是 JSON 字符串（0.1.7 实测
- *  两种都出现过——字符串形态下 `.wait_ms` 恒 undefined，首轮探针因此没发过插话）。 */
+/** tool/call 的 arguments 兼容取值：可能是对象，也可能是 JSON 字符串（验证实例实测
+ *  两种都出现过——字符串形态下 `.wait_ms` 恒 undefined，取值必须两种形状都兼容）。 */
 function argsOf(data) {
   if (typeof data?.arguments === 'string') {
     try { return JSON.parse(data.arguments); } catch { return {}; }
@@ -131,9 +132,9 @@ function argsOf(data) {
 }
 
 /** 转录里的工具调用与结果文本。
- *  字段与形状（验证实例实测，0.1.7）：tool/call 用 callId；tool/result 的 message 带
- *  toolCallId，正文是 message.content[].type==='text' 的文本块——不是旧探针里
- *  嵌套的 tool-result 块。两种形状都收，避免版本漂移再咬一次。 */
+ *  字段与形状（验证实例实测）：tool/call 用 callId；tool/result 的 message 带
+ *  toolCallId，正文是 message.content[].type==='text' 的文本块——不是嵌套的
+ *  tool-result 块。两种形状都收，避免宿主形状漂移导致判据失配。 */
 function callsOf(pageResult) {
   const calls = [];
   const resultsById = new Map();
@@ -179,32 +180,32 @@ function record(name, ok, detail) {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  ${detail}` : ''}`);
 }
 
-// ── 工具目录口径（§28.2 行集 → 模型面工具名；名字取自验证实例实测 faceNames，
+// ── 工具目录口径（设计 §3.6 行集 → 模型侧工具名；名字取自验证实例实测 faceNames，
 //    不从开发实例的会话推断——两实例组合不同，tool-cordis 在验证实例只注册
 //    cordis_inspect_list/cordis_inspect_query 两件）────────────────────────────
 const CREATE_MUST_HAVE = [
-  'async_run', 'async_wait_job', 'async_wait_agent', 'async_agent', // 四行 async（手术 3）
+  'async_run', 'async_wait_job', 'async_wait_agent', 'async_agent', // 四行 async（需求 §3.1 五工具在场）
   'read', 'glob', 'grep', 'write', 'edit',                           // tool-fs（基线启用）
   'web_search', 'web_fetch',                                        // tool-web
   'ask_user_question', 'todo_write', 'skill',                       // 交互/规划行
   'cordis_inspect_list', 'cordis_inspect_query',                    // tool-cordis（创造侧独有于 dsh-async）
   'workflow',                                                       // tool-workflow
   'job_list', 'job_output',                                         // tool-jobs
-  'interrupt_agent', 'list_agents',                                 // tool-subagent-control（行在场，管理面保留）
+  'interrupt_agent', 'list_agents',                                 // tool-subagent-control（行在场，管理范围保留）
   'exit_plan_mode', 'create_goal', 'get_goal', 'update_goal',       // planning 组（goal 行）
   'present', 'send_message'                                         // tool-present / tool-subagent-control
 ];
-// 禁用/摘除行 → 模型面不得出现的工具名（R26 e2e 判据②：禁用行的工具不在目录）。
+// 禁用/摘除行 → 模型侧不得出现的工具名（端到端判据②：禁用行的工具不在目录）。
 const CREATE_MUST_NOT_HAVE = [
-  'pwsh', 'bash',                        // tool-pwsh 摘除（手术 2b）/ tool-bash 布尔禁用（手术 1）
-  'run_code',                            // 呈现面 native（R2）
-  'subagent', 'subagent_fork',           // 裁决 A：结构性唯一入口
+  'pwsh', 'bash',                        // tool-pwsh 摘除 / tool-bash 布尔禁用（需求 §3.1 禁同步 shell）
+  'run_code',                            // 呈现层 native（不在本预设行集）
+  'subagent', 'subagent_fork',           // 创建入口结构性唯一（需求 §3.1）
   'subagent_codex', 'subagent_claude_code', // 基线本就禁用
-  'ralph'                                // 基线禁用（F86）
+  'ralph'                                // 基线本就禁用
 ];
-// 隔离对照：dsh-async 的面貌必须不变（R14 双入口仍在、async 四件也在）。
+// 隔离对照：dsh-async 的形态必须不变（双入口仍在、async 四件也在）。
 const ASYNC_MUST_HAVE = ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent', 'subagent', 'subagent_fork'];
-// 面差集口径（裁决 A 的实机面）：create 独有 = tool-cordis 的两件；control 独有 = 双入口。
+// 差集口径：create 独有 = tool-cordis 的两件；control 独有 = 双入口。
 const CREATE_ONLY_EXPECTED = ['cordis_inspect_list', 'cordis_inspect_query'];
 const CONTROL_ONLY_EXPECTED = ['subagent', 'subagent_fork'];
 
@@ -222,7 +223,7 @@ async function phaseFace() {
     if (row.running === false) break;
   }
   const face = faceOf(await transcriptOf(s1));
-  if (face === null) throw new Error('转录里没有 request/header（工具面判据无从取数）');
+  if (face === null) throw new Error('转录里没有 request/header（工具清单判据无从取数）');
   const missing = CREATE_MUST_HAVE.filter((n) => !face.names.includes(n));
   const leaked = CREATE_MUST_NOT_HAVE.filter((n) => face.names.includes(n));
   record('②a 创造侧启用行的工具在场（含四 async + cordis/workflow）', missing.length === 0,
@@ -232,7 +233,7 @@ async function phaseFace() {
 
   // ③+④ 派生→有界等待→插话打断。
   // 长子任务刻意做**慢**（约 2000 字输出，flash 也要写半分钟以上）——400 字太快，
-  // 首轮实测等待在插话落地前就正常返回了（无打断证据，④a 假红）。
+  // 首轮实测等待在插话送达前就正常返回了（无打断证据，④a 假红）。
   const TASK = [
     '请严格按步做，每步 finish 前不要做别的：',
     '第 1 步：用 async_agent 派生一个子代理，prompt 让它「计算 17×23 并只回答这个数字」，不要传 provider/model。',
@@ -262,7 +263,7 @@ async function phaseFace() {
     // 任务轮已开始 = 转录里出现过 async_agent 调用（防 READY 轮结束瞬间的假收敛）。
     const taskStarted = (page.records ?? []).some((r) => r.event?.type === 'tool/call' && r.event.data?.name === 'async_agent');
 
-    // v4 插话窗口（状态不是时刻，async-e2e 的四版教训）：async_wait_agent 且 wait_ms
+    // 插话窗口（定位的是状态不是时刻）：async_wait_agent 且 wait_ms
     // 很大 → 两拍后发 steer；若这轮等待已正常返回而打断证据未出现，则在**下一次**
     // 长等待里重试（有界 3 次）。
     const longWaitActive = (() => {
@@ -303,7 +304,7 @@ async function phaseFace() {
   record('③a async_agent 被真的调用并立返（agent_id 在结果里）',
     agentCalls.length >= 2 && typeof firstAgentText === 'string' && /agent_id/i.test(firstAgentText),
     firstAgentText === undefined ? '无结果文本' : JSON.stringify(firstAgentText.slice(0, 120)));
-  // ③b 口径（契约事实，0.1.7 实测）：等待返回只报结算（「状态转为 idle…不再被观察」），
+  // ③b 口径（契约事实，验证实例实测）：等待返回只报结算（「状态转为 idle…不再被观察」），
   // 子代理的**回答**以独立消息到达（agent-message/subagent-settled）。判据 = 两半：
   // 有界等待真的返回了（结算文案）+ 391 出现在子代理中继消息里。
   const firstWaitSettled = waitTexts.some((t) => /idle|不再被观察|完成/.test(t));
@@ -330,7 +331,7 @@ async function phaseFace() {
   record('③c 主线汇报 Q1=391（端到端答案一致）', /Q1\s*=\s*391/.test(finalTexts),
     JSON.stringify((finalTexts.match(/Q1[^\n]*/) ?? ['（无）'])[0].slice(0, 40)));
 
-  // ⑤ 隔离对照：dsh-async 面貌不变 + 面差集恰为裁决 A 的形状
+  // ⑤ 隔离对照：dsh-async 形态不变 + 差集恰为「创建入口结构性唯一」的形状（需求 §3.1）
   const s2 = await newSession('dsh-async');
   await prompt(s2, '（不需要做任何事，请直接回答：READY）');
   for (let i = 0; i < 60; i += 1) {
@@ -340,11 +341,11 @@ async function phaseFace() {
   }
   const face2 = faceOf(await transcriptOf(s2));
   const missing2 = ASYNC_MUST_HAVE.filter((n) => !face2?.names.includes(n));
-  record('⑤a 隔离对照：dsh-async 预设面貌不变（async 四件 + subagent 双入口都在）',
+  record('⑤a 隔离对照：dsh-async 预设形态不变（async 四件 + subagent 双入口都在）',
     missing2.length === 0, missing2.length === 0 ? `${String(face2?.names.length ?? 0)} 个工具` : `缺：${missing2.join(', ')}`);
   const createOnly = face.names.filter((n) => !face2?.names.includes(n));
   const controlOnly = (face2?.names ?? []).filter((n) => !face.names.includes(n));
-  record('⑤b 面差集恰为裁决 A 的形状（create 独有 = cordis inspect 双件；control 独有 = subagent 双入口）',
+  record('⑤b 差集恰为裁决 A 的形状（create 独有 = cordis inspect 双件；control 独有 = subagent 双入口）',
     createOnly.join(',') === CREATE_ONLY_EXPECTED.join(',') && controlOnly.join(',') === CONTROL_ONLY_EXPECTED.join(','),
     `create 独有=[${createOnly.join(', ')}]；control 独有=[${controlOnly.join(', ')}]`);
 

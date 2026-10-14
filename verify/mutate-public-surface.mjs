@@ -13,8 +13,8 @@
  *
  * ## 为什么进程内调用
  *
- * 本仓的既有教训：默认沙箱下**子进程管道捕获一律 EPERM**，靠 `spawnSync` 读检查器 stdout
- * 的变异脚本会稳定报出假红（`verify/mutate-facts-anchors.mjs` 就是这么被咬的）。
+ * 固定风险：默认沙箱下**子进程管道捕获一律 EPERM**，靠 `spawnSync` 读检查器 stdout
+ * 的变异脚本会稳定报出假红。
  * `checkPublicSurface(root, {quiet})` 是可导入函数，直接吃返回值里的 `findings`。
  *
  * 用法：`node verify/mutate-public-surface.mjs`
@@ -34,7 +34,7 @@ const ALLOWLISTED_FILES = [...PUBLIC_SURFACE_ALLOWLIST.keys()];
 
 /** 合成树里那份"干净"的 `.gitignore`。 */
 const CLEAN_IGNORE = [
-  '# 本机平面的唯一例外目录',
+  '# 本机侧的唯一例外目录',
   '.local/',
   '',
   'node_modules/',
@@ -107,9 +107,9 @@ function mutation({ name, family, why, patch }) {
 /**
  * 一条**负向**用例：这个形态**不该**被报出来。
  *
- * 假阳性与漏报一样致命——一个动不动就红的检查器会被绕过或被塞满豁免。
- * 本检查器第一版就误报过 30+ 条：`dsh-web` 按子串匹配，把上游公开包名
- * `dsh-web-app` / `dsh-webhook` 全当成了本机服务名。
+ * 假阳性与漏报一样致命——一个动不动就红的检查器会被绕过或被塞满豁免；
+ * `dsh-web` 按子串匹配会把上游公开包名 `dsh-web-app` / `dsh-webhook`
+ * 误当成对它的引用，负向用例防的正是这一类。
  *
  * @param {{ name: string, patch: object }} spec - 用例规格。
  */
@@ -150,7 +150,7 @@ mutation({
   family: '指纹',
   why: /开发盘路径/,
   // ⚠️ 用**双反斜杠**写：JS 源码里的 Windows 路径是转义的，判据必须认这一个形态。
-  // 第一版判据只认单反斜杠，于是"可执行代码里的本机绝对路径"整类漏检。
+  // 只认单反斜杠会让"可执行代码里的本机绝对路径"整类漏检——转义形态必须一并认。
   patch: { source: "export const P = 'D:\\\\P\\\\somewhere\\\\repo';\n" }
 });
 
@@ -158,8 +158,8 @@ mutation({
   name: 'M1-b 源码里种下裸盘根（转义形态、引号紧随）→ 必须报「指纹」',
   family: '指纹',
   why: /开发盘路径/,
-  // 第二代盲区（发布前盲审抓到）：盘根后不再跟分隔符，旧判据的 `P[\\/]` 尾部
-  // 要求让 `'D:\\P'`（引号收尾）整类漏检——公开面夹具里留过真残留。
+  // 盘根后可以不跟分隔符（`'D:\\P'` 引号收尾形态）——判据若尾部强要求 `P[\\/]`，
+  // 这类形态会整类漏检，必须单独认。
   patch: { source: "export const P = 'D:\\\\P';\n" }
 });
 

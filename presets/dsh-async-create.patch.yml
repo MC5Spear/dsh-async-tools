@@ -1,38 +1,42 @@
 # The `dsh-async-create` agent preset: the CREATION-side agent (cordis baseline)
 # with an ASYNCHRONOUS shell and a single bounded-wait derivation entry.
 #
-# 0.1.7 交付形态（docs/design.md §20/§28）：本文件是 `dsh.bundle.patch` 数组的第三项——
-# 一条预设声明行（`@deepseek-ai/dsh-agent-preset`），config.plugins 是完整子清单。
-# 预设生命周期由 loader 拥有（F66）：本包从 bundles 移除即预设消失，无清理代码。
+# 结构（设计 §3.6）：本文件是 `dsh.bundle.patch` 数组的一项——一条预设声明行
+# （`@deepseek-ai/dsh-agent-preset`），config.plugins 是完整子清单。预设生命周期由
+# loader 拥有：本包从 bundles 移除即预设消失，无清理代码（设计 §7.1）。
 #
-# 基线 = 0.1.7 shipped 创造模式（cordis）预设补丁（F103），对其的手术（§28.2，逐条给依据）：
-#   1. tool-bash 无条件 disabled: true（R20 / F82 / R26「不做同步 shell」）；
-#   2. 不挂 tool-pwsh 行（R6：前台同步 shell 到期杀进程树，与异步语义冲突）；
-#   3. tool-bash 之后连续成组新增四行 dsh-async-tools（toolName 分派，成例 F44）；
-#   4. tool-subagent / tool-subagent-fork 置 disabled: true、config 逐字保留
-#      （§28.1 裁决 A：派生入口唯一 = async_agent，结构性禁用强于提示词约束；
-#      管理面 tool-subagent-control / -list-agents 与引擎服务 workflow-ptc 保持
-#      在场——tool-workflow 行 R35-b 起禁用，见 4b）；
-#   4b. R35 手术：tool-workflow 置 disabled: true（R35-b——编排只走 async_workflow）；
-#      第五行 async_workflow 插 delegation 组内 tool-workflow 行后（R35-a——引擎是
-#      组内隔离服务，组外行取不到，设计 G-1）；workflow-ptc（引擎服务，供电）保留。
-#      功能损失照 R35-e 登记：失去宿主 workflow 工具的脚本编排参数面——出路 =
-#      async_workflow（同引擎、异步语义），或换预设开新会话。
+# 基线 = 随宿主 0.2.0-rc.2 发布的 shipped 创造模式（cordis）预设补丁（需求 §7.3；
+# 基线位置由 tools/validate-preset.mjs 按需求读取）。相对基线的手术（设计 §3.6
+# "两者相对基线的共同差异"，逐条给依据）：
+#   1. tool-bash 无条件 disabled: true——禁同步 shell（需求 §3.1），两平台工具清单
+#      一致（需求 §3.3）；
+#   2. 不挂 tool-pwsh 行——前台同步 shell 到期杀进程树，与异步语义冲突（需求 §3.1）；
+#   3. tool-bash 之后连续成组新增四行 dsh-async-tools（toolName 分派）；
+#   4. tool-subagent 系委托入口（单发 / fork / codex / claude-code）置
+#      disabled: true、config 逐字保留（需求 §3.1：派生入口唯一 = async_agent，
+#      结构性禁用强于提示词约束）；管理侧 tool-subagent-control / -list-agents 与
+#      引擎服务 workflow-ptc 保持在场；
+#   4b. tool-workflow 置 disabled: true（需求 §3.1：编排只走 async_workflow）；第五行
+#      async_workflow 插 delegation 组内 tool-workflow 行后——编排引擎是组内隔离服务，
+#      组外行取不到（需求 §3.2 末条、设计 §3.5）；workflow-ptc（引擎服务，供电）保留。
+#      失去宿主 workflow 工具的脚本编排参数集合——出路 = async_workflow（同引擎、
+#      异步语义），或按宿主规则换预设开新会话（需求 §3.1 末条）；
 #   5. tool-plugin-manager 的 disabled 从基线的 !!js 表达式换成布尔 true
-#      （R26 明文「与 dsh-async 补丁一致的手术」）；
+#      （与 dsh-async 补丁一致的手术）；
 #   6. persona prefix 在基线身份句之上加异步纪律（与 dsh-async 预设逐字同源）+
-#      DELEGATION 硬规则（R26 按 R14 写入、句面适配唯一入口，锚句见 §28.3）；
-#   7. 预设行不带 disabled 护栏（F67，与 dsh-async 补丁同款）；
+#      后台委托强制规则（锚句被 tools/validate-preset.mjs 锁死，同 dsh-async 补丁）；
+#   7. 预设行不带 disabled 护栏（与 dsh-async 补丁同款，理由见该文件头注）；
 #   8. 其余行与基线逐字一致（含组内整段 config、skill-filesystem 的 customSkillDirs
 #      表达式与行序——cordis 的 skill 系行在尾部，不在 tool-jobs 之后）。
-# 创作指导不写回 persona（§28.1 裁决 C）：基线把它交给 skill 系行承载。
+# 创作指导不写回 persona：基线把它交给 skill 系行承载（需求 §3.1"保留插件和预设
+# 创作功能及对应 skill 工具"）。
 - insert:
     - id: preset-dsh-async-create
       name: '@deepseek-ai/dsh-agent-preset'
       config:
         id: dsh-async-create
         name: 异步创造模式
-        description: 在创造模式基础上改用异步 shell 与后台委托的插件/预设创作 Agent：async_run 的命令超出让出预算不会被杀掉，而是转后台并返回 job_id；子代理一律经 async_agent 后台派生，用 async_wait_agent 有界等待取回；用户插话时等待立即返回且后台工作不受影响。
+        description: 在创造模式基础上改用异步 shell 与后台委托的插件/预设创作 Agent：async_run 的命令超出首次等待不会被杀掉，而是转后台并返回作业编号（job_id）；子代理一律经 async_agent 后台派生，用 async_wait_agent 有界等待读取；用户插话时等待立即返回且后台工作不受影响。
         order: 6
         plugins:
           # ── identity（手术 6：persona prefix）──
@@ -131,7 +135,7 @@
                   thresholdChars: 8192
                   headChars: 4096
                   tailChars: 1024
-          # ── delegation（手术 4：subagent / fork 结构性禁用，config 逐字保留）──
+          # ── delegation（手术 4：原生委托入口结构性禁用，config 逐字保留）──
           - id: delegation
             name: cordis:group
             group: true
@@ -177,12 +181,12 @@
                 name: '@deepseek-ai/dsh-workflow-ptc'
                 config:
                   provider: spawn
-              # R35-b：宿主编排工具禁用（编排只走 async_workflow；引擎服务行保留供电）。
+              # 宿主编排工具禁用（需求 §3.1：编排只走 async_workflow；引擎服务行保留供电）。
               - id: tool-workflow
                 name: '@deepseek-ai/dsh-tool-workflow'
                 disabled: true
-              # R35-a：第五行 async_workflow 插在 delegation 组内（tool-workflow 行后）——
-              # workflowEngine 是组内隔离服务，组外行 ctx.get 恒 miss（设计 G-1）。
+              # 第五行 async_workflow 插在 delegation 组内（tool-workflow 行后）——
+              # 编排引擎是组内隔离服务，组外行 ctx.get 恒取不到（需求 §3.2 末条、设计 §3.5）。
               - id: async-workflow
                 name: dsh-async-tools
                 config:

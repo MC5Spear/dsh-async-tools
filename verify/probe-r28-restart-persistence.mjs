@@ -1,9 +1,10 @@
 /**
- * R28 真机 5 的后半：托管服务重启后，`silentFailureGuard=true` 与三防线状态保持。
+ * 静默失败防护重启保持的真机判据：托管服务重启后，`silentFailureGuard=true` 与三防线
+ * 状态保持（需求 §6.3、设计 §6.2）。
  *
  * 前半由操作者在两条探针之间完成（本脚本**不做**服务控制——重启是宿主动作，不是探针动作）：
  *
- * 1. 安全门：验证实例上无 `running` 会话、近 10 分钟无活动；操作会话不在验证实例的进程树里
+ * 1. 安全检查：验证实例上无 `running` 会话、近 10 分钟无活动；操作会话不在验证实例的进程树里
  *    （本 GUI 是开发实例，天然满足）；验证实例端口当前在听。
  * 2. 裸调用 `powershell -NoProfile -ExecutionPolicy Bypass -File
  *    <服务家目录>\service\restart-one.ps1`（Restart-Service 的带日志包装，日志落
@@ -13,7 +14,7 @@
  *
  * 判据：重启后 ①开关值仍为 true（持久化在 DSH_HOME，不是内存态）；②c 段纪律段仍在
  * （行为判据）；③b 段描述警告仍在；④a 管线执行链仍在（提权档良性真跑空输出 +
- * 经批准；受限档环境读数不变——F116 后「走提权」口径，note 阳性由单测覆盖）。
+ * 经批准；受限档环境读数不变——受限档 spawn 必死，按「走提权」口径，note 阳性由单测覆盖）。
  * 收尾把开关复原 false。
  *
  * 前置：`probe-r28-silent-failure.mjs` 已跑完（它故意把 guard 留在 true）。
@@ -57,7 +58,7 @@ try {
     ns.value.silentFailureGuard === true,
     `读数=${JSON.stringify(ns.value)}`);
 
-  console.log('· 三防线状态逐面复核');
+  console.log('· 三防线状态逐项复核');
   const on = await askBatteryConsistent(PRESET, 'en');
   log.battery = { session: on.sessionId, answer: on.answer, attempts: on.attempts };
   check('真机 5b c 段纪律段仍在（行为：防杀退出码判别子 + 语言子；矛盾读数换会话重抽 ≤3 全记录）',
@@ -74,7 +75,7 @@ try {
     `空输出=${String(benignE.result.trim() === '')} 批准=${JSON.stringify(benignE.approvals)} 含note=${String(benignE.result.includes(NOTE_EN))}`);
   const benignC = await commandRun(BENIGN_COMMAND);
   log.benignConfined = { session: benignC.sessionId, result: benignC.result.slice(0, 400) };
-  check('真机 5d′ 受限档环境读数不变（127 死于 ACL 前置、无 note——重启未改变 F116 事实）',
+  check('真机 5d′ 受限档环境读数不变（127 死于 ACL 前置、无 note——重启未改变受限档 spawn 必死的事实）',
     benignC.result.includes(ACL_FAIL) && !benignC.result.includes(NOTE_EN),
     `环境锚=${String(benignC.result.includes(ACL_FAIL))} 含note=${String(benignC.result.includes(NOTE_EN))}`);
 

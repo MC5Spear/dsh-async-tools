@@ -1,5 +1,5 @@
 /**
- * `async_run` 单次提权的单测（需求 R11，现场与根因见 `docs/escalation-path.md`）。
+ * `async_run` 单次提权的单测（需求 §6.1 单次提权安全红线）。
  *
  * ## 这条需求修的是什么
  *
@@ -43,7 +43,7 @@ function confinedCtx(outcome = 'allowed-once', options = {}) {
   // 审批那一刻"已经启动了几次进程"的快照。
   //
   // `seen` 统计的是 `shell.resolve` 的调用（resolve 之后才会 start），所以
-  // `resolveCallsAtApproval === 0` 就是"审批发生在**任何执行准备之前**"的硬证据。
+  // `resolveCallsAtApproval === 0` 就是"审批发生在**任何执行准备之前**"的实证。
   const resolveCallsAtApproval = [];
   f.installShellResolve((request) => { seen.push(request); return request; });
   f.installShellExecute(() => Promise.resolve(fakeProc({ text: 'ok' }).proc));
@@ -141,9 +141,9 @@ test('R11：**先问审批、再启动进程**——审批发生在进程创建�
   //
   // ⚠️ 若只断言了事后计数 + reason 文本，注释却写着"用审批那一刻还没有任何 resolve
   // 记录表达顺序"——**那段断言根本不存在**。后果：把审批整体挪到 `ctx.shell.start()` 之后，
-  // 那几条断言**全绿**。独立审查的 N5 抓到了这一点。
+  // 那几条断言**全绿**。
   //
-  // 现在真的在**审批那一刻**取快照：`resolveCallsAtApproval[0]` 必须是 0，
+  // 判据在**审批那一刻**取快照：`resolveCallsAtApproval[0]` 必须是 0，
   // 也就是"还没为这次调用做任何执行准备"。审批后置的实现会让它是 1，从而变红。
   assert.deepEqual(resolveCallsAtApproval, [0],
     '审批必须在**任何执行准备之前**发生；这里应恰有一次审批、且那一刻 resolve 调用数为 0');
@@ -154,13 +154,12 @@ test('R11：**先问审批、再启动进程**——审批发生在进程创建�
 });
 
 test('R11/R32-a：调用**没有 agent** 时在入口被拒，零审批零进程', async () => {
-  // 这是 R11 列的五种失败情形之一（非严格加宽 / 缺审批服务 / **无 agent** / 拒绝 / 取消），
-  // 独立审查的 N4 指出：其余四种都有用例，**只有"无 agent"没有**——
-  // 于是 `approveEscalation` 的 agent 分支被改坏也全绿。
+  // 五种失败情形：非严格加宽 / 缺审批服务 / **无 agent** / 拒绝 / 取消。
+  // "无 agent"必须有专门用例——否则 `approveEscalation` 的 agent 分支被改坏也全绿。
   //
-  // R32-a 起无 agent 语境在 async_run **入口**就被拒（§33.2-1：作业必须归属 owner，
+  // 无 agent 语境在 async_run **入口**就被拒（作业必须归属 owner，
   // 无主作业对任意 caller 可见且收不到完成通知）——审批路由的"无收件人"分支
-  // 对 agentless 调用不再可达，本用例改验入口闸：拒绝更早、信息更准（指出用
+  // 对 agentless 调用不再可达，本用例改验入口关卡：拒绝更早、信息更准（指出用
   // 内置 pwsh），且同样零审批请求、零进程。
   const { f, asks, seen } = confinedCtx('allowed-once');
   const tool = createRunTool(f.ctx, config);
@@ -242,11 +241,11 @@ test('R11：没有审批服务 → 抛出可读错误且不启动进程', async 
   assert.equal(seen.length, 1, '没有审批服务不该影响普通调用');
 });
 
-test('R11（0.1.7 语义）：同级模式免审批直接放行；更窄/不支持的模式仍抛出', async () => {
-  // ⚠️ 0.1.7 宿主语义变化（`dsh-sandbox/lib/index.js:91`，docstring 明文：
-  // "Repeating the call's effective mode returns it without approval"）——
-  // 0.1.5 的"同级也抛 not strictly wider"已过时：同级现在**免弹窗**返回当前模式
-  // （合理：请求自己已有的权限不该打扰用户），只有**更窄或不在加宽梯上**的模式才抛。
+test('同级模式免审批直接放行；更窄/不支持的模式仍抛出（0.2.0-rc.2 语义）', async () => {
+  // ⚠️ 宿主语义（[0.2.0-rc.2] `dsh-sandbox/lib/index.js:90-92`，docstring 明文：
+  // "Repeating the call's effective mode returns it without approval"）：
+  // 同级**免弹窗**返回当前模式（合理：请求自己已有的权限不该打扰用户），
+  // 只有**更窄或不在加宽梯上**的模式才抛。
   const { f, seen, asks } = confinedCtx('allowed-once');
   const tool = createRunTool(f.ctx, config);
 
@@ -255,13 +254,14 @@ test('R11（0.1.7 语义）：同级模式免审批直接放行；更窄/不支�
     command: 'x', description: 'x',
     sandbox_permissions: 'workspace-write', justification: 'same level'
   }, exec);
-  assert.equal(same.status, 'completed', '同级模式应免审批直接放行（0.1.7）');
+  assert.equal(same.status, 'completed', '同级模式应免审批直接放行（0.2.0-rc.2）');
   assert.equal(asks.length, 0, '同级不得弹审批——请求自己已有的权限不该打扰用户');
   assert.equal(seen.length, 1);
 
   // ② 更窄（从 workspace-write 请求更窄的...这里用不存在的加宽关系表达）：
   // confinedCtx 的策略恒为 workspace-write；danger-full-access 是唯一更宽档。
-  // 直接验证"不在加宽梯上的目标仍抛"：借 0.1.5 语义的旧断言换成对新语义的否定面。
+  // 直接验证"不在加宽梯上的目标仍抛"：把策略改成 danger-full-access，使
+  // workspace-write 成为更窄目标（下两行即做这件事）。
   const narrower = confinedCtx('allowed-once');
   // 把当前策略改成 danger-full-access，使 workspace-write 变成"更窄"目标。
   narrower.f.ctx.get = (key) => {
@@ -321,7 +321,7 @@ test('R11：沙箱拒绝时，完成分支必须产出**拒绝标记 + 同轮提
 test('R11：没有沙箱执行器时**不给**提权提示（不给走不通的指引）', async () => {
   const f = fakeCtx();
   const { proc, settle } = fakeProc({ text: 'x', exitCode: 1, status: 'running', autoResolve: false });
-  // 即使有人硬塞了沙箱事实，没有可提权目标时也不该提示"去提权"。
+  // 即使有人强制塞了沙箱事实，没有可提权目标时也不该提示"去提权"。
   proc.sandbox = { mode: 'workspace-write', denied: true };
   f.installShellExecute(() => Promise.resolve(proc));
   const pending = createRunTool(f.ctx, config).execute({ command: 'x', description: 'x' }, exec);
@@ -355,7 +355,7 @@ test('R11：让出后的作业结局**同样**带沙箱标记（"让出后才发
   assert.equal(result.status, 'running', '应当让出并返回句柄');
 
   settle();
-  // 0.1.7：run(handle) 由作业注册表消费（fake 注册表在 start 里同步调用），
+  // run(handle) 由作业注册表消费（fake 注册表在 start 里同步调用），
   // hooks.done 的 JobOutcome 自动耦合结算——从注册表视图断言沙箱标记。
   await new Promise((r) => { setTimeout(r, 0); });
   const view = f.jobsFake.views().at(-1);
@@ -366,9 +366,9 @@ test('R11：让出后的作业结局**同样**带沙箱标记（"让出后才发
 });
 
 test('R11：审批未决期间 GUI 停止 → 挂监听处的已中止短路接管，不等满预算', async () => {
-  // 入口闸（exec.signal.aborted 检查）与挂 abort 监听之间唯一的 await 是提权
+  // 入口关卡（exec.signal.aborted 检查）与挂 abort 监听之间唯一的 await 是提权
   // 审批。宿主审批契约只承诺 signal 骑在请求上（escalation.d.ts:106-107），各
-  // 审批服务是否因 abort 取消请求不在本包可控面——挂监听后补一枪已中止短路
+  // 审批服务是否因 abort 取消请求不在本包可控范围——挂监听后补一枪已中止短路
   // （已中止信号挂监听永不触发），把窗口压成零。
   const f = fakeCtx();
   const seen = [];

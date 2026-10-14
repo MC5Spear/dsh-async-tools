@@ -3,20 +3,18 @@
  *
  * ## 这条判据挡什么
  *
- * 那张表原来是手工维护的，于是它**漂移了**：列了三个当时就已经删掉的脚本
- * （`mutate-two-planes` / `mutate-r9-lifecycle` / `mutate-check-docs`），
- * 接手的人按图索骥全落空——独立实现审查 r11 的 N3 就是这么报的。
+ * 手工维护的名单会**漂移**：表里可能列着早已删掉的脚本，接手的人按图索骥全落空。
  *
  * 判据两头都查：
  * ① 表里列的每个脚本**必须在盘上**（指向不存在的文件 = 读者扑空）；
  * ② 每个变异脚本**必须在表里**（漏登记 = 没人知道它跑哪个测试文件，
  *    而"跑错文件"会报 MISSED、看起来像"断言是空的"）。
  *
- * 这是 `dsh-plugin-workflow` 纪律 11 的落点：**静态检查器的名单漏一项就是假绿**。
+ * 落点是一条通用纪律：**静态检查器的名单漏一项就是假绿**。
  *
  * 用法：node tools/check-mutate-index.mjs
  *
- * ## 双入口形态（§26.4）
+ * ## 双入口形态
  *
  * `checkMutateIndex(root)` 可导入（测试进程内调用，避免沙箱下 spawn EPERM 的假红）；
  * CLI 入口只在直接执行时生效。与 `tools/validate-preset.mjs` 同款分工。
@@ -43,10 +41,10 @@ const EXEMPT_FROM_TABLE = new Map([
   ['verify/mutate-doc-paths.mjs', '验证 tools/check-doc-paths.mjs 能拦住悬空指针，不改交付实现'],
   ['verify/mutate-bare-filenames.mjs', '验证 tools/check-bare-filenames.mjs 能拦住裸文件名悬空，不改交付实现'],
   ['verify/mutate-facts-anchors.mjs', '验证 verify/check-facts-anchors.mjs 的三条判据（行号越界 / 文件不存在 / 四字段不齐）都能失败，不改交付实现'],
-  ['verify/mutate-r24-ui.mjs', '验证 verify/r24-judgements.mjs 的 R24/R27 界面判据（下发字节 / 配置页读数 / 保存往返 / 两段读数）都能失败，不改交付实现'],
+  ['verify/mutate-r24-ui.mjs', '验证 verify/r24-judgements.mjs 的界面判据（下发字节 / 配置页读数 / 保存往返 / 两段读数）都能失败，不改交付实现'],
   ['verify/mutate-model-text.mjs', '验证 tools/check-model-text.mjs 的硬编码文案层（像句子的字面量必须来自 lib/text.js）能失败，不改交付实现'],
-  ['verify/mutate-alias-tokens.mjs', '验证 tools/check-alias-tokens.mjs（R27 判据 7）能拦住未定义的 --dsw-alias-* 引用；判据长在检查器而非测试文件，没有"跑的测试文件"一列'],
-  ['verify/mutate-agent-policy.mjs', '验证 verify/check-agent-policy.mjs 的钉版判据（宿主锚与本包锚整段互锚，R40 §38.4）都能失败——变异打的是检查器的输入（本包副本/宿主源文本），不改交付行为；交付侧单测在 test/agent-policy.test.mjs，与本表无关'],
+  ['verify/mutate-alias-tokens.mjs', '验证 tools/check-alias-tokens.mjs 能拦住未定义的 --dsw-alias-* 引用；判据长在检查器而非测试文件，没有"跑的测试文件"一列'],
+  ['verify/mutate-agent-policy.mjs', '验证 verify/check-agent-policy.mjs 的钉版判据（宿主锚与本包锚整段互锚）都能失败——变异打的是检查器的输入（本包副本/宿主源文本），不改交付行为；交付侧单测在 test/agent-policy.test.mjs，与本表无关'],
   ['verify/mutate-public-surface.mjs', '验证 tools/check-public-surface.mjs 的三类判据（结构 / 本机指纹 / 内部引用）都能失败——变异打在**合成树**上（不碰真仓），不改交付实现；判据语义的单测在 test/public-surface.test.mjs']
 ]);
 

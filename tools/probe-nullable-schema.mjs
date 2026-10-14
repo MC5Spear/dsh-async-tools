@@ -1,11 +1,11 @@
 /**
  * schema 方言探针 2：找出 dsh 自有 DSL 里"可空数字/可空字符串"的正确写法。
  *
- * 背景（真机实测）：`async_run` 的完成分支返回
+ * 背景：`async_run` 的完成分支返回
  * `{status:'completed', exit_code:0, signal:null, output, truncated:false}`，
- * 宿主校验器直接判 `"value" must match exactly one oneOf branch (matched 0)`——
- * 也就是说这一支**从来没能通过校验**，任何没让出的 `async_run` 调用都会变成
- * `tool "async_run" returned invalid output`。整包单测全绿也照样漏，因为单测只断言字段、
+ * 宿主校验器对写错的可空声明会判
+ * `"value" must match exactly one oneOf branch (matched 0)`——那一支就**通不过校验**，
+ * 调用会变成 `tool "async_run" returned invalid output`。包内单测挡不住它：单测只断言字段、
  * 没有用宿主校验器验过 schema 本体。
  *
  * 嫌疑点：`exit_code` 与 `signal` 声明成 `{ type: 'number' }` / `{ type: 'string' }`，

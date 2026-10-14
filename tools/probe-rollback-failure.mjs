@@ -1,8 +1,8 @@
 /**
  * 探针：本机能不能制造"回滚也失败"？
  *
- * 背景：复审 R8 指出 R9-16 的场景让 `rollbackFailure` **恒为 `null`**，
- * 于是"回滚也失败"那条分支的 warn 与消息都没有被覆盖（末尾还是 `void logged;`）。
+ * 背景：若某些场景让 `rollbackFailure` **恒为 `null`**，
+ * 则"回滚也失败"那条分支的 warn 与消息都没有被覆盖（末尾还是 `void logged;`）。
  * 要真正覆盖它，必须先找到一种让 `rmSync(dir, {recursive:true, force:true})` 抛错的办法。
  *
  * 逐种尝试并如实记录哪种有效。用法：node probe-rollback-failure.mjs
@@ -62,5 +62,5 @@ console.log('=== 制造"回滚也失败"的尝试 ===');
 for (const [name, outcome] of results) console.log(`  ${outcome.includes('成功') || outcome.includes('准备') ? '无效  ' : '有效  '}${name} → ${outcome}`);
 console.log('');
 console.log(results.some(([, outcome]) => outcome.includes('抛错'))
-  ? '结论：本机有可行手段，R9-16 可以真覆盖那条分支。'
+  ? '结论：本机有可行手段，可以真覆盖那条分支。'
   : '结论：本机 rmSync 对这些情形都成功——那条分支只能靠**注入失败**（例如把 rmSync 换掉）来覆盖。');

@@ -1,36 +1,44 @@
 window.__ModuleLoader__.load({ id: "dsh-async-tools", factory: (require) => {
 var module = { exports: {} }; var exports = module.exports;
 "use strict";
-// 异步工具的设置卡片（浏览器半边，0.1.7 形态；R27 起表单本体改用官方共享控件）。
+// 异步工具的设置卡片（浏览器半边，设计 §5.1/§5.3；表单本体用官方共享控件）。
 //
-// ## 形态要点（§21、§26.3.5、§29；槽位归属见裁决 §7.1-D13）
+// ## 形态要点（设计 §5.1/§5.3，需求 §5.4）
 //
 // - 注册进插件管理页的 **`plugins.bundle.config`** keyed 槽，槽键 = **包名**
 //   = `dsh-async-tools`；宿主把它渲染在插件页的描述与组件行之间。
 //   `view:"page"` 渲染表单本体；卡片壳（标题/图标/面包屑/折叠）由宿主画。
-// - 表单**由官方控件组装**（§29.1 裁决 A）：`SettingsForm` 出框架（只读/不可用通告、
-//   页脚唯一的保存按钮及其门控、卸载丢弃草稿），`SettingsValueField` 出值字段，
-//   暂存/差集/保存全部由 `SettingsFormModel` 承担（裁决 C）——本包不再自绘草稿、
-//   差集与写后回读。primitives 在冻结平台模块表里，直接 `require` 即可，
-//   `dsh.client.external` 一条都不用加。
-// - 模型的 scope = `ctx.configForms.get(ENTRY)` 的控制器（控制器面就是官方
+// - 表单**由官方控件组装**：`SettingsForm` 出框架（只读/不可用通告、
+//   页脚唯一的保存按钮及其启用条件、卸载丢弃草稿），暂存/差集/保存全部由
+//   `SettingsFormModel` 承担——本包不自绘草稿、差集与写后回读。primitives 在
+//   冻结平台模块表里，直接 `require` 即可，`dsh.client.external` 一条都不用加。
+// - 字段壳统一自绘（设计 §5.5）：17 个字段共用 `FieldShell`——官方
+//   `SettingsValueField` 的帮助图标固定带圈 i、标签行没有注入开口（需求 5.6 要
+//   带圈问号），所以值字段也转入统一壳；官方件继续在场：`SettingsForm`／
+//   `SettingsFormModel`／`settingsNumberField`／`settingsTextField`（模型 spec）、
+//   `P.Switch`／`P.Tag`／`P.IconQuestionOutlineRegular`（控件本体与图标）。
+// - 模型的 scope = `ctx.configForms.get(ENTRY)` 的控制器（控制器就是官方
 //   `SettingsFormScope`——`getSnapshot`/`subscribe`/`mutate`）。bundle 槽的 owner props
 //   只有 `{view}`、没有 `form`，所以卡片自取控制器；模型在构造时订阅 scope，
-//   组件经 `model.bind(...)` 的快照店 + `useSyncExternalStore` 重渲染（裁决 §29.2 手术 7）。
-// - 枚举字段（uiLang/agentLang）：官方导出面没有枚举控件，但语义仍注册进模型
-//   （本包的 `enumFieldSpec` 形状同 `SettingsFieldSpec`），自绘的只有 select 控件本体，
-//   字段壳/徽标/说明行照官方值字段同形（裁决 B、§29.2 手术 5 的两条硬条目：无覆盖时
-//   下拉显示**生效值**；label `for`/控件 `id` 绑定 + `aria-describedby`/`aria-invalid`）。
-// - 布尔字段（silentFailureGuard，R28）：同样"语义注册 + 壳自绘"——`flagFieldSpec`
-//   形状同上，`FlagField` 壳复用 `.ats-enum-*` 类名（不新增自有 CSS），控件本体是
-//   官方原语 `P.Switch`（可见标签在壳上，`Switch.label` 只作无障碍名；偏离清单第 ③ 项）。
-// - 毫秒字段的秒数读数（R21/R27 + 用户裁定）长在官方说明行里，
+//   组件经 `model.bind(...)` 的快照店 + `useSyncExternalStore` 重渲染（bind 只调一次）。
+// - 枚举字段（uiLang/agentLang/askUiSeat）与布尔字段（silentFailureGuard/
+//   askTakeover）：语义注册进模型（`enumFieldSpec`/`flagFieldSpec` 形状同
+//   `SettingsFieldSpec`），控件本体分别是原生 select 与官方 `P.Switch`，壳与帮助
+//   由 `FieldShell` 统一承担（设计 §5.5 的两条强制条目：无覆盖时下拉显示**生效值**；
+//   label `for`/控件 `id` 绑定 + `aria-describedby`/`aria-invalid`；布尔开关的
+//   可见标签在壳上，`Switch.label` 只作无障碍名）。
+// - 帮助（需求 5.5/5.6）：每个字段标签旁带圈问号按钮（官方
+//   `IconQuestionOutlineRegular`），点击在字段下方展开 `help.<键>` 正文、再点收起；
+//   开合只存 `FieldShell` 局部 state，不碰草稿/保存/mutate；缺键回退＝按钮/说明行
+//   退场（`resolveCopy`），T21 在场断言守 17×3 键组两档齐全。
+// - 毫秒字段的秒数读数（需求 §5.4）长在说明行里，
 //   **与字段说明换行**（行首不带点，样式照同机参考插件的读数行）：说明行 =
 //   字段说明 + 换行 + 「生效：S s」+「 · 」+「输入：T s」。值**只写秒文本**
-//   （`600 s` / `0.5 s` / 亚 10 ms 的 `< 0.01 s` / 空草稿的 `—`）——毫秒原值输入框里
-//   本来就有；生效段恒显示，输入段未保存就随键入刷新，非数字/非正数时整行随官方
-//   说明行换成 invalidLabel（`composeHint` 单点承担）。
-// - 保存语义（裁决 C/E）：一个「保存」按钮，`!dirty || invalid || saving` 时禁用，
+//   （`600 s` / `0.5 s` / 亚 10 ms 的 `< 0.01 s` / 空草稿的 `—`；整数秒无小数、
+//   非整数最多两位）——毫秒原值输入框里本来就有；生效段恒显示，输入段未保存就
+//   随键入刷新，非数字/非正数时整行随说明行换成 invalidLabel（`composeHint`
+//   单点承担）。
+// - 保存语义：一个「保存」按钮，`!dirty || invalid || saving` 时禁用，
 //   保存中显示「保存中…」；模型 `save()` 一次 `mutate(ops, baseline.revision)`，
 //   布尔为假即 `failed` 并保留草稿，失败文案由官方页脚渲染；离开页面 = 卸载 =
 //   丢弃草稿。成功不弹文案；字段由活 section 值回填，谎报成功没有藏身处。
@@ -39,10 +47,11 @@ var module = { exports: {} }; var exports = module.exports;
 //
 // - 本文件是 `window.__ModuleLoader__.load({ id, factory })` 的 **CJS 包裹**，顶层不得
 //   出现 ESM 语法；UI 全部 `React.createElement`，无 JSX（浏览器侧没有转译器）。
-// - 自有样式（枚举字段壳与 select 本体）只引用 `--dsw-alias-*` 里**被定义**的名字
-//   （定义表 = theme 包运行时 90 个名字；`tools/check-alias-tokens.mjs` 守这条），
-//   错误色一律 `--dsw-alias-state-error-primary`。失败文案的颜色跟随官方 `.failed`
-//   （它引用的 `label-error` 未定义、落继承色是官方现行行为，本包不复制其颜色引用）。
+// - 自有样式（统一字段壳、select/input 本体与帮助按钮）只引用 `--dsw-alias-*`
+//   里**被定义**的名字（定义表 = theme 包运行时；`tools/check-alias-tokens.mjs`
+//   守这条），错误色一律 `--dsw-alias-state-error-primary`。失败文案的颜色跟随
+//   官方 `.failed`（它引用的 `label-error` 未定义、落继承色是官方现行行为，
+//   本包不复制其颜色引用）。
 var React = require("react");
 var P = require("@deepseek-ai/dsh-client-ui-primitives");
 
@@ -55,10 +64,10 @@ var NS = "settings.async-tools";
 
 // 字段表：key 与宿主 Config 的 volatile 字段一一对应；ms 字段的说明行带秒数读数。
 // 顺序 = `lib/config.js` 的 `BUDGET_FIELD_KEYS` 之后接 `LANG_FIELD_KEYS`，末尾接
-// `FLAG_FIELD_KEYS`（R28；T19 逐项核对 + R28 增补）。
+// `FLAG_FIELD_KEYS`（与 test/two-planes.test.mjs T19 的键集对账，静默失败开关字段在列）。
 // ⚠️ `toolName` 不在表里（它不是 volatile，不可用户写——写会被宿主拒绝
 // `Config field "toolName" is not volatile`，`dsh-settings/lib/index.js:507`），
-// 这正是 0.1.7"volatile 才可编辑"语义的正确表达。
+// 这正是「volatile 才可编辑」语义的正确表达。
 var FIELDS = [
   { key: "defaultYieldMs", label: "defaultYieldMs", ms: true },
   { key: "minYieldMs", label: "minYieldMs", ms: true },
@@ -70,20 +79,23 @@ var FIELDS = [
   { key: "maxResultChars", label: "maxResultChars", ms: false },
   { key: "jobKind", label: "jobKind", ms: false },
   { key: "subagentProvider", label: "subagentProvider", ms: false },
-  // 两个语言开关（R25）：注册进模型的枚举 spec，控件本体是自绘 select（裁决 B）。
+  // 两个语言开关：注册进模型的枚举 spec，控件本体是自绘 select。
   { key: "uiLang", label: "uiLang", ms: false, options: ["auto", "zh", "en"] },
   { key: "agentLang", label: "agentLang", ms: false, options: ["en", "zh"] },
-  // R28 静默失败防线总开关：volatile 布尔（默认 false = 三防线全不存在）。
-  // 壳照 EnumField 同形（偏离清单第 ③ 项），控件本体是官方原语 Switch。
+  // 静默失败防线总开关：volatile 布尔（默认 false = 三防线全不存在）。
+  // 壳照统一 FieldShell，控件本体是官方原语 Switch。
   { key: "silentFailureGuard", label: "silentFailureGuard", ms: false, flag: true },
-  // R30 提问接管三字段（§32.1，裁决 R30-A）：总开关默认关 = 零行为；窗口毫秒
-  // 带秒读数与上下界（10000–600000）；座位枚举 overlay|sidebar 只换呈现层。
+  // 提问接管四字段（需求 §5.2/设计 §4.2）：总开关默认关 = 零行为；窗口毫秒带秒读数
+  // 与上下界（10000–600000）；延长毫秒带秒读数与上下界（1–2^31-1，设计 §4.2）；
+  // 座位枚举 sidebar|overlay 只换呈现层，选项序 [sidebar, overlay] 与默认标记位
+  // （需求 §5.2/5.5：默认 sidebar）。
   { key: "askTakeover", label: "askTakeover", ms: false, flag: true },
   { key: "askTimeoutMs", label: "askTimeoutMs", ms: true },
-  { key: "askUiSeat", label: "askUiSeat", ms: false, options: ["overlay", "sidebar"] }
+  { key: "askExtendMs", label: "askExtendMs", ms: true },
+  { key: "askUiSeat", label: "askUiSeat", ms: false, options: ["sidebar", "overlay"] }
 ];
 var FIELD_KEYS = FIELDS.map(function (field) { return field.key; });
-/** 语言开关的键（R25）：`uiLang` 管本卡片文案，`agentLang` 管模型面文案。 */
+/** 语言开关的键：`uiLang` 管本卡片文案，`agentLang` 管面向模型的文案（需求 §5.3）。 */
 var LANG_KEYS = ["uiLang", "agentLang"];
 
 /** 数字字段 = `MS_FIELD_KEYS` 的毫秒字段 + `maxResultChars`（`numeric` 只提示键盘，合法性由 spec 定）。 */
@@ -92,15 +104,17 @@ function isNumericField(field) {
 }
 
 /**
- * R29-d（Q4 卡片层，挂法按该轮修复裁决 N1）：与 `lib/budget-limits.js`
+ * 卡片层的预算上界常量（需求 §5.2）：与 `lib/budget-limits.js`
  * 同组的上界/配对常量——客户端模块图只投递平名包（见文件头形态约束），**引不到
  * lib/ 下的文件**，只能内联同值；`test/two-planes.test.mjs`（T23c）的对账断言钉住
  * 两处相等，只改一处必红。
  */
 var MS_FIELD_LIMIT = 2147483647;
 var RESULT_CHARS_LIMIT = 1000000;
-/** R30：`askTimeoutMs` 的界（§32.1；下界 10 s / 上界 10 min，与宿主 schema 同值）。 */
+/** `askTimeoutMs` 的界（需求 §5.2：下界 10 s / 上界 10 min，与宿主 schema 同值）。 */
 var ASK_TIMEOUT_LIMIT = 600000;
+/** 设计 §4.2：`askExtendMs` 的上界（与服务端到期分段的单段上限同值）。 */
+var ASK_EXTEND_LIMIT = 2147483647;
 var FIELD_MAX = {
   defaultYieldMs: MS_FIELD_LIMIT,
   minYieldMs: MS_FIELD_LIMIT,
@@ -110,18 +124,29 @@ var FIELD_MAX = {
   maxWaitMs: MS_FIELD_LIMIT,
   pollIntervalMs: MS_FIELD_LIMIT,
   maxResultChars: RESULT_CHARS_LIMIT,
-  askTimeoutMs: ASK_TIMEOUT_LIMIT
+  askTimeoutMs: ASK_TIMEOUT_LIMIT,
+  askExtendMs: ASK_EXTEND_LIMIT
 };
-/** 卡片层下界（R30：只有 askTimeoutMs 有非平凡下界 10000；T23c 对账含上界）。 */
+/** 卡片层下界（设计 §5.4：全部数值字段的下界表——毫秒预算字段与 `maxResultChars`
+ * 为 1，`askTimeoutMs` 为 10000；T23c 对账含上界）。 */
 var FIELD_MIN = {
-  askTimeoutMs: 10000
+  defaultYieldMs: 1,
+  minYieldMs: 1,
+  maxYieldMs: 1,
+  defaultWaitMs: 1,
+  minWaitMs: 1,
+  maxWaitMs: 1,
+  pollIntervalMs: 1,
+  maxResultChars: 1,
+  askTimeoutMs: 10000,
+  askExtendMs: 1
 };
 
 /**
- * 数值字段的越界 spec（R29-d）：包装官方 `settingsNumberField`——官方 parse 只验
+ * 数值字段的越界 spec：包装官方 `settingsNumberField`——官方 parse 只验
  * 有限性，上界在这里补。parse 返回 `undefined` 走**官方非法通道**
  * （plan 聚合 → `state.invalid` → 保存按钮禁用），这是宿主 SettingsForm 唯一认的
- * 因果链（复审 N1：字段 props 的 `invalid` 只进显示层，不回流 shell）。
+ * 因果链（字段 props 的 `invalid` 只进显示层，不回流 shell）。
  */
 function boundedNumberSpec(key) {
   var base = P.settingsNumberField(key);
@@ -144,7 +169,7 @@ function boundedNumberSpec(key) {
 
 /** 草稿数字（两字段都在场才判配对；空/非法草稿返回 null，不参与比较）。 */
 function draftNumber(state, key) {
-  var entry = state.fields[key];
+  var entry = state.fields === undefined ? undefined : state.fields[key];
   var text = entry !== undefined && typeof entry.text === "string" ? entry.text.trim() : "";
   if (text === "") return null;
   var parsed = Number(text);
@@ -152,23 +177,65 @@ function draftNumber(state, key) {
 }
 
 /**
- * 跨字段配对违例（R29-d：`pollIntervalMs` 草稿 > `maxWaitMs` 草稿）。parse 通道
- * 做不了跨字段（单字段解析时看不见别的字段）——判在壳层：`makeBundleCard` 把
- * 违例叠加进传给 `SettingsForm` 的 `state.invalid`（保存按钮随之禁用，草稿不外发），
- * 同时在 `pollIntervalMs` 字节显示层给原因文案。
+ * 跨字段链式不等式（设计 §5.4）：与 `lib/budget-limits.js` 的 `CHAIN_INEQUALITIES`
+ * 同组常量——客户端模块图只投递平名包（见文件头形态约束），引不到 lib/ 下的
+ * 文件，只能内联同值；`test/two-planes.test.mjs`（T23c）的对账断言钉住两处
+ * 相等。每对 `[leftKey, rightKey]` 要求 `left <= right`；链式键按左值字段扩展。
  */
-function pairViolated(state) {
-  var poll = draftNumber(state, "pollIntervalMs");
-  var max = draftNumber(state, "maxWaitMs");
-  return poll !== null && max !== null && poll > max;
+var CHAIN_PAIRS = [
+  ["minYieldMs", "defaultYieldMs"],
+  ["defaultYieldMs", "maxYieldMs"],
+  ["minWaitMs", "defaultWaitMs"],
+  ["defaultWaitMs", "maxWaitMs"],
+  ["pollIntervalMs", "maxWaitMs"]
+];
+
+/**
+ * 链式比较值（设计 §5.4）：**草稿优先，无草稿用生效值**——覆盖草稿与生效值的任意
+ * 组合（只判一侧草稿会把"把上限改小"漏成可保存）。空/非法草稿且无生效值 →
+ * null，该侧不参与比较。
+ */
+function chainNumber(state, key) {
+  var draft = draftNumber(state, key);
+  if (draft !== null) return draft;
+  var source = state.effective === undefined || state.effective === null ? {} : state.effective;
+  var effective = source[key];
+  return typeof effective === "number" && Number.isFinite(effective) ? effective : null;
 }
 
 /**
- * 枚举字段的转换 spec（裁决 B）：形状同官方 `SettingsFieldSpec`
+ * 跨字段链式违例（设计 §5.4）。parse 通道做不了跨字段（单字段解析时看不见别的字段）
+ * ——判在壳层：`makeBundleCard` 把违例叠加进传给 `SettingsForm` 的
+ * `state.invalid`（保存按钮随之禁用，草稿不外发），同时在不等式**左值**字段
+ * 的显示层给原因文案（文案指明参照字段）。
+ */
+function pairViolated(state) {
+  for (var i = 0; i < CHAIN_PAIRS.length; i += 1) {
+    var left = chainNumber(state, CHAIN_PAIRS[i][0]);
+    var right = chainNumber(state, CHAIN_PAIRS[i][1]);
+    if (left !== null && right !== null && left > right) return true;
+  }
+  return false;
+}
+
+/** 该字段作为左值命中的链式违例（设计 §5.4）：命中返回右值键（参照字段），未命中
+ * 返回 null——原因文案挂左值字段，`{ref}` 占位替换为参照字段名。 */
+function chainHitOf(state, key) {
+  for (var i = 0; i < CHAIN_PAIRS.length; i += 1) {
+    if (CHAIN_PAIRS[i][0] !== key) continue;
+    var left = chainNumber(state, key);
+    var right = chainNumber(state, CHAIN_PAIRS[i][1]);
+    if (left !== null && right !== null && left > right) return CHAIN_PAIRS[i][1];
+  }
+  return null;
+}
+
+/**
+ * 枚举字段的转换 spec：形状同官方 `SettingsFieldSpec`
  * （`form-model.d.ts:65-76`），语义不自绘——暂存、覆盖态与校验仍走模型。
  *
  * `format` 把生效值原样作为草稿文本（无覆盖时快照的 `value` 层就是生效值 ⇒ 下拉显示
- * 生效值而不是空选项，N2 的缺陷形态）；`parse` 把空草稿判清除、
+ * 生效值而不是空选项——空态即缺陷形态）；`parse` 把空草稿判清除、
  * 命中选项判写值、其余判非法（非法草稿阻止保存而不是被丢弃）。
  *
  * @param {string} key - 字段键。
@@ -190,7 +257,7 @@ function enumFieldSpec(key, options) {
 }
 
 /**
- * 布尔字段的转换 spec（R28，偏离 ③）：形状与语义同 `enumFieldSpec`，只是值域是
+ * 布尔字段的转换 spec：形状与语义同 `enumFieldSpec`，只是值域是
  * `"true" | "false"` 两态映射到 volatile 布尔。
  *
  * `format`：生效值 `true` → `"true"`，其余（false/undefined/非布尔）→ `"false"`
@@ -218,10 +285,11 @@ function flagFieldSpec(key) {
 }
 
 /**
- * 模型装配：8 个数字字段（官方 `settingsNumberField`）+ 2 个文本字段
- * （官方 `settingsTextField`）+ 2 个枚举字段（本包 `enumFieldSpec`）+ 1 个布尔
- * 字段（本包 `flagFieldSpec`，R28）。字段键集合必须与 `FIELDS` 逐项相等
- * （§29.4 的装配断言）。
+ * 模型装配：10 个数字字段（官方 `settingsNumberField`——七个毫秒预算 +
+ * `maxResultChars` + 提问接管两字段）+ 2 个文本字段（官方 `settingsTextField`）+
+ * 3 个枚举字段（本包 `enumFieldSpec`——两个语言开关 + 座位）+ 2 个布尔字段
+ * （本包 `flagFieldSpec`——静默失败防线总开关 + 提问接管总开关），合计 17 个
+ * 字段。字段键集合必须与 `FIELDS` 逐项相等（卡片装配断言钉住）。
  *
  * @returns {object[]} spec 列表（顺序 = FIELDS 顺序）。
  */
@@ -238,8 +306,8 @@ function makeSpecs() {
 }
 
 /**
- * 毫秒 → 秒读数（R21）：`20000 → "20 s"`、`1500 → "1.5 s"`、`250 → "0.25 s"`；
- * **亚 10 毫秒的正数显示 `< 0.01 s`**（R27 增补：正数不得读成 `0 s`，也不留空——
+ * 毫秒 → 秒读数（需求 §5.4）：`20000 → "20 s"`、`1500 → "1.5 s"`、`250 → "0.25 s"`；
+ * **亚 10 毫秒的正数显示 `< 0.01 s`**（正数不得读成 `0 s`，也不留空——
  * 逐位键入时不给"读数消失"的错觉）。非有限正数返回空串（调用方决定占位）。
  * @param {number} ms - 毫秒值。
  * @returns {string} 形如 "20 s" / "< 0.01 s" 的读数；无法换算时空串。
@@ -256,7 +324,7 @@ function formatSeconds(ms) {
 var READOUT_PLACEHOLDER = "—";
 
 /**
- * 输入段读数（裁决 D 定则 4 的三姿态）：正数 → 秒文本；空文本 → `—` 占位；
+ * 输入段读数（三姿态）：正数 → 秒文本；空文本 → `—` 占位；
  * 非数字/非正数（`0`、负数）→ `—` 占位 + 非法标记。最后一种姿态下官方说明行整体
  * 换成 invalidLabel，标记只在说明行仍显示的路径上有意义，作为防御保留。
  * @param {string} stagedText - 模型暂存文本。
@@ -271,25 +339,39 @@ function draftReadout(stagedText) {
 }
 
 /**
- * 字段说明（毫秒字段带两段秒读数，R21/R27 + 用户裁定）：说明行 =
+ * 文案缺键回退（设计 §5.5）：取值 undefined/空串/等于键名本身（裸键名——宿主
+ * 翻译函数对缺失键返回键名）都按缺席处理，返回 undefined。调用方（`composeHint`、
+ * `makeFieldNodes` 的帮助正文）据此让说明行/帮助按钮退场，不渲染空段或空区域。
+ * @param {Function} t - 文案函数。
+ * @param {string} key - 词典键。
+ * @returns {string|undefined} 在场文案或 undefined。
+ */
+function resolveCopy(t, key) {
+  var value = t(key);
+  if (value === undefined || value === null || value === "" || value === key) return undefined;
+  return value;
+}
+
+/**
+ * 字段说明（毫秒字段带两段秒读数，需求 §5.4）：说明行 =
  * 字段说明**换行**接 `生效：{v} · 输入：{v}`（样式照同机参考插件的读数行：
  * 行首不带点、与字段说明分行；值只写秒文本——毫秒原值输入框里本来就有）。
  * - 生效段恒显示（值 = 生效值 user ?? 组合 ?? 默认）；
  * - 输入段取**模型当前的暂存文本**（未保存就随键入刷新——模型 `edit → publish` 免费给了
  *   重渲染），三姿态见 `draftReadout`；
  * - 两段恒显示（相等也不隐藏——"时而有时而无"会被读成坏了）；非毫秒字段无读数；
- * - 只读态同样渲染（判据 11：控件禁用，读数仍在）；
- * - 不拆独立段落（官方 `.field + .field` 的分隔链会被打散）、不新增自有 CSS——官方
- *   `.hint` 与参考包读数行的度量一致（12px / label-tertiary）。
+ * - 只读态同样渲染（控件禁用，读数仍在）；
+ * - 缺键回退（设计 §5.5）：`hint.<键>` 缺席/裸键名时整行退场（含读数），返回 undefined。
  * @param {Function} t - 文案函数。
  * @param {{key: string, ms?: boolean}} field - 字段表项。
  * @param {number} effectiveMs - 生效毫秒值。
  * @param {string} stagedText - 模型当前的暂存文本（未暂存时 = 生效值的格式化）。
- * @returns {string|Array} 非毫秒字段 = 说明文本；毫秒字段 = 说明行的 children
- *   （`[说明, 换行, 生效段, " · ", 输入段]`）。
+ * @returns {string|Array|undefined} 非毫秒字段 = 说明文本；毫秒字段 = 说明行的 children
+ *   （`[说明, 换行, 生效段, " · ", 输入段]`）；缺键 = undefined。
  */
 function composeHint(t, field, effectiveMs, stagedText) {
-  var hint = t("hint." + field.key);
+  var hint = resolveCopy(t, "hint." + field.key);
+  if (hint === undefined) return undefined;
   if (field.ms !== true) return hint;
   var effectiveFill = formatSeconds(effectiveMs);
   var draft = draftReadout(stagedText);
@@ -306,11 +388,16 @@ function composeHint(t, field, effectiveMs, stagedText) {
   ];
 }
 
-// 枚举字段的样式（唯一一处自有样式）：壳与 select 本体的度量逐项照官方
-// `fields.module.css`（34px / 13px / 8px 圆角 / bg-layer-3 / .5px border-l4 / focus
-// brand-primary / 禁用 label-tertiary / 非法 state-error-primary），select 的修饰照
+// 字段壳与自绘控件样式：度量逐项照官方 `fields.module.css`（34px / 13px / 12px 圆角 /
+// .5px border-l4 / 禁用 label-tertiary / 非法 state-error-primary / 焦点
+// state-business-primary——设计 §5.5 控件焦点与输入件同源），select 的修饰照
 // `dsh-client-ui-settings-models` 的成例（appearance:none + 右侧 chevron +
-// padding-right:32px）。只引用定义表内的 token。
+// padding-right:32px）。帮助按钮（设计 §5.5）：24×24 常态可发现（0.5px 轮廓 +
+// label-secondary 图标），hover/展开背景用 `interactive-bg-hover`（深浅两主题各有
+// 计算值；不用 `bg-layer-*` 族——1/2/3 浅色与底色同值，官方所引 bg-layer-4 在
+// 主题定义表中未定义），focus-visible 外廓 2px 与输入件同源。只引用定义表内的
+// token（check-alias-tokens 把关）。唯一例外：select 下拉箭头的 SVG data-URI
+// 内嵌固定色 %2381858C——data URI 内无法引用 CSS 变量，是本样式块唯一写死色的例外。
 var ENUM_CSS = ""
   + ".ats-enum-field{display:flex;flex-direction:column;gap:6px;padding:12px 0}"
   + ".ats-enum-field:not(:first-child){border-top:.5px solid var(--dsw-alias-border-l2)}"
@@ -323,21 +410,47 @@ var ENUM_CSS = ""
   + "line-height:1.5;color:var(--dsw-alias-label-secondary);cursor:pointer}"
   + ".ats-enum-reset:hover:not(:disabled){color:var(--dsw-alias-label-primary)}"
   + ".ats-enum-reset:disabled{cursor:default}"
-  + ".ats-enum-select{height:34px;padding:0 12px;padding-right:32px;"
-  + "border:.5px solid var(--dsw-alias-border-l4);border-radius:8px;"
+  + ".ats-enum-select,.ats-value-input{height:34px;padding:0 12px;"
+  + "border:.5px solid var(--dsw-alias-border-l4);border-radius:12px;"
   + "background:var(--dsw-alias-bg-layer-3);font:inherit;font-size:13px;line-height:1.5;"
-  + "color:var(--dsw-alias-label-primary);appearance:none;"
+  + "color:var(--dsw-alias-label-primary)}"
+  + ".ats-enum-select{appearance:none;padding-right:32px;"
   + "background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' "
   + "width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' "
   + "stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E"
   + "%3C/svg%3E\");background-position:right 12px center;background-repeat:no-repeat;"
   + "background-size:12px 12px}"
-  + ".ats-enum-select:focus-visible{outline:none;border-color:var(--dsw-alias-brand-primary)}"
-  + ".ats-enum-select:disabled{color:var(--dsw-alias-label-tertiary);cursor:default}"
-  + ".ats-enum-select[aria-invalid='true']{border-color:var(--dsw-alias-state-error-primary)}"
+  + ".ats-enum-select:focus-visible,.ats-value-input:focus-visible{outline:none;"
+  + "border-color:var(--dsw-alias-state-business-primary)}"
+  + ".ats-enum-select:disabled,.ats-value-input:disabled{color:var(--dsw-alias-label-tertiary);"
+  + "cursor:default}"
+  + ".ats-enum-select[aria-invalid='true'],.ats-value-input[aria-invalid='true']{"
+  + "border-color:var(--dsw-alias-state-error-primary)}"
+  + ".ats-help-button{flex:none;display:inline-flex;align-items:center;justify-content:center;"
+  + "width:24px;height:24px;padding:0;border:.5px solid var(--dsw-alias-border-l4);"
+  + "border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);"
+  + "cursor:pointer}"
+  + ".ats-help-button:hover:not(:disabled),"
+  + ".ats-help-button[aria-expanded='true']:not(:disabled){"
+  + "background:var(--dsw-alias-interactive-bg-hover);"
+  + "color:var(--dsw-alias-label-primary)}"
+  + ".ats-help-button:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);"
+  + "outline-offset:1px}"
+  + ".ats-help-region{margin:0;font-size:12px;line-height:1.6;"
+  + "color:var(--dsw-alias-label-secondary)}"
+  + ".ats-help-region p:not(:last-child){margin:0 0 8px}"
   + ".ats-enum-message{margin:0;font-size:12px;line-height:1.5;"
   + "color:var(--dsw-alias-label-tertiary)}"
-  + ".ats-enum-message[aria-invalid='true']{color:var(--dsw-alias-state-error-primary)}";
+  + ".ats-enum-message[aria-invalid='true']{color:var(--dsw-alias-state-error-primary)}"
+  // 卸载风险提示块（设计 §5.4）：静态非交互文本，长在表单顶部、全部字段之前；
+  // 醒目外壳（需求 §7.2「在设置页醒目提示」）：警示浅底 + 左侧色条 + 三角警示
+  // 图标，全部走 warn 态 token（深浅主题均可读），与普通字段说明拉开视觉层级；
+  // 宽度随表单列。
+  + ".ats-uninstall-risk{display:flex;gap:8px;align-items:flex-start;margin:12px 0 0;"
+  + "padding:10px 12px;border-left:3px solid var(--dsw-alias-state-warn-primary);"
+  + "border-radius:8px;background:var(--dsw-alias-state-warn-tertiary);"
+  + "font-size:12px;line-height:1.5;color:var(--dsw-alias-state-warn-label)}"
+  + ".ats-uninstall-risk svg{flex:none;margin-top:1px}"
 
 if (typeof document !== "undefined" && document.getElementById("dsh-async-tools-enum-style") === null) {
   var styleEl = document.createElement("style");
@@ -347,91 +460,105 @@ if (typeof document !== "undefined" && document.getElementById("dsh-async-tools-
 }
 
 /**
- * 枚举字段（自绘的只有控件本体，裁决 B）：结构照官方 `SettingsValueField`——
- * 字段列（label 行 + 覆盖徽标 + 整行控件 + 说明/错误行），控件是原生 select 元素。
+ * 统一字段壳（设计 §5.5）：17 个字段共用——label 行（标签 + 带圈问号帮助按钮 +
+ * 覆盖徽标）、控件本体、说明/错误行、展开区（仅展开时渲染）。控件本体四形态：
+ * 布尔 = 官方 `P.Switch`；枚举 = 原生 select；数值 = input（`inputMode="numeric"`）；
+ * 文本 = input。度量逐项照官方 `fields.module.css`（见 ENUM_CSS 头注）。
  *
- * 两条硬条目（§29.2 手术 5）：① 无覆盖时下拉显示**生效值**——`text` 未暂存时来自
- * 模型对 `format(sectionValue)` 的取值，而快照 `value` 层就是生效值；② label 的 `for`
- * 与控件的 `id` 绑定、说明/错误经 `aria-describedby` 关联、非法态带 `aria-invalid`
- * （与官方值字段同形）。
+ * 帮助开合是**组件局部 state**（设计 §5.5 状态隔离）：`useState(false)`，按钮
+ * `type="button"`、onClick 只调 `setHelpOpen`——不触碰草稿模型、不动保存、不调
+ * mutate。重渲按组件类型 + key 复用，开合状态在草稿键入/保存/语言切换时保留。
  *
- * @param {object} props - 字段文案与状态（形状对齐官方值字段）+ `options`/`optionLabel`。
+ * 缺键回退（设计 §5.5）：`help` 缺席（undefined/空/裸键名）不渲染帮助按钮；
+ * `hint` 缺席时说明行（含毫秒读数）整体退场，不渲染空段——宁可少按钮不开空区域。
+ *
+ * @param {object} props - 字段文案与状态 + 控件形态（`flag`/`options`/`numeric`）。
  * @returns {object} React 元素。
  */
-function EnumField(props) {
+function FieldShell(props) {
+  var helpOpenState = React.useState(false);
+  var helpOpen = helpOpenState[0];
+  var setHelpOpen = helpOpenState[1];
   var messageId = props.id + "-message";
-  var hasMessage = props.invalid === true || Boolean(props.hint);
-  return React.createElement("div", { className: "ats-enum-field", key: props.fieldKey },
-    React.createElement("div", { className: "ats-enum-head" },
-      React.createElement("div", { className: "ats-enum-labelGroup" },
-        React.createElement("label", { className: "ats-enum-label", htmlFor: props.id }, props.label)),
-      props.overridden === true ? React.createElement("span", { className: "ats-enum-badges" },
-        React.createElement(P.Tag, { tone: "neutral" }, props.overriddenLabel),
-        React.createElement("button", {
-          type: "button", className: "ats-enum-reset", disabled: props.disabled,
-          onClick: props.onReset
-        }, props.resetLabel)) : null),
-    React.createElement("select", {
+  var helpId = props.id + "-help";
+  var hasMessage = props.invalid === true || props.hint !== undefined;
+  var helpButton = props.help === undefined ? null : React.createElement("button", {
+    type: "button",
+    className: "ats-help-button",
+    "aria-label": props.helpA11y,
+    "aria-expanded": helpOpen,
+    "aria-controls": helpId,
+    onClick: function () { setHelpOpen(!helpOpen); }
+  }, React.createElement(P.IconQuestionOutlineRegular, { size: 14 }));
+  var described = [hasMessage ? messageId : null, helpOpen ? helpId : null]
+    .filter(function (part) { return part !== null; }).join(" ");
+  var control;
+  if (props.flag === true) {
+    control = React.createElement(P.Switch, {
+      checked: props.text === "true",
+      label: props.label,
+      disabled: props.disabled,
+      onChange: function (next) { props.onEdit(next ? "true" : "false"); }
+    });
+  } else if (props.options !== undefined) {
+    control = React.createElement("select", {
       id: props.id,
       className: "ats-enum-select",
       "aria-invalid": props.invalid === true ? true : undefined,
-      "aria-describedby": hasMessage ? messageId : undefined,
+      "aria-describedby": described === "" ? undefined : described,
       value: props.text,
       disabled: props.disabled,
       onChange: function (event) { props.onEdit(event.target.value); }
     }, props.options.map(function (option) {
       return React.createElement("option", { key: option, value: option },
         props.optionLabel(option));
-    })),
-    hasMessage ? React.createElement("p", {
-      id: messageId,
-      className: "ats-enum-message",
-      "aria-invalid": props.invalid === true ? true : undefined
-    }, props.invalid === true ? props.invalidLabel : props.hint) : null);
-}
-
-/**
- * 布尔字段（R28，偏离 ③）：壳照 `EnumField` 同形（label 行 + 覆盖徽标 + 控件 +
- * 说明行，复用同一组 `.ats-enum-*` 类名，**不新增自有 CSS**），控件本体是官方原语
- * `P.Switch`（`checked`/`onChange`/`label`/`disabled`/`title`/`className`）。
- *
- * 可访问性分工（照 settings-subagent 的模型 toggle 行成例）：**可见标签长在壳上**，
- * `Switch` 的 `label` prop 传同一标签串——它只落到 `aria-label`（primitives 的
- * `Switch` 不渲染可见文本），是开关的无障碍名。`Switch` 不收 `id`/`aria-*` 摆位，
- * 所以枚举字段那组 `htmlFor`/`aria-describedby` 绑定在这里不适用；说明行仍渲染
- * （视觉提示不变），`invalid` 分支是防御性的（`"true"`/`"false"` 之外无草稿文本）。
- *
- * @param {object} props - 字段文案与状态（形状对齐 `EnumField`，去掉 options 面）。
- * @returns {object} React 元素。
- */
-function FlagField(props) {
-  var messageId = props.id + "-message";
-  var hasMessage = props.invalid === true || Boolean(props.hint);
-  return React.createElement("div", { className: "ats-enum-field", key: props.fieldKey },
+    }));
+  } else {
+    control = React.createElement("input", {
+      id: props.id,
+      className: "ats-value-input",
+      inputMode: props.numeric === true ? "numeric" : undefined,
+      "aria-invalid": props.invalid === true ? true : undefined,
+      "aria-describedby": described === "" ? undefined : described,
+      value: props.text,
+      disabled: props.disabled,
+      onChange: function (event) { props.onEdit(event.target.value); }
+    });
+  }
+  // 元素 key 在父级 createElement 上（makeFieldNodes 传 `key: field.key`）——
+  // 真实 React 靠它对 17 个同函数实例做「相同组件类型 + 相同 key → 复用局部 state」，
+  // 草稿键入/保存/语言切换的重渲不丢帮助开合状态（设计 §5.5）。
+  return React.createElement("div", { className: "ats-enum-field" },
     React.createElement("div", { className: "ats-enum-head" },
       React.createElement("div", { className: "ats-enum-labelGroup" },
-        React.createElement("div", { className: "ats-enum-label" }, props.label)),
+        props.flag === true
+          ? React.createElement("div", { className: "ats-enum-label" }, props.label)
+          : React.createElement("label", { className: "ats-enum-label", htmlFor: props.id }, props.label),
+        helpButton),
       props.overridden === true ? React.createElement("span", { className: "ats-enum-badges" },
         React.createElement(P.Tag, { tone: "neutral" }, props.overriddenLabel),
         React.createElement("button", {
           type: "button", className: "ats-enum-reset", disabled: props.disabled,
           onClick: props.onReset
         }, props.resetLabel)) : null),
-    React.createElement(P.Switch, {
-      checked: props.text === "true",
-      label: props.label,
-      disabled: props.disabled,
-      onChange: function (next) { props.onEdit(next ? "true" : "false"); }
-    }),
+    control,
     hasMessage ? React.createElement("p", {
       id: messageId,
       className: "ats-enum-message",
       "aria-invalid": props.invalid === true ? true : undefined
-    }, props.invalid === true ? props.invalidLabel : props.hint) : null);
+    }, props.invalid === true ? props.invalidLabel : props.hint) : null,
+    helpOpen && props.help !== undefined ? React.createElement("div", {
+      id: helpId,
+      role: "region",
+      "aria-label": props.helpA11y,
+      className: "ats-help-region"
+    }, String(props.help).split("\n\n").map(function (paragraph, index) {
+      return React.createElement("p", { key: index }, paragraph);
+    })) : null);
 }
 
 /**
- * 生效的 `uiLang`（R25）：用户层在场就用它，否则用实时解析值，再否则 `"auto"`。
+ * 生效的 `uiLang`：用户层在场就用它，否则用实时解析值，再否则 `"auto"`。
  * @param {object|undefined} snapshot - 控制器快照。
  * @returns {string} `"auto" | "zh" | "en"`。
  */
@@ -443,7 +570,7 @@ function uiLangOf(snapshot) {
 }
 
 /**
- * 选文案函数（R25）：`"auto"` 用宿主 locale 的 `props.t`（现行行为）；`"zh"` / `"en"` 用本包
+ * 选文案函数（需求 §5.3）：`"auto"` 用宿主 locale 的 `props.t`（现行行为）；`"zh"` / `"en"` 用本包
  * 自己的词典——宿主语言是**全局**偏好，本包不得调 `locale.setLocale`，只能自己选表。
  * 缺键回退宿主 `t`，这样新词条漏加也不会渲染成空白。
  * @param {string} uiLang - 生效的语言开关值。
@@ -484,8 +611,8 @@ function projectCardState(model, scope) {
 }
 
 /**
- * 建卡片模型：控制器交给官方 `SettingsFormModel`，`bind` 只调一次（§29.2 手术 7），
- * 返回 `{model, store, dispose}`——`dispose` 解除模型对 scope 的订阅（手术 8）。
+ * 建卡片模型：控制器交给官方 `SettingsFormModel`，`bind` 只调一次，
+ * 返回 `{model, store, dispose}`——`dispose` 解除模型对 scope 的订阅。
  *
  * @param {object} ctx - 客户端上下文（`configForms` 由 inject 声明）。
  * @returns {object} 卡片模型句柄。
@@ -502,9 +629,10 @@ function createCardModel(ctx) {
 }
 
 /**
- * 渲染 `FIELDS` 里的全部字段（四组现取）：值字段用官方 `SettingsValueField`，
- * 枚举字段用本包 `EnumField`，布尔字段用本包 `FlagField`（官方 Switch 控件本体）；
- * `id = "plugin-config-" + key`；毫秒字段的说明行带秒数读数。
+ * 渲染 `FIELDS` 里的全部字段（设计 §5.5：17 个字段统一走 `FieldShell`——
+ * 布尔/枚举/数值/文本四形态由壳分流）；`id = "plugin-config-" + key`；毫秒字段的
+ * 说明行带秒数读数。帮助与说明走缺键回退（`resolveCopy`）：缺席/裸键名时
+ * 按钮/说明行退场。
  *
  * @param {object} state - `projectCardState` 的投影。
  * @param {object} model - 模型实例（动作从这里取）。
@@ -517,51 +645,42 @@ function makeFieldNodes(state, model, t) {
     var fieldState = state.fields[field.key];
     var id = "plugin-config-" + field.key;
     var hint = composeHint(t, field, state.effective[field.key], fieldState.text);
-    if (field.flag === true) {
-      return React.createElement(FlagField, {
-        fieldKey: field.key, id: id, label: t(field.label), hint: hint,
-        overridden: fieldState.overridden, overriddenLabel: t("overridden"),
-        resetLabel: t("reset"), invalid: fieldState.invalid, invalidLabel: t("invalidNumber"),
-        disabled: !state.shell.writable, text: fieldState.text,
-        onEdit: function (text) { actions.edit(field.key, text); },
-        onReset: function () { actions.resetField(field.key); }
-      });
-    }
-    if (field.options !== undefined) {
-      return React.createElement(EnumField, {
-        fieldKey: field.key, id: id, label: t(field.label), hint: hint,
-        overridden: fieldState.overridden, overriddenLabel: t("overridden"),
-        resetLabel: t("reset"), invalid: fieldState.invalid, invalidLabel: t("invalidNumber"),
-        disabled: !state.shell.writable, text: fieldState.text,
-        options: field.options,
-        optionLabel: function (option) { return t("opt." + field.key + "." + option); },
-        onEdit: function (text) { actions.edit(field.key, text); },
-        onReset: function () { actions.resetField(field.key); }
-      });
-    }
-    // R29-d：数值字段的非法原因分三档——越上界（spec parse 判非法后的可读版）、
-    // 配对违例（壳层判，pollIntervalMs 字段显示）、官方"不是数字"。
+    var label = t(field.label);
+    var help = resolveCopy(t, "help." + field.key);
+    var helpA11y = help === undefined ? undefined
+      : t("help.a11yName").replace("{field}", label);
+    // 设计 §5.4：数值字段的非法原因分四档——越上界（spec parse 判非法后的可读版）、
+    // 低于下界、链式违例（壳层判，不等式左值字段显示、文案指明参照字段）、
+    // 官方"不是数字"。`invalidPair` 的 `{ref}` 显示层经词典换参照字段的中文名称。
     var outOfRange = false;
     var belowRange = false;
-    var pairHit = false;
+    var pairHit = null;
     if (isNumericField(field)) {
       var draftNum = draftNumber(state, field.key);
       outOfRange = fieldState.invalid === true && draftNum !== null && draftNum > FIELD_MAX[field.key];
       belowRange = fieldState.invalid === true && draftNum !== null
         && FIELD_MIN[field.key] !== undefined && draftNum < FIELD_MIN[field.key];
-      if (field.key === "pollIntervalMs") pairHit = pairViolated(state);
+      pairHit = chainHitOf(state, field.key);
     }
     var invalidLabel = outOfRange
       ? t("invalidRange").replace("{max}", String(FIELD_MAX[field.key]))
       : belowRange ? t("invalidBelow").replace("{min}", String(FIELD_MIN[field.key]))
-      : pairHit ? t("invalidPair.pollIntervalMs") : t("invalidNumber");
-    return React.createElement(P.SettingsValueField, {
-      key: field.key, id: id, label: t(field.label), hint: hint,
+      : pairHit !== null
+        ? t("invalidPair." + field.key).replace(/\{ref\}/g, t(pairHit))
+        : t("invalidNumber");
+    return React.createElement(FieldShell, {
+      key: field.key,
+      fieldKey: field.key, id: id, label: label,
+      hint: hint, help: help, helpA11y: helpA11y,
       overridden: fieldState.overridden, overriddenLabel: t("overridden"),
       resetLabel: t("reset"), invalid: fieldState.invalid === true || pairHit,
       invalidLabel: invalidLabel,
-      numeric: isNumericField(field), disabled: !state.shell.writable,
-      text: fieldState.text,
+      flag: field.flag === true,
+      numeric: isNumericField(field),
+      options: field.options,
+      optionLabel: field.options === undefined ? undefined
+        : function (option) { return t("opt." + field.key + "." + option); },
+      disabled: !state.shell.writable, text: fieldState.text,
       onEdit: function (text) { actions.edit(field.key, text); },
       onReset: function () { actions.resetField(field.key); }
     });
@@ -569,9 +688,49 @@ function makeFieldNodes(state, model, t) {
 }
 
 /**
- * 插件页卡片工厂：模型每挂载建一次、卸载时 `dispose`（手术 8）；重渲染走
- * `useSyncExternalStore(card.store.subscribe, card.store.getSnapshot)`（手术 7）。
- * `SettingsForm` 的 `onDiscard` 接模型的 `discard`——卸载丢弃草稿由它承担（判据 9）。
+ * 卸载风险提示块（设计 §5.4）：静态非交互文本，长在表单顶部、全部字段之前——
+ * 用户改设置的入口在插件管理页，同一页面就是停用/移除本包的入口，风险提示
+ * 放在操作现场。醒目外壳（警示浅底 + 左色条 + 三角图标，样式见 ENUM_CSS）
+ * 与普通字段说明拉开层级（需求 §7.2「醒目提示」）。内容与 README 卸载指引
+ * 同一口径（设置页给结论与动作，README 给步骤）。不依赖插件已卸载后的任何
+ * 组件（纯静态文案）。
+ * @param {Function} t - 文案函数。
+ * @returns {object} React 元素。
+ */
+function makeUninstallRiskNode(t) {
+  return React.createElement(
+    "p",
+    { className: "ats-uninstall-risk", key: "uninstall-risk" },
+    React.createElement(
+      "svg",
+      {
+        width: "14", height: "14", viewBox: "0 0 14 14", fill: "none",
+        "aria-hidden": "true", focusable: "false"
+      },
+      React.createElement("path", {
+        d: "M7 1.8L12.6 11.6H1.4L7 1.8Z",
+        stroke: "var(--dsw-alias-state-warn-primary)", strokeWidth: "1.4",
+        strokeLinejoin: "round"
+      }),
+      React.createElement("path", {
+        d: "M7 5.4V7.8",
+        stroke: "var(--dsw-alias-state-warn-primary)", strokeWidth: "1.4",
+        strokeLinecap: "round"
+      }),
+      React.createElement("path", {
+        d: "M7 9.6V9.7",
+        stroke: "var(--dsw-alias-state-warn-primary)", strokeWidth: "1.4",
+        strokeLinecap: "round"
+      })
+    ),
+    React.createElement("span", null, t("uninstallRisk"))
+  );
+}
+
+/**
+ * 插件页卡片工厂：模型每挂载建一次、卸载时 `dispose`；重渲染走
+ * `useSyncExternalStore(card.store.subscribe, card.store.getSnapshot)`。
+ * `SettingsForm` 的 `onDiscard` 接模型的 `discard`——卸载丢弃草稿由它承担。
  * @param ctx - 客户端上下文（`configForms` 由 inject 声明）。
  * @returns 槽位组件。
  */
@@ -598,18 +757,18 @@ function makeBundleCard(ctx) {
         save: t("save"),
         saving: t("saving")
       },
-      // R29-d（复审 N1 挂法）：跨字段配对违例叠加在传给 SettingsForm 的
+      // 跨字段链式违例叠加在传给 SettingsForm 的
       // `state.invalid` 上——宿主保存禁用只认这条链（`blocked = !dirty ||
       // state.invalid || saving`）；不包 save（save 仍是官方模型的动作）。
       state: { ...state.shell, invalid: state.shell.invalid === true || pairViolated(state) },
       onSave: actions.save,
       onDiscard: actions.discard
-    }, makeFieldNodes(state, card.model, t));
+    }, [makeUninstallRiskNode(t)].concat(makeFieldNodes(state, card.model, t)));
   };
 }
 
 /** 词典：字段键即标签键、`hint.<键>` 为字段说明、`opt.<键>.<选项>` 为枚举选项文案；
- *  zh 为主，en 对照（`ctx.locale.register`；两语言键集必须一致，R25）。 */
+ *  zh 为主，en 对照（`ctx.locale.register`；两语言键集必须一致）。 */
 var DICTIONARIES = {
   zh: {
     title: "异步工具",
@@ -624,41 +783,66 @@ var DICTIONARIES = {
     invalidNumber: "这个值不是该字段可接受的输入",
     invalidRange: "超出该字段的上界（≤ {max}）",
     invalidBelow: "低于该字段的下界（≥ {min}）",
-    "invalidPair.pollIntervalMs": "轮询间隔不能大于等待预算上限（maxWaitMs）——请调小本值或调大 maxWaitMs",
-    defaultYieldMs: "默认让出预算（毫秒）",
-    minYieldMs: "让出预算下限（毫秒）",
-    maxYieldMs: "让出预算上限（毫秒）",
-    defaultWaitMs: "默认等待预算（毫秒）",
-    minWaitMs: "等待预算下限（毫秒）",
-    maxWaitMs: "等待预算上限（毫秒）",
-    pollIntervalMs: "兜底轮询间隔（毫秒）",
-    maxResultChars: "输出字符上限",
-    jobKind: "后台作业 kind（jobKind）",
-    subagentProvider: "子代理后端（async_agent）",
-    uiLang: "设置表单语言（uiLang）",
-    agentLang: "模型面文案语言（agentLang）",
-    silentFailureGuard: "静默失败防线（silentFailureGuard）",
-    askTakeover: "提问接管（askTakeover）",
-    askTimeoutMs: "提问等待窗口（毫秒）",
-    askUiSeat: "待答界面座位（askUiSeat）",
-    "hint.defaultYieldMs": "async_run 不带预算时的让出毫秒数。",
-    "hint.minYieldMs": "让出预算的下界。",
-    "hint.maxYieldMs": "让出预算的上界。",
-    "hint.defaultWaitMs": "两个等待工具不带预算时的等待毫秒数。",
-    "hint.minWaitMs": "等待预算的下界。",
-    "hint.maxWaitMs": "等待预算的上界。",
-    "hint.pollIntervalMs": "事件等待的兜底轮询间隔。",
-    "hint.maxResultChars": "工具输出超出该字符数会被截断。",
-    "hint.jobKind": "后台作业的 kind 标签。",
-    "hint.subagentProvider": "async_agent 派发子代理的后端。",
-    "hint.uiLang": "本卡片文案的语言。",
-    "hint.agentLang": "模型面文案（工具描述等）的语言。",
-    "hint.silentFailureGuard": "开启后注入执行纪律段与静默失败警示，关闭则三防线全部消失（默认关）。",
-    "hint.askTakeover": "开启后接管本包两预设的 ask_user_question：在浏览器待答界面作答，窗口耗尽自动放行（默认关 = 原生行为）。",
-    "hint.askTimeoutMs": "提问的等待窗口；耗尽后放行并给模型合成空选答案，迟到作答以通知注入送达。",
-    "hint.askUiSeat": "待答界面长在哪里：overlay = 右下角浮框；sidebar = 侧栏底栏徽标。",
-    "opt.askUiSeat.overlay": "右下角浮框（默认）",
-    "opt.askUiSeat.sidebar": "侧栏底栏徽标",
+    "invalidPair.minYieldMs": "首次等待时长下限不能大于默认首次等待时长（{ref}）——请调小本值或调大 {ref}",
+    "invalidPair.defaultYieldMs": "默认首次等待时长不能大于首次等待时长上限（{ref}）——请调小本值或调大 {ref}",
+    "invalidPair.minWaitMs": "单次等待时长下限不能大于等待示例时长（{ref}）——请调小本值或调大 {ref}",
+    "invalidPair.defaultWaitMs": "等待示例时长不能大于单次等待时长上限（{ref}）——请调小本值或调大 {ref}",
+    "invalidPair.pollIntervalMs": "子代理状态检查间隔不能大于单次等待时长上限（{ref}）——请调小本值或调大 {ref}",
+    uninstallRisk: "卸载风险：默认预设指向本包预设（dsh-async / dsh-async-create）时，停用或移除本包会让新建会话报 agent-preset/not-found，宿主不会自动清除该选择。卸载前先在宿主设置把默认预设切换到可用预设；已移除后按宿主设置入口清选或重选。",
+    defaultYieldMs: "默认首次等待时长（毫秒）",
+    minYieldMs: "首次等待时长下限（毫秒）",
+    maxYieldMs: "首次等待时长上限（毫秒）",
+    defaultWaitMs: "等待示例时长（毫秒）",
+    minWaitMs: "单次等待时长下限（毫秒）",
+    maxWaitMs: "单次等待时长上限（毫秒）",
+    pollIntervalMs: "子代理状态检查间隔（毫秒）",
+    maxResultChars: "结果内容字符上限",
+    jobKind: "命令作业类型标识",
+    subagentProvider: "子代理创建后端",
+    uiLang: "插件界面语言",
+    agentLang: "Agent 文案语言",
+    silentFailureGuard: "命令静默失败提示",
+    askTakeover: "在待答面板处理提问",
+    askTimeoutMs: "首次提问等待时长（毫秒）",
+    askExtendMs: "每次增加的等待时长（毫秒）",
+    askUiSeat: "待答问题显示方式",
+    "hint.defaultYieldMs": "async_run 与 async_workflow 未指定 yield_ms 时使用的首次等待时长；指定时按本次请求与上下限取值。到时仍未完成就结束本次等待、返回作业编号（job_id），后台任务继续运行。",
+    "hint.minYieldMs": "限制本次 yield_ms 的有效值；请求低于此值时按下限取值。不是后台任务的最长运行时间。",
+    "hint.maxYieldMs": "限制本次 yield_ms 的有效值；请求高于此值时按上限取值。不是后台任务的最长运行时间。",
+    "hint.defaultWaitMs": "返回提示里等待调用示例使用的时长；示例只作演示，不等于实际调用的生效等待。wait_ms 仍必填，省略时报错；此值不是省略参数后的备用值。",
+    "hint.minWaitMs": "适用于两个等待工具的 wait_ms；请求低于此值时按下限取值。到时结束本次等待，不停止后台任务。",
+    "hint.maxWaitMs": "适用于两个等待工具的 wait_ms；请求高于此值时按上限取值。到时结束本次等待，不停止后台任务。",
+    "hint.pollIntervalMs": "async_wait_agent 备用检查子代理是否仍在运行的间隔。不是待答面板刷新间隔，也不是子代理运行时限。",
+    "hint.maxResultChars": "单次返回保留的结果内容字符上限，超出时保留首尾并说明截断；状态与提示另计。",
+    "hint.jobKind": "注册命令作业用的类型名称，便于在作业列表与日志中识别；不决定命令执行方式。",
+    "hint.subagentProvider": "async_agent 创建子代理使用的后端服务；不是选择大语言模型或模型服务商。",
+    "hint.uiLang": "控制本包设置表单、字段帮助与待答界面文案；跟随宿主语言或显式中英文，不改宿主全局语言。",
+    "hint.agentLang": "控制本包工具描述、参数说明、提示、错误与执行规则文案；不翻译命令、问题或用户输入，不改变行为。",
+    "hint.silentFailureGuard": "“静默失败”指命令可能未执行、却没有明显报错。开关只给条件式提醒，不保证检出或自动修复；仅本包两预设生效，默认关。",
+    "hint.askTakeover": "开启后由待答面板处理本包两预设根 Agent 的普通提问，关闭时保持宿主原生提问流程；到期如实告知未答、不替用户选答案。不接管权限审批或计划评审。",
+    "hint.askTimeoutMs": "从接收一批提问起计时的初始窗口，同批多题共享期限。到期如实说明未答、不替用户选答案；已答内容保留、之后仍可补答。新值不重置进行中的批次。",
+    "hint.askExtendMs": "待答面板“增加等待时间”每点击一次给该会话未到期批次增加的时长；已到期批次不重新等待。",
+    "hint.askUiSeat": "侧边栏底栏徽标显示未处理数、点击展开；右下角浮窗直接显示问题。切换显示方式不改变接管开关。",
+    "help.a11yName": "{field} 的说明",
+    "help.defaultYieldMs": "配置键：defaultYieldMs（数值，毫秒）。\n\n首次等待机制：async_run 与 async_workflow 用首次等待限制本次调用的占用时长，不终止任务——到时仍未完成就结束本次等待、返回作业编号（job_id），后台任务继续运行，Agent 可以继续其他工作；消息和取消可提前结束等待。\n\n时长示例（演示值，非当前生效值）：设 20000 毫秒——短命令在首次等待内完成，直接取得结果；长命令到时先取得作业编号、稍后用 async_wait_job 读取结果。示例说明等待时长不限制任务寿命。\n\n夹紧关系：默认值须落在首次等待时长的上下限内（minYieldMs ≤ defaultYieldMs ≤ maxYieldMs）。",
+    "help.minYieldMs": "配置键：minYieldMs（数值，毫秒）。\n\n本次 yield_ms 低于此下限时按下限取值；消息和取消仍可提前结束首次等待。与 defaultYieldMs、maxYieldMs 构成首次等待时长的上下限夹紧。",
+    "help.maxYieldMs": "配置键：maxYieldMs（数值，毫秒）。\n\n本次 yield_ms 高于此上限时按上限取值；消息和取消仍可提前结束首次等待。与 minYieldMs、defaultYieldMs 构成首次等待时长的上下限夹紧。",
+    "help.defaultWaitMs": "配置键：defaultWaitMs（数值，毫秒）。\n\nwait_ms 是必填参数：两个等待工具的每次调用都要显式给出（需求 2.1.1），缺省报错——返回提示里的 wait_ms=30000 仅为示例，随本设置显示演示值，不是省略参数后的备用值。示例与 minWaitMs、maxWaitMs 的区间配对。",
+    "help.minWaitMs": "配置键：minWaitMs（数值，毫秒）。\n\n一份预算覆盖入口检查、查询、重试与等待，不为每个阶段重新计时；到时交回控制权、作业句柄仍有效，再次调用即可继续读。消息到达可提前结束本次等待（需求 2.1）。",
+    "help.maxWaitMs": "配置键：maxWaitMs（数值，毫秒）。\n\n一份预算覆盖入口检查、查询、重试与等待，不为每个阶段重新计时；到时交回控制权、作业句柄仍有效，再次调用即可继续读。消息到达可提前结束本次等待（需求 2.1）。",
+    "help.pollIntervalMs": "配置键：pollIntervalMs（数值，毫秒）。\n\nasync_wait_agent 以结束事件为主、轮询为备用的双通道检查子代理是否仍在运行；本间隔是备用轮询的节奏，受 pollIntervalMs ≤ maxWaitMs 配对约束（需求 5.2）。",
+    "help.maxResultChars": "配置键：maxResultChars（数值，字符）。\n\n按 String.length 计量：超出时保留首尾并说明省略量与截断；状态与提示另计，不占本预算（需求 2.2.3）。与宿主输出缓冲的三倍换算配合决定溢出时的文件交付路径。",
+    "help.jobKind": "配置键：jobKind（文本）。\n\n注册命令作业时使用的类型名称，用于作业列表与日志的辨识；不决定命令执行方式。空值非法（需求 5.2）。",
+    "help.subagentProvider": "配置键：subagentProvider（文本）。\n\nasync_agent 创建子代理使用的后端服务，默认 spawn；修剪后空值回默认，未知后端在调用时可读拒绝。不是选择大语言模型或模型服务商——模型路由按 provider／model 参数另行指定（需求 2.3.1）。",
+    "help.uiLang": "配置键：uiLang（枚举：auto / zh / en）。\n\n与 agentLang 两个开关独立，修改其中一个不影响另一个；auto 档只读跟随宿主语言，不写宿主全局语言。",
+    "help.agentLang": "配置键：agentLang（枚举：en / zh）。\n\n与 uiLang 两个开关独立，修改其中一个不影响另一个；控制模型可见文案（工具描述、参数说明、提示、错误与执行规则）；跟随宿主语言的开关是 uiLang。",
+    "help.silentFailureGuard": "配置键：silentFailureGuard（布尔）。\n\n开启后三处防线生效：结果诊断（返回提示里的条件式提醒）、命令描述警示、执行纪律提示；关闭则三处全部消失。只给条件式提醒，不保证检出或自动修复（需求 6.3）。仅本包两预设生效，默认关。",
+    "help.askTakeover": "配置键：askTakeover（布尔）。\n\n接管范围：本包两预设的根 Agent 的普通提问（需求 4.1）——在待答面板作答；权限审批与计划评审不接管，走宿主原生流程。迟到作答按通知送达，不丢失。到期不替用户选答案。",
+    "help.askTimeoutMs": "配置键：askTimeoutMs（数值，毫秒）。\n\n从接收一批提问起计时，同批多题共享期限；到期合成超时事实、不代答，Agent 继续工作。可补答路径：面板在到期后仍接受作答，迟到作答按通知送达。",
+    "help.askExtendMs": "配置键：askExtendMs（数值，毫秒）。\n\n组级动作语义（需求 4.3）：组头“增加等待时间”每点击一次，给该会话当时未到期的批次各增加此时长，在原截止点上叠加；已到期批次不重新等待，新批次不继承延长。",
+    "help.askUiSeat": "配置键：askUiSeat（枚举：sidebar / overlay）。\n\n两种方式的展开动作（需求 4.2）：侧边栏底栏徽标显示未处理数、点击展开；右下角浮窗直接显示问题。徽标计数全部处理后消隐。选项默认标记与需求 5.2 一致（默认 sidebar），标记不指示用户当前选择。",
+    "opt.askUiSeat.sidebar": "侧边栏底栏徽标（默认）",
+    "opt.askUiSeat.overlay": "右下角浮窗",
     "ask.title": "待答问题",
     "ask.count": "{n} 题待答",
     "ask.answer": "提交",
@@ -670,9 +854,7 @@ var DICTIONARIES = {
     "ask.callFailed": "提交没有送达（宿主侧失败），请重试。",
     "ask.dismissLost": "知道了",
     "ask.windowLeft": "剩 {s}",
-    "ask.paused": "已暂停",
-    "ask.pause": "暂停计时",
-    "ask.resume": "恢复计时",
+    "ask.extend": "增加等待时间",
     "readout.effective": "生效：{v}",
     "readout.input": "输入：{v}",
     "opt.uiLang.auto": "跟随界面语言",
@@ -694,41 +876,66 @@ var DICTIONARIES = {
     invalidNumber: "This text is not a value the field accepts",
     invalidRange: "This value exceeds the field's upper bound (≤ {max})",
     invalidBelow: "This value is below the field's lower bound (≥ {min})",
-    "invalidPair.pollIntervalMs": "The poll interval must not exceed the wait budget upper bound (maxWaitMs) — lower this value or raise maxWaitMs",
-    defaultYieldMs: "Default yield budget (ms)",
-    minYieldMs: "Yield budget lower bound (ms)",
-    maxYieldMs: "Yield budget upper bound (ms)",
-    defaultWaitMs: "Default wait budget (ms)",
-    minWaitMs: "Wait budget lower bound (ms)",
-    maxWaitMs: "Wait budget upper bound (ms)",
-    pollIntervalMs: "Fallback poll interval (ms)",
-    maxResultChars: "Output character cap",
-    jobKind: "Background job kind (jobKind)",
-    subagentProvider: "Subagent provider (async_agent)",
-    uiLang: "Settings form language (uiLang)",
-    agentLang: "Model-facing text language (agentLang)",
-    silentFailureGuard: "Silent-failure defenses (silentFailureGuard)",
-    askTakeover: "Question takeover (askTakeover)",
-    askTimeoutMs: "Question wait window (ms)",
-    askUiSeat: "Pending-answer seat (askUiSeat)",
-    "hint.defaultYieldMs": "Milliseconds async_run yields when no budget is given.",
-    "hint.minYieldMs": "Lower bound of yield budgets.",
-    "hint.maxYieldMs": "Upper bound of yield budgets.",
-    "hint.defaultWaitMs": "Milliseconds the wait tools use when no budget is given.",
-    "hint.minWaitMs": "Lower bound of wait budgets.",
-    "hint.maxWaitMs": "Upper bound of wait budgets.",
-    "hint.pollIntervalMs": "Fallback polling interval of the event wait.",
-    "hint.maxResultChars": "Tool output beyond this many characters is truncated.",
-    "hint.jobKind": "Kind label of background jobs.",
-    "hint.subagentProvider": "Backend async_agent dispatches subagents through.",
-    "hint.uiLang": "Language of this card's copy.",
-    "hint.agentLang": "Language of model-facing text (tool descriptions and such).",
-    "hint.silentFailureGuard": "When on, adds the execution-discipline block and silent-failure warnings; when off, all three defenses are absent (off by default).",
-    "hint.askTakeover": "When on, takes over ask_user_question in this package's two presets: answer in the browser pending UI; a spent window releases the turn (off by default = native behavior).",
-    "hint.askTimeoutMs": "Wait window per question; when it runs out the turn is released with synthesized empty answers, and late answers arrive as a notice injection.",
-    "hint.askUiSeat": "Where the pending UI lives: overlay = bottom-right floating panel; sidebar = sidebar footer badge.",
-    "opt.askUiSeat.overlay": "Bottom-right overlay (default)",
-    "opt.askUiSeat.sidebar": "Sidebar footer badge",
+    "invalidPair.minYieldMs": "The first-wait lower bound must not exceed the default first-wait duration ({ref}) — lower this value or raise {ref}",
+    "invalidPair.defaultYieldMs": "The default first-wait duration must not exceed the first-wait upper bound ({ref}) — lower this value or raise {ref}",
+    "invalidPair.minWaitMs": "The per-call wait lower bound must not exceed the example wait duration ({ref}) — lower this value or raise {ref}",
+    "invalidPair.defaultWaitMs": "The example wait duration must not exceed the per-call wait upper bound ({ref}) — lower this value or raise {ref}",
+    "invalidPair.pollIntervalMs": "The subagent status check interval must not exceed the per-call wait upper bound ({ref}) — lower this value or raise {ref}",
+    uninstallRisk: "Uninstall risk: while the default preset points to this package's presets (dsh-async / dsh-async-create), disabling or removing this package makes new sessions fail with agent-preset/not-found; the host does not clear that choice automatically. Switch the default preset to an available one in host settings before uninstalling; after removal, clear or reselect it from the host settings entry.",
+    defaultYieldMs: "Default first-wait duration (ms)",
+    minYieldMs: "First-wait lower bound (ms)",
+    maxYieldMs: "First-wait upper bound (ms)",
+    defaultWaitMs: "Example wait duration (ms)",
+    minWaitMs: "Per-call wait lower bound (ms)",
+    maxWaitMs: "Per-call wait upper bound (ms)",
+    pollIntervalMs: "Subagent status check interval (ms)",
+    maxResultChars: "Result content character cap",
+    jobKind: "Command job kind label",
+    subagentProvider: "Subagent creation backend",
+    uiLang: "Plugin interface language",
+    agentLang: "Agent-facing text language",
+    silentFailureGuard: "Command silent-failure hint",
+    askTakeover: "Answer questions in the pending panel",
+    askTimeoutMs: "Initial question wait duration (ms)",
+    askExtendMs: "Wait time added per click (ms)",
+    askUiSeat: "Pending-question display placement",
+    "hint.defaultYieldMs": "First-wait duration used by async_run and async_workflow when yield_ms is not given; when given, this request and the bounds decide. If the work is still running when it ends, this wait ends and returns the job id (job_id); the background task keeps running.",
+    "hint.minYieldMs": "Clamps the effective value of this yield_ms; requests below it use the lower bound. Not the background task's maximum run time.",
+    "hint.maxYieldMs": "Clamps the effective value of this yield_ms; requests above it use the upper bound. Not the background task's maximum run time.",
+    "hint.defaultWaitMs": "Duration used by the wait-call example in return notes; the example is a demo, not the effective wait of an actual call. wait_ms is still required and omitting it errors; this value is not a fallback for an omitted parameter.",
+    "hint.minWaitMs": "Applies to wait_ms on both wait tools; requests below it use the lower bound. When it ends, the wait ends without stopping the background task.",
+    "hint.maxWaitMs": "Applies to wait_ms on both wait tools; requests above it use the upper bound. When it ends, the wait ends without stopping the background task.",
+    "hint.pollIntervalMs": "Interval async_wait_agent uses as a backup check that the subagent is still running. Not the pending-panel refresh interval, and not a subagent run limit.",
+    "hint.maxResultChars": "Character cap for the result content kept per return; beyond it the head and tail are kept with a truncation note; status and notices are counted separately.",
+    "hint.jobKind": "Type name used to register command jobs, for identification in job lists and logs; it does not decide how commands run.",
+    "hint.subagentProvider": "Backend service async_agent uses to create subagents; this is not choosing a large language model or a model vendor.",
+    "hint.uiLang": "Controls this package's settings form, field help, and pending-panel copy; follows the host language or an explicit Chinese/English choice, and does not change the host's global language.",
+    "hint.agentLang": "Controls this package's tool descriptions, parameter notes, notices, errors, and execution-rule copy; it does not translate commands, questions, or user input, and does not change behavior.",
+    "hint.silentFailureGuard": "\"Silent failure\" means a command may not have run, yet no error is visible. The switch only gives conditional reminders and does not guarantee detection or automatic repair; it applies only to this package's two presets and is off by default.",
+    "hint.askTakeover": "When on, the pending panel handles plain questions from this package's two presets' root agents; when off, the host's native flow stays. On expiry it states honestly that the question went unanswered; it never picks answers for the user. Permission approvals and plan reviews are not taken over.",
+    "hint.askTimeoutMs": "Initial window counted from receiving a batch of questions; all questions in a batch share the deadline. On expiry it states honestly that the question went unanswered and never picks answers for the user; answered content is kept and can still be answered later. A new value does not reset in-flight batches.",
+    "hint.askExtendMs": "Wait time each \"Extend wait\" click adds to that session's unexpired batches; expired batches do not wait again.",
+    "hint.askUiSeat": "The sidebar footer badge shows the open count and expands on click; the bottom-right overlay shows the questions directly. Switching placement does not change the takeover switch.",
+    "help.a11yName": "Help for \"{field}\"",
+    "help.defaultYieldMs": "Config key: defaultYieldMs (number, ms).\n\nFirst-wait mechanism: async_run and async_workflow use the first wait to bound this call's occupancy, not to terminate the task — when it ends with work still running, the wait ends and returns the job id (job_id); the background task keeps running and the Agent can continue other work; messages and cancellation can end the wait early.\n\nDuration example (demo value, not the current effective value): with 20000 ms — a short command finishes inside the first wait and you get the result directly; a long command returns the job id first, and you read the result with async_wait_job afterwards. The example shows the wait duration does not limit the task's lifetime.\n\nClamping: the default must sit within the first-wait bounds (minYieldMs ≤ defaultYieldMs ≤ maxYieldMs).",
+    "help.minYieldMs": "Config key: minYieldMs (number, ms).\n\nA yield_ms below this lower bound is clamped to it; messages and cancellation can still end the first wait early. Forms the first-wait clamping bounds together with defaultYieldMs and maxYieldMs.",
+    "help.maxYieldMs": "Config key: maxYieldMs (number, ms).\n\nA yield_ms above this upper bound is clamped to it; messages and cancellation can still end the first wait early. Forms the first-wait clamping bounds together with minYieldMs and defaultYieldMs.",
+    "help.defaultWaitMs": "Config key: defaultWaitMs (number, ms).\n\nwait_ms is required: every call of the two wait tools must give it explicitly (requirement 2.1.1) and omitting it errors — the wait_ms=30000 in return notes is only an example that follows this setting as a demo value, not a fallback for an omitted parameter. The example pairs with the minWaitMs/maxWaitMs range.",
+    "help.minWaitMs": "Config key: minWaitMs (number, ms).\n\nOne budget covers entry checks, lookups, retries, and the wait — no per-stage re-arming; when it ends, control returns with the job handle still valid, and calling again continues reading. An arriving message can end the wait early (requirement 2.1).",
+    "help.maxWaitMs": "Config key: maxWaitMs (number, ms).\n\nOne budget covers entry checks, lookups, retries, and the wait — no per-stage re-arming; when it ends, control returns with the job handle still valid, and calling again continues reading. An arriving message can end the wait early (requirement 2.1).",
+    "help.pollIntervalMs": "Config key: pollIntervalMs (number, ms).\n\nasync_wait_agent checks whether the subagent is still running on two channels — completion events first, polling as the backup; this interval sets the backup polling cadence and is bound by the pollIntervalMs ≤ maxWaitMs pairing (requirement 5.2).",
+    "help.maxResultChars": "Config key: maxResultChars (number, characters).\n\nMeasured by String.length: beyond the cap the head and tail are kept and the omission and truncation are stated; status and notices are counted separately and do not consume this budget (requirement 2.2.3). Works with the host output buffer's threefold conversion to decide the overflow file-delivery path.",
+    "help.jobKind": "Config key: jobKind (text).\n\nType name used when registering command jobs, for identification in job lists and logs; it does not decide how commands run. An empty value is invalid (requirement 5.2).",
+    "help.subagentProvider": "Config key: subagentProvider (text).\n\nBackend service async_agent uses to create subagents, spawn by default; an empty value after trimming falls back to the default, and an unknown backend is rejected readably at call time. This is not choosing a large language model or a model vendor — model routing is specified via the provider/model parameters (requirement 2.3.1).",
+    "help.uiLang": "Config key: uiLang (enum: auto / zh / en).\n\nThe two switches are independent — changing this one does not affect agentLang; the auto mode only follows the host language and never writes the host's global language.",
+    "help.agentLang": "Config key: agentLang (enum: en / zh).\n\nThe two switches are independent — changing this one does not affect uiLang; it controls model-visible copy (tool descriptions, parameter notes, notices, errors, and execution rules); the switch that follows the host language is uiLang.",
+    "help.silentFailureGuard": "Config key: silentFailureGuard (boolean).\n\nWhen on, three defenses are active: result diagnostics (the conditional reminder in return notes), the command-description warning, and the execution-discipline note; when off, all three are absent. It only gives conditional reminders and does not guarantee detection or automatic repair (requirement 6.3). It applies only to this package's two presets and is off by default.",
+    "help.askTakeover": "Config key: askTakeover (boolean).\n\nTakeover scope: plain questions from the root agents of this package's two presets (requirement 4.1) — answered in the pending panel; permission approvals and plan reviews are not taken over and use the host's native flow. Late answers arrive as a notice and are not lost. On expiry it never picks answers for the user.",
+    "help.askTimeoutMs": "Config key: askTimeoutMs (number, ms).\n\nCounted from receiving a batch of questions; all questions in a batch share the deadline; on expiry a timeout fact is synthesized without answering for anyone, and the Agent continues. Still-answerable path: the panel keeps accepting answers after expiry, and late answers arrive as a notice.",
+    "help.askExtendMs": "Config key: askExtendMs (number, ms).\n\nGroup-level action semantics (requirement 4.3): each \"Extend wait\" click in a group header adds this duration to that session's unexpired batches at that moment, stacked on the original deadline; expired batches do not wait again, and new batches do not inherit the extension.",
+    "help.askUiSeat": "Config key: askUiSeat (enum: sidebar / overlay).\n\nExpansion actions of the two placements (requirement 4.2): the sidebar footer badge shows the open count and expands on click; the bottom-right overlay shows the questions directly. The badge hides once everything is handled. The option's default marker matches requirement 5.2 (default sidebar) and does not indicate the user's current choice.",
+    "opt.askUiSeat.sidebar": "Sidebar footer badge (default)",
+    "opt.askUiSeat.overlay": "Bottom-right overlay",
     "ask.title": "Pending questions",
     "ask.count": "{n} pending",
     "ask.answer": "Submit",
@@ -740,9 +947,7 @@ var DICTIONARIES = {
     "ask.callFailed": "The submission did not reach the host; please retry.",
     "ask.dismissLost": "Dismiss",
     "ask.windowLeft": "{s} left",
-    "ask.paused": "Paused",
-    "ask.pause": "Pause timer",
-    "ask.resume": "Resume timer",
+    "ask.extend": "Extend wait",
     "readout.effective": "Effective: {v}",
     "readout.input": "Input: {v}",
     "opt.uiLang.auto": "Follow interface language",
@@ -753,21 +958,21 @@ var DICTIONARIES = {
   }
 };
 
-// ── R30 提问接管的待答界面（§32.4/§32.6）────────────────────────────────
+// ── 提问接管的待答界面（需求 §4.2/设计 §4.3）────────────────────────────
 //
 // 通道：状态 = 轮询自有 typert remote 命名空间（1000 ms，模块 dispose 清除）；
-// 作答/忽略 = `answer`/`ignore` 直调（载荷**裸传**，客户端按 wire 名组装
-// 位置参数）；回执 `{ok,value|error}`（voice-input 同款判法）。总开关关 → 模型停轮询、
-// 两座位渲染 null——零行为。
+// 作答/忽略/延长 = `answer`/`ignore`/`extend` 直调（载荷**裸传**，客户端按 wire 名
+// 组装位置参数）；回执 `{ok,value|error}`（voice-input 同款判法）。总开关关 → 模型停
+// 轮询、两座位渲染 null——零行为。
 
-/** 轮询间隔（裁决 R30-E；requirements §5 登记 ASK_STATE_POLL_MS）。 */
+/** 轮询间隔（待答状态的轮询节拍；1000 ms，与 host 侧 state() 的轮询预期一致）。 */
 var ASK_STATE_POLL_MS = 1000;
-/** 命名空间与服务键（§32.6；与宿主 `lib/ask-takeover.js` 同串，J-15 对账）。 */
+/** 命名空间与服务键（设计 §4.3；与宿主 `lib/ask-takeover.js` 同串，对账锚点）。 */
 var ASK_NAMESPACE = "async-tools-ask";
 var ASK_SERVICE_KEY = "asyncToolsAsk";
 
 /**
- * 透传 strict codec（手写形态）。真机实测教训：`$mount` 会走
+ * 透传 strict codec（手写形态）。`$mount` 会走
  * typert-registry 的 `validateCodec`——strict codec 的 `create` 必须是**函数工厂**
  * （对象形或缺席都会被 "strict codec has no create() factory" 炸掉）；调用期
  * decode 可缺席（api-gateway client 的口径：无 decode = 透传）。工厂返回一个
@@ -788,7 +993,7 @@ function passthroughCodec(typeSymbol) {
 
 /**
  * 手写 strict descriptors（voice-input 同款形态）。`wire` 与宿主服务方法的
- * **参数名**逐字一致（`submission`）——J-15 双断言：参数名对齐 + 假 RPC 载荷单层包裹。
+ * **参数名**逐字一致（`submission`）——双断言：参数名一致 + 假 RPC 载荷单层包裹。
  */
 var ASK_REMOTE = {
   package: PACKAGE_NAME,
@@ -817,19 +1022,11 @@ var ASK_REMOTE = {
       sourceLocation: { file: "lib/ask-takeover.js" }
     },
     {
-      id: "dsh-async-tools#async-tools-ask/pause",
-      service: ASK_SERVICE_KEY, namespace: ASK_NAMESPACE, method: "pause",
+      id: "dsh-async-tools#async-tools-ask/extend",
+      service: ASK_SERVICE_KEY, namespace: ASK_NAMESPACE, method: "extend",
       invocation: { kind: "direct" },
       parameters: [{ name: "submission", wire: "submission", source: "json", codec: passthroughCodec("dsh-async-tools#ask-submission") }],
-      result: passthroughCodec("dsh-async-tools#async-tools-ask/pause:result"),
-      sourceLocation: { file: "lib/ask-takeover.js" }
-    },
-    {
-      id: "dsh-async-tools#async-tools-ask/resume",
-      service: ASK_SERVICE_KEY, namespace: ASK_NAMESPACE, method: "resume",
-      invocation: { kind: "direct" },
-      parameters: [{ name: "submission", wire: "submission", source: "json", codec: passthroughCodec("dsh-async-tools#ask-submission") }],
-      result: passthroughCodec("dsh-async-tools#async-tools-ask/resume:result"),
+      result: passthroughCodec("dsh-async-tools#async-tools-ask/extend:result"),
       sourceLocation: { file: "lib/ask-takeover.js" }
     }
   ]
@@ -838,19 +1035,19 @@ var ASK_REMOTE = {
 /**
  * 待答模型：订阅设置 scope 读 `askTakeover`/`askUiSeat`/`uiLang`（生效值 = 用户层
  * ?? 组合层 ?? 默认），开关开时轮询 `state()`。`visibilitychange → visible` 与每次
- * answer/ignore 动作后立即补一次轮询；后台标签页由浏览器节流，不做可见性门控
- * （§32.4：晚到总比停了好）。
+ * answer/ignore 动作后立即补一次轮询；后台标签页由浏览器节流，轮询不以可见性为前提
+ * （设计 §4.3：页面恢复可见及每次提交后立即刷新；后台页节流不当作服务端停止计时）。
  *
- * 失败面不静默：RPC 回执 `{ok:false}` → `callFailed` 旗标（面板顶报错，
+ * 失败不静默：RPC 回执 `{ok:false}` → `callFailed` 旗标（面板顶报错，
  * 可重试）；宿主回执 `outcome:'failed'`（迟到注入 followup/inject 抛错、条目已
  * 出列）→ 记入 `lostAnswers`（面板顶列名报错——那一条用户的答案没有送达，且
- * 无重试通道 §32.5）。竞态补醒失败（§32.6）经 `state().lost` 名单随轮询并入——
+ * 无重试通道，需求 §4.4）。竞态补醒失败（设计 §4.3）经 `state().lost` 名单随轮询并入——
  * 两个时点共用同一复合键去重与「知道了」消除（消除后服务端名单不回弹）。
  *
  * @param {object} ctx - 客户端上下文（configForms/uiWorkspace 由 inject 声明）。
  * @param {object} remote - ask 命名空间代理（`ctx.inject(['remote.async-tools-ask'])`
  *   拿到的——自 mount 的命名空间**不能**直接读 `ctx.remote[ns]`，运行时要求先 inject，
- *   否则 "cannot get property without inject" 每秒炸一次轮询——真机实测教训）。
+ *   否则 "cannot get property without inject" 每秒炸一次轮询）。
  * @returns {{store: object, actions: object, dispose: Function}} 快照店 + 动作 + 处置。
  */
 function createAskModel(ctx, remote) {
@@ -859,7 +1056,7 @@ function createAskModel(ctx, remote) {
   var timer = null;
   var seq = 0;
   var state = {
-    enabled: false, seat: "overlay", uiLang: "auto",
+    enabled: false, seat: "sidebar", uiLang: "auto",
     serverNow: 0, fetchedAt: 0, items: [], callFailed: false, lostAnswers: []
   };
 
@@ -871,7 +1068,7 @@ function createAskModel(ctx, remote) {
 
   /** 没送达的迟到答案记进面板（复合键 batchId/questionId——模型自命名
    * 的 questionId 跨批次会撞，单 questionId 会吞掉第二条丢失）。名单计入座位
-   * 渲染门——条目出列后面板不消失，报错必须被人看到并手动消除。 */
+   * 渲染条件——条目出列后面板不消失，报错必须被人看到并手动消除。 */
   function recordLost(item) {
     var key = item.batchId + "/" + item.questionId;
     if (state.lostAnswers.some(function (lost) { return lost.batchId + "/" + lost.questionId === key; })) return;
@@ -881,7 +1078,7 @@ function createAskModel(ctx, remote) {
     notify();
   }
 
-  /** §32.6：竞态补醒失败名单（state().lost，服务端内存账）随每次轮询并入本地
+  /** 设计 §4.3：竞态补醒失败名单（state().lost，服务端内存账）随每次轮询并入本地
    * lostAnswers——复合键去重、被用户「知道了」消除过的键不回弹（服务端名单有
    * 上限自愈，这里的已消除集只挡重复打扰）。 */
   var dismissedLost = new Set();
@@ -908,7 +1105,7 @@ function createAskModel(ctx, remote) {
     var seat = user.askUiSeat !== undefined ? user.askUiSeat : value.askUiSeat;
     return {
       enabled: takeover === true,
-      seat: seat === "sidebar" ? "sidebar" : "overlay",
+      seat: seat === "overlay" ? "overlay" : "sidebar",
       uiLang: uiLangOf(snap)
     };
   }
@@ -948,13 +1145,20 @@ function createAskModel(ctx, remote) {
   }
 
   function onVisibility() {
-    if (document.visibilityState === "visible" && state.enabled) poll();
+    if (document.visibilityState !== "visible" || !state.enabled) return;
+    // 恢复可见即刻**本地**重算（需求 §4.2「展示真实期限和剩余时间」）：倒计时文本按
+    // `Date.now() + skew` 现算，同步 `notify()` 让首帧就是当前剩余——不等 `poll()`
+    // 的往返（宿主忙时往返可达秒级，旧值会闪现）。隐藏期间浏览器会挂起/节流页面
+    // 定时器（平台行为，页面不可见时无观察者）；恢复可见的这条本地重算保证读数
+    // 永远从当前时刻起算，不存在累积漂移或旧值滞留。
+    notify();
+    poll();
   }
 
   var unsubscribe = scope.subscribe(function () { applyConfig(readConfig()); notify(); });
   applyConfig(readConfig());
   if (state.enabled) poll();
-  // R30-c 修正：auto 档跟随宿主语言——订阅 locale 读取面（revision 推进
+  // auto 档跟随宿主语言——订阅 locale 读取侧（revision 推进
   // 驱动重渲：语言切换与词典注册都会推）。只读不写（不调 setLocale）。
   var localeService = ctx.locale !== undefined && ctx.locale !== null
     && typeof ctx.locale.subscribe === "function"
@@ -963,7 +1167,7 @@ function createAskModel(ctx, remote) {
   var unsubscribeLocale = localeService === null
     ? null
     : localeService.subscribe(function () { notify(); });
-  // headless 守卫：无 DOM 的装载环境（单测/SSR）不挂可见性监听（轮询门控仍由开关承担）。
+  // headless 守卫：无 DOM 的装载环境（单测/SSR）不挂可见性监听（轮询启用仍由开关承担）。
   if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisibility);
 
   var actions = {
@@ -1001,27 +1205,28 @@ function createAskModel(ctx, remote) {
     jump: function (sessionId) {
       ctx.uiWorkspace.openSession(sessionId);
     },
-    /** R36-c（R49 批级作用面）：组级暂停/恢复——回执 {outcome:'paused'|'resumed'}；
-     * 成功后立即补一次轮询（items 的批级 paused 标记与冻结的 expiresAt 来自
-     * 服务端，本地不猜）。 */
-    pauseSession: function (sessionId, onDone) {
+    /** 需求 §4.3：组级延长——回执 {extended:n}；成功后立即补一次轮询（新期限经
+     * serverNow 校准显示，本地不猜）。失败走面板顶报错通道（callFailed），
+     * 不假报加时成功。 */
+    extendSession: function (sessionId, onDone) {
       if (remote === undefined) { if (onDone) onDone(false); return; }
-      remote.pause({ sessionId: sessionId }).then(function (result) {
+      remote.extend({ sessionId: sessionId }).then(function (result) {
         var ok = result !== undefined && result !== null && result.ok === true;
-        if (ok) poll();
+        if (ok) {
+          poll();
+        } else {
+          state.callFailed = true;
+          notify();
+        }
         if (onDone) onDone(ok);
-      }, function () { if (onDone) onDone(false); });
-    },
-    resumeSession: function (sessionId, onDone) {
-      if (remote === undefined) { if (onDone) onDone(false); return; }
-      remote.resume({ sessionId: sessionId }).then(function (result) {
-        var ok = result !== undefined && result !== null && result.ok === true;
-        if (ok) poll();
-        if (onDone) onDone(ok);
-      }, function () { if (onDone) onDone(false); });
+      }, function () {
+        state.callFailed = true;
+        notify();
+        if (onDone) onDone(false);
+      });
     },
     /** 报错名单手动消除（「知道了」）——未读失败不算「处理完」，消除后面板
-     * 回到「计数 0 消隐」口径。§32.6：服务端 lost 名单里的同键条目也一并挡住
+     * 回到「计数 0 消隐」口径。设计 §4.3：服务端 lost 名单里的同键条目也一并挡住
      * （已消除集），轮询不再回弹。 */
     dismissLost: function (batchId, questionId) {
       var key = batchId + "/" + questionId;
@@ -1068,7 +1273,7 @@ var ASK_CSS = ""
   + "color:var(--dsw-alias-label-tertiary);font-size:12px}"
   + ".ats-ask-jump{margin-left:auto;background:none;border:none;cursor:pointer;"
   + "color:var(--dsw-alias-brand-primary);font-size:12px;padding:0}"
-  + ".ats-ask-pause,.ats-ask-resume{background:none;border:.5px solid "
+  + ".ats-ask-extend{background:none;border:.5px solid "
   + "var(--dsw-alias-border-l4);border-radius:8px;cursor:pointer;"
   + "color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;padding:2px 8px}"
   + ".ats-ask-q{padding:6px 0}"
@@ -1136,15 +1341,22 @@ function AskItem(props) {
   var customRef = React.useRef(null);
   var busyRef = React.useRef(false);
   var rerender = React.useState(0)[1];
+  // 本地走秒（需求 §4.3「倒计时继续运行」）：显示层每秒自跳一拍，**不依赖轮询返回**——
+  // 轮询挂起（宿主忙、RPC 排队）时读数照走，不再冻结在最后一次成功轮询的值上；
+  // 服务端期限仍是权威，`skew` 校准在每轮成功轮询后自校。后台标签的浏览器
+  // 节流只降低刷新密度，不破坏正确性（文本每次重渲都按 Date.now() 现算）。
+  React.useEffect(function () {
+    var ticker = window.setInterval(function () {
+      rerender(function (n) { return n + 1; });
+    }, 1000);
+    return function () { window.clearInterval(ticker); };
+  }, []);
   var skew = props.serverNow === 0 ? 0 : props.serverNow - props.fetchedAt;
-  // R36（R49 批级口径）：暂停项冻结倒计时并示「已暂停」——不做 serverNow
-  // 折算（expiresAt 是暂停时刻冻结的到期点，恢复平移后才恢复推进）。
-  var leftMs = item.paused === true ? Infinity : item.expiresAt - (Date.now() + skew);
-  var leftText = item.paused === true
-    ? t("ask.paused")
-    : leftMs > 0
-      ? t("ask.windowLeft").replace("{s}", Math.ceil(leftMs / 1000) + " s")
-      : t("ask.expired");
+  // 倒计时仅显示用（需求 §4.3）：服务端期限为权威，本地按 serverNow 校准的钟走秒。
+  var leftMs = item.expiresAt - (Date.now() + skew);
+  var leftText = leftMs > 0
+    ? t("ask.windowLeft").replace("{s}", Math.ceil(leftMs / 1000) + " s")
+    : t("ask.expired");
   function submit() {
     if (busyRef.current) return;
     busyRef.current = true;
@@ -1188,7 +1400,7 @@ function AskItem(props) {
 }
 
 /**
- * 共享待答列表（§32.4）：按会话分组（组头 = 会话 id 短式 + 跳转按钮），组内逐题
+ * 共享待答列表（需求 §4.2）：按会话分组（组头 = 会话 id 短式 + 跳转按钮），组内逐题
  * `AskItem`；`callFailed` 时顶部报错文案（不静默）。
  */
 function AskList(props) {
@@ -1204,26 +1416,21 @@ function AskList(props) {
   }
   var nodes = [];
   groups.forEach(function (items, sessionId) {
-    // R36（R49-5 并存态口径）：组级开关的暂停态取组内条目的批级标记——存在
-    // 暂停批（不论是否与计时批并存）→ 显「恢复计时」（点击只作用于暂停批）；
-    // 全部计时批 → 显「暂停计时」（点击作用于全部在窗批）。
-    var groupPaused = items.some(function (item) { return item.paused === true; });
     nodes.push(React.createElement("div", { key: sessionId, className: "ats-ask-group" },
       React.createElement("div", { className: "ats-ask-grouphead" },
         React.createElement("span", null,
-          // 真机实测教训：会话 id 一律以 "session-" 开头，裸 slice(0,8) 让所有组头
-          // 撞成同一个 "session session-"——无法区分（也害探针点错组）。去前缀再截。
+          // 会话 id 一律以 "session-" 开头，裸 slice(0,8) 会让所有组头
+          // 撞成同一个 "session session-"——无法区分（也会害探针点错组）。去前缀再截。
           "session " + String(sessionId).replace(/^session-/, "").slice(0, 8)),
+        // 需求 §4.3：组头「增加等待时间」与既有组头动作并列——点击只发本组 sessionId，
+        // 作用该组当下在窗的批次（服务端按 askExtendMs 追加，本地不猜期限）。
         React.createElement("button", {
           type: "button",
-          className: groupPaused ? "ats-ask-resume" : "ats-ask-pause",
-          "aria-label": t(groupPaused ? "ask.resume" : "ask.pause"),
-          title: t(groupPaused ? "ask.resume" : "ask.pause"),
-          onClick: function () {
-            if (groupPaused) ask.actions.resumeSession(sessionId);
-            else ask.actions.pauseSession(sessionId);
-          }
-        }, t(groupPaused ? "ask.resume" : "ask.pause")),
+          className: "ats-ask-extend",
+          "aria-label": t("ask.extend"),
+          title: t("ask.extend"),
+          onClick: function () { ask.actions.extendSession(sessionId); }
+        }, t("ask.extend")),
         React.createElement("button", {
           type: "button", className: "ats-ask-jump",
           onClick: function () { ask.actions.jump(sessionId); }
@@ -1254,11 +1461,11 @@ function AskList(props) {
 }
 
 /**
- * 座位/面板的文案翻译（R30-c 修正）：`uiLang` 的 auto 档经客户端
- * `ctx.locale` 读取面解析宿主当前语言（渲染订阅 `getSnapshot().active`、一次性读
+ * 座位/面板的文案翻译：`uiLang` 的 auto 档经客户端
+ * `ctx.locale` 读取侧解析宿主当前语言（渲染订阅 `getSnapshot().active`、一次性读
  * `getLocale()`——返回值是快照对象，只读不写）；zh/en 走本包词典；两档之外回退
  * en 词典（「不得裸键名」护栏维持）。locale 服务缺席（旧装载环境/单测
- * 未注入）时 auto 档回退 en——与修正前行为一致，不抛错。
+ * 未注入）时 auto 档回退 en，不抛错。
  *
  * @param {string} uiLang - 生效的语言开关值（auto/zh/en）。
  * @param {object} [locale] - `ctx.locale` 服务（可缺席）。
@@ -1284,15 +1491,15 @@ function askTranslator(uiLang, locale) {
 }
 
 /**
- * 座位渲染门的公共口径：计数 > 0 **或** 存在未消除的 lostAnswers 才有脸。
- * failed 只发生在 expired 批迟到提交，该题随即出列——门若只看计数，单题批次（最常见
+ * 座位渲染条件的公共口径：计数 > 0 **或** 存在未消除的 lostAnswers 才有脸。
+ * failed 只发生在 expired 批迟到提交，该题随即出列——条件若只看计数，单题批次（最常见
  * 形态）的报错名单永不显示。未读失败不算「处理完」，消除后才回到消隐口径。
  */
 function askHasFace(state) {
   return state.items.length > 0 || state.lostAnswers.length > 0;
 }
 
-/** overlay 座位（默认）：开关开 + 座位 overlay + 有脸（见 askHasFace）才渲染浮框。 */
+/** overlay 座位：开关开 + 座位 overlay + 有脸（见 askHasFace）才渲染浮框。 */
 function AskOverlaySeat(props) {
   var state = React.useSyncExternalStore(props.ask.store.subscribe, props.ask.store.getSnapshot);
   if (!state.enabled || state.seat !== "overlay" || !askHasFace(state)) return null;
@@ -1306,7 +1513,7 @@ function AskSidebarSeat(props) {
   var rerender = React.useState(0)[1];
   if (!state.enabled || state.seat !== "sidebar" || !askHasFace(state)) return null;
   injectAskStyles();
-  var t = askTranslator(state.uiLang);
+  var t = askTranslator(state.uiLang, props.ask.locale);
   return React.createElement(React.Fragment, null,
     React.createElement("button", {
       type: "button", className: "ats-ask-badge",
@@ -1335,11 +1542,11 @@ function apply(ctx) {
     });
   }, "async-tools: plugins.bundle.config section");
 
-  // ── R30 提问接管（§32.4）：remote 命名空间挂载 + 待答模型 + 两座位 ──────────
+  // ── 提问接管（需求 §4.2）：remote 命名空间挂载 + 待答模型 + 两座位 ──────────
   // $mount 纯客户端：只装本地命名空间与描述符，不向宿主登记 strict
   // 定义，宿主侧 SRC 回退照常认领 `AskTakeoverService`。挂载失败只丢待答界面，
   // 不拖垮设置卡（catch 后 stderr 一行，模块照常装载）。
-  // 真机实测教训（②两连红的根因）：自 mount 的命名空间**不能**直接读
+  // 自 mount 的命名空间**不能**直接读
   // `ctx.remote[ns]`——运行时按 inject 清单放行属性访问（"cannot get property
   // without inject"），voice-input 的成例是 `$mount` 完成后**动态**
   // `ctx.inject(['remote.' + 命名空间], …)` 拿命名空间代理。
@@ -1347,7 +1554,7 @@ function apply(ctx) {
   askMount.catch(function (error) {
     (window.console && window.console.error) && window.console.error("[dsh-async-tools] ask remote mount failed", error);
   });
-  // 模块卸载时撤下命名空间（R4 可逆；seats 的处置在 seats 自己的 effect 里）。
+  // 模块卸载时撤下命名空间（可逆卸载，需求 §7.2；seats 的处置在 seats 自己的 effect 里）。
   ctx.effect(function () {
     return function () {
       askMount.then(function (dispose) { dispose(); }, function () {});
@@ -1388,9 +1595,9 @@ function apply(ctx) {
     };
   }
 
-  // 待答模型与座位都在 whileServed 门内：宿主行不服务这个命名空间时整套消失
+  // 待答模型与座位都在 whileServed 条件内：宿主行不服务这个命名空间时整套消失
   // （部署无痕语义与设置卡同款）。两座位**同时注册**、各自按 `askUiSeat` 与计数
-  // 决定渲染 null 还是本体——座位切换是纯呈现层（J16：宿主管道路径不随座位变）。
+  // 决定渲染 null 还是本体——座位切换是纯呈现层（宿主管道路径不随座位变）。
   ctx.effect(function () {
     return ctx.configForms.whileServed([ENTRY], function () {
       var inner = null;
@@ -1438,8 +1645,8 @@ module.exports = {
   enumFieldSpec: enumFieldSpec,
   flagFieldSpec: flagFieldSpec,
   makeSpecs: makeSpecs,
-  EnumField: EnumField,
-  FlagField: FlagField,
+  FieldShell: FieldShell,
+  resolveCopy: resolveCopy,
   createCardModel: createCardModel,
   createAskModel: createAskModel,
   AskList: AskList,
@@ -1454,14 +1661,18 @@ module.exports = {
   passthroughCodec: passthroughCodec,
   DICTIONARIES: DICTIONARIES,
   FIELDS: FIELDS,
-  /** R29-d 对账面：与 `lib/budget-limits.js` 同值（test/two-planes.test.mjs T23c 断言相等）。 */
+  /** 对账项：与 `lib/budget-limits.js` 同值（test/two-planes.test.mjs T23c 断言相等）。 */
   MS_FIELD_LIMIT: MS_FIELD_LIMIT,
   RESULT_CHARS_LIMIT: RESULT_CHARS_LIMIT,
   ASK_TIMEOUT_LIMIT: ASK_TIMEOUT_LIMIT,
+  ASK_EXTEND_LIMIT: ASK_EXTEND_LIMIT,
   FIELD_MAX: FIELD_MAX,
   FIELD_MIN: FIELD_MIN,
+  /** 设计 §5.4 对账项：与 `lib/budget-limits.js` 的 CHAIN_INEQUALITIES 同组（T23c 断言相等）。 */
+  CHAIN_PAIRS: CHAIN_PAIRS,
   boundedNumberSpec: boundedNumberSpec,
   pairViolated: pairViolated,
+  chainHitOf: chainHitOf,
   LANG_KEYS: LANG_KEYS,
   ENTRY: ENTRY,
   PACKAGE_NAME: PACKAGE_NAME,

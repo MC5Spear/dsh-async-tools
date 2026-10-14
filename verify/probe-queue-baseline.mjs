@@ -13,6 +13,8 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { rpc, rowOf, transcriptOf, localConfig } from './_rpc.mjs';
+import { NS, elevateSession } from './_r28-helpers.mjs';
+import { WAIT_INTERRUPTED } from './message-markers.mjs';
 
 const CWD = localConfig.workspaceDir;
 const PRESET = 'dsh-async';
@@ -20,16 +22,20 @@ const OUT = join(localConfig.evidenceDir, 'logs', 'queue-baseline.json');
 const QUEUE_MARKER = '排队投递测试';
 const QUEUE_TEXT = `${QUEUE_MARKER}：这条消息是用 queue 模式发进队列的。当它真正到达你时，请只回复一行：QUEUE_RECEIVED_OK`;
 
-// 起跑前把设置写回出厂默认（`async-e2e.mjs` 的教训：上游残留的 maxWaitMs 会让窗口假窄）。
+// 起跑前把设置写回出厂默认（上游残留的 maxWaitMs 会让窗口假窄）。
 const DEFAULTS = {
   maxResultChars: 30000, defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
   defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000, pollIntervalMs: 500, jobKind: 'async-command'
 };
-await rpc('settings/replace', { ns: 'async-tools', section: DEFAULTS });
+// ns 单一登记点 `_r28-helpers.mjs`（各探针统一从这里取，不自带字面量）。
+await rpc('settings/replace', { ns: NS, section: DEFAULTS });
 
 const created = await rpc('session/create', { request: { cwd: CWD, agentPreset: PRESET } });
 if (created.agentPreset !== PRESET) throw new Error(`session/create fell back: ${String(created.agentPreset)}`);
 const sessionId = created.sessionId;
+// 环境前置：本验证实例（LocalSystem 托管服务）受限档 spawn 必死，长命令前先升档
+// （见 `_r28-helpers.elevateSession` 头注）。
+await elevateSession(sessionId);
 console.log(`sessionId=${sessionId}`);
 
 const TASK = [
@@ -54,15 +60,14 @@ function userTextOf(event) {
   return content.map((b) => (b?.type === 'text' ? String(b.text ?? '') : '')).join(' ');
 }
 
-/** 工具结果文本（按 async-e2e 的形状：tool/result → message.content → tool-result 块）。 */
+/** 工具结果文本（0.2.0 转录形状：渲染文本块 type:'text'，句柄在 message.toolCallId
+ *  ——旧 'tool-result' 块形状在转录 0 次出现，2026-10-09 实测，与 async-e2e 同款形状判据）。 */
 function toolResultTexts(page) {
   const texts = [];
   for (const record of page.records) {
     if (record.event?.type !== 'tool/result') continue;
-    for (const block of record.event.data?.message?.content ?? []) {
-      if (block.type !== 'tool-result') continue;
-      texts.push((block.content ?? []).map((p) => p.text ?? '').join(''));
-    }
+    texts.push((record.event.data?.message?.content ?? [])
+      .filter((c) => c.type === 'text').map((c) => String(c.text ?? '')).join(''));
   }
   return texts;
 }
@@ -97,7 +102,7 @@ for (;;) {
     }
   }
 
-  // 定位长等待（wait_ms=120000），两拍后发 queue 消息（窗口定位法抄 async-e2e v4）。
+  // 定位长等待（wait_ms=120000），两拍后发 queue 消息（窗口定位法与 async-e2e 同款）。
   const longWaitActive = page.records.some((r) => {
     if (r.event?.type !== 'tool/call' || r.event.data?.name !== 'async_wait_job') return false;
     return /wait_ms"\s*:\s*120000/.test(String(r.event.data.arguments ?? ''));
@@ -119,9 +124,9 @@ for (;;) {
     console.log(`RECORD +${String(evidence.timings.queueSentAtMs)}ms 发出 queue 消息`);
   }
 
-  // 打断证据：queue 消息发出之后，等待的工具结果里出现"等待被打断"。
+  // 打断证据：queue 消息发出之后，等待的工具结果里出现打断锚（两语标记）。
   if (queueSentAt > 0 && evidence.waitInterrupted === undefined) {
-    const interrupted = toolResultTexts(page).some((t) => t.includes('等待被打断'));
+    const interrupted = toolResultTexts(page).some((t) => WAIT_INTERRUPTED.test(t));
     if (interrupted) {
       evidence.waitInterrupted = true;
       evidence.timings.interruptSeenAtMs = Date.now() - startedAt;

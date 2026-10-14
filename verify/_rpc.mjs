@@ -7,13 +7,12 @@
  * ## 实例坐标不在代码里
  *
  * 基址与令牌文件的路径都是**本机事实**，所以它们经 `tools/_local-config.mjs` 从
- * 本机平面读（`.local/config.mjs`，或环境变量 `DSAT_INSTANCE_URL` / `DSAT_TOKEN_FILE`）。
+ * 本机侧读（`.local/config.mjs`，或环境变量 `DSAT_INSTANCE_URL` / `DSAT_TOKEN_FILE`）。
+ * 写死路径（含从本文件位置推算服务家目录的写法）只在"仓库与服务目录是兄弟"
+ * 这一台机器上成立；换个目录布局就解析到不存在的路径，而报错会指向 `ENOENT`
+ * 而不是"你的坐标没配置"。
  *
- * 在本模块之前，这两件事是"从本文件位置往上两级推算服务家目录"，外加一个写死的端口。
- * 那个写法只在"仓库与服务目录是兄弟"这一台机器上成立；换个目录布局就解析到不存在的
- * 路径，而报错会指向 `ENOENT` 而不是"你的坐标没配置"。
- *
- * 本机平面缺席（CI、外部 clone）时本模块打印一行 `SKIP …` 并以 0 退出——这类判据只对
+ * 本机环境缺席（CI、外部 clone）时本模块打印一行 `SKIP …` 并以 0 退出——这类判据只对
  * 开发机上的活体实例有意义，缺席不是失败，但必须留痕。
  *
  * @module verify/_rpc
@@ -29,23 +28,41 @@ if (cookie.length === 0) throw new Error('token exchange returned no cookie');
 
 /**
  * 调一个网关方法。
+ *
+ * 连接级失败（TypeError: fetch failed）**重试一次**：探针一跑 20+ 分钟，浏览器
+ * 阶段的长时间隙后，服务端关闭的空闲 keep-alive 连接会被 undici 复用——旧连接
+ * 上刚要发请求就撞上已关连接，表现为一次随机 fetch failed（长探针两跑两中，
+ * 失败点各不相同；async-e2e 等短探针零命中）。重试发起新连接即成。安全边界：
+ * settings/* 幂等（同值再写一次无害）；session/new 侧效应是可能多出一个孤儿
+ * 会话——探针本来就留会话，可接受；业务判据不受影响（重试的是同一请求）。
  * @param {string} endpoint - 方法名（如 `session/list`）。
  * @param {object} args - 参数。
  * @returns {Promise<object>} `result.value`。
  */
 export async function rpc(endpoint, args) {
   const rpcId = `probe-${Math.random().toString(36).slice(2, 10)}`;
-  const response = await fetch(`${BASE}/api/${endpoint}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', cookie },
-    body: JSON.stringify({ type: 'client-request', rpcId, method: endpoint, payload: { args } })
-  });
-  const text = await response.text();
-  const body = JSON.parse(text);
-  if (body?.result?.ok !== true) {
-    throw new Error(`${endpoint}: ${JSON.stringify(body?.result?.error ?? text.slice(0, 200))}`);
+  const body = JSON.stringify({ type: 'client-request', rpcId, method: endpoint, payload: { args } });
+  let response;
+  try {
+    response = await fetch(`${BASE}/api/${endpoint}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body
+    });
+  } catch (connError) {
+    await fetch(`${BASE}/api/${endpoint}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body
+    }).then((retry) => { response = retry; }, (retryError) => { throw retryError; });
+    void connError;
   }
-  return body.result.value;
+  const text = await response.text();
+  const parsed = JSON.parse(text);
+  if (parsed?.result?.ok !== true) {
+    throw new Error(`${endpoint}: ${JSON.stringify(parsed?.result?.error ?? text.slice(0, 200))}`);
+  }
+  return parsed.result.value;
 }
 
 /** 读一个会话的清单行。 */

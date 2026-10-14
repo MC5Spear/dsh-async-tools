@@ -1,6 +1,6 @@
 /**
- * 守哪些需求：R55（等待工具对先到插话的起始检查）五判据——设计 §43.2 变异口径
- * （R56 重写：五状态机＋精确红面核验）。
+ * 守哪条需求：需求 §2.2（等待入口对先到插话的起始检查）五判据
+ * （五状态机＋精确红面核验）。
  *
  * 五个变异，方向互补，缺一个就有无守卫的防线：
  * - MA **纯事件驱动回潮**：两工具的起始检查调用点失效 → C1a/C1b 必红（判据 1 的
@@ -10,11 +10,11 @@
  * - MB **拆 kind 过滤**：`preexistingSteering` 认 next-step 里一切消息 → 转达/结算/
  *   迟到作答滞留也打断 → C2a/C2b＋读侧/起始检查 kind 守卫用例红（判据 2 负面对照一）。
  * - MC **加扫 next-turn**：排队消息也命中 → C3a/C3b＋读侧用例红（判据 3 负面对照二，
- *   R12 不回归）。
+ *   打断语义不回归——需求 §2.1.2）。
  * - MD **wait-agent 去结算并存决定**：起始命中即无条件 interrupted → C5a 红（判据 5）。
  * - ME **wait-job 停点前移**：屏障终态判定对插话在场让路 → C5b 红（判据 5，停点防回归）。
  *
- * 核验口径（设计 §43.2，R56）：每个变异的**精确红面**＝按文件分组的用例名集合与
+ * 核验口径：每个变异的**精确红面**＝按文件分组的用例名集合与
  * 下方 expectFail 名单双向相等，且 expectPass（两条既有 T2 用例）保持绿——红面多
  * 一条少一条都算 MISPLACED（非零退出），不是 CAUGHT。结局五状态分清：green / red /
  * timeout / didnt-run / incomplete——超时不算 CAUGHT（挂起护栏 250 ms 让真红快过
@@ -173,7 +173,7 @@ function restore() {
   }
 }
 
-/** 对指定文件应用一组锚点替换。锚唯一性计数门（§43.2）：任一锚出现次数 ≠ 1 →
+/** 对指定文件应用一组锚点替换。锚唯一性计数门：任一锚出现次数 ≠ 1 →
  *  整个变异失效当失败处理（撞句在变异前暴露，不靠红面反推）。 */
 function applyVariant(patches) {
   for (const { file, anchor } of patches) {
@@ -198,7 +198,7 @@ const AGENT_ADJUDICATE = '        if (unclaimedSettlement(agent, agentId) !== nu
 const JOB_SCAN = '      if (preexistingSteering(exec.agent) !== null) {';
 const JOB_TERMINAL = '      if (TERMINAL.has(barrier.status)) return settledResult(barrier);';
 
-// 期望红面（§43.2 校准后冻结；红面多一条少一条都算 MISPLACED）与期望绿面（T2 两例）。
+// 期望红面（红面多一条少一条都算 MISPLACED）与期望绿面（T2 两例）。
 const EXPECT_PASS = [
   { file: 'test/wait-agent.test.mjs', name: 'async_wait_agent（T2）：用户插话 → interrupted，子代理一次都没被碰过' },
   { file: 'test/wait-job.test.mjs', name: 'async_wait_job（T2）：用户插话 → interrupted，作业一次都没被碰过' }

@@ -1,16 +1,16 @@
 /**
- * 测试替身：不启动真实进程、不依赖 dsh 宿主的假件（0.1.7 契约，§26.1）。
+ * 测试替身：不启动真实进程、不依赖 dsh 宿主的假件（0.2.0-rc.2 契约）。
  *
  * 每个假件只实现被测代码**真正调用到**的成员；任何契约漂移都会立刻变成测试失败，
  * 而不是被宽容的 mock 掩盖。
  *
- * ## 0.1.7 形态（与旧假件的差异）
+ * ## 契约形态
  *
- * - `shell.execute(spec)` 是 **async**（0.1.5 的 `start` 是同步）；
- * - `fakeProc` 补 `observed.stdout/stderr` 非消费偏移读（`readFrom(from)` →
+ * - `shell.execute(spec)` 是 **async**；
+ * - `fakeProc` 提供 `observed.stdout/stderr` 非消费偏移读（`readFrom(from)` →
  *   `{text, nextOffset, lossy, spillPath?}`，与 `JobSourceRead` 同形）；`status` 值域
- *   0.1.7 是 `running|completed|killed`（旧的 `exited` 不存在了）；
- * - `jobs` 不再是"默认全抛"的占位：内置一个**行为完整的假注册表**——
+ *   是 `running|completed|killed`；
+ * - `jobs` 内置一个**行为完整的假注册表**——
  *   `start` 收 `run(job)` 同步 hooks + `output` 拉式源、自动把 `hooks.done` 的
  *   `JobOutcome` 耦合成结算、`wait` 实现超时 resolve 活视图与 abort reject 两条路径、
  *   `read` 返回 `{chunks, lossy, result?, job}`（契约）。
@@ -24,14 +24,13 @@ import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools';
 /**
  * 断言工具的返回值真的符合它自己声明的 `output.schema`。
  *
- * **`validateJsonSchemaValue` 返回违规数组，不抛错**。写成 try/catch 会让每条分支
- * 都假绿——定位探针曾因此所有分支都打印 OK。
+ * **`validateJsonSchemaValue` 返回违规数组，不抛错**。写成 try/catch 会什么都捕不到，
+ * 每条分支都假绿。
  * 抛 `ToolOutputError` 的是宿主那一层；单测直接调 `tool.execute` 走不到那一层，
  * 所以必须自己调校验器。
  *
- * 为什么必须有它：真机上 `async_run` 的**完成分支**曾 100% 失败
- * （`"value" must match exactly one oneOf branch (matched 0)`），而当时的单测只断言字段，
- * 69 条全绿也照样漏。
+ * 为什么必须有它：只断言字段的用例对 schema 违规不设防——字段齐全而整体选不中
+ * output.schema 的分支时照样全绿，宿主校验器当场能抓。
  *
  * @param {object} tool - `defineTool()` 的返回值（要读它的 `output.schema`）。
  * @param {unknown} value - `execute()` 的返回值。
@@ -67,17 +66,17 @@ export function checkedTool(tool) {
 }
 
 /**
- * 行为完整的假作业注册表（0.1.7 `JobRegistry` 的测试投影）。
+ * 行为完整的假作业注册表（0.2.0-rc.2 `JobRegistry` 的测试投影）。
  *
  * 只实现本插件真正调用到的成员（start/get/read/wait/list），外加测试探针
  * （settleJob / views / waitersOf / wasAwaited / readCalls）。两个关键行为纪律：
  *
  * - **结算自动耦合**：`start` 里 `hooks.done.then(outcome => 结算)`——生产者的
- *   `done`（我们的 `proc.done → jobOutcome` 链）resolve 什么，注册表就以什么结算，
+ *   `done`（替身的 `proc.done → jobOutcome` 链）resolve 什么，注册表就以什么结算，
  *   与真实契约一致（`JobHooks.done: Promise<JobOutcome>`）；
  * - **wait 双路径**：超时是 **resolve 回当时的 JobView**（可能是 running），
  *   abort 才 reject（`"wait aborted"`）；被结算释放的活 wait 记 `awaited` 旗标
- *   （0.1.7 通知语义的判据面）。
+ *   （0.2.0-rc.2 通知语义的判据）。
  *
  * @param {object} [options] - `{ now }` 可注入时钟。
  * @returns {object} `{ service, settleJob, views, waitersOf, wasAwaited, readCalls, specs }`。
@@ -124,6 +123,9 @@ export function createFakeJobs({ now = () => Date.now() } = {}) {
     pump(job); // 结算前最后 drain 一次（真实契约）
     job.status = outcome.status;
     if (outcome.detail !== undefined) job.detail = outcome.detail;
+    // 一次性 result 保真：注册表保存 outcome.result，read 只在首次终态读取时一次性交付
+    // （resultDelivered）——假件保持同款语义。
+    if (outcome.result !== undefined) job.outcomeResult = outcome.result;
     job.finishedAt = now();
     const released = [...job.waiters];
     job.awaited = released.length > 0;
@@ -168,10 +170,10 @@ export function createFakeJobs({ now = () => Date.now() } = {}) {
       job.cancel = hooks.cancel;
       void Promise.resolve(hooks.done).then(
         (outcome) => settle(job, outcome ?? { status: 'completed' }),
-        // 宿主 `dsh-jobs-local/lib/index.js:472-478`：done 拒绝 → 作业按 failed 结算。
+        // 宿主 `[0.2.0-rc.2] dsh-jobs-local/lib/index.js:472-478`：done 拒绝 → 作业按 failed 结算。
         // 本包生产者的 done 自分类（jobs.js 的 done 链不拒绝），此分支是替身对齐
-        // 宿主契约的兜底面——没有它，done 拒绝在 fake 上变成 unhandled rejection
-        // 且作业永不结算（实现审查发现的保真缺口）。
+        // 宿主契约的回退路径——没有它，done 拒绝在 fake 上变成 unhandled rejection
+        // 且作业永不结算。
         (error) => settle(job, { status: 'failed', detail: String(error?.message ?? error) })
       );
       return id;
@@ -228,7 +230,7 @@ export function createFakeJobs({ now = () => Date.now() } = {}) {
         }
       });
     },
-    /** 存活清单（R8 错误文案用）。 */
+    /** 存活清单（上限报错的存活作业列举用）。 */
     list(caller) {
       return [...jobs.values()]
         .filter((job) => job.owner === caller || job.owner === undefined)
@@ -244,7 +246,7 @@ export function createFakeJobs({ now = () => Date.now() } = {}) {
     views: () => [...jobs.values()].map(view),
     /** 测试驱动结算（不经生产者 done，用于 wait 场景）。 */
     settleJob: (id, outcome) => settle(jobs.get(id), outcome),
-    /** 测试驱动 kill：经 hooks.cancel（真实 job_kill / owner teardown 的入口，R32 prep 窗口判据用）。 */
+    /** 测试驱动 kill：经 hooks.cancel（真实 job_kill / owner teardown 的入口，prep 窗口判据用）。 */
     killJob: (id, reason) => {
       const job = jobs.get(id);
       if (job?.cancel) job.cancel(reason);
@@ -268,7 +270,7 @@ export function fakeCtx() {
   const started = [];
 
   // 测试经常替换 shell.execute / shell.resolve；把"启动记录"放在包装函数里，
-  // 这样替换实现后计数仍然有效（早期版本把数组直接闭包在 start 里，替换后失效）。
+  // 这样替换实现后计数仍然有效。
   const shell = {
     resolve(request) { return { ...request, resolved: true }; },
     async execute(spec) {
@@ -281,7 +283,7 @@ export function fakeCtx() {
    * 假 shellEnv：真实实现返回**冻结的** `DSH_*` 快照。
    * 每次 `collect()` 返回**同一个**对象，断言用"身份相等"而不是深比较——
    * `async_run` 必须把 `collect(exec)` 的**返回值本身**放进请求，
-   * 而不是自己拼一份同形对象（N1 的验收口径）。
+   * 而不是自己拼一份同形对象。
    */
   const shellEnvSnapshot = Object.freeze({ DSH_HOME: 'C:\\fake-dsh-home', DSH_SHELL: '1' });
   const shellEnv = {
@@ -297,7 +299,7 @@ export function fakeCtx() {
     jobs: jobsFake.service,
     shell,
     shellEnv,
-    // R30：宿主半边构造 AskTakeoverService（cordis Service 基类在构造里调
+    // 宿主半边构造 AskTakeoverService（cordis Service 基类在构造里调
     // `ctx.reflect.provide` 注册服务）——假 ctx 提供空实现即可（服务随 ctx 处置）。
     reflect: {
       provide() {},
@@ -306,7 +308,7 @@ export function fakeCtx() {
     subagents: {
       listChildren() { throw new Error('listChildren not stubbed'); }
     },
-    // R13 模型选择：`async_agent` 只读 `subagentModelSelectionPolicy` 投影。
+    // 模型选择：`async_agent` 只读 `subagentModelSelectionPolicy` 投影。
     // 挂载层默认"无 policy"（stateOf 返回 null——reducer 未 record 的初值形态）；
     // 行为测试在各自文件里覆盖带 routes 的形态（test/agent.test.mjs）。
     sessionProjections: {
@@ -334,9 +336,9 @@ export function fakeCtx() {
         if (index >= 0) current.splice(index, 1);
       };
     },
-    // R30 通道轮：ask-takeover 宿主半边用 `ctx.emit(name, payload)` 发迟到作答
+    // ask-takeover 宿主半边用 `ctx.emit(name, payload)` 发迟到作答
     // 插件事件（普通 cordis 频道事件）——假 ctx 与探针 emit 同步分发到监听器。
-    // R34：cordis emit 是多参透传（workflow 引擎事件是 `(info, title|message|agent)`
+    // cordis emit 是多参透传（workflow 引擎事件是 `(info, title|message|agent)`
     // 双参形状，dsh-tool-workflow :19-44）——假件按同语义分发全部实参。
     emit(name, ...payload) {
       const list = [...(listeners.get(name) ?? [])];
@@ -357,7 +359,7 @@ export function fakeCtx() {
     shellEnvSnapshot,
     /** 每次 `shell.execute(spec)` 用过的 spec（按调用顺序）。 */
     startedSpecs: started,
-    /** 假作业注册表的探针面（settleJob / views / wasAwaited / readCalls / chunksOf…）。 */
+    /** 假作业注册表的探针（settleJob / views / wasAwaited / readCalls / chunksOf…）。 */
     jobsFake,
     /**
      * 安装 shell.execute 的实现，同时记录每次调用到 `started`。
@@ -398,16 +400,16 @@ export function fakeCtx() {
  * kebab 的 `'next-turn'`/`'next-step'` 只是内部 state 键与事件 target。
  * `inboxPayload({ target })` 会把消息推进对应列表，模拟 `followup()`（queue）与
  * `steer()` 的落点。`watchUserInterrupt` 的打断判定按 `message.id` 回查
- * `nextStep`（R12），因此期望打断的用例必须用 `target: 'next-step'` 发射事件。
+ * `nextStep`（需求 §2.1.2），因此期望打断的用例必须用 `target: 'next-step'` 发射事件。
  */
 export function fakeAgent(id = 'session-1') {
   return { id, session: { header: { cwd: 'D:\\work' } }, inbox: { nextTurn: [], nextStep: [] } };
 }
 
 /**
- * **守卫式** ctx：只放行 `async_wait_agent` 有权使用的公共面，其余一律抛错。
+ * **守卫式** ctx：只放行 `async_wait_agent` 有权使用的公共接口，其余一律抛错。
  *
- * R8 第一条要求 `async_wait_agent` **不得读会话日志、内部状态或越界数据**。
+ * 需求 §6.2 要求 `async_wait_agent` **不得读会话日志、内部状态或越界数据**。
  * 本函数把这条要求**行为化**：把 ctx 包成 Proxy，**只有明确列出的属性可读**，
  * 读别的立刻抛错并记下名字——"碰了内部状态"当场变红并指出碰的是哪个属性。
  *
@@ -416,9 +418,10 @@ export function fakeAgent(id = 'session-1') {
  * | 属性 | 为什么放行 |
  * |---|---|
  * | `ctx.on` | 公共事件订阅（`lib/interrupts.js` 用它收插话与结算通知） |
- * | `ctx.timer` | 有界等待的截止与兜底轮询 |
+ * | `ctx.timer` | 有界等待的截止与回退轮询 |
  * | `ctx.logger` | 日志出口（不影响语义） |
- * | `ctx.subagents.listChildren` | 公共查询——本需求允许的唯一"读"通道 |
+ * | `ctx.subagents.listChildren` | 公共查询——本需求允许的"读"通道之一 |
+ * | `ctx.agents.get` | 公共 Agent 注册表（三态判定；目录在列的行驻留读 running） |
  * | `ctx.get` | cordis 取服务的标准入口（可选服务用） |
  *
  * @returns {{ctx: object, touched: string[], denied: string[], emit: (name: string, payload: object) => void}} 守卫 ctx 与探针。
@@ -440,7 +443,7 @@ export function guardedWaitAgentCtx() {
       if (typeof key === 'symbol' || key in target) return target[key];
       denied.push(`subagents.${String(key)}`);
       throw new Error(
-        `R8 第一条违规：async_wait_agent 读了 ctx.subagents.${String(key)}——`
+        `越界读取违规（需求 §6.2）：async_wait_agent 读了 ctx.subagents.${String(key)}——`
         + '只允许公共查询 listChildren()'
       );
     }
@@ -451,6 +454,24 @@ export function guardedWaitAgentCtx() {
     ['timer', base.ctx.timer],
     ['logger', { info: (...args) => base.logs.push(['info', ...args]), warn: (...args) => base.logs.push(['warn', ...args]) }],
     ['subagents', subagents],
+    // 注册表三态：目录在列的行按 running 驻留（用例可整替 `agents` 键控状态）。
+    ['agents', new Proxy({
+      get(id) {
+        touched.push('agents.get');
+        return state.children.some((row) => row?.id === id)
+          ? { status: 'running' }
+          : undefined;
+      }
+    }, {
+      get(target, key) {
+        if (typeof key === 'symbol' || key in target) return target[key];
+        denied.push(`agents.${String(key)}`);
+        throw new Error(
+          `越界读取违规（需求 §6.2）：async_wait_agent 读了 ctx.agents.${String(key)}——`
+          + '只允许公共查询 agents.get(id)'
+        );
+      }
+    })],
     ['get', () => undefined]
   ]);
 
@@ -464,8 +485,8 @@ export function guardedWaitAgentCtx() {
       }
       denied.push(String(key));
       throw new Error(
-        `R8 第一条违规：async_wait_agent 读了 ctx.${String(key)}——`
-        + '只允许公共事件 ctx.on 与公共查询 ctx.subagents.listChildren'
+        `越界读取违规（需求 §6.2）：async_wait_agent 读了 ctx.${String(key)}——`
+        + '只允许公共事件 ctx.on 与公共查询 ctx.subagents.listChildren / ctx.agents.get'
       );
     },
     has(_target, key) { return typeof key === 'string' && allowed.has(key); }
@@ -485,10 +506,10 @@ export function guardedWaitAgentCtx() {
 }
 
 /**
- * 构造假 shell 进程句柄（0.1.7 `ShellExecution` 形状）。
+ * 构造假 shell 进程句柄（0.2.0-rc.2 `ShellExecution` 形状）。
  *
  * - `readOutput()` 按真实契约返回**增量**结构 `{ delta, lossy, stdoutSpillPath? }`
- *   ——消费型游标（早期实现静默丢输出的地方）；
+ *   ——消费型游标（每次只给新增量，不持续读就丢字节）；
  * - `observed.stdout/stderr.readFrom(from)` 是**非消费**偏移读
  *   （`{text, nextOffset, lossy, spillPath?}`，与 `JobOutputSource.read` 同形
  *   只差方法名——`lib/jobs.js` 做薄适配）；与消费游标互不抢字节；
@@ -529,7 +550,7 @@ export function fakeProc({
     exitCode,
     signal,
     done,
-    /** 非消费偏移读（observed.stderr 在 spawn 失败时承载失败说明——0.1.7 契约）。 */
+    /** 非消费偏移读（observed.stderr 在 spawn 失败时承载失败说明——0.2.0-rc.2 契约）。 */
     observed: {
       stdout: makeReader(text),
       stderr: makeReader(spawnFailed)
@@ -580,13 +601,13 @@ const TARGET_TO_PROPERTY = { 'next-turn': 'nextTurn', 'next-step': 'nextStep' };
  * @param {'next-turn'|'next-step'} [options.target] - 落点（事件 target 用 kebab，
  *   对应 `Inbox` 公共属性 `nextTurn`/`nextStep`）；给出时把消息推进对应列表
  *   （模拟 `followup`/`steer` 的插入副作用）。
- *   期望打断的用例必须传 `'next-step'`（R12：只有插话落点打断）。
+ *   期望打断的用例必须传 `'next-step'`（需求 §2.1.2：只有插话落点打断）。
  *
  *   ⚠️ **不带 `target` 的消息不落任何列表**——这与真机上 deferContext 的上下文消息
  *   （`source.kind:'plugin'` 的工具结果、`subagent-settled` 结算通知，**恰恰 splice 进
  *   next-step**）形态不同。要建模后者必须显式传 `target: 'next-step'`，
  *   否则 `isSteering` 的落点判定会"顺带"挡住它们。
- *   守卫用例见 `interrupt.test.mjs` 的"×R12，M3 守卫"一条。
+ *   守卫用例见 `interrupt.test.mjs` 的"M3 守卫"一条。
  * @returns {object} payload。
  */
 export function inboxPayload({ agent, sourceKind, text = '', form, summary, senderSessionId, target }) {
@@ -627,7 +648,7 @@ export async function flush(times = 8) {
  */
 export function freezeTimers(ctx) {
   ctx.timer.timeout = () => () => {};
-  // 兜底轮询也一并冻结：在 listChildren 恒返回同一份数据的替身里它永不触发，
+  // 回退轮询也一并冻结：在 listChildren 恒返回同一份数据的替身里它永不触发，
   // 但它的短间隔会让竞速结果难以预测。
   ctx.timer.interval = () => () => {};
 }

@@ -1,5 +1,5 @@
 /**
- * 开发树 node_modules 七条 junction 的重锚核验（R38 §37.2-A2；R40 增 zod 第七条）。
+ * 开发树 node_modules 七条 junction 的重锚核验。
  *
  * 判据：六条 `@deepseek-ai` junction（cordis / dsh-jobs / dsh-sandbox / dsh-subagent /
  * dsh-tools / schemastery）必须逐条存在、逐条指向 0.2.0 线树的 `@deepseek-ai` 目录，
@@ -7,19 +7,15 @@
  * 第七条 zod（**顶层平铺**，非 `@deepseek-ai` 域）锚树顶层 `node_modules\zod`，
  * 版本 4.6.5——投影 stateSchema 的注册表契约是 zod，与宿主同一物理实例、零版本漂移。
  *
- * ## 树根从哪来（本条是重构后的关键变化）
+ * ## 树根从哪来
  *
- * 从前这里写死一个绝对路径常量，仓内另**五处**也各写死一个树根常量，于是本脚本末尾
- * 挂了一段"五处常量必须与本器同根"的对账——因为漏改/回退任一处，各自检查器都照绿。
- *
- * 现在树根**只有一个来源**：`tools/_local-config.mjs` 从本机平面读（或环境变量
+ * 树根**只有一个来源**：`tools/_local-config.mjs` 从本机侧读（或环境变量
  * `DSAT_HOST_MODULES`）。`evidenceTree['020']` 的缺省值就是 `<hostModules>/@deepseek-ai`，
- * 所以"宿主锚"与"证据锚"在构造上不可能指向两棵不同的树——**半翻锚状态从"要靠对账发现"
- * 变成了"写不出来"**。
+ * 所以"宿主锚"与"证据锚"在构造上不可能指向两棵不同的树。
  *
- * 对账段因此换了个形态，但**没有取消**：它改成断言"树的消费者不许自带树根"——
+ * 对账段保留，形态是断言"树的消费者不许自带树根"——
  * 下面 `TREE_CONSUMERS` 列出的每个模块都必须引用配置加载器。自带绝对路径字面量的
- * 情形另有 `tools/check-public-surface.mjs` 全局兜底（公开面零本机指纹）。
+ * 情形另有 `tools/check-public-surface.mjs` 从全局兜住（公开范围零本机指纹）。
  *
  * ## 与 `npm test` 的关系
  *
@@ -30,7 +26,7 @@
  *
  * ## 跳过态
  *
- * 本机平面缺席（CI、外部 clone）时打一行 `SKIP` 放过。本机上**没有跳过态**：
+ * 本机环境缺席（CI、外部 clone）时打一行 `SKIP` 放过。本机上**没有跳过态**：
  * junction 是开发机接线状态，缺席就是红（那份七条清单是交付物本身）。
  *
  * 用法：`node verify/check-junctions.mjs [--tree <0.2.0 线树的 @deepseek-ai 目录>]`
@@ -77,8 +73,13 @@ const TREE_TOP = dirname(TREE); // 0.2.0 树 node_modules 根（zod 顶层平铺
 /**
  * 树根的消费者：每个都**必须**从配置加载器取树，不许自带树根字面量。
  *
- * 这份名单就是老"五处常量对账段"的新形态。加一个新的树消费者时要同步登记——
+ * 加一个新的树消费者时要同步登记——
  * 漏登记不会立刻红，但下一个人就没有地方看到这条约定。
+ *
+ * `tools/_host-resolve.mjs` **不在名单里**：它就是锚的提供方（环境变量契约
+ * `DSAT_HOST_MODULES`/`DSH_HOME` 的实现），把它列进来等于要求它引用自己。
+ * 消费方引用它（`LOADER_REF` 认 `_host-resolve.mjs`）与引用 `_local-config.mjs`
+ * 同效。
  */
 const TREE_CONSUMERS = [
   'verify/check-facts-anchors.mjs',
@@ -86,7 +87,6 @@ const TREE_CONSUMERS = [
   'verify/mutate-agent-policy.mjs',
   'verify/diff-trees.mjs',
   'tools/validate-preset.mjs',
-  'tools/_host-resolve.mjs',
   'test/preset.test.mjs'
 ];
 
@@ -150,9 +150,8 @@ checkOne({
 
 // ── 树根唯一来源的对账段 ────────────────────────────────────────────────────
 //
-// 判据：每个树消费者都必须**引用配置加载器**（或经 `_host-resolve` 的环境变量契约）。
-// 这正是老"五处常量同根"段要挡的那件事——"另一处偷偷自带树根"——的新形态：
-// 从前靠"两处常量文本相同"发现，现在靠"根本不许出现第二处常量"避免。
+// 判据：每个树消费者都必须**引用配置加载器**（或经 `_host-resolve` 的环境变量契约）——
+// 树根常量只许存在于配置加载器一处，"另一处偷偷自带树根"即红。
 const LOADER_REF = /_local-config\.mjs|_host-resolve\.mjs/;
 for (const file of TREE_CONSUMERS) {
   checked += 1;

@@ -3,18 +3,12 @@
  *
  * ## 为什么需要这个工具（而不是"记得手动补"）
  *
- * 本文件所在目录的 `edit` 工具**每次写文件都会丢掉 UTF-8 BOM**。
- * 而 `probe-service-signal.ps1` 的 BOM **是必需的**——文件自己的注释就写着：
- * *"读这些文件必须显式 -Encoding UTF8：驱动是 Node 写的、不带 BOM，
- * Windows PowerShell 5.1 的 Get-Content -Raw 会按 ANSI(CP936) 解码"*。
- *
- * 实测的后果（本会话踩了 **4 次**）：丢了 BOM 之后
+ * `edit` 工具**每次写文件都会丢掉 UTF-8 BOM**。丢了 BOM 之后：
  * - `pwsh`（PowerShell 7，默认 UTF-8）跑**正常**；
  * - `powershell`（Windows PowerShell 5.1）把它按 cp936 读，中文全乱，
  *   报一堆"Missing closing '}'"，而**首条错误与真正的问题无关**。
  *
- * 更麻烦的是：`check-ps1-bom.mjs` 只能**检测**，不能**修复**；
- * 而"检测到之后手工补"依赖我记得——这正是本项目反复失败的形态。
+ * 检测在 `check-ps1-bom.mjs`，修复在这里；手工补依赖记忆，不可靠。
  * 所以这里做成可重复运行的工具，并在需要时紧跟 `edit` 之后跑一次。
  *
  * 用法：

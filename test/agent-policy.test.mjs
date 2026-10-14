@@ -1,5 +1,5 @@
 /**
- * `lib/agent-policy.js` 单测（R40 §38.4；D1/D3/D4/D5/D6/D8 各有
+ * `lib/agent-policy.js` 单测（变异腿 D1/D3/D4/D5/D6/D8 各有
  * 对应腿——删掉被测保护该测必红）。
  *
  * 夹具纪律：**不读宿主树**（钉版看守 `verify/check-agent-policy.mjs` 管树锚；单测
@@ -66,7 +66,7 @@ function makeSettings({ enabled = true, allowedModels = ROUTES, currentThrows = 
   };
 }
 
-test('常量与宿主同键同版同事件串（钉版看守的静态面对应物）', () => {
+test('常量与宿主同键同版同事件串（版本锁定看守的静态侧对应物）', () => {
   assert.equal(POLICY_KEY, 'subagentModelSelectionPolicy');
   assert.equal(POLICY_STATE_VERSION, 1);
   assert.equal(POLICY_EVENT, 'subagent/model-selection-policy');
@@ -182,7 +182,7 @@ test('采样②边缘：origin=subagent 且 header.parentSession 缺失 → 本�
   }, malformedChild);
   assert.deepEqual(result, { appended: false, routes: undefined },
     '宿主三元结构（:592-598）会让无父 id 的 subagent-origin 会话落入 fresh 全局采样；'
-    + '本包按 origin 命中②、父缺即跳过——更保守（无 policy 拒绝方向），§38.2 表脚注登记');
+    + '本包按 origin 命中②、父缺即跳过——更保守（无 policy 拒绝方向），设计 §3.3 采样顺序');
   assert.equal(malformedChild.__events.length, 0);
 });
 
@@ -224,7 +224,7 @@ test('wirePolicyRow：settings 缺席 → fold 照注册、不接采样监听、
   };
   const wired = wirePolicyRow(ctx, (line) => notices.push(line));
   assert.equal(wired.sampling, false);
-  assert.equal(registered.length, 1, '投影 fold 无条件注册（读取面基础设施）');
+  assert.equal(registered.length, 1, '投影 fold 无条件注册（读取侧基础设施）');
   assert.equal(registered[0].key, POLICY_KEY);
   assert.equal(listeners['agent/created'], undefined, 'settings 缺席不接采样');
   assert.equal(notices.length, 1);

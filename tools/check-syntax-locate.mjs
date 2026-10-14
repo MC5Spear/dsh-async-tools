@@ -4,8 +4,7 @@
  * ## 为什么需要它
  *
  * `node --input-type=module -e "import('./x.mjs')"` 报语法错误时**不给行号**
- * （只有 `SyntaxError: Unexpected token '}'` 加一串栈），本会话因此在一个
- * "末尾多了一个 `}`" 上耗掉四次编辑往返。而 `node --check <文件>` **直接报行号**：
+ * （只有 `SyntaxError: Unexpected token '}'` 加一串栈）。而 `node --check <文件>` **直接报行号**：
  *
  * ```
  * D:\...\test\_probe.mjs:156
@@ -14,8 +13,8 @@
  * SyntaxError: Unexpected token '}'
  * ```
  *
- * 所以这个脚本做的就是把那份输出整理成"第 N 行 + 上下文"。**不要自己写括号计数器**——
- * 试过，含正则字面量的文件会误报（`/["']/` 里的引号被当成字符串开头）。
+ * 所以这个脚本做的就是把那份输出整理成"第 N 行 + 上下文"。自写括号计数器会因
+ * 正则字面量误报（`/["']/` 里的引号被当成字符串开头），不要用。
  *
  * 用法：node tools/check-syntax-locate.mjs <文件>
  */

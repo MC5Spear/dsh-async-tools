@@ -1,12 +1,12 @@
 /**
- * `async_wait_agent` 工具的单测（对应 `docs/design.md` §6，需求 R3/R4）。
+ * `async_wait_agent` 工具的单测（对应需求 §2.3 子代理派生与观察）。
  *
- * 覆盖四条硬约束：
+ * 覆盖四条强制约束：
  * - **打断判定只能用 `source.kind === 'user'`**（role 陷阱）；
  * - 结算通知用 `source.senderSessionId` 精确关联，正文匹配只是降级路径；
- * - `agent/status` 的 `idle` 是可达的提前返回通道（实测）；
+ * - `agent/status` 的 `idle` 是可达的提前返回通道（设计 §3.4：命中且非 running 即立即交回）；
  * - 屏障用"这个 id 在不在父会话的子代理目录里"判存在性，**两种行形状都认**：
- *   0.1.7 的 `listChildren()` 行没有 `kind`/`activity`，`kind: 'diagnostic'` 的判别联合
+ *   `listChildren()` 行没有 `kind`/`activity`，`kind: 'diagnostic'` 的判别联合
  *   是 `listDescendants()` 的形状。
  */
 import { test, afterEach } from 'node:test';
@@ -27,9 +27,9 @@ const agent = fakeAgent();
 const exec = { agent, signal: new AbortController().signal };
 const CHILD = 'child-42';
 
-// R56 条 1（R55 盲审 F2）：共享 fixture 兜底清理——起始检查开始读收件箱后，
-// 失败用例经 inboxPayload / R55 用例推入的消息残留会级联污染后续用例的起始读
-// （红面失真）。afterEach 清空两个待处理列表，让失败用例的红收敛到自身断言；
+// 共享 fixture 的末位清理——起始检查开始读收件箱后，
+// 失败用例经 inboxPayload / 起始检查用例推入的消息残留会级联污染后续用例的起始读
+// （假红失真）。afterEach 清空两个待处理列表，让失败用例的红收敛到自身断言；
 // 各用例尾部的显式清理行保留（幂等，保可读性）。
 afterEach(() => {
   agent.inbox.nextStep.length = 0;
@@ -39,8 +39,8 @@ afterEach(() => {
 /**
  * 装一个**有状态**的子代理列表：`interrupt(id)` 会真的把子代理移出列表并记账。
  *
- * 为什么要状态：R2 审查 §3.2 第 4 点点名过一条恒真断言——旧探针装在
- * `subagents.interrupt` 上，但被测代码根本不碰这个方法。现在 `interrupt` 会真的
+ * 为什么要状态：恒真断言的风险——探针若装在被测代码根本不碰的方法上
+ * （如 `subagents.interrupt`），断言就永远绿。现在 `interrupt` 会真的
  * 改变 `listChildren()` 的结果，于是"打断等待 ≠ 打断子代理"可以断言在
  * "它还查得到、interrupt 一次都没被调用"上；测试末尾再手工调用一次 `interrupt`，
  * 证明这套探针确实能记到（否则 0 与"探针坏了"无法区分）。
@@ -69,10 +69,10 @@ function installChildren(f, { children = [], throws = false } = {}) {
 }
 
 /**
- * 一个"存在"的条目，**用 0.1.7 的真实行形状**：`listChildren()` 返回父会话
+ * 一个"存在"的条目，**用真实行形状**：`listChildren()` 返回父会话
  * `subagentCatalog` 投影的条目 `{ id, createdAt, mode, label? }`——**没有 `kind`、
- * 没有 `activity`**。假件必须照真实形状造：本包曾经用带 `kind: 'child'` 的假件
- * 把"形状漂移"整段盖住（真机上屏障恒 not_found，单测却全绿）。
+ * 没有 `activity`**。假件必须照真实形状造：带 `kind: 'child'` 的假件会把
+ * "形状漂移"整段盖住（真机上屏障恒 not_found，单测却全绿）。
  *
  * @param {string} label - 派发时的标签。
  * @returns {object} catalog 行。
@@ -82,8 +82,8 @@ function runningChild(label = 'worker') {
 }
 
 /**
- * 旧形状（判别联合）：带 `kind` 与 `activity`，那是 `listDescendants()` 的行
- * （`childRow()` 的产物），不是 0.1.7 `listChildren()` 的行。
+ * 判别联合形状：带 `kind` 与 `activity`，那是 `listDescendants()` 的行
+ * （`childRow()` 的产物），不是 `listChildren()` 的行。
  * 仅用于锁"形状带 activity 时那条快速返回仍成立"的兼容判据。
  *
  * @param {string} activity - `running` | `inactive`。
@@ -133,11 +133,9 @@ test('async_wait_agent：未知子代理 → not_found 并列出已知子代理'
 });
 
 // ---------------------------------------------------------------------------
-// 真机缺陷（§26.3.7⑥）：`async_wait_agent` 对一个刚派发的子代理
-// 报 `unknown subagent "<id>". Known children:` 空清单。根因是**行形状漂移**：
-// 本包按判别联合（`kind === 'child'`）消费 `listChildren()`，而 0.1.7 的
-// `listChildren()` 返回父会话目录条目（无 `kind`），过滤后一行不剩——屏障恒 not_found，
-// 假件却一直用旧形状，所以单测全绿。下面两条用例改用真实形状。
+// 真机目录行形状与假件不同——这两条用例按真实形状断言：
+// `listChildren()` 返回父会话目录条目（无 `kind`）；屏障若只认判别联合
+// （`kind === 'child'`），过滤后一行不剩、恒 not_found——那是缺陷形态。
 // ---------------------------------------------------------------------------
 
 test('async_wait_agent（真机缺陷）：catalog 形状的行必须被认出来，不得误报 not_found', async () => {
@@ -156,7 +154,7 @@ test('async_wait_agent（真机缺陷）：catalog 形状的行必须被认出�
     pending,
     new Promise((resolve) => setTimeout(() => resolve({ status: 'still-waiting' }), 3000))
   ]);
-  assert.equal(result.status, 'settled', 'catalog 行（无 kind）必须被屏障认出，修前这里是 not_found');
+  assert.equal(result.status, 'settled', 'catalog 行（无 kind）必须被屏障认出');
   assert.equal(result.agent_id, CHILD);
 });
 
@@ -170,7 +168,7 @@ test('async_wait_agent（真机缺陷）：派发瞬间行还没进目录 → �
   setTimeout(() => f.emit('agent/status', { agent: { id: CHILD }, status: 'idle' }), 40);
 
   const result = await tool.execute({ agent_id: CHILD, wait_ms: 60000 }, exec);
-  assert.equal(result.status, 'settled', '行出现后屏障必须看到它（修前：一次查空即 not_found）');
+  assert.equal(result.status, 'settled', '行出现后屏障必须看到它（一次查空即 not_found 是缺陷形态）');
   assert.ok(calls.length >= 2, `屏障必须重试过（一次查空就报 not_found 正是被测缺陷）；实查 ${String(calls.length)} 次`);
 });
 
@@ -214,7 +212,7 @@ test('async_wait_agent：结算通知（带 senderSessionId）→ settled', asyn
   assert.equal(result.agent_id, CHILD);
   assert.match(result.note, /A settlement notice for this subagent was received/);
   assert.match(result.note, /will arrive as a separate message in the conversation/, '必须告知最终回答不在返回值里');
-  // R3-1 口径 A（R4 审查 #2）：**三条 settled 路径**的 note 都不许出现**无条件**的
+  // 口径 A：**三条 settled 路径**的 note 都不许出现**无条件**的
   // "子代理 X 已结束"。settled 的 note 若对每个 id 都这么写，会与本条路径前半句的
   // "不再观察到它在运行"正面对冲。
   //
@@ -263,7 +261,7 @@ test('async_wait_agent：agent/status 的 idle 是可达的提前返回通道', 
   assert.equal(result.status, 'settled');
   assert.match(result.note, /status turned idle/, '必须注明信号来源，便于模型理解语义差异');
   // 这条路径的"该子代理已结束当前工作（状态转为空闲）"是**有依据的观察**，允许存在；
-  // 不许存在的是无条件的"子代理 X 已结束"（口径 A / R4 审查 #2）。
+  // 不许存在的是无条件的"子代理 X 已结束"（口径 A）。
   assert.doesNotMatch(result.note, new RegExp(`子代理 ${CHILD} 已结束`), '不许无条件断言"子代理已结束"');
 });
 
@@ -288,6 +286,168 @@ test('async_wait_agent：agent/status 的 running 不结算；别的 agent 的 i
   assert.equal((await pending).status, 'settled');
 });
 
+// ── 入口注册表三态（目录命中后查 `agents.get`，事件已错过就靠现读） ──
+
+test('async_wait_agent（入口三态）：注册表现读 idle → 立即 settled（不订阅不进竞速）', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  installChildren(f, { children: [runningChild('entry-idle')] });
+  f.ctx.agents = { get: (id) => (id === CHILD ? { status: 'idle' } : undefined) };
+  const tool = createWaitAgentTool(f.ctx, config);
+
+  const result = await tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec);
+  assert.equal(result.status, 'settled', '入口现读 idle → 已停止运行，立即交回');
+  assert.match(result.note, /status turned idle/, 'via=idle（与事件通道同文案）');
+  assert.match(result.note, /entry-idle/, 'label 透传');
+  assert.ok(result.waited_ms < 50, '入口路径立即交回（毫秒级，不空等预算——屏障 await 本身有几毫秒）');
+});
+
+test('async_wait_agent（入口三态）：注册表无驻留（absent）→ 立即 settled（noResident 文案）', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  installChildren(f, { children: [runningChild()] });
+  // 目录行还在、注册表查无此人：与"目录行消失"同档的提前返回，不冒称终结。
+  f.ctx.agents = { get: () => undefined };
+  const tool = createWaitAgentTool(f.ctx, config);
+
+  const result = await tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec);
+  assert.equal(result.status, 'settled');
+  assert.match(result.note, /no longer resident in the agent registry/, 'via=noResident');
+});
+
+test('async_wait_agent（入口三态）：注册表查询抛错/服务缺席（unknown）→ 照常进入等待', async () => {
+  const f = fakeCtx();
+  // 不冻结：预算到期要真的到（unknown 只是不在入口提前返回，等待语义照旧）。
+  installChildren(f, { children: [runningChild()] });
+  // 服务在场但抛错：状态未证实——不制造 not-found 也不制造停止态。
+  f.ctx.agents = { get: () => { throw new Error('registry unavailable'); } };
+  const tool = createWaitAgentTool(f.ctx, config);
+
+  const pending = tool.execute({ agent_id: CHILD, wait_ms: 30 }, exec);
+  const raced = await Promise.race([
+    pending.then(() => 'returned'),
+    new Promise((resolve) => setTimeout(() => resolve('still-waiting'), 10))
+  ]);
+  assert.equal(raced, 'still-waiting', 'unknown 不得在入口提前返回（宁可进等待）');
+  const result = await pending;
+  assert.equal(result.status, 'running', '预算到期照常 running');
+});
+
+test('async_wait_agent（双通道·轮询侧）：等待中注册表转 idle（无任何事件）→ polled 通道唤醒 → settled via.idle', async () => {
+  const f = fakeCtx();
+  // 不冻结：轮询走真 interval（2ms 一拍），这是双通道的轮询侧本身。
+  installChildren(f, { children: [runningChild('poll-me')] });
+  const quick = resolveConfig({ toolName: 'async_run', pollIntervalMs: 2 });
+  // 轮询观察器：前两拍 running，第三拍 idle——事件通道全程静默（错过 idle 事件
+  // 的真实形态：等待开始前状态已转，只有注册表现读能看到）。
+  let ticks = 0;
+  f.ctx.agents = { get: (id) => (id === CHILD ? { status: ++ticks < 3 ? 'running' : 'idle' } : undefined) };
+  const tool = createWaitAgentTool(f.ctx, quick);
+
+  const result = await tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec);
+  assert.equal(result.status, 'settled', '轮询通道观察到 idle → 复查确认 → settled');
+  assert.match(result.note, /status turned idle/, 'via=idle（注册表复查，与事件通道同文案）');
+  assert.ok(ticks >= 3, '轮询真的查了注册表（探针活性）');
+});
+
+test('async_wait_agent（完成优先）：结算通知同拍双命中唤醒 → settled 直返，投影滞后窗口不误报 running', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  installChildren(f, { children: [runningChild()] });
+  // 投影滞后形态：注册表与目录在整个窗口内恒读 running（通知已到、投影未更新）。
+  // 竞速若把 wake 排在 settled 前，同拍双命中时 wake 先出线、复查层读到 running
+  // → 误报 running 且 note 声称 still running（双重误报）——这是缺陷形态。完成优先：权威结算
+  // 信号已到 ⇒ settled（设计 §2.1，与 async_wait_job 同名决定一致）。
+  f.ctx.agents = { get: () => ({ status: 'running' }) };
+  const tool = createWaitAgentTool(f.ctx, config);
+
+  const pending = tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  f.emit('agent/inbox/inserted', settledNotice());
+
+  const result = await pending;
+  assert.equal(result.status, 'settled', '不被唤醒分支压制');
+  assert.match(result.note, /settlement notice/, 'via=notice（信号来源注明）');
+  assert.doesNotMatch(result.note, /still running/, '不得再声称"仍在运行"');
+});
+
+test('async_wait_agent（串行轮询·幽灵链）：等待结束后在途 tick 不得续排新拍（R4 可逆性）', async () => {
+  const f = fakeCtx();
+  // 真 timer + 计数替身：记录每次 timeout 武装，dispose 真撤销——冻结模式看不见
+  // 这条路径（替身 timeout 恒返回空 disposer）。
+  let armed = 0;
+  const realTimeout = f.ctx.timer.timeout.bind(f.ctx.timer);
+  f.ctx.timer = {
+    ...f.ctx.timer,
+    timeout: (fn, ms) => { armed += 1; return realTimeout(fn, ms); }
+  };
+  const quick = resolveConfig({ toolName: 'async_run', pollIntervalMs: 5 });
+  installChildren(f, { children: [runningChild()] });
+  f.ctx.agents = { get: () => ({ status: 'running' }) };
+  // 第 1 次 listChildren 是存在性屏障（立即放行）；第 2 次是首个轮询拍的目录查询
+  // ——把它挂起，构造「竞速由 deadline 收敛时恰有一拍在途」。
+  let calls = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const realList = f.ctx.subagents.listChildren.bind(f.ctx.subagents);
+  f.ctx.subagents.listChildren = async (...a) => {
+    calls += 1;
+    if (calls === 2) await gate;
+    return realList(...a);
+  };
+  const tool = createWaitAgentTool(f.ctx, quick);
+
+  const result = await tool.execute({ agent_id: CHILD, wait_ms: 60 }, exec);
+  assert.equal(result.status, 'running', '预算到期、目标仍在运行');
+  const armedAtReturn = armed;
+  release(); // 放行在途拍——无闸门的续排会让链自续（每 5ms 一拍）
+  await new Promise((resolve) => { setTimeout(resolve, 80); });
+  assert.equal(armed, armedAtReturn,
+    `工具返回后不得再武装新的轮询拍（幽灵链；返回时 ${String(armedAtReturn)} 拍，80ms 后 ${String(armed)} 拍）`);
+});
+
+test('async_wait_agent（有界查询·r3）：目录查询挂起不得超预算占用主体——到期收敛后复查也不等诊断', async () => {
+  const f = fakeCtx();
+  // 不冻结：deadline 要真的到。目录查询挂 600ms（远超 wait_ms=250）——屏障与
+  // 复查各占一段等待时，极端情况总时长约 1200ms（600ms + 600ms）——上限判据覆盖。
+  installChildren(f, { children: [runningChild()] });
+  f.ctx.agents = { get: () => ({ status: 'running' }) };
+  const realList = f.ctx.subagents.listChildren.bind(f.ctx.subagents);
+  f.ctx.subagents.listChildren = async (...a) => {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    return realList(...a);
+  };
+  const tool = createWaitAgentTool(f.ctx, config);
+
+  const start = Date.now();
+  const result = await tool.execute({ agent_id: CHILD, wait_ms: 250 }, exec);
+  const took = Date.now() - start;
+  assert.equal(result.status, 'running', '预算到期照常 running');
+  assert.ok(took < 450, `挂起查询下总时长 ${String(took)}ms 必须贴住 250ms 预算（+调度容差），不得等诊断`);
+});
+
+test('async_wait_agent（有界查询·r3）：唤醒收敛后复查只拿剩余预算——插话后不等挂起的目录查询', async () => {
+  const f = fakeCtx();
+  installChildren(f, { children: [runningChild()] });
+  f.ctx.agents = { get: () => ({ status: 'running' }) };
+  const realList = f.ctx.subagents.listChildren.bind(f.ctx.subagents);
+  f.ctx.subagents.listChildren = async (...a) => {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    return realList(...a);
+  };
+  const tool = createWaitAgentTool(f.ctx, config);
+
+  const pending = tool.execute({ agent_id: CHILD, wait_ms: 2000 }, exec);
+  setTimeout(() => {
+    f.emit('agent/inbox/inserted', inboxPayload({ agent, sourceKind: 'user', text: '停一下', target: 'next-step' }));
+  }, 120);
+  const start = Date.now();
+  const result = await pending;
+  const took = Date.now() - start;
+  assert.equal(result.status, 'interrupted', '插话路径照常打断');
+  assert.ok(took < 500, `插话后交回 ${String(took)}ms——复查与剩余预算竞速，不得再等 600ms 挂起查询`);
+});
+
 test('async_wait_agent（T2）：用户插话 → interrupted，子代理一次都没被碰过', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
@@ -304,7 +464,7 @@ test('async_wait_agent（T2）：用户插话 → interrupted，子代理一次�
   assert.match(result.note, /is still running in the background and is completely unaffected/);
   assert.match(result.note, /async_wait_agent/);
 
-  // ★ R4 的核心不变量：打断**等待**不得打断**子代理**。
+  // ★ 核心不变量：打断**等待**不得打断**子代理**。
   assert.deepEqual(state.interrupted, [], 'subagents.interrupt 一次都不能被调用');
   const rows = await f.ctx.subagents.listChildren(agent.id);
   assert.equal(rows.length, 1, '子代理必须还在列表里（仍在运行）');
@@ -312,11 +472,11 @@ test('async_wait_agent（T2）：用户插话 → interrupted，子代理一次�
   assert.ok(calls.length >= 1);
 
   // 探针活性证明：这套探针**确实**能记到打断。不证明这一点，
-  // 上面的空数组与"探针坏了"无法区分（这正是旧断言恒真的原因）。
+  // 上面的空数组与"探针坏了"无法区分（这是恒真断言的风险）。
   f.ctx.subagents.interrupt(CHILD);
   assert.deepEqual(state.interrupted, [CHILD]);
   assert.deepEqual(await f.ctx.subagents.listChildren(agent.id), []);
-  agent.inbox.nextStep.length = 0; // 还原共享 fixture（R55 起等待入口会读它）
+  agent.inbox.nextStep.length = 0; // 还原共享 fixture（等待入口会读它——设计 §2.2 入口扫描）
 });
 
 test('async_wait_agent（R30-d 唤醒分支）：等待中迟到作答通知 → 运行句柄 + note，非 interrupted 非 settled', async () => {
@@ -327,7 +487,7 @@ test('async_wait_agent（R30-d 唤醒分支）：等待中迟到作答通知 →
 
   const pending = tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec);
   await new Promise((resolve) => setTimeout(resolve, 5));
-  // 迟到作答到达（R30 通道轮：插件事件——ask-takeover 宿主半边发布，载荷含
+  // 迟到作答到达（插件事件——ask-takeover 宿主半边发布，载荷含
   // agent 标识与题号；作答与忽略同形）。
   f.emit(LATE_ANSWER_EVENT, {
     agentId: agent.id, questionId: 'color', kind: 'answer', summary: 'Late answer for color: red'
@@ -348,7 +508,7 @@ test('async_wait_agent（R30 通道轮 起始检查）：作答先到、等待�
   const f = fakeCtx();
   freezeTimers(f.ctx);
   installChildren(f, { children: [runningChild()] });
-  // 待读登记非空：作答已投递未领取（滞留 next-step——真机实录里这种等待
+  // 待读登记非空：作答已投递未领取（滞留 next-step——这种等待会
   // 干等到预算耗尽；起始检查堵这个空窗）。
   agent.inbox.nextStep.push({
     source: { kind: 'async-tools-late-answer', form: 'notice', summary: 'Late answer for color: red', questionId: 'color' }
@@ -379,9 +539,9 @@ test('async_wait_agent（T2 反向对照）：工具自身被取消 → 结束�
 
 /**
  * 只让**第一个** `timeout` 真正生效（那是等待预算的 deadline），其余冻结；
- * 同时冻结兜底轮询 —— 该轮询的到期条件是"子代理从列表里消失"，
+ * 同时冻结回退轮询 —— 该轮询的到期条件是"子代理从列表里消失"，
  * 在一个 listChildren 恒返回同一份数据的替身里它永远不会触发，
- * 但它的 interval 会让竞速难以预测（早期版本正是被它抢先解成 running）。
+ * 但它的 interval 会让竞速难以预测（轮询若抢先到期，等待会被解成 running）。
  * @param {object} ctx - 假上下文。
  */
 function firstTimerOnly(ctx) {
@@ -420,10 +580,13 @@ test('async_wait_agent：子代理转达消息不得被当作插话或结算', a
   assert.equal((await pending).status, 'settled');
 });
 
-test('async_wait_agent：预算到期 → running 且提示可再次等待', async () => {
+test('async_wait_agent：预算到期 → running 且提示可再次等待（注册表证实仍在运行）', async () => {
   const f = fakeCtx();
   firstTimerOnly(f.ctx);
   installChildren(f, { children: [runningChild()] });
+  // 证实档的前提（设计 §1.3）：注册表现读 running 才允许说"尚未结束"——
+  // 目录行不算数（R29-c 判据 6·注册表读不到用例锁同场景的未证实档）。
+  f.ctx.agents = { get: () => ({ status: 'running' }) };
   const tool = createWaitAgentTool(f.ctx, config);
 
   const result = await tool.execute({ agent_id: CHILD, wait_ms: 5000 }, exec);
@@ -474,15 +637,15 @@ test('async_wait_agent：结束时清理所有监听器（R4 可逆性）', asyn
 });
 
 // ---------------------------------------------------------------------------
-// 以下用例锁 R2 审查的 N3 / N7 / N11。
+// 以下用例是缺陷防御组。
 // ---------------------------------------------------------------------------
 
-test('async_wait_agent（N3，形状带 activity 时）：屏障读出非运行态 → 立即 settled，不进等待', async () => {
+test('async_wait_agent（形状带 activity 时）：屏障读出非运行态 → 立即 settled，不进等待', async () => {
   const f = fakeCtx();
   // 冻结截止与轮询：屏障若没生效，这个调用会永远挂着（不会假装通过）。
   freezeTimers(f.ctx);
-  // 只有**判别联合**形状（`listDescendants()` 的行）才带 `activity`；0.1.7 的
-  // `listChildren()` 行不带，所以这条快速返回是真机上的能力缺口，不是主路径。
+  // 只有**判别联合**形状（`listDescendants()` 的行）才带 `activity`；
+  // `listChildren()` 行不带，所以这条快速返回是真机上的功能缺口，不是主路径。
   installChildren(f, { children: [legacyChildRow('inactive')] });
   const tool = createWaitAgentTool(f.ctx, config);
 
@@ -493,7 +656,7 @@ test('async_wait_agent（N3，形状带 activity 时）：屏障读出非运行�
 
   assert.equal(outcome.status, 'settled', 'R3：不再观察到它在运行 → 立即结束等待');
   assert.equal(outcome.agent_id, CHILD);
-  // 措辞裁决（R3 审查 R3-1，口径 A）：`inactive` 只表示"这一行走了冷读"，**不是**
+  // 措辞决定（口径 A）：`inactive` 只表示"这一行走了冷读"，**不是**
   // "它结束了"。所以说明必须停在"不再观察到它在运行"（英文口径：
   // "is no longer observed running"），不许替宿主下"已结束"（has finished）的结论。
   assert.match(outcome.note, /is no longer observed running/, '必须只声明观察到什么，不得断言"它已结束"');
@@ -501,7 +664,7 @@ test('async_wait_agent（N3，形状带 activity 时）：屏障读出非运行�
   assert.match(outcome.note, /will arrive as a separate message/);
 });
 
-test('async_wait_agent（N3，形状带 activity 时）：等待期间列表变成非运行态 → 收敛时报 settled 而不是 running', async () => {
+test('async_wait_agent（形状带 activity 时）：等待期间列表变成非运行态 → 收敛时报 settled 而不是 running', async () => {
   const f = fakeCtx();
   firstTimerOnly(f.ctx);
   const { setRows } = installChildren(f, { children: [legacyChildRow('running')] });
@@ -516,7 +679,7 @@ test('async_wait_agent（N3，形状带 activity 时）：等待期间列表变�
   assert.match(result.note, /is no longer observed running/);
 });
 
-test('async_wait_agent（N3）：查询失败（列表抛错）不得被当成已结束', async () => {
+test('async_wait_agent：查询失败（列表抛错）不得被当成已结束', async () => {
   const f = fakeCtx();
   // 屏障查询抛错 → 必须报错而不是假装结束（与"查不到条目"区分开）。
   installChildren(f, { throws: true });
@@ -527,7 +690,7 @@ test('async_wait_agent（N3）：查询失败（列表抛错）不得被当成�
   );
 });
 
-test('async_wait_agent（N7）：diagnostic 行不算子代理，但仍要写进纠错清单并带 reason', async () => {
+test('async_wait_agent：diagnostic 行不算子代理，但仍要写进纠错清单并带 reason', async () => {
   const f = fakeCtx();
   const quick = resolveConfig({ toolName: 'async_run', pollIntervalMs: 2 });
   installChildren(f, {
@@ -547,10 +710,10 @@ test('async_wait_agent（N7）：diagnostic 行不算子代理，但仍要写进
   assert.match(result.known_children[0], /worker/);
   assert.match(result.known_children[1], /broken-1 \(diagnostic: corrupt\)/);
   assert.match(result.known_children[2], /broken-2 \(diagnostic: unavailable\)/);
-  assert.doesNotMatch(result.known_children.join('\n'), /\?, \?/, '不得让模型看到 "?, ?" 这种占位（R2 审查 N7 的初衷）');
+  assert.doesNotMatch(result.known_children.join('\n'), /\?, \?/, '不得让模型看到 "?, ?" 这种占位（占位符等于把纠错信息抹掉）');
 });
 
-test('async_wait_agent（N7）：目标被判为不可用（diagnostic 行）→ not_found，不得进入等待', async () => {
+test('async_wait_agent：目标被判为不可用（diagnostic 行）→ not_found，不得进入等待', async () => {
   const f = fakeCtx();
   // 不再 freezeTimers：屏障重试需要真的定时器（冻住会把重试睡死）；
   // not_found 从屏障直接返回，deadline 根本不会被武装。
@@ -565,51 +728,50 @@ test('async_wait_agent（N7）：目标被判为不可用（diagnostic 行）→
   assert.equal(outcome.status, 'not_found');
 });
 
-test('async_wait_agent（N3/N11）：描述必须写清能力边界并带上生效的预算数字', () => {
+test('async_wait_agent：描述必须写清功能边界并带上生效的预算数字', () => {
   const f = fakeCtx();
   const tool = createWaitAgentTool(f.ctx, resolveConfig({ toolName: 'async_run', minWaitMs: 300, maxWaitMs: 120000 }));
-  // 描述里的能力边界必须**与实测一致**，不能更宽也不能更窄。
-  //
-  // 真机实测否决"开始等待前已结束就必然等满预算"的说法（那套结论
-  // 由 `activity` 支撑）；0.1.7 的目录条目没有 `activity`，能证明的只有存在性，
-  // 所以描述改成"结算通知已在对话里 + 本工具分辨不出来 + 只能等满预算"。
-  assert.match(tool.description, /the subagent catalog only shows which children exist/,
-    '必须交代"列表快照只能证明存在性"这条能力边界');
-  assert.match(tool.description, /only wait out wait_ms/, '也必须交代屏障看不出来时的退路，否则模型会以为永远即时');
+  // 描述里的功能边界必须**与现行机制一致**：入口即查注册表现读与未领取的
+  // 结算通知——已结束目标立即返回 settled，不等满预算；目录快照只证明存在性，
+  // 确认真实状态的手段是结算通知或 list_agents。
+  assert.match(tool.description, /subagent catalog shows which children exist/,
+    '必须交代"列表快照只能证明存在性"这条功能边界');
+  assert.match(tool.description, /returns status:"settled" immediately instead of waiting out the budget/,
+    '必须交代入口检查对已结束目标立即交回，否则模型会无谓绕开本工具');
   assert.match(tool.description, /list_agents/, '必须给出确认真实状态的手段');
   assert.match(tool.description, /120000 ms/, '等待上限必须来自生效配置（补缺口）');
-  // R29-d（N4）：覆盖口径句 + pollIntervalMs 现值插值（缺省 500 ms）。
+  // 覆盖口径句 + pollIntervalMs 现值插值（缺省 500 ms）。
   assert.match(tool.description, /budget bounds the total call time: the existence barrier \(up to 3 x 500 ms of retries\) plus the wait segment/,
     '覆盖口径句必须在描述里，且屏障重试上限随 pollIntervalMs 现值插值');
-  // 反面：不许再出现被实测推翻的那句绝对化说法。
-  assert.doesNotMatch(tool.description, /必然等满|always waits out the full/, '该绝对化说法已被真机实测推翻');
+  // 反侧：不许再出现与设计 §3.4 入口检查矛盾的那句绝对化说法。
+  assert.doesNotMatch(tool.description, /必然等满|always waits out the full/, '该绝对化说法与入口检查机制矛盾');
   // 段落拼接：多段 join('') 时**任何**一段忘了尾随空格，都会把两个句子粘成一个词
-  // （`reach you.When`——英文化期间真实出现过的接缝缺陷）。语言无关的通用断言：
+  // （`reach you.When`——该形态是段落拼接的典型接缝缺陷）。语言无关的通用断言：
   // 句号后紧跟大写字母 = 缺空格（本描述里没有合法的 `x.Y` 序列）。
   assert.doesNotMatch(tool.description, /\.[A-Z]/, '段与段之间必须留出分隔（句号后必须有空格）');
-  // `settled` 的承诺口径（R3 审查 R3-1 裁决，口径 A）：**不得**写成"它已经结束了"。
+  // `settled` 的承诺口径（口径 A）：**不得**写成"它已经结束了"。
   assert.match(tool.description, /no longer observed running/, 'settled 只能承诺"不再观察到它在运行"');
-  // 反面断言必须**能命中真实风险**：描述是英文串，用中文正则（`/它结束了/`）永远不命中
-  // ——那是恒真断言（R4 审查 #5 的同一类毛病）。盯英文形态：
+  // 反侧断言必须**能命中真实风险**：描述是英文串，用中文正则（`/它结束了/`）永远不命中
+  // ——那是恒真断言。盯英文形态：
   // 把描述改成 "settled means it has finished" 必须变红。
   assert.doesNotMatch(tool.description, /settled means (that )?it has (already )?finished/i,
     'settled 不许承诺"它结束了"');
   // 并且参数表里确实没有 yield_ms —— 描述里当然也不该提。
   // JSON Schema 形状：参数在 `parameters.properties` 下。
   assert.equal(tool.parameters.properties.yield_ms, undefined, 'async_wait_agent 没有 yield_ms 参数');
-  assert.doesNotMatch(tool.description, /yield_ms/, '描述提到了一个不存在的参数（R4 审查 #1）');
-  assert.doesNotMatch(tool.description, /转入后台|返回 job_id/, 'async_wait_agent 不会转后台，也不返回 job_id');
-  assert.doesNotMatch(tool.description, /让出预算/, '让出预算是 async_run 的概念');
+  assert.doesNotMatch(tool.description, /yield_ms/, '描述提到了一个不存在的参数');
+  assert.doesNotMatch(tool.description, /转入后台|返回 job_id|作业编号/, 'async_wait_agent 不会转后台，也不返回作业编号');
+  assert.doesNotMatch(tool.description, /首次等待|让出预算/, '首次等待（让出预算）是 async_run 的概念');
 });
 
 test('async_wait_agent（R8 第一条）：只走公共查询与公共事件，碰内部状态就红', async () => {
   // ## 这条判据要挡什么
   //
-  // R8 第一条：`async_wait_agent` **不得读会话日志、内部状态或越界数据**，只能走
+  // 需求 §6.2：`async_wait_agent` **不得读会话日志、内部状态或越界数据**，只能走
   // 宿主的公共查询（`ctx.subagents.listChildren`）与宿主的公共事件（`ctx.on`）。
   //
-  // 当时守这条的只有 `test/index.test.mjs` 里一条**静态**断言（扫 `ctx.<x>` 是否在
-  // `inject` 里）。那条能挡"忘了声明 inject"，但**挡不住"用了已声明服务上的非公共属性"**
+  // 静态侧由 `test/index.test.mjs` 的一条**静态**断言承担（扫 `ctx.<x>` 是否在
+  // `inject` 里）：它挡"忘了声明 inject"，但**挡不住"用了已声明服务上的非公共属性"**
   // —— 只要 `subagents` 声明了，静态扫描就放行。
   //
   // 本用例把它**行为化**：`guardedWaitAgentCtx()` 把 ctx 包成 Proxy，
@@ -617,13 +779,13 @@ test('async_wait_agent（R8 第一条）：只走公共查询与公共事件，�
   // 不再是靠读代码发现，而是用例当场变红**并指出碰的是哪个属性**。
   const g = guardedWaitAgentCtx();
   freezeTimers(g.ctx);
-  // 行用 0.1.7 的真实形状（catalog 条目：无 `kind`）——假件照旧形状造，正是
-  // 真机缺陷（屏障恒 not_found）当初逃过单测的原因。
+  // 行用真实形状（catalog 条目：无 `kind`）——假件按另一种形状造，正是
+  // 真机缺陷（屏障恒 not_found）在单测里不可见的盲区。
   g.children.push({ id: CHILD, createdAt: 1, mode: 'continuable', label: 'child work' });
   const tool = createWaitAgentTool(g.ctx, resolveConfig({ toolName: 'async_run', minWaitMs: 250, maxWaitMs: 120000 }));
   const agent = fakeAgent();
 
-  // 跑完一次**正常路径**：屏障读到子代理还在 ⇒ 进入等待 ⇒ 我们发一条公共事件结束它。
+  // 跑完一次**正常路径**：屏障读到子代理还在 ⇒ 进入等待 ⇒ 发一条公共事件结束它。
   const pending = tool.execute({ agent_id: CHILD, wait_ms: 5000 }, exec);
   await new Promise((resolve) => setTimeout(resolve, 20));
   // 结算通知走的是宿主的公共事件通道；`senderSessionId` 精确关联。
@@ -641,20 +803,20 @@ test('async_wait_agent（R8 第一条）：只走公共查询与公共事件，�
     `不得读取放行清单之外的任何 ctx 属性；实得违规：${g.denied.join('、')}`);
   // 正向：它**确实**用了公共查询与公共事件——否则"没违规"可能是因为它什么都没做。
   assert.ok(g.touched.includes('subagents.listChildren'),
-    `必须通过宿主的公共查询读子代理列表；实得接触面：${g.touched.join('、')}`);
+    `必须通过宿主的公共查询读子代理列表；实得接触点：${g.touched.join('、')}`);
   assert.ok(g.touched.includes('on'),
-    `必须通过宿主的公共事件订阅；实得接触面：${g.touched.join('、')}`);
+    `必须通过宿主的公共事件订阅；实得接触点：${g.touched.join('、')}`);
 });
 
 // ---------------------------------------------------------------------------
-// R29（安全/健壮性/异常处理）新增判据：设计 §31.9 判据 1、2、6、9。
+// 安全/健壮性/异常处理的缺陷防御判据。
 // ---------------------------------------------------------------------------
 
 /**
- * 进程级 unhandledRejection 探针：R29-a 的核心断言面。
+ * 进程级 unhandledRejection 探针的核心断言集。
  *
  * 宿主 `installFailLoud` 语义下，一条无人接住的 reject 就是整实例退出。
- * 测试里用 `process.on('unhandledRejection')` 复刻同一道闸——no-op catch 撤掉后，
+ * 测试里用 `process.on('unhandledRejection')` 复刻同一道关卡——no-op catch 撤掉后，
  * 本探针非空，用例当场红。
  *
  * @returns {{take: Function, off: Function}} 探针：`take()` 读累计数组，`off()` 摘除。
@@ -666,11 +828,11 @@ function unhandledProbe() {
   return { take: () => seen, off: () => process.off('unhandledRejection', onUnhandled) };
 }
 
-test('R29-a（判据 1·屏障窗口）：工具取消落在竞速组装之前——no-op catch 必须兜住，不得 unhandledRejection', async () => {
+test('R29-a（判据 1·屏障窗口）：工具取消落在竞速组装之前——屏障及时交回 interrupted，no-op catch 兜住不外泄', async () => {
   const f = fakeCtx();
   const quick = resolveConfig({ toolName: 'async_run', pollIntervalMs: 2 });
   // 列表恒空 → 屏障按 pollIntervalMs 有界重试 → abort 落在"第一个 await childOf
-  // 之后、竞速组装之前"的窗口里（窗口长达 3×pollIntervalMs，正是 no-op catch 的靶区）。
+  // 之后"的窗口里（窗口长达 3×pollIntervalMs，正是 no-op catch 的靶区）。
   const { calls } = installChildren(f, { children: [] });
   const controller = new AbortController();
   const tool = createWaitAgentTool(f.ctx, quick);
@@ -678,15 +840,116 @@ test('R29-a（判据 1·屏障窗口）：工具取消落在竞速组装之前�
 
   const pending = tool.execute({ agent_id: CHILD, wait_ms: 1000 }, { agent, signal: controller.signal });
   await new Promise((resolve) => setTimeout(resolve, 3)); // 进入第一个屏障重睡
-  controller.abort(new Error('tool cancelled')); // ★ 窗口内取消：aborted 此刻 reject，无人竞速
-  const result = await pending; // 屏障跑满重试 → not_found（aborted 不打断屏障）
+  controller.abort(new Error('tool cancelled')); // ★ 窗口内取消：aborted 此刻 reject
+  const result = await pending; // 屏障睡眠与取消竞速 → 及时 interrupted（需求 §2.1.2）
   await new Promise((resolve) => setTimeout(resolve, 30)); // 微任务排空：若有未接住的 reject 必已上报
 
-  assert.equal(result.status, 'not_found', '窗口内取消不打断屏障（屏障不知道 abort），按有界重试收敛');
+  assert.equal(result.status, 'interrupted', '屏障期取消必须及时结束等待，不得跑满重试/预算');
   assert.ok(calls.length >= 1);
   assert.equal(probe.take().length, 0,
     'no-op catch（wait-agent.js `aborted.catch(() => {})`）必须兜住窗口期 reject——撤掉它，本断言必红（整实例退出）');
   probe.off();
+});
+
+test('R29-a（判据 1·屏障睡眠）：用户插话在重试睡眠中到达 → 及时 interrupted，不等满重试', async () => {
+  const f = fakeCtx();
+  // 列表恒空 → 屏障进重试睡眠；pollIntervalMs 大（真实部署形态）——睡眠必须
+  // 与唤醒信号竞速，否则一条 20ms 到达的插话要等 3×pollIntervalMs 跑满后
+  // 以 not_found 谎报收场（需求 §2.1.2：消息的处理不能等满剩余预算）。
+  installChildren(f, { children: [] });
+  f.ctx.agents = { get: () => ({ status: 'running' }) };
+  const tool = createWaitAgentTool(f.ctx, resolveConfig({ toolName: 'async_run', pollIntervalMs: 1500 }));
+  const startedAt = Date.now();
+
+  const pending = tool.execute({ agent_id: CHILD, wait_ms: 2000 }, exec);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  f.emit('agent/inbox/inserted', inboxPayload({ agent, sourceKind: 'user', text: '先回来', target: 'next-step' }));
+  const result = await pending;
+  const took = Date.now() - startedAt;
+
+  assert.equal(result.status, 'interrupted', '插话必须结束屏障等待并以 interrupted 交回，不得谎报 not_found');
+  assert.ok(took < 1000, `插话后必须及时交回（实得 ${String(took)}ms），不得等满重试或预算`);
+});
+
+test('R29-a（判据 1·屏障查询期）：取消落在在途查询上 → 及时 interrupted，不等查询也不等预算', async () => {
+  const f = fakeCtx();
+  // 目录查询永悬（真实形态：宿主投影挂起）——取消必须与查询竞速胜出；
+  // 忽略 signal 的宿主实现同样被时间界封住（需求 §2.1.1 准备查询阶段及时交回）。
+  installChildren(f, { children: [] });
+  f.ctx.subagents.listChildren = () => new Promise(() => {});
+  f.ctx.agents = { get: () => ({ status: 'running' }) };
+  const controller = new AbortController();
+  const tool = createWaitAgentTool(f.ctx, resolveConfig({ toolName: 'async_run', pollIntervalMs: 1500 }));
+  const startedAt = Date.now();
+
+  const pending = tool.execute({ agent_id: CHILD, wait_ms: 1200 }, { agent, signal: controller.signal });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  controller.abort(new Error('caller cancelled'));
+  const result = await pending;
+  const took = Date.now() - startedAt;
+
+  assert.equal(result.status, 'interrupted', '在途查询期的取消必须立即结束等待，不得等满预算');
+  assert.ok(took < 500, `取消后必须及时交回（实得 ${String(took)}ms）`);
+});
+
+test('R29-a（判据 1·屏障 not_found 复核）：重试耗尽的最后一轮查询赢得竞速 → 已到插话仍须交回', async () => {
+  const f = fakeCtx();
+  // 微任务次序陷阱：最后一轮快速查询稳定压过已解析的唤醒信号——not_found
+  // 出口前必须同步复核，已到消息不得被重试耗尽吞掉（需求 §2.1.2）。
+  const quick = resolveConfig({ toolName: 'async_run', pollIntervalMs: 2 });
+  installChildren(f, { children: [] });
+  f.ctx.agents = { get: () => ({ status: 'running' }) };
+  const tool = createWaitAgentTool(f.ctx, quick);
+
+  const pending = tool.execute({ agent_id: CHILD, wait_ms: 1000 }, exec);
+  await new Promise((resolve) => setTimeout(resolve, 3));
+  f.emit('agent/inbox/inserted', inboxPayload({ agent, sourceKind: 'user', text: '改主意了', target: 'next-step' }));
+  await new Promise((resolve) => setTimeout(resolve, 3));
+  const result = await pending;
+
+  assert.equal(result.status, 'interrupted', '消息已在收件箱时 not_found 不得胜出——存在性未定，交回控制给模型');
+});
+
+test('R29-c（判据 6·复查失败）：到期收敛后复查查询抛错 → 状态未证实文案，不宣称"尚未结束"', async () => {
+  const f = fakeCtx();
+  // 屏障首查即中（目标在场）→ 等待；到期收敛后的复查查询抛错——注册表仍
+  // 可读（running）但目录复查失败：状态未证实，note 不得再写"尚未结束
+  // （仍在运行）"（需求 §2.2.2：无法证实时不得宣称确定状态）。
+  installChildren(f, { children: [runningChild()] });
+  f.ctx.agents = { get: () => ({ status: 'running' }) };
+  const realList = f.ctx.subagents.listChildren.bind(f.ctx.subagents);
+  let callsCount = 0;
+  f.ctx.subagents.listChildren = async (...a) => {
+    callsCount += 1;
+    if (callsCount >= 2) throw new Error('listing blew up at recheck');
+    return realList(...a);
+  };
+  const tool = createWaitAgentTool(f.ctx, resolveConfig({ toolName: 'async_run', minWaitMs: 250 }));
+
+  const result = await tool.execute({ agent_id: CHILD, wait_ms: 250 }, exec);
+
+  assert.equal(result.status, 'running');
+  assert.match(result.note, /unverified/i, '复查失败必须明说状态未证实');
+  assert.doesNotMatch(result.note, /not finished yet \(unaffected, still running\)|尚未结束/,
+    '复查失败时不得宣称"尚未结束（仍在运行）"');
+  assert.match(result.note, /async_wait_agent\(agent_id="child-42"/, '重试出路必须指向 async_wait_agent');
+});
+
+test('R29-c（判据 6·注册表读不到）：到期收敛且目录行在场 → 未证实文案，目录行不算运行证据', async () => {
+  const f = fakeCtx();
+  // 目录行恒在场（stale 投影），注册表 agents.get 恒抛错：到期回退档不得以
+  // 目录行为据宣称"尚未结束（仍在运行）"（设计 §1.3——目录条目只证明会话
+  // 存在过，注册表驻留才证明当前有驱动；需求 §2.2.2——无法证实不宣称）。
+  installChildren(f, { children: [runningChild()] });
+  f.ctx.agents = { get: () => { throw new Error('registry blew up'); } };
+  const tool = createWaitAgentTool(f.ctx, resolveConfig({ toolName: 'async_run', minWaitMs: 250 }));
+
+  const result = await tool.execute({ agent_id: CHILD, wait_ms: 250 }, exec);
+
+  assert.equal(result.status, 'running');
+  assert.match(result.note, /unverified/i, '注册表读不到必须明说状态未证实');
+  assert.doesNotMatch(result.note, /not finished yet|尚未结束/, '目录行在场也不得宣称"尚未结束（仍在运行）"');
+  assert.match(result.note, /async_wait_agent\(agent_id="child-42"/, '重试出路必须指向 async_wait_agent');
 });
 
 test('R29-a（判据 1·竞速期）：取消后竞速以 aborted 拒绝退出，同样不得 unhandledRejection', async () => {
@@ -761,8 +1024,8 @@ test('R29-c（判据 6·正文回退 + 复查确认）：命中且复查已不�
 
 test('R29-d（判据 9a·等待段半边）：子代理在场时全程 ≈ waitMs，不得超总时长上界', async () => {
   // 本用例锁**等待段**半边：子代理在场 → 屏障首查即中（barrierSleep 零调用，
-  // 屏障段恒为零）→ 全程 = 等待段。屏障段的可达红判据在 9b（实现审查 N2：
-  // 旧版用例宣称"屏障加重必红"不实——在场路径屏障根本不睡）。
+  // 屏障段恒为零）→ 全程 = 等待段。屏障段的可达红判据在 9b
+  // （在场路径屏障根本不睡，屏障加重只在重试路径可红）。
   const poll = 20;
   const waitMs = 60;
   const tolerance = 300;
@@ -786,7 +1049,7 @@ test('R29-d（判据 9b·屏障段半边）：重试路径下屏障睡也计入�
   // 目录投影刷新窗口的最小模拟：子代理行第一个 poll 之后才出现 → 屏障
   // 恰好睡一次重试一次。全程 = 屏障段（1×poll）+ 等待段（waitMs）。
   // 变异"屏障睡定值远超 pollIntervalMs"（如 +2000ms）会让本用例击穿上界——
-  // 这是判据 9 对屏障段的可达红锚（实现审查 N2 补）。
+  // 这是判据 9 对屏障段的可达红锚。
   const poll = 20;
   const waitMs = 60;
   const tolerance = 300;
@@ -807,7 +1070,7 @@ test('R29-d（判据 9b·屏障段半边）：重试路径下屏障睡也计入�
     `总时长 ${String(elapsed)} ms 不得超过 waitMs + 3×pollIntervalMs + 容差 = ${String(bound)} ms——屏障睡加重（如 +2000ms）时此处必红`);
 });
 
-// ── R55 起始检查（设计 §42.2；需求 §2 R55 五判据的工具级落点） ──
+// ── 起始检查（设计 §2.2 消息集合和入口扫描的工具级落点） ──
 
 /** 挂起护栏：起始检查被拆掉（纯事件驱动回潮）时用例必须红得快，不是挂死套件。 */
 const HANG_MARKER = { status: '__test-hang__' };
@@ -829,32 +1092,69 @@ test('R55（判据 1）：等待开始时 next-step 已有 user 插话 → 立�
   const result = await withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec));
   assert.notEqual(result.status, '__test-hang__', '起始检查必须立即返回——纯事件驱动回潮（挂到预算耗尽）本身就是红');
   assert.equal(result.status, 'interrupted');
-  assert.equal(result.waited_ms, 0, '预算从未武装');
+  // 总截止定时器在参数解析处武装（含本次），waited_ms 是墙钟噪声而非
+  // 预算消耗——不变量是"立即返回"（毫秒级）。
+  assert.ok(result.waited_ms < 25, `起始命中必须立即返回（实得 ${String(result.waited_ms)} ms）`);
   assert.match(result.note, /Wait not started: a user message had already arrived/, 'note 按起始命中措辞（到达时点在等待开始前）');
   assert.match(result.note, /still running in the background and is completely unaffected/);
   assert.match(result.note, /async_wait_agent/);
 
-  // 停点断言（§42.1 R55-C）：不订阅、不进存在屏障。
+  // 停点断言：不订阅、不进存在屏障。
   assert.equal(f.count('agent/inbox/inserted'), 0, '起始命中路径不得挂任何 inbox 监听器');
   assert.equal(calls.length, 0, '起始命中路径不得进存在屏障（listChildren 零调用）');
   assert.deepEqual(state.interrupted, [], '打断等待 ≠ 打断子代理');
   agent.inbox.nextStep.length = 0; // 还原共享 fixture
 });
 
-test('R55（判据 2·负面对照一）：next-step 滞留的是转达/结算/迟到作答 → 不打断，迟到作答照旧唤醒', async () => {
+test('R55（判据 2·负面对照一）：next-step 滞留的是转达/迟到作答 → 不打断，迟到作答照旧唤醒', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   installChildren(f, { children: [runningChild()] });
   agent.inbox.nextStep.push(
     { id: 'relay-1', source: { kind: 'agent-message', form: 'relay' } },
-    { id: 'settle-1', source: { kind: 'subagent-settled', form: 'notice', senderSessionId: CHILD } },
     { id: 'late-1', source: { kind: 'async-tools-late-answer', form: 'notice', summary: 'Late answer for color: red', questionId: 'color' } }
   );
   const tool = createWaitAgentTool(f.ctx, config);
 
   const result = await tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec);
-  assert.equal(result.status, 'running', '三类非 user 消息都不命中起始检查——等待照常开（迟到作答起始检查立即唤醒）');
+  assert.equal(result.status, 'running', '两类非 user 消息都不命中打断——迟到作答专门分支先于通用 notice/relay 扫描交还');
   assert.match(result.note, /A late answer has arrived/, '迟到作答照旧走其唤醒分支（R30-d 不回归）');
+  agent.inbox.nextStep.length = 0; // 还原共享 fixture
+});
+
+test('R55（判据 2·注册表读不到）：入口唤醒收敛时 agents.get 抛错 → 未证实文案，不宣称"尚未结束"', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  installChildren(f, { children: [runningChild()] });
+  // 入口滞留转达消息（relay——非 user，走运行句柄交回）；注册表 agents.get 抛错：
+  // 入口路径没有目录证据，运行状态没有可证实来源，note 不得写"尚未结束（仍在
+  // 运行）"（需求 §2.2.2——无法证实时不得把状态写成确定事实）。
+  f.ctx.agents = { get: () => { throw new Error('registry blew up'); } };
+  agent.inbox.nextStep.push({ id: 'relay-1', source: { kind: 'agent-message', form: 'relay' } });
+  const tool = createWaitAgentTool(f.ctx, config);
+
+  const result = await withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec));
+  assert.notEqual(result.status, '__test-hang__', '入口命中必须立即返回');
+  assert.equal(result.status, 'running', '唤醒照常交回运行句柄——只是口径改为未证实');
+  assert.match(result.note, /unverified/i, '注册表读不到必须明说状态未证实');
+  assert.doesNotMatch(result.note, /not finished yet|尚未结束/, '不得宣称"尚未结束（仍在运行）"');
+  agent.inbox.nextStep.length = 0; // 还原共享 fixture
+});
+
+test('R55（判据 2b·入口优先级）：next-step 滞留目标结算通知 → 结束优先于一切唤醒（含迟到作答）', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  installChildren(f, { children: [runningChild()] });
+  agent.inbox.nextStep.push(
+    { id: 'settle-1', source: { kind: 'subagent-settled', form: 'notice', senderSessionId: CHILD } },
+    { id: 'late-1', source: { kind: 'async-tools-late-answer', form: 'notice', summary: 'Late answer for color: red', questionId: 'color' } }
+  );
+  const tool = createWaitAgentTool(f.ctx, config);
+
+  const result = await withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec));
+  assert.notEqual(result.status, '__test-hang__', '入口优先级判定必须立即返回');
+  assert.equal(result.status, 'settled', '未领取的目标结算通知是入口权威证据（§2.2 终止证据压过唤醒）');
+  assert.match(result.note, /had already arrived before the wait started/, 'via 走 noticePreexisting 措辞');
   agent.inbox.nextStep.length = 0; // 还原共享 fixture
 });
 
@@ -887,7 +1187,9 @@ test('R55（判据 5）：先到插话与未领取结算通知并存 → settled
   const result = await withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec));
   assert.notEqual(result.status, '__test-hang__');
   assert.equal(result.status, 'settled', '权威结算通知可证已结束 → settled，不让插话压过结束（口径同竞速收敛复查）');
-  assert.equal(result.waited_ms, 0);
+  // 总截止在参数解析处武装（含本次），入口早退的 waited_ms 是墙钟噪声——
+  // 不变量是"立即返回"（毫秒级），不是严格 0。
+  assert.ok(result.waited_ms < 25, `入口早退必须立即返回（实得 ${String(result.waited_ms)} ms）`);
   assert.match(result.note, /had already arrived before the wait started/, 'note 标明通知先于等待到达（via.noticePreexisting）');
   assert.match(result.note, /separate message/, 'settledNote 既有文案保留（最终回答不在本返回值）');
   assert.equal(calls.length, 0, '并存决定也走入口早退——不进存在屏障');

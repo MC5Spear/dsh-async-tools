@@ -1,17 +1,16 @@
 /**
- * `async_run` 工具的单测（对应 `docs/design.md` §4/§33，需求 R1/R32/R33）。
+ * `async_run` 工具的单测（对应需求 §2.1.1、§2.2.1）。
  *
  * 两条最关键的断言：
- * - **执行即注册**（R32-a）：注册先于进程启动，短命令也注册——预算内结算的
- *   等待是活 waiter（awaited），宿主不补发完成通知（R32-e）；
- * - **首次等待＝五信号竞速**（R32-b）：结算/插话/abort/迟到作答/预算，任何
- *   信号只结束等待不终止命令；呈现面 label=命令原文、progress=描述
- *   （R33）。
+ * - **执行即注册**：注册先于进程启动，短命令也注册——预算内结算的
+ *   等待是活 waiter（awaited），宿主不补发完成通知；
+ * - **首次等待＝五信号竞速**：结算/插话/abort/迟到作答/预算，任何
+ *   信号只结束等待不终止命令；呈现层 label=命令原文、progress=描述。
  *
- * 后半部分（N1/N4/N5/N10/N11）锁 R2 实现审查提出的缺陷。
+ * 后半部分是缺陷防御用例。
  *
- * ⚠️ **读用例名前先读这句**：带"防御路径"字样的用例验的是**分支逻辑**，
- * 它们靠测试替身构造出真机上读不到的状态。"真机上会不会发生"由旁边的
+ * ⚠️ **读用例名前先读这句**：靠测试替身构造真机上读不到状态（竞速微调、
+ * 查询抛错一类）的用例验的是**分支逻辑**；"真机上会不会发生"由旁边的
  * 否定命题用例回答。两类混在一起会让整个缺陷处置被误当成"已经解决"。
  */
 import test from 'node:test';
@@ -24,8 +23,8 @@ import { resolveConfig } from '../lib/config.js';
 import { checkedTool, fakeAgent, fakeCtx, fakeProc, freezeTimers, inboxPayload } from './_helpers.mjs';
 
 /**
- * 被测工具一律经 `checkedTool` 包一层：**每条**用例的返回值都会被喂给宿主输出校验器。
- * 真机上 `async_run` 的完成分支曾 100% 因 schema 不匹配而失败，而当时的单测只断言字段。
+ * 被测工具一律经 `checkedTool` 包一层：**每条**用例的返回值都会被喂给宿主输出校验器
+ * （只断言字段验不出 schema 违规——完成分支必须真的过 `output.schema` 才算数）。
  */
 const createRunTool = (ctx, config) => checkedTool(buildRunTool(ctx, config));
 
@@ -56,12 +55,12 @@ test('async_run（R32-a/e）：预算内结束 → 完成分支照旧；作业�
   // 执行即注册：短命令同样先注册（终态卡残留是用户裁定接受的可见性代价）。
   assert.equal(f.jobsFake.registeredSpecs.length, 1, 'R32-a：完成路径也注册作业（准入先于进程）');
   const jobId = f.jobsFake.views()[0].id;
-  // R32-e 前半：预算内结算的等待是活 waiter（awaited）→ 宿主不补发完成通知。
+  // 预算内结算的等待是活 waiter（awaited）→ 宿主不补发完成通知。
   assert.equal(f.jobsFake.wasAwaited(jobId), true,
-    '结算必须释放活 waiter 并置 awaited——这是"预算内完成零通知"的判据面');
+    '结算必须释放活 waiter 并置 awaited——这是"预算内完成零通知"的判据所在');
 });
 
-test('async_run：超出让出预算 → 返回句柄，命令不被杀死', async () => {
+test('async_run：超出首次等待 → 返回作业编号，命令不被杀死', async () => {
   const f = fakeCtx();
   immediateTimers(f.ctx);
   const { proc, isKilled } = fakeProc({ text: 'partial output', exitCode: null, status: 'running', autoResolve: false });
@@ -73,8 +72,8 @@ test('async_run：超出让出预算 → 返回句柄，命令不被杀死', asy
   assert.equal(result.status, 'running');
   assert.match(result.job_id, /^async-command-/);
   assert.match(result.note, /async_wait_job\(job_id="/);
-  assert.match(result.note, /was NOT terminated/, '让出不杀命令（R22 英文口径）');
-  assert.match(result.note, /keeps running in the background/);
+  assert.match(result.note, /was NOT terminated/, '首次等待到期不杀命令（R22 英文口径）');
+  assert.match(result.note, /the background task keeps running/);
   assert.equal(isKilled(), false, '让出不得杀死命令 —— 这是与内置 pwsh 的根本区别');
   assert.equal(f.jobsFake.registeredSpecs.length, 1, '让出路径应注册一个作业');
   assert.equal(f.startedSpecs.length, 1, '不得重复执行进程');
@@ -94,7 +93,7 @@ test('async_run（R32/R33）：注册字段——label=命令原文、progress=�
   };
   f.installShellExecute((spec) => {
     order.push('execute');
-    assert.notEqual(spec.signal, undefined, 'execute 必须带作业私有 signal（设计审查 S2：prep 窗口 kill 的载体）');
+    assert.notEqual(spec.signal, undefined, 'execute 必须带作业私有 signal（prep 窗口 kill 的载体）');
     return Promise.resolve(proc);
   });
 
@@ -105,22 +104,22 @@ test('async_run（R32/R33）：注册字段——label=命令原文、progress=�
 
   const spec = f.jobsFake.registeredSpecs[0];
   assert.equal(spec.kind, config.jobKind);
-  // R33-a：label 是命令原文（不截断、不换用 description； pwsh 先例）。
+  // label 是命令原文（不截断、不换用 description； pwsh 先例）。
   assert.equal(spec.label, 'build --flag with spaces');
-  // 0.1.7：owner 是 SessionId（agent.id）。
+  // [0.2.0-rc.2]：owner 是 SessionId（agent.id）。
   assert.equal(spec.owner, exec.agent.id, '作业归属发起 agent 的 SessionId');
-  // 通知截断口径随迁（设计审查 L2）：outputLimitBytes 必须还在（字节量纲）。
+  // 通知截断口径：outputLimitBytes 必须还在（字节量纲）。
   assert.ok(Number.isSafeInteger(spec.outputLimitBytes) && spec.outputLimitBytes > 0,
     'outputLimitBytes 随迁——完成通知的截断口径不能静默变化');
   assert.equal(Array.isArray(spec.output), true, 'spec.output 必须是拉式源数组');
   assert.deepEqual(spec.output.map((source) => source.channel), ['stdout', 'stderr']);
   assert.equal(typeof spec.output[0].read, 'function', 'JobOutputSource 形状：read(fromByte)');
-  // R32-a 核心次序：`run` 由注册表在 start 内**同步**回调（准入检查之后），
+  // 核心次序：`run` 由注册表在 start 内**同步**回调（准入检查之后），
   // execute 在 run 内发起——所以 execute 必然晚于 admission（触顶/owner 检查
   // 在 `dsh-jobs-local:419` 先于 `:437` 的 run 调用），只是早于 start 返回点。
   assert.deepEqual(order.slice(0, 3), ['admission', 'execute', 'start-returned'],
     `进程只能在准入之后启动；实得 ${JSON.stringify(order)}`);
-  // R33-b：描述进 progress 行（注册即可见）。
+  // 描述进 progress 行（注册即可见）。
   assert.equal(f.jobsFake.views()[0].progress, 'long build', 'progress 行必须是 description');
 
   // 结算后：拉式源泵进环形缓冲（fake 注册表结算前最后 drain 一次，与真实契约一致）。
@@ -128,7 +127,10 @@ test('async_run（R32/R33）：注册字段——label=命令原文、progress=�
   await new Promise((r) => { setTimeout(r, 0); });
   const views = f.jobsFake.views();
   assert.equal(views[0].status, 'completed', 'hooks.done 的 JobOutcome 耦合注册表结算');
-  assert.match(views[0].detail, /exit code: 0/);
+  // 需求 2.2.3 两路径一致：正常退出不加标记（与前台 `exitStatusMarker` 同一条
+  // 规则）——detail 里不得再出现退出码行。
+  assert.doesNotMatch(views[0].detail ?? '', /exit code|退出码/,
+    '正常退出的 detail 不得带退出码标记（前台同口径）');
   const chunks = f.jobsFake.chunksOf(result.job_id);
   assert.ok(chunks.some((chunk) => chunk.text === 'background output' && chunk.channel === 'stdout'),
     'observed.stdout 的内容必须进环形缓冲（async_wait_job 从这里取输出）');
@@ -145,14 +147,14 @@ test('async_run（R32·prep 窗口）：拉式源在 proc 到位前被泵 → �
   await new Promise((r) => { setTimeout(r, 0); });
   const result = await pending;
 
-  assert.equal(result.status, 'running', '预算到期照常转句柄（prep 悬置：作业在跑预备，§33.8）');
+  assert.equal(result.status, 'running', '预算到期照常转句柄（prep 悬置：作业在跑预备）');
   const jobId = result.job_id;
   // 结算前泵一次：proc 未到位 → 空读（fake pump 里 text 为空不进 chunks、游标不动）。
   f.ctx.jobs.read(jobId, exec.agent.id);
   assert.deepEqual(f.jobsFake.chunksOf(jobId), [], '空读不得产生分块');
 });
 
-test('async_run（0.1.7）：请求显式 onExpiry:"none"——内置到期杀进程与本插件语义正面冲突', async () => {
+test('async_run（0.2.0-rc.2）：请求显式 onExpiry:"none"——内置到期杀进程与本插件语义正面冲突', async () => {
   const f = fakeCtx();
   const { proc } = fakeProc({ text: 'ok' });
   const seen = [];
@@ -255,7 +257,7 @@ test('async_run：lossy 输出必须显式呈现，不得静默丢弃', async ()
 });
 
 test('J-limit（R11）：outputLimitBytes 必须是**字节**预算，不能把字符数直接传进去', async () => {
-  // 缺陷形态：`JobSpec.outputLimitBytes` 的量纲是字节，而我们的配置项叫
+  // 缺陷形态：`JobSpec.outputLimitBytes` 的量纲是字节，而配置项叫
   // `maxResultChars`（**字符**）。直接把字符数传进去，中文通知会被提前约 1/3 截断。
   //
   // 这条断言守的是**量纲**：传出去的数必须 ≥ 字符数（即已完成换算），
@@ -306,7 +308,7 @@ test('async_run：输出超限时标记 truncated', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 以下用例锁 R2 审查的 N1 / N2 / N4 / N5 / N10 / N11。
+// 以下用例是缺陷防御组。
 // ---------------------------------------------------------------------------
 
 /**
@@ -352,7 +354,7 @@ function lossyProc({ spillPath, autoResolve = true } = {}) {
   return { proc, settle };
 }
 
-test('async_run（N1）：请求必须带 shellEnv.collect(exec) 的 dshEnv', async () => {
+test('async_run：请求必须带 shellEnv.collect(exec) 的 dshEnv', async () => {
   const f = fakeCtx();
   const { proc } = fakeProc({ text: 'ok' });
   const seen = [];
@@ -391,11 +393,14 @@ test('async_run（R32-d）：插话与结算同拍 → 完成优先，返回结�
   const result = await pending;
   assert.equal(result.status, 'completed', '终态复查胜过插话——不得返回句柄让模型重复等待');
   assert.equal(result.output, 'already done');
+  // 先到扫描（§2.2）会读入口 inbox：模块级共享的 exec 不能跨用例滞留插话，
+  // 否则后续用例的首次等待被上一条插话污染（迟到作答/预算到期用例依赖干净入口）。
+  exec.agent.inbox.nextStep.splice(0);
 });
 
-test('async_run（N2b）：结算挂在 done.then 上 → start() 返回后同步读必然是 running（注册即终态读不到）', async () => {
+test('async_run：结算挂在 done.then 上 → start() 返回后同步读必然是 running（注册即终态读不到）', async () => {
   // 这条用例证明的是**否定命题**：注册复查窗口在同构实现上不存在。
-  // 0.1.7 的 `JobHooks.done: Promise<JobOutcome>`（dsh-jobs/lib/types/types.d.ts:96-110）
+  // `JobHooks.done: Promise<JobOutcome>`（[0.2.0-rc.2] dsh-jobs/lib/types/types.d.ts:96-110）
   // 决定了结算至少晚一个 microtask——即便生产者的 done 在 start 内就已 resolve。
   const store = new Map();
   const settled = [];
@@ -436,12 +441,12 @@ test('async_run（R32-c-e）：预算到期 → 句柄 + 预算口径 note；不
     .execute({ command: 'build', description: 'long build', yield_ms: 5 }, exec);
 
   assert.equal(result.status, 'running');
-  assert.match(result.note, /outlived the .* yield budget/, '预算路径的开头仍是"超出预算"句');
+  assert.match(result.note, /outlived the .* first wait/, '预算路径的开头仍是"超出首次等待"句');
   assert.doesNotMatch(result.note, /ended early: a user message arrived/, '不是插话路径，不得出现提前让出句');
   assert.doesNotMatch(result.note, /A late answer has arrived/, '不是迟到作答路径，不得出现 lateArrived 句');
 });
 
-test('async_run（N4）：elapsed_ms 覆盖整个让出窗口，不能恒为 0', async () => {
+test('async_run：elapsed_ms 覆盖整个让出窗口，不能恒为 0', async () => {
   const f = fakeCtx();
   const fastConfig = resolveConfig({ toolName: 'async_run', minYieldMs: 20, defaultYieldMs: 40 });
   const { proc } = fakeProc({ text: '', status: 'running', autoResolve: false });
@@ -451,14 +456,14 @@ test('async_run（N4）：elapsed_ms 覆盖整个让出窗口，不能恒为 0',
     .execute({ command: 'build', description: 'long build', yield_ms: 40 }, exec);
 
   assert.equal(result.status, 'running');
-  assert.ok(fastConfig.minYieldMs <= 40, '前提：本次让出预算没有被夹紧');
-  assert.ok(result.elapsed_ms >= 40, `elapsed_ms 必须覆盖让出窗口，实际 ${result.elapsed_ms}`);
+  assert.ok(fastConfig.minYieldMs <= 40, '前提：本次首次等待没有被夹紧');
+  assert.ok(result.elapsed_ms >= 40, `elapsed_ms 必须覆盖首次等待窗口，实际 ${result.elapsed_ms}`);
   assert.ok(result.elapsed_ms < 10000, `elapsed_ms 不该是别的量级，实际 ${result.elapsed_ms}`);
-  assert.match(result.note, /outlived the 40 ms yield budget/, 'note 里的预算数字必须取自生效配置');
+  assert.match(result.note, /outlived the 40 ms first wait/, 'note 里的等待数字必须取自生效配置');
   assert.match(result.note, new RegExp(`about ${String(result.elapsed_ms)} ms elapsed`), 'note 里的数字必须与 elapsed_ms 一致');
 });
 
-test('async_run（N5）：lossy 且有落点 → note 与作业结局都给出 spill 路径', async () => {
+test('async_run：lossy 且有落点 → note 与作业结局都给出 spill 路径', async () => {
   const f = fakeCtx();
   const first = lossyProc({ spillPath: 'C:\\spill\\stdout.txt' });
   f.installShellExecute(() => Promise.resolve(first.proc));
@@ -484,7 +489,7 @@ test('async_run（N5）：lossy 且有落点 → note 与作业结局都给出 s
   assert.match(view.detail, /full output at stdout: C:\\spill\\stdout\.txt/);
 });
 
-test('async_run（N5）：lossy 但没有落点 → 必须明说没有落点，不得让模型以为磁盘上还有一份', async () => {
+test('async_run：lossy 但没有落点 → 必须明说没有落点，不得让模型以为磁盘上还有一份', async () => {
   // 完成分支
   const f = fakeCtx();
   f.installShellExecute(() => Promise.resolve(lossyProc().proc));
@@ -495,7 +500,7 @@ test('async_run（N5）：lossy 但没有落点 → 必须明说没有落点，�
   assert.match(completed.note, /no spill file was reported/, '没有落点必须说清楚');
   assert.doesNotMatch(completed.note, /full output is on disk/);
 
-  // 而且**必须到达模型可见文本**——`value.note` 里有不等于模型看得见（R11 真机测出的 P1）。
+  // 而且**必须到达模型可见文本**——`value.note` 里有不等于模型看得见。
   const completedText = tool.output.render({ command: 'x' }, completed).map((part) => part.text).join('\n');
   assert.match(completedText, /no spill file was reported/, '没有落点必须出现在**模型可见文本**里');
   assert.doesNotMatch(completedText, /full output is on disk/, '模型可见文本里也不许声称磁盘上有');
@@ -513,7 +518,7 @@ test('async_run（N5）：lossy 但没有落点 → 必须明说没有落点，�
   assert.doesNotMatch(view.detail, /full output at/);
 });
 
-test('async_run（N10）：相对 workdir 按会话工作目录解析；无 cwd 时原样透传', async () => {
+test('async_run：相对 workdir 按会话工作目录解析；无 cwd 时原样透传', async () => {
   const f = fakeCtx();
   const { proc } = fakeProc({ text: 'ok' });
   const seen = [];
@@ -528,13 +533,13 @@ test('async_run（N10）：相对 workdir 按会话工作目录解析；无 cwd 
   await tool.execute({ command: 'echo', description: 'echo', workdir: 'D:\\abs' }, exec);
   assert.equal(seen[1].workdir, 'D:\\abs', '绝对路径原样透传');
 
-  // 有 agent 但会话没有 cwd（拿不到工作目录）时不得自己编一个：原样交给 shell.resolve 兜底。
-  // （R32-a 起 agent 缺席会在入口被拒——无 cwd 的正向用例换成"有 agent、无 cwd"。）
+  // 有 agent 但会话没有 cwd（拿不到工作目录）时不得自己编一个：原样交给 shell.resolve 回退。
+  // （agent 缺席会在入口被拒——无 cwd 的正向用例换成"有 agent、无 cwd"。）
   await tool.execute({ command: 'echo', description: 'echo', workdir: 'src' }, { agent: { id: 'sess-no-cwd' }, signal: exec.signal });
   assert.equal(seen[2].workdir, 'src');
 });
 
-test('async_run（R32-a/§33.2-1）：无 agent 语境 → 拒绝且零注册零进程', async () => {
+test('async_run（R32-a/设计 §3.1）：无 agent 语境 → 拒绝且零注册零进程', async () => {
   const f = fakeCtx();
   const { proc } = fakeProc({ text: 'never' });
   f.installShellExecute(() => Promise.resolve(proc));
@@ -543,7 +548,8 @@ test('async_run（R32-a/§33.2-1）：无 agent 语境 → 拒绝且零注册零
     () => createRunTool(f.ctx, config).execute({ command: 'x', description: 'x' }, { signal: exec.signal }),
     (error) => {
       assert.match(error.message, /no agent context/, '说清拒绝的原因是缺 agent 语境');
-      assert.match(error.message, /built-in pwsh/, '给出可行动出路：内置 pwsh');
+      assert.match(error.message, /session whose preset provides a synchronous shell/,
+        '给出可行动出路：换到提供同步 shell 的预设会话（本包预设不含内置 pwsh）');
       return true;
     }
   );
@@ -551,17 +557,17 @@ test('async_run（R32-a/§33.2-1）：无 agent 语境 → 拒绝且零注册零
   assert.equal(f.startedSpecs.length, 0, '进程不得启动');
 });
 
-test('async_run（N11）：描述里写出生效的预算数字（锚②③④都接上了）', async () => {
+test('async_run：描述里写出生效的预算数字（锚②③④都接上了）', async () => {
   const tool = createRunTool(fakeCtx().ctx, resolveConfig({ toolName: 'async_run', defaultYieldMs: 15000, maxWaitMs: 120000 }));
-  assert.match(tool.description, /15000 ms/, '让出预算必须来自生效配置');
+  assert.match(tool.description, /15000 ms/, '首次等待必须来自生效配置');
   assert.match(tool.description, /120000 ms/, '等待上限必须来自生效配置（补缺口）');
-  // R4 审查 #1：`async_run` 是**唯一**该看到 yield_ms 与"转后台"的工具。
+  // `async_run` 是**唯一**该看到 yield_ms 与"转后台"的工具。
   assert.match(tool.description, /yield_ms/, 'async_run 必须告诉模型 yield_ms 参数');
-  assert.match(tool.description, /job_id handle/, 'async_run 必须说清超时后转后台');
-  // §24.2 锚点：②③④（刷新规则就地改写的锚句必须真的在描述里）。
-  assert.match(tool.description, /Yield budget bounded to \d+–\d+ ms/);
-  assert.match(tool.description, /Yield budget defaults to 15000 ms \(pass yield_ms, range \d+–\d+ ms\)/);
-  assert.match(tool.description, /Wait budgets must be passed explicitly, range \d+–120000 ms;/);
+  assert.match(tool.description, /job id \(job_id\)/, 'async_run 必须说清超时后转后台');
+  // 锚点：②③④（刷新规则就地改写的锚句必须真的在描述里）。
+  assert.match(tool.description, /First wait bounded to \d+–\d+ ms/);
+  assert.match(tool.description, /The first wait defaults to 15000 ms \(pass yield_ms, range \d+–\d+ ms\)/);
+  assert.match(tool.description, /Per-call wait budgets must be passed explicitly, range \d+–120000 ms;/);
   assert.equal(typeof tool.parameters.properties.yield_ms, 'object', 'async_run 的 parameters 里必须有 yield_ms');
 });
 
@@ -589,7 +595,7 @@ test('async_run（R8·R32-a）：准入拒绝必须可读可行动——进程�
 
   assert.ok(raised !== undefined, '准入失败必须让本次工具调用失败，不能假装拿到了句柄');
   // 四条都要满足：说得清失败的是启动、给出可行动作、明说**进程未启动**、
-  // 并且列出**生效上限**（设计 §33.1-4；R4 审查 #13a 的触顶新形态）。
+  // 并且列出**生效上限**（触顶拒绝的判据）。
   assert.match(raised.message, /refused before the process launched/, '必须说清失败发生在进程启动前');
   assert.match(raised.message, /nothing is running/, '必须明说没有进程在运行——准入在先，无东西可取消');
   assert.match(raised.message, /job_kill/, '必须给出可行动作');
@@ -652,7 +658,7 @@ test('async_run（R8/#13a）：清单查询失败不得盖掉真正的原因', a
 });
 
 // ---------------------------------------------------------------------------
-// T7：把返回值喂给宿主自己的输出校验器。真机上 `async_run` 的完成分支曾 100% 失败。
+// T7：把返回值喂给宿主自己的输出校验器。
 // ---------------------------------------------------------------------------
 
 test('async_run（T7）：exitCode / signal 为 null 时完成分支仍必须通过 output.schema', async () => {
@@ -705,13 +711,15 @@ test('async_run（T7）：校验器活性证明——`exit_code: null` 确实会
 });
 
 test('J-render（R11 P1）：async_run 的完成分支必须把 note 渲染进模型可见文本', () => {
-  // 真机实测到的缺陷（`verify/reports/shell-spill.md` §6.1）：完成分支的 `render` 原来只输出
-  // `value.output`，于是"输出被内存丢弃、完整输出在 <路径>"这句 `note` **永远到不了模型眼前**。
+  // 缺陷形态：完成分支的 `render` 若只输出
+  // `value.output`，"输出被内存丢弃、完整输出在 <路径>"这句 `note` **永远到不了模型眼前**。
   //
   // 根因是**把"值里有"当成了"模型看得见"**：结构化 `value` 不进模型上下文。
   const tool = buildRunTool(fakeCtx().ctx, resolveConfig({ toolName: 'async_run' }));
 
-  // ① 完成 + lossy：note 必须在渲染文本里（样例串用英文——模型面口径，R22）。
+  // ① 完成 + lossy：note 必须在渲染文本里（样例串用英文——模型侧口径）。
+  // 截断标注改由 `truncate` 嵌进 `output` 正文（双语带省略量，真实路径由
+  // 「输出超限时标记 truncated」与 output.test 锁定），render 层不追加。
   const lossyText = tool.output.render({ command: 'x' }, {
     status: 'completed',
     output: 'OUT',
@@ -719,7 +727,6 @@ test('J-render（R11 P1）：async_run 的完成分支必须把 note 渲染进�
     note: 'output partially dropped; full output at C:\\Temp\\spill\\async_run-1-stdout.log'
   }).map((part) => part.text).join('\n');
   assert.match(lossyText, /^OUT/, '输出本体要在最前面');
-  assert.match(lossyText, /\[output truncated\]/, '截断标注要在');
   assert.match(lossyText, /output partially dropped/, 'lossy 说明必须在模型可见文本里');
   assert.match(lossyText, /async_run-1-stdout\.log/, '落点路径必须在模型可见文本里');
 
@@ -742,14 +749,14 @@ test('J-render（R11 P1）：async_run 的完成分支必须把 note 渲染进�
 });
 
 // ---------------------------------------------------------------------------
-// R29（安全/健壮性/异常处理）新增判据：设计 §31.9 判据 5、7、11。
+// 安全/健壮性/异常处理的缺陷防御判据。
 // ---------------------------------------------------------------------------
 
 test('R29-e（判据 7·）：让出窗口内被信号杀死且 done 照常 resolve → killed 结局带部分输出，且过 output schema', async () => {
   const f = fakeCtx();
   // done 在预算内 resolve（微任务先行，赢过 5ms 的让出定时器），但 status 是
-  // 'killed'——被杀进程的 done 也是 resolve。旧逻辑无条件走 completed
-  // 分支，等于对模型说"正常完成"。
+  // 'killed'——被杀进程的 done 也是 resolve。无条件走 completed
+  // 分支等于对模型说"正常完成"——那是缺陷形态。
   const { proc } = fakeProc({ text: 'partial output', exitCode: null, signal: 'SIGTERM', status: 'killed', autoResolve: true });
   f.installShellExecute(() => Promise.resolve(proc));
   const tool = createRunTool(f.ctx, config);
@@ -759,19 +766,19 @@ test('R29-e（判据 7·）：让出窗口内被信号杀死且 done 照常 reso
   const result = await tool.execute({ command: 'build', description: 'x', yield_ms: 5 }, exec);
 
   assert.equal(result.status, 'killed');
-  assert.equal(result.output, 'partial output', 'killed 也要带让出窗口内已收到的字节（Q3 裁决）');
+  assert.equal(result.output, 'partial output', 'killed 也要带让出窗口内已收到的字节（决定：已收到的字节照常交付）');
   assert.equal(result.truncated, false);
   assert.match(result.detail, /SIGTERM/, 'detail 必须注明致死信号');
   assert.equal(f.jobsFake.registeredSpecs.length, 1, 'R32-a：执行即注册——预算内 killed 同样注册过（终态卡残留已裁定接受）');
 
-  // 渲染面：killed 形态的模型可见文本 = detail 行（致死信号是头条）+ 输出本体。
+  // 渲染侧：killed 形态的模型可见文本 = detail 行（致死信号是头条）+ 输出本体。
   const killedText = tool.output.render({ command: 'build' }, result).map((part) => part.text).join('\n');
   assert.match(killedText, /^signal: SIGTERM/, 'killed 的头条是致死信号');
   assert.match(killedText, /^partial output$/m, '部分输出本体也要在模型可见文本里');
 });
 
 test('R29-e（判据 7b·无文形态）：killed 且无任何输出 → 不带 output 键，渲染只剩 detail', async () => {
-  // "没值就不写这个键"是 jobOutcome 对可空字段的口径（实现审查 O5）：无文的 killed
+  // "没值就不写这个键"是 jobOutcome 对可空字段的口径：无文的 killed
   // 不得凭空多出 output:''（空串会让模型以为"确认读过、确实没有"，而事实是"没收到"）。
   const f = fakeCtx();
   const { proc } = fakeProc({ text: '', exitCode: null, signal: 'SIGKILL', status: 'killed', autoResolve: true });
@@ -859,16 +866,16 @@ test('R29-f（判据 11·让出日志单行化）：label=命令原文（R33-a�
     .map(([, message]) => message)
     .find((message) => message.includes('label='));
   assert.ok(line !== undefined, '让出必须记操作者日志');
-  assert.doesNotMatch(line, /[\r\n]/, 'escapeLogValue 必须把 CR/LF 转成字面 \\r\\n——日志注入面收成单行');
+  assert.doesNotMatch(line, /[\r\n]/, 'escapeLogValue 必须把 CR/LF 转成字面 \\r\\n——日志注入收成单行');
   assert.match(line, /label=line1\\r\\nline2\\tend/, 'label= 现在是命令原文（R33-a），转义后的字面序列要在');
 });
 
-test('R29-f（判据 11·注册失败单行化）：宿主原文多行超长 → 模型面单行 + 500 截断 + 操作者日志留全文', async () => {
+test('R29-f（判据 11·注册失败单行化）：宿主原文多行超长 → 模型侧单行 + 500 截断 + 操作者日志留全文', async () => {
   const f = fakeCtx();
   immediateTimers(f.ctx);
   const { proc } = fakeProc({ text: 'bg', status: 'running', autoResolve: false });
   f.installShellExecute(() => Promise.resolve(proc));
-  // 615 字符、含 \n、\r\n\t：拍平后 612 → 模型面截到 500 + (+112)。
+  // 615 字符、含 \n、\r\n\t：拍平后 612 → 模型侧截到 500 + (+112)。
   const rawDetail = `${'X'.repeat(250)}\n${'Y'.repeat(250)}\r\n\t${'Z'.repeat(110)}`;
   f.ctx.jobs.start = () => { throw new Error(rawDetail); };
   const tool = createRunTool(f.ctx, config);
@@ -876,7 +883,7 @@ test('R29-f（判据 11·注册失败单行化）：宿主原文多行超长 →
   await assert.rejects(
     () => tool.execute({ command: 'build', description: 'x', yield_ms: 5 }, exec),
     (error) => {
-      assert.doesNotMatch(error.message, /[\r\n]/, '模型面错误必须单行');
+      assert.doesNotMatch(error.message, /[\r\n]/, '模型侧错误必须单行');
       assert.ok(error.message.includes('(+112)'), `500 之后的余额要以 (+N) 注明；实得：${error.message.slice(-40)}`);
       return true;
     }
@@ -886,16 +893,16 @@ test('R29-f（判据 11·注册失败单行化）：宿主原文多行超长 →
     .map(([, message]) => message)
     .find((message) => message.includes('full detail'));
   assert.ok(full !== undefined && full.includes(rawDetail),
-    '完整原文（含换行）必须留在操作者日志——单行化只作用于模型面，不丢线索');
+    '完整原文（含换行）必须留在操作者日志——单行化只作用于模型侧，不丢线索');
 });
 
 // ---------------------------------------------------------------------------
-// R32 首次等待的五信号竞速（§33.6）：结算/插话/abort/迟到作答/预算。
+// 首次等待的五信号竞速：结算/插话/abort/迟到作答/预算。
 // 预算与结算路径已有上方用例；这里补插话、迟到、abort、prep 窗口 kill 与
-// 通知计数（R32-e）的判据。预算路径由 yield_ms=600000 的大预算排除（fake
+// 通知计数的判据。预算路径由 yield_ms=600000 的大预算排除（fake
 // jobs.wait 的超时走全局 setTimeout，freezeTimers 只冻结 ctx.timer——它冻结
 // 不了这里的预算）。`pending` 若在毫秒级收敛，只能来自
-// 注入的信号本身（§33.2-2 的单元面"微任务级联"判据）。
+// 注入的信号本身（单元层"微任务级联"判据）。
 // ---------------------------------------------------------------------------
 
 test('async_run（R32-b·插话）：让出窗口内用户消息到达 → 秒回句柄 + 提前让出注记，命令零影响', async () => {
@@ -916,10 +923,12 @@ test('async_run（R32-b·插话）：让出窗口内用户消息到达 → 秒�
   assert.match(result.note, /async_wait_job\(job_id="/, '恢复示例照带');
   assert.equal(isKilled(), false, '插话只结束等待，绝不终止命令');
   assert.equal(f.jobsFake.views()[0].status, 'running', '作业必须存活');
-  // R32-e 后半 + S1/S3：竞速定局即撤销 → waiter 已摘 → 结算时不计 awaited。
+  // 竞速定局即撤销 → waiter 已摘 → 结算时不计 awaited。
   assert.equal(f.jobsFake.waitersOf(result.job_id), 0, '句柄返回后不得残留 waiter（否则通知被吞）');
   f.jobsFake.settleJob(result.job_id, { status: 'completed', detail: 'exit code: 0' });
   assert.equal(f.jobsFake.wasAwaited(result.job_id), false, '撤销后的结算 awaited=false → 完成通知照发（恢复通道）');
+  // 同上：清掉本用例滞留的插话，别污染后续用例的先到扫描。
+  exec.agent.inbox.nextStep.splice(0);
 });
 
 test('async_run（R32-b·迟到作答）：让出窗口内迟到作答到达 → 句柄 + lateArrived（与 wait 工具同键）', async () => {
@@ -959,7 +968,7 @@ test('async_run（R32-c·abort）：GUI 停止 → 句柄形状返回（宿主�
   const result = await pending;
   // 宿主会把整个结果改写为 "Error: tool call aborted"——模型看不到这个值；
   // 但返回值必须仍是合法形状（output schema 由 checkedTool 验证），且作业必须
-  // 存活：撤销后的结算通知是 abort 后模型唯一的恢复通道（R32-c）。
+  // 存活：撤销后的结算通知是 abort 后模型唯一的恢复通道。
   assert.equal(result.status, 'running', 'abort 分支按句柄口径返回（宿主整体改写，形状合法即可）');
   assert.equal(isKilled(), false, 'abort 绝不终止命令（R32-c：与 exec.signal 无关的作业私有通道才管 kill）');
   assert.equal(f.jobsFake.views()[0].status, 'running', '作业必须存活（不 kill、不 remove）');
@@ -989,10 +998,10 @@ test('async_run（R32·prep 窗口 kill，S2）：execute 未 resolve 时 job_ki
   assert.match(result.detail, /spawn aborted before start/);
 });
 
-test('async_run（§33.8）：prep 失败——execute 异步拒绝（非 kill）→ 作业按 failed 结算，原始错误原样重抛', async () => {
+test('async_run（prep 窗口）：prep 失败——execute 异步拒绝（非 kill）→ 作业按 failed 结算，原始错误原样重抛', async () => {
   // done 链把 execute 拒绝分类为 {status:'failed'} → 注册表按 failed 结算 →
-  // 首次等待带回 failed view → settleNow 重抛闭包里的原始错误（与旧形态
-  // 「准备失败直接抛」等价，设计 §33.3-a；作业侧终态卡在册，job_list 可见）。
+  // 首次等待带回 failed view → settleNow 重抛闭包里的原始错误（与
+  // 「准备失败直接抛」等价；作业侧终态卡在册，job_list 可见）。
   const f = fakeCtx();
   freezeTimers(f.ctx);
   f.installShellExecute(() => Promise.reject(new Error('spawn EPERM at process creation')));
@@ -1005,6 +1014,6 @@ test('async_run（§33.8）：prep 失败——execute 异步拒绝（非 kill�
   );
   const views = f.jobsFake.views();
   assert.equal(views.length, 1, '执行即注册：prep 失败也留下作业记录');
-  assert.equal(views[0].status, 'failed', '作业按 failed 结算（宿主 done→结算契约，通知面同 killed 路）');
+  assert.equal(views[0].status, 'failed', '作业按 failed 结算（宿主 done→结算契约，通知侧同 killed 路）');
   assert.match(views[0].detail, /spawn EPERM/);
 });

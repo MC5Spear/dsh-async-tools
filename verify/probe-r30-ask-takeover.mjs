@@ -1,45 +1,48 @@
 /**
- * R30 提问接管真机探针（`docs/design.md` §32.8，判据①–⑦；F115/F116 口径；
- * 修正轮（3f36f76）后 ②/⑥/⑦ 为通知形/唤醒分支/语言三档的真机面）。
+ * 提问接管真机探针（设计 §4.1–4.4／需求 §4，判据⓪–⑧）。
  *
  * 两相用法：
- * - 主相：`node verify/probe-r30-ask-takeover.mjs`（判据①②③④⑥⑦；收尾**故意
+ * - 主相：`node verify/probe-r30-ask-takeover.mjs`（判据⓪①②③④⑥⑦⑧；收尾**故意
  *   留着** `askTakeover=true` —— 判据⑤要穿过重启验证持久化）。
- * - 重启相：操作者按三道安全门重启验证实例（无 running 会话、近 10 分钟无活动、
+ * - 重启相：操作者按三道安全检查重启验证实例（无 running 会话、近 10 分钟无活动、
  *   操作会话不在其进程树）后 `node verify/probe-r30-ask-takeover.mjs --after-restart`
  *   （判据⑤：设置仍开 + 提问仍被接管；收尾复原全部默认）。
  *
- * 判据（§32.8）：
+ * 判据（设计 §4.1–4.4／需求 §4）：
+ * - ⓪ 座位默认（需求 §5.2·设计 §4.3）：清掉 askUiSeat 的用户层覆盖（patch null）
+ *   → 生效值 sidebar；接管开时提问 → **徽标**在场（.ats-ask-badge ≥ 1）、浮框缺席。
+ *   随后显式 overlay（同条件）→ 浮框在场（②接手）——默认档与显式档两步对照；
+ *   实例若不支持 null 清层则本步降级为留痕跳过（不算通过也不算失败）。
  * - ① `dsh-async` 会话让 Agent 提问 → 10 s 窗口耗尽 → 转录含合成超时答案
  *   （en 档 `ask.timeoutCustom` 锚句）且模型继续工作（turn/end + 后续 assistant 文本）。
  * - ② overlay 出现（`.ats-ask-panel`）且计数正确；等超时徽标出现后对选项 chip 真实
  *   点击 + 提交 → 转录出现**通知形触发行**（迟到正文锚 + 转录源对象带
  *   `kind=async-tools-late-answer`/`form=notice`/summary——非用户消息气泡，
- *   F130/F141）→ Agent 空闲后被唤醒续答（answer 通道端到端：typert 标记 → 裸传
- *   载荷 → 注册表迟到注入 followup）。锚句随实例 `agentLang` 双档自适应（r30f：
- *   共享实例的语言档可能被并行轮/用户置 zh，探针不强制改回）。
+ *   设计 §4.4）→ Agent 空闲后被唤醒续答（answer 通道端到端：typert 标记 → 裸传
+ *   载荷 → 注册表迟到注入 followup）。锚句随实例 `agentLang` 双档自适应
+ *   （共享实例的语言档可能被并行轮/用户置 zh，探针不强制改回）。
  * - ③ `standard` 对照会话：原生问题卡（`.Mbwy4a_card`，user-questions 官方包）
- *   出现在 DOM、我们的浮框与徽标**都不在场**（条件②行为证据）；随后经原生卡作答
+ *   出现在 DOM、本包的浮框与徽标**都不在场**（条件②行为证据）；随后经原生卡作答
  *   释放会话（顺证原生链未被接管路径损伤）。
  * - ④ `askUiSeat='sidebar'` 后再问 → 徽标（`.ats-ask-badge`）在场、浮框缺席；
- *   点徽标浮框出现（纯呈现层切换，J16 的真机面）。
+ *   点徽标浮框出现（纯呈现层切换，实例环境同 ③）。
  * - ⑤ 重启验证实例 → 设置与行为不变（开关仍开、提问仍被接管）；复原默认。
  * - ⑥ 等待期间作答：Agent 发长跑作业 → 提问（超时放行）→ 进入 `async_wait_job`
- *   长等待；此时对超时批作答 → 迟到作答事件（通道轮：插件事件 + 起始检查）
+ *   长等待；此时对超时批作答 → 迟到作答事件（需求 §4.4：插件事件 + 起始检查）
  *   唤醒等待 → 工具**提前返回运行句柄**（tool/result 渲染文含 note 锚句「迟到作答已到/A late answer
- *   has arrived」+「仍在运行」语义；无打断锚——非 interrupted、非终态，r30f 真
+ *   has arrived」+「仍在运行」语义；无打断锚——非 interrupted、非终态；真
  *   机读数：转录 tool/result 是渲染文本，无结构化 status 字段）；后续回合读到
  *   通知正文。
- * - ⑦ 语言四组合（R30-c 修正）：宿主语言用 `--lang` 启动开关分起两个无头实例
- *   （zh-CN 宿主 = 默认启动 / en-US 宿主 = `--lang=en-US`；r30f 真机读数：
+ * - ⑦ 语言四组合（需求 §5.3）：宿主语言用 `--lang` 启动开关分起两个无头实例
+ *   （zh-CN 宿主 = 默认启动 / en-US 宿主 = `--lang=en-US`；真机读数：
  *   `Emulation.setLocaleOverride` 在本机 headless Edge 上不改变
  *   `navigator.language`）× `uiLang`（auto/zh/en）四组合下待答面板文案语言
  *   正确（auto 跟宿主；zh/en 钉住本包词典）。
- * - ⑧ 通道与整批领取（通道轮，§32.8）：(a) 子代理等待期间作答不排队——正文
- *   当回合进入上下文（点答到正文落地 < 25 s，非等待预算耗尽后），wait 唤醒
+ * - ⑧ 通道与整批领取（需求 §4.4）：(a) 子代理等待期间作答不排队——正文
+ *   当回合进入上下文（点答到正文送达 < 25 s，非等待预算耗尽后），wait 唤醒
  *   返回带 note 锚；(b) 空闲时两秒内乱序连答三题——首条立即开回合，其余并入
  *   该回合下一领取点**整批领取**（转录相邻通知记录无间隔），新增 turn/end ≤ 2
- *   （旧病灶：每条 followup 各串行开一回）。
+ *   （判基线：串行开回是缺陷形态）。
  *
  * 证据：本机证据目录 logs/r30-ask-takeover{-after-restart}.json + shots/r30-*.png。
  * 前置：验证实例在听；本包宿主行已随 0.2.0 装载（验证实例的 DSH_HOME 插件树）。
@@ -56,7 +59,7 @@ mkdirSync(LOGS, { recursive: true });
 mkdirSync(SHOTS, { recursive: true });
 
 // —— 锚句（与 lib/text.js 对应项逐字一致；改文案必须同步）——
-// 双档锚（r30f 真机教训）：验证实例是共享实例，agentLang 可能被并行轮/用户置
+// 双档锚（真机读数）：验证实例是共享实例，agentLang 可能被并行轮/用户置
 // zh——锚句随实例实况选档，不强制改别人的 agentLang。
 const ANCHORS = {
   en: {
@@ -76,7 +79,7 @@ const ANCHORS = {
 };
 /** 本轮实例的锚句档（mainPhase 前置时按 agentLang 选定；after-restart 同法重选）。 */
 let A = ANCHORS.en;
-// R30-d 通知形：迟到作答消息的自声明源（与 lib/interrupts.js LATE_ANSWER_SOURCE 同串）。
+// 迟到作答通知形（设计 §4.4）：迟到作答消息的自声明源（与 lib/interrupts.js LATE_ANSWER_SOURCE 同串）。
 const LATE_KIND = 'async-tools-late-answer';
 const ASK_TOOL = 'ask_user_question';
 const WAIT_JOB_TOOL = 'async_wait_job';
@@ -100,7 +103,7 @@ function check(name, ok, detail = '') {
 
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
-/** 转录全文化（判据锚句检索面）。 */
+/** 转录全文化（判据锚句检索范围）。 */
 function transcriptText(transcript) {
   const parts = [];
   for (const record of transcript.records ?? []) {
@@ -141,7 +144,7 @@ async function openApp(launchArgs = []) {
 const countOf = (selector) => `document.querySelectorAll("${selector}").length`;
 
 /**
- * 会话组定位（真机第二轮教训）：expired 批按设计留列供迟到作答——面板里同时会有
+ * 会话组定位（真机实测：同时会有多批）：expired 批按设计留列供迟到作答——面板里同时会有
  * 历史批与本轮批。所有断言与点击都必须**落在目标会话的组里**（组头文本
  * `session <id 前 8 位>`），不能数全局。
  */
@@ -183,23 +186,61 @@ async function clickFirstOptionAndSubmit(page, sessionId) {
 let nsBefore = null;
 
 async function mainPhase() {
-  console.log('· 前置：接管开 + 窗口 10 s + 座位 overlay + 界面 auto（agentLang 按实例实况选锚档）');
+  console.log('· 前置：接管开 + 窗口 10 s + 界面 auto + 座位清层（默认档先行；agentLang 按实例实况选锚档）');
   const described0 = await rpc('settings/describe', {});
   nsBefore = described0.namespaces.find((n) => (n.ns ?? n.namespace ?? n.id) === NS)?.value ?? null;
   log.nsBefore = nsBefore;
   A = nsBefore?.agentLang === 'zh' ? ANCHORS.zh : ANCHORS.en;
   log.anchorLang = nsBefore?.agentLang === 'zh' ? 'zh' : 'en';
   // 座位/界面语言是本探针的判定对象，前置归一；agentLang 不动（并行轮可能在用）。
-  await rpc('settings/update', { ns: NS, patch: { askTakeover: true, askTimeoutMs: 10000, askUiSeat: 'overlay', uiLang: 'auto' } });
+  // askUiSeat=null 是**清层**（去掉用户层覆盖）——默认档判据（⓪）需要真正的
+  //「无覆盖」：宿主配置行与用户层都没写这个字段，生效值只能来自 schema 默认 sidebar。
+  let seatUnsetOk = true;
+  try {
+    await rpc('settings/update', { ns: NS, patch: { askTakeover: true, askTimeoutMs: 10000, uiLang: 'auto', askUiSeat: null } });
+  } catch (error) {
+    seatUnsetOk = false;
+    log.seatUnsetError = String(error);
+    console.log(`  （askUiSeat=null 清层不被支持：${String(error)}；⓪ 降级为留痕跳过）`);
+    await rpc('settings/update', { ns: NS, patch: { askTakeover: true, askTimeoutMs: 10000, uiLang: 'auto' } });
+  }
   const described = await rpc('settings/describe', {});
   const ns = described.namespaces.find((n) => (n.ns ?? n.namespace ?? n.id) === NS);
-  check('前置 开关开 + 窗口 10 s + overlay + auto（回读比对）',
+  check('前置 开关开 + 窗口 10 s + auto + 默认座位 sidebar（回读比对）',
     ns?.value?.askTakeover === true && ns?.value?.askTimeoutMs === 10000
-    && ns?.value?.askUiSeat === 'overlay' && ns?.value?.uiLang === 'auto',
+    && ns?.value?.askUiSeat === 'sidebar' && ns?.value?.uiLang === 'auto',
     `读数=${JSON.stringify(ns?.value)}`);
 
   const { instance, page } = await openApp();
   try {
+    // —— ⓪ 座位默认档（无覆盖 → 徽标；需求 §5.2·设计 §4.3）——
+    if (seatUnsetOk) {
+      console.log('· ⓪ askUiSeat 无覆盖 → 生效 sidebar → 徽标在场、浮框缺席');
+      const s0 = await newSession(PRESET);
+      log.session0 = s0;
+      await prompt(s0, ASK_PROMPT);
+      const badgeCount = await waitFor(page, countOf('.ats-ask-badge'), (n) => Number(n) >= 1, 60_000);
+      const panel0 = Number(await evaluate(page, countOf('.ats-ask-panel'))) || 0;
+      check('⓪-a 默认座位徽标在场（.ats-ask-badge ≥ 1）', Number(badgeCount) >= 1,
+        `徽标数=${String(badgeCount)}`);
+      check('⓪-b 默认座位浮框缺席（.ats-ask-panel = 0）', panel0 === 0,
+        `面板数=${String(panel0)}`);
+      await screenshot(page, `${SHOTS}\\r30-0-default-sidebar-badge.png`);
+    } else {
+      // 留痕跳过：不算通过也不算失败——总判定行会把它带进分子，但 ok=true 只是
+      //「没有失败」，skipped=true 与 detail 里的清层报错才是它的真实身份。
+      results.push({ name: '⓪ 座位默认档（askUiSeat=null 清层不受支持，留痕跳过）', ok: true, skipped: true, detail: log.seatUnsetError ?? '' });
+      console.log('  SKIP  ⓪ 座位默认档（清层不受支持，见 log.seatUnsetError）');
+    }
+
+    // —— ⓪-b 显式 overlay（前置 B；①② 在此档执行）——
+    console.log('· 前置 B：显式 askUiSeat=overlay（显式选择保持原值、不被清洗——与 ⓪ 两步对照）');
+    await rpc('settings/update', { ns: NS, patch: { askUiSeat: 'overlay' } });
+    const describedB = await rpc('settings/describe', {});
+    const nsB = describedB.namespaces.find((n) => (n.ns ?? n.namespace ?? n.id) === NS);
+    check('⓪-c 显式 overlay 回读在位（不被清洗回默认）',
+      nsB?.value?.askUiSeat === 'overlay', `读数=${JSON.stringify(nsB?.value)}`);
+
     // —— ① 超时放行（合成答案 + 模型继续）——
     console.log('· ① dsh-async 提问 → 超时合成 → 模型继续');
     const s1 = await newSession(PRESET);
@@ -232,13 +273,13 @@ async function mainPhase() {
       Number(expiredMark) >= 1, `组内超时标记数=${String(expiredMark)}`);
     await screenshot(page, `${SHOTS}\\r30-2-overlay-expired.png`);
     // 点的是组内**第一条**条目——按 state 的 questionId 记住它（模型可能在收到迟到
-    // 作答前重问同题，生成新的 expired 条目；②-f 只认被答的那条出列，r30f 真机读数）。
+    // 作答前重问同题，生成新的 expired 条目；②-f 只认被答的那条出列，真机读数）。
     const stateBeforeClick = await rpc('async-tools-ask/state', {});
     const s2ItemsBefore = (stateBeforeClick.items ?? stateBeforeClick).filter((i) => i.sessionId === s2);
     const answeredQid = s2ItemsBefore[0]?.questionId;
     await clickFirstOptionAndSubmit(page, s2);
     await sleep(1500);
-    // 迟到作答的落点有两种（F130）：第一回合仍在跑则**折进当前回合**（真机读数：10 s
+    // 迟到作答的落点有两种（设计 §4.4）：第一回合仍在跑则**折进当前回合**（真机读数：10 s
     // 窗口一过期就点，模型多半还在作答——turn/end 恒为 1）；回合已收则开新回合。
     // 判据取锚句而非回合数：轮询转录至迟到正文锚在场（240 s 预算）。
     let t2 = await transcriptOf(s2);
@@ -250,17 +291,17 @@ async function mainPhase() {
     }
     check(`②-d 转录出现迟到通知正文（${log.anchorLang} 锚句）`, text2.includes(A.late),
       `迟到锚句命中=${String(text2.includes(A.late))}`);
-    // 修正轮 ②：注入是**通知形**（F130/F141）——转录源对象带自声明 kind ≠ 'user'、
-    // form=notice、summary 在册；正文自含完整题面（题干/选项/multiSelect/时延）。
+    // ②：注入是**通知形**（设计 §4.4）——转录源对象带自声明 kind ≠ 'user'、
+    // form=notice、summary 在册；正文自含完整题目内容（题干/选项/multiSelect/时延）。
     check('②-d2 通知形源对象在场（kind=async-tools-late-answer + form=notice，非用户消息气泡）',
       text2.includes(`"kind":"${LATE_KIND}"`) && text2.includes('"form":"notice"'),
       `kind=${String(text2.includes(`"kind":"${LATE_KIND}"`))} form=${String(text2.includes('"form":"notice"'))}`);
     check('②-d3 summary 在册（一句话作答摘要）', text2.includes(A.summary),
       `summary 锚=${String(text2.includes(A.summary))}`);
-    check('②-d4 正文自含题面（题干 + 选项 + multiSelect + 时延字段）',
+    check('②-d4 正文自含题目内容（题干 + 选项 + multiSelect + 时延字段）',
       text2.includes('Pick a color') && text2.includes('multiSelect=false') && text2.includes(A.delay),
       `题干=${String(text2.includes('Pick a color'))} multiSelect=${String(text2.includes('multiSelect=false'))} 时延=${String(text2.includes(A.delay))}`);
-    // ②-e Agent 续答：followup 唤醒开新回合后模型才回话——正文锚落地与 assistant
+    // ②-e Agent 续答：followup 唤醒开新回合后模型才回话——正文锚出现与 assistant
     // 回复之间有生成延迟，轮询等它（60 s 预算）而不是只看当下。
     let reply2 = '';
     for (let i = 0; i < 30 && reply2.length === 0; i += 1) {
@@ -277,7 +318,7 @@ async function mainPhase() {
       !s2ItemsAfter.some((i) => i.questionId === answeredQid),
       `被答 qid=${String(answeredQid)} 组内余条=${String(s2ItemsAfter.length)}（重问会产生新条目）`);
 
-    // —— ⑥ 等待期间作答（唤醒分支真机面，R30-d）——
+    // —— ⑥ 等待期间作答（迟到作答唤醒，需求 §4.4）——
     // 流程：长跑作业（150 s）→ 提问（10 s 超时放行）→ async_wait_job 长等待；
     // 轮询转录见到 wait 的 tool/call（订阅已挂）后对超时批作答 → followup 通知
     // 唤醒等待 → 工具提前返回运行句柄 + note（非 interrupted、非终态）。
@@ -295,7 +336,7 @@ async function mainPhase() {
     // 面板出现本会话组并等到超时徽标（10 s 窗口耗尽、批转 expired）。
     await waitFor(page, expiredIn(s6), (n) => Number(n) >= 1, 40_000);
     // 关键时序：必须等 wait 的 tool/call 进转录（此时订阅已挂）再点作答。预算 180 s
-    // ——含沙箱进程创建层被杀后的 full-access 重试周期（r30f 真机读数）。
+    // ——含沙箱进程创建层被杀后的 full-access 重试周期（真机读数）。
     let t6 = await transcriptOf(s6);
     let waitCallSeen = (t6.records ?? []).some((r) => r.event?.type === 'tool/call'
       && r.event.data?.name === WAIT_JOB_TOOL);
@@ -309,7 +350,7 @@ async function mainPhase() {
       `wait 调用=${String(waitCallSeen)}`);
     await screenshot(page, `${SHOTS}\\r30-6-waiting.png`);
     await clickFirstOptionAndSubmit(page, s6);
-    // 轮询转录：wait 的 tool/result 带 note 锚句（唤醒提前返回）。真机形状（r30f
+    // 轮询转录：wait 的 tool/result 带 note 锚句（唤醒提前返回）。真机形状（真机
     // 读数）：data.message.content[0].text 是**渲染文本**（note + 再等提示直文），
     // 没有结构化 status——⑥-b/⑥-c 都按这份文断言。
     let wakeResult = null;
@@ -348,7 +389,7 @@ async function mainPhase() {
       `末条=${JSON.stringify(lastAssistantText(t6end).slice(0, 120))}`);
     await screenshot(page, `${SHOTS}\\r30-6-after-wake.png`);
 
-    // —— ⑧ 通道与整批领取（R30 通道轮真机面，§32.8 判据⑧）——
+    // —— ⑧ 通道与整批领取（迟到作答通道联测，需求 §4.4 判据⑧）——
     // (a) 子代理等待期间作答不排队：正文当回合进入上下文（秒级），非等待预算耗尽后。
     console.log('· ⑧-a 子代理等待期间作答：秒级进上下文（不排队）');
     const s8a = await newSession(PRESET);
@@ -381,7 +422,7 @@ async function mainPhase() {
     const t8aClick = Date.now();
     await clickFirstOptionAndSubmit(page, s8a);
     // 轮询：迟到正文锚进入转录的时延。秒级 = 运行中走 inject、wait 返回后的下一
-    // 领取点当回合领取（不排队到等待预算耗尽后——验证实例旧实录的病灶）。
+    // 领取点当回合领取（不排队到等待预算耗尽后——排队到预算耗尽后才交付是缺陷形态）。
     let late8aElapsed = -1;
     for (let i = 0; i < 150; i += 1) {
       await sleep(1000);
@@ -389,7 +430,7 @@ async function mainPhase() {
       if (transcriptText(latest).includes(A.late)) { late8aElapsed = Date.now() - t8aClick; break; }
     }
     check('⑧-a-2 作答正文秒级进入上下文（< 25 s，非等待预算耗尽后）',
-      late8aElapsed >= 0 && late8aElapsed < 25_000, `点答到正文落地时延=${String(late8aElapsed)} ms`);
+      late8aElapsed >= 0 && late8aElapsed < 25_000, `点答到正文送达时延=${String(late8aElapsed)} ms`);
     const t8aMid = await transcriptOf(s8a);
     let wake8a = null;
     for (const record of t8aMid.records ?? []) {
@@ -454,11 +495,11 @@ async function mainPhase() {
       text8b = transcriptText(t8b);
     }
     const turnEndsAfter = (t8b.records ?? []).filter((r) => r.event?.type === 'turn/end').length;
-    check('⑧-b-1 三条迟到通知全部落地（late 锚 ×3）', countLate8b(text8b) >= 3,
+    check('⑧-b-1 三条迟到通知全部送达（late 锚 ×3）', countLate8b(text8b) >= 3,
       `late 计数=${String(countLate8b(text8b))}`);
-    check('⑧-b-2 不串行开回合（新增 turn/end ≤ 2；旧病灶为每条各开一回）',
+    check('⑧-b-2 不串行开回合（新增 turn/end ≤ 2；串行开回是缺陷形态）',
       turnEndsAfter - turnEndsBefore <= 2, `turn/end delta=${String(turnEndsAfter - turnEndsBefore)}`);
-    // 整批判据（F142）：相邻两条迟到通知记录之间无任何其他记录（同一领取点领取）。
+    // 整批判据（需求 §4.4）：相邻两条迟到通知记录之间无任何其他记录（同一领取点领取）。
     const isLate8b = (r) => {
       const s = JSON.stringify(r.event?.data ?? {});
       return s.includes(`"kind":"${LATE_KIND}"`) && s.includes('"form":"notice"');
@@ -489,7 +530,7 @@ async function mainPhase() {
     check('④-c 点徽标浮框出现（同组件换座位）', Number(panelAfterBadge) >= 1,
       `面板数=${String(panelAfterBadge)}`);
     await screenshot(page, `${SHOTS}\\r30-4-sidebar-opened.png`);
-    // 窗口内快速作答，释放会话（不留给 ⑤ 的重启安全门添堵）——同样组内定位。
+    // 窗口内快速作答，释放会话（不留给 ⑤ 的重启安全检查添堵）——同样组内定位。
     await waitFor(page, chipsIn(s4), (n) => Number(n) >= 2, 10_000);
     await clickFirstOptionAndSubmit(page, s4);
     const t4 = await waitTurnEnd(s4, 120_000);
@@ -500,7 +541,7 @@ async function mainPhase() {
 
     // —— ③ standard 预设对照（零接管的宿主侧证明）——
     // 原生问题卡（.Mbwy4a_card）只渲染在**正在查看该会话**的主视图里；API 建的会话
-    // 不在侧栏当前工作区分组里，页面导航不可靠（侦查轮结论）。③ 的契约本来就不是
+    // 不在侧栏当前工作区分组里，页面导航不可靠（探针实测结论）。③ 的契约本来就不是
     // 「原生卡长什么样」——是「标准预设不被接管、原生链不被损伤」：宿主侧判据更硬。
     // （顺序：排在 ⑦ 之前——⑦ 会关掉主实例换 en 宿主实例，主 page 随之失效。）
     console.log('· ③ standard 对照：零接管 + 原生链未损伤');
@@ -521,13 +562,13 @@ async function mainPhase() {
       askCalled3 === true && synth3 === false,
       `ask=${String(askCalled3)} 合成=${String(synth3)}`);
     const oursGroup3 = await evaluate(page, groupPresent(s3));
-    check('③-c 我们的浮框里没有 s3 的组', oursGroup3 === false, `组在场=${String(oursGroup3)}`);
+    check('③-c 本包的浮框里没有 s3 的组', oursGroup3 === false, `组在场=${String(oursGroup3)}`);
     await screenshot(page, `${SHOTS}\\r30-3-standard-notake.png`);
-    // 原生卡留给官方 UI 的超时/人工路径——会话悬置安静，不影响 ⑤ 的安静门。
+    // 原生卡留给官方 UI 的超时/人工路径——会话悬置安静，不影响 ⑤ 的安静检查项。
 
-    // —— ⑦ 语言四组合（R30-c 修正真机面）——
+    // —— ⑦ 语言四组合（需求 §5.3）——
     // 宿主语言模拟：真机读数证明 `Emulation.setLocaleOverride` 在本机 headless Edge
-    // 上不改变 navigator.language（r30f 侦查）——改用 `--lang` 启动开关分起两个
+    // 上不改变 navigator.language（探针实测）——改用 `--lang` 启动开关分起两个
     // 实例：默认实例 = 本机 zh 宿主；`--lang=en-US` 实例 = en 宿主。uiLang 走设置
     // RPC。面板挂靠 ① 留下的 expired 批（24 h TTL 内恒在场）——四个组合复用同组。
     console.log('· ⑦ 语言四组合：宿主 locale × uiLang → 面板文案语言');
@@ -588,7 +629,7 @@ async function afterRestartPhase() {
     `锚句=${String(text5.includes(A.timeout))} 末条=${JSON.stringify(lastAssistantText(t5).slice(0, 80))}`);
 
   // 复原：探针自控的四字段回**默认值**（不回写起始快照——上跑遗留的 true 会被
-  // 级联当起点，r30f 真机教训）；别人的字段（agentLang 等）探针从未改过，不碰。
+  // 级联当起点，真机读数）；别人的字段（agentLang 等）探针从未改过，不碰。
   const restorePatch = { askTakeover: false, askTimeoutMs: 60000, askUiSeat: 'overlay', uiLang: 'auto' };
   console.log(`· 复原默认：${JSON.stringify(restorePatch)}`);
   await rpc('settings/update', { ns: NS, patch: restorePatch });
@@ -610,7 +651,7 @@ try {
 } catch (error) {
   check('探针自身无异常', false, error instanceof Error ? `${error.message}\n${String(error.stack ?? '')}` : String(error));
   try {
-    // 异常路径复原默认（与 ⑤-c 同一套四字段——探针自控面，别人的字段不碰）。
+    // 异常路径复原默认（与 ⑤-c 同一套四字段——探针自控范围，别人的字段不碰）。
     const restorePatch = { askTakeover: false, askTimeoutMs: 60000, askUiSeat: 'overlay', uiLang: 'auto' };
     await rpc('settings/update', { ns: NS, patch: restorePatch });
     console.log(`  （异常路径复原默认：${JSON.stringify(restorePatch)}）`);

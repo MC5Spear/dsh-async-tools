@@ -1,10 +1,9 @@
 /**
- * R10 的行为验证：**改设置后，模型看到的数字真的跟着变**。
+ * 行为验证：**改设置后，模型看到的数字真的跟着变**（需求 §5.1）。
  *
- * 为什么不能用文本匹配代替：实现审查 R5 的 P1-1 指出，原实现的 `setSource`/`onChange`
- * 是空函式，而当时的 T3 只是"源码里出现 `makeConfigView`"——把实现退化成构造时快照后，
- * 当时的全量测试**全绿**。所以这里用**行为差异**判定：改设置前后，描述字符串必须不同，
- * 且必须不再含旧值。
+ * 为什么不能用文本匹配代替：文本匹配（"源码里出现 `makeConfigView`"）挡不住
+ * "实现退化成构造时快照"这类假绿——退化后源码照样含那些字。所以这里用**行为差异**
+ * 判定：改设置前后，描述字符串必须不同，且必须不再含旧值。
  *
  * 用法：node --import ./tools/_host-hooks.mjs tools/probe-live-description.mjs
  */
@@ -52,7 +51,7 @@ for (const [name, value] of Object.entries(before)) {
   console.log(`  ${name} 参数     ：${value.param.slice(0, 76)}`);
 }
 
-// 改设置，然后走**真实链路**里那个刷新函数。
+// 改设置，然后走**真实调用链**里那个刷新函数。
 current = {
   ...current,
   defaultYieldMs: 5000,
@@ -70,9 +69,9 @@ for (const name of Object.keys(tools)) {
   // **解析出数字再比**，不要用 `!includes('600000')` 这种子串否定——
   // 新值 `130000` 里就含 `30000`，会让断言误报（量法陷阱）。
   //
-  // 还要**锚定上下文**：`async_run` 的描述里有两个区间（让出预算 `1000-600000`、等待预算
-  // `250–600000`），不锚定就会匹配到第一个（第二版就是这么错的）。
-  const topRange = /等待预算必须显式传入，范围 (\d+)–(\d+) ms/.exec(after[name].top);
+  // 还要**锚定上下文**：`async_run` 的描述里有两个区间（首次等待 `1000-600000`、单次等待
+  // `250–600000`），不锚定上下文就会匹配到第一个区间。
+  const topRange = /单次等待预算必须显式传入，范围 (\d+)–(\d+) ms/.exec(after[name].top);
   record(`${name}：顶层描述里的等待区间已更新为 250–130000`,
     topRange !== null && topRange[1] === '250' && topRange[2] === '130000',
     topRange === null ? '没解析到区间' : `解析到 ${topRange[1]}–${topRange[2]}`);

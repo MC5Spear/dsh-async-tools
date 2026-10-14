@@ -1,11 +1,11 @@
 /**
- * 真机缺陷定位探针：把四个工具的**实际返回值**喂给宿主自己的输出校验器。
+ * 缺陷定位探针：把四个工具的**实际返回值**喂给宿主自己的输出校验器。
  *
- * 为什么需要它：整包单测全绿（当时的 69 条）而验证实例上 `async_run` 直接报
+ * 为什么需要它：包内单测可能全绿，而验证实例上 `async_run` 报
  * `tool "async_run" returned invalid output: "value" must match exactly one oneOf branch (matched 0)`。
- * 原因是单测只断言返回值的**字段**，从来没有用宿主校验器验过**输出 schema 本体**，
+ * 原因是单测只断言返回值的**字段**，没有用宿主校验器验过**输出 schema 本体**，
  * 而 `output.schema` 的校验只在运行时发生（`PKGS/dsh-tools/lib/index.js:3415-3418`）。
- * 这个坑现在已经用 `test/_helpers.mjs` 的 `assertOutputShape` / `checkedTool` 固化成单测，
+ * 这个坑已经用 `test/_helpers.mjs` 的 `assertOutputShape` / `checkedTool` 固化成单测，
  * 本探针保留作为"改 schema 之后先手工看一眼"的入口。
  *
  * 用法：`node --import ./tools/_host-hooks.mjs tools/probe-output-schema.mjs`；
@@ -64,7 +64,7 @@ function fakeCtx(proc) {
       get: () => ({ status: 'running' }),
       read: () => ({ text: '' }),
       // `async_wait_job` 的未终态分支靠预算定时器收敛，这里给一个永不落定的等待即可
-      // （真实语义：`jobs.wait` 到期以非终态快照正常解析，F6）。
+      // （真实语义：`jobs.wait` 到期以非终态快照正常解析）。
       wait: () => new Promise(() => {})
     },
     shell: {
@@ -170,7 +170,7 @@ for (const [name, rows] of [
   console.log(`async_wait_agent(${name}): ${violations.length === 0 ? 'OK' : `校验失败 → ${violations.join('; ')}`}`);
 }
 
-// 7) `async_agent` 的立返分支（§18.2）：替身 provider 走 startContinuable。
+// 7) `async_agent` 的立返分支：替身 provider 走 startContinuable。
 //    （fakeCtx 的 subagents 是共享对象——这里补上 async_agent 需要的两个成员。）
 const spawnCtx = fakeCtx(fakeProc().proc);
 spawnCtx.subagents.getProvider = (providerName) => ({ name: providerName, prepareContinuable() {} });

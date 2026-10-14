@@ -1,28 +1,20 @@
 /**
  * 静态判据：`verify/` 下的 PowerShell 脚本必须**通过语法解析**（用正确的方式解析）。
  *
- * ## 为什么不能用 `Parser::ParseFile`
+ * ## 为什么不能用 `Parser::ParseFile` 直接读原文件
  *
- * 第一版判据用 `[Parser]::ParseFile($path, ...)`，得到两个"坏文件"：
- * `probe-service-signal.ps1` 报 **50** 个错误、`probe-service-signal-disposer.ps1` 报 **8** 个。
- * 追下去发现：
- *
- * - 前者的 50 个错误是**我自己造成的**——我用脚本清理注释里的反引号时，
- *   顺手把文件的 **UTF-8 BOM 删掉了**（`U+FEFF` 被当成可删字符）。该文件自己的注释就写着：
- *   *"Windows PowerShell 5.1 的 Get-Content -Raw 会按 ANSI(CP936) 解码"*——
- *   去掉 BOM 之后解析器正是按 cp936 读它，中文全乱，语法随之崩。
- * - 后者的 8 个错误是**解析方法的假象**：那个文件**没有 BOM**，
- *   `ParseFile` 同样按 ANSI 读，于是报错；改用 `ParseInput`（文本由 Node 以 UTF-8 读入后
- *   经 stdin 传入）得到的是 **0 个错误**。
+ * `ParseFile` 按 PowerShell 自己的探测读文件：无 BOM 的 `.ps1` 会被
+ * Windows PowerShell 5.1 按 ANSI(CP936) 解码，中文全乱、语法随之崩——
+ * 报错是假象，文件本身语法是好的（文本按 UTF-8 解码后 `ParseInput` 得 0 错）。
  *
  * ⇒ **判据必须把"读文件"和"解析文本"分开**：由 Node 用 UTF-8 读，再让 PowerShell 解析文本。
  * 否则判据会随文件的 BOM 有无而给出完全不同的结论——而 BOM 的取舍是**另一个**问题。
  *
- * ## 顺带一个真事实（值得单独记）
+ * ## 顺带一个事实
  *
- * `verify/` 下的 `.ps1` 里，**`probe-service-signal.ps1` 有 BOM、`probe-service-signal-disposer.ps1` 没有**。
- * 前者被 PowerShell 正确读取（因为 BOM 指明 UTF-8），后者的中文注释在 PS 5.1 里会乱码。
- * 后者之所以还能跑，是因为它的**代码部分**恰好没有依赖中文串做判定。
+ * `verify/` 下的 `.ps1` 里，`probe-service-signal.ps1` 有 BOM、`probe-service-signal-disposer.ps1` 没有。
+ * 前者被 PowerShell 正确读取（BOM 指明 UTF-8），后者的中文注释在 PS 5.1 里会乱码。
+ * 后者还能跑，是因为它的**代码部分**恰好没有依赖中文串做判定。
  * 这一条登记为待办，不在本判据里自动修（改 BOM 会动到 git diff 与字节）。
  *
  * 用法：node verify/check-ps1-syntax.mjs
@@ -53,8 +45,7 @@ const walk = (dir, out = []) => {
  *
  * ## 为什么是"临时文件 + `ParseFile`"，而不是"stdin + `ParseInput`"
  *
- * 原来的写法是把文本经 **stdin** 喂给 `powershell -Command`，脚本里
- * `[Console]::In.ReadToEnd()` 读它。那个口径在本机**对中文文件一律误报**：
+ * stdin 口径在本机**对中文文件一律误报**：
  * Windows PowerShell 5.1 按**控制台输入代码页**（本机 CP936）解码 stdin 字节，
  * 而 Node 写进去的是 **UTF-8** 字节 ⇒ 每个中文字符都乱掉，乱出来的字符会吃掉引号，
  * 于是报成 `Missing closing '}' in statement block` 之类的**假语法错**。
@@ -65,7 +56,7 @@ const walk = (dir, out = []) => {
  *   - 同一文件 `ParseFile` 直接读 → **0 错**；同一进程内 `ParseInput($src)` → **0 错**。
  * 即"错"只出现在 stdin 这一条传输路上。
  *
- * 所以改成：Node 把**解码后的文本**写成带 UTF-8 BOM 的临时文件，交给 `ParseFile`。
+ * 本判据：Node 把**解码后的文本**写成带 UTF-8 BOM 的临时文件，交给 `ParseFile`。
  * 这样"由 Node 负责解码"（本判据的初衷）与"PS 负责解析"两件事都保住，
  * 而 BOM 让 PS 明确知道那是 UTF-8。临时文件建在系统临时目录，**不落进包内**。
  *
@@ -106,9 +97,8 @@ for (const file of files) {
   //   （前者只在 `detectEncodingFromByteOrderMarks` 为真时才剥），所以那个 U+FEFF
   //   落在 `param(` 前面，PowerShell 解析器就报 "The assignment expression is not valid"。
   //
-  //   本文件此处曾写着"BOM 存在时 Node 会保留为 U+FEFF 字符，**解析器不在意**"——
-  //   **那句话是错的**，于是带 BOM 的脚本一律被误报成语法坏。教训：
-  //   "我以为解析器不在意"这种判断必须有对照实验，不能靠印象。
+  //   由此得出纪律："解析器不在意 BOM"这类判断必须有对照实验，不能靠印象——
+  //   单凭印象，带 BOM 的脚本会被一律误报成语法坏。
   const text = bytes.toString('utf8').replace(/^\uFEFF/, '');
   if (!hasBom) bomless.push(relative(VERIFY, file));
 

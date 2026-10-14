@@ -1,12 +1,13 @@
 /**
- * R28 真机探针的公共件：锚句常量、固定格式问答电池、会话驱动与结果抠取。
+ * 真机探针的公共件（需求 §6.3 可选静默失败防护）：锚句常量、固定格式问答测试套件、
+ * 会话驱动与结果抠取。
  *
  * 两个探针共用（`probe-r28-silent-failure.mjs` 跑真机 1–4、6；`probe-r28-restart-persistence.mjs`
  * 跑真机 5 的重启后半），锚句只登记在这一处——改 `lib/text.js` 文案必须同步这里
  * （verify/README.md 的锚句表有登记项）。
  *
- * c 段（纪律段）没有转录通道（`request/header` 只含 config/adapterDefaults/tools，裁定见
- * r17-1），取证走**行为判据**：固定格式问答 + 定向断言（§12.3 修正 3 的既定口径——逐字引用
+ * c 段（纪律段）没有转录通道（`request/header` 只含 config/adapterDefaults/tools），
+ * 取证走**行为判据**：固定格式问答 + 定向断言（逐字引用
  * 系统提示会被模型的提示保密策略拒）。判别子取纪律段第 2 条独有的退出码 `4294967295`
  * （不可猜）；问答轮以水位线断言零 tool/call。
  *
@@ -24,9 +25,9 @@ export const ANCHOR_DENIED = 'Access is denied';
 /** 纪律段第 2 条独有的防杀退出码（c 段行为判据的不可猜判别子）。 */
 export const AVKILL_CODE = '4294967295';
 /**
- * F116 环境锚：验证实例（托管服务 LocalSystem，无 logon SID）上受限档作业的死法
+ * 环境锚：验证实例（托管服务 LocalSystem，无 logon SID）上受限档作业的死法
  * `CreateRestrictedToken prerequisite failed`——不是 `lib/text.js` 文案，是部署事实，
- * 受限档真机读数都要认它（用户裁定「走提权」后的环境判别子）。
+ * 受限档真机读数都要认它。
  */
 export const ACL_FAIL = 'CreateRestrictedToken prerequisite failed';
 
@@ -35,7 +36,7 @@ export const PRESET = 'dsh-async';
 /**
  * 探针自管的空目录（良性命令的靶子，由**远端会话**创建/删除）。
  *
- * 落在本机平面的运行期临时目录下，**不是** evidenceDir：它是探针干活时的脚手架，
+ * 落在本机侧的运行期临时目录下，**不是** evidenceDir：它是探针干活时的脚手架，
  * 不是要留档的证据。落到 `verify/` 下会让"包内"多出一堆只有跑过探针才存在的东西。
  */
 export const EMPTY_DIR = join(localConfig.tmpDir, 'verify', 'tmp-empty-r28');
@@ -53,6 +54,29 @@ export async function readNs() {
 /** 写一个设置补丁（与页面保存同一条链：settings/update）。 */
 export async function patchNs(patch) {
   await rpc('settings/update', { ns: NS, patch });
+}
+
+/**
+ * 把探针**自建**的会话升档到 danger-full-access（环境前置）。
+ *
+ * 为什么需要：验证实例是 NSSM 托管服务（LocalSystem，会话 0，无 logon SID），
+ * 受限档下一切受约束 spawn 死于 `ACL_FAIL`（`CreateRestrictedToken prerequisite
+ * failed`）——2026-10-09 实测 `async_run` 的 pwsh 与 workflow 引擎的 PTC worker
+ * 同死（前者 exit 127、stderr 带 `windows-acl-run:` 前缀）。GUI composer 的
+ * `/permission` 与 `commands/execute` RPC 是同一 remote 提交事务（纯准入语义、
+ * command/run+command/done 持久留痕）；无浏览器面的探针经 RPC 面对**自己建的
+ * 会话**执行同一命令。只升探针自己的会话，不碰实例共享设置。
+ *
+ * @param {string} sessionId - 探针自建会话的 id。
+ * @returns {Promise<void>} 升档未被采纳时抛错（fail-closed，不让判据在死沙箱上空跑）。
+ */
+export async function elevateSession(sessionId) {
+  await rpc('commands/execute', { agentId: sessionId, line: '/permission danger-full-access', submittedAttachments: [] });
+  const page = await transcriptOf(sessionId);
+  const modes = (page.records ?? []).filter((r) => r.event?.type === 'sandbox/mode').map((r) => r.event.data?.mode);
+  if (!modes.includes('danger-full-access')) {
+    throw new Error(`升档未被采纳：sandbox/mode 事件序列 ${JSON.stringify(modes)}`);
+  }
 }
 
 /**
@@ -84,7 +108,7 @@ export async function prompt(sessionId, text) {
 
 /**
  * 等轮次收尾。`minTurns`（默认 1）= 要求见到的 turn/end 条数——同一会话发第二问时传 2，
- * 否则第一问的旧 turn/end 会让它立刻返回陈旧转录（再审查发现 1，r28-round2）。
+ * 否则第一问的旧 turn/end 会让它立刻返回陈旧转录。
  * 不依赖 running 窗口——短轮会错过。
  */
 export async function waitTurnEnd(sessionId, maxMs = 120000, minTurns = 1) {
@@ -120,7 +144,7 @@ export function runDescriptionOf(transcript) {
 }
 
 /**
- * 转录里 async_run 的**末条**结果文本（a 管线通道；同会话多次调用时取最新那次——再审查发现 1）。
+ * 转录里 async_run 的**末条**结果文本（a 管线通道；同会话多次调用时取最新那次）。
  *
  * 形状（2026-09-27 在验证实例实测定案）：`tool/result` 的 `message.toolCallId` 与 `tool/call`
  * 的 `callId` 配对；文本在 `message.content` 的 `type:'text'` 块里。同时兼容旧
@@ -164,10 +188,10 @@ const BATTERY = [
 ].join('\n');
 
 /**
- * 在一个新会话上跑问答电池。
+ * 在一个新会话上跑问答测试套件。
  *
  * @param {string} [preset] - 预设；显式传才断言回读（验证实例裸建 = 部署默认 dsh-async，
- *   要 standard 必须显式传——上一轮 2c 翻车的根因）。
+ *   要 standard 必须显式传）。
  * @returns {Promise<{sessionId: string, answer: string, description: string | null, toolCalls: number}>} 读数。
  */
 export async function askBattery(preset) {
@@ -183,10 +207,10 @@ export async function askBattery(preset) {
 }
 
 /**
- * 电池自洽重采样（r28-round3：真机 2b/2c 观测到电池噪声——同会话 AVKILL/MEANS 全对、
+ * 测试套件前后一致重采样（真机会出现测试套件噪声：同会话 AVKILL/MEANS 全对、
  * 语言子却答 none 的矛盾读数）。原则：`4294967295` 是本机事实、不可猜——主判别子
  * （AVKILL + MEANS）答对就证明块在场，语言子矛盾视为读数噪声，换**新会话**重抽；
- * 最多 `maxAttempts` 次仍不自洽才判失败。逐次读数全记录（`attempts`），证据不稀释。
+ * 最多 `maxAttempts` 次仍前后不一致才判失败。逐次读数全记录（`attempts`），证据不稀释。
  * 只用于**在场断言**（期望块在场 + 语言已知）；缺席断言仍单发——缺席方向的假阳性
  * （幻觉出不可猜的退出码）结构上不可达，不需要也不应该重采样。
  */
@@ -221,7 +245,7 @@ export function fieldOf(answer, key) {
 /**
  * 让一个 dsh-async 会话用 async_run 跑指定命令（一次调用），回结果文本与批准读数。
  *
- * 两档（F116 后的真机口径，用户裁定「走提权」）：
+ * 两档：
  * - `escalate:false` = 受限档（不带 sandbox_permissions）——在验证实例上死于 ACL 前置
  *   （127 + `CreateRestrictedToken prerequisite failed`），作为环境读数保留；
  * - `escalate:true` = 提权档（带 sandbox_permissions + justification，经批准）——
@@ -246,5 +270,5 @@ export async function commandRun(command, { escalate = false } = {}) {
   return { sessionId, result: runResultText(transcript), approvals: approvalOutcomes(transcript) };
 }
 
-/** 良性误发面命令（内建 cmdlet，进程内执行——需求 508–509 的禁令不涉此形）。 */
+/** 良性误发用例命令（内建 cmdlet，进程内执行——没有外部进程创建，命令必然真跑；空目录给出真实空输出）。 */
 export const BENIGN_COMMAND = `Get-ChildItem '${EMPTY_DIR}' 2>&1`;

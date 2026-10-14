@@ -5,32 +5,36 @@
  *
  * 真包的 `lib/index.js` 是 web 外壳的**打包源**：顶层 import 了 `react`、`react-dom`、
  * `shiki`、`katex`、`simple-icons`、`micromark-*` 等一整张依赖图，而那些包不在本仓库
- * 可达的任何 node_modules 里（0.1.7 预置树只装宿主侧包；实测
- * `import '@deepseek-ai/dsh-client-ui-primitives'` 在 `Cannot find package "react"` 上失败，
- * 见 `verify/_scratch/probe-primitives-import.mjs`）。Node 单测因此无法直接用真模块。
+ * 可达的任何 node_modules 里（预置树只装宿主侧包；实测
+ * `import '@deepseek-ai/dsh-client-ui-primitives'` 在 `Cannot find package "react"` 上失败）。
+ * Node 单测因此无法直接用真模块。
  *
- * 分工（§29.4）：**单元/接线层**用本替身验证本包的接线（模型装配、bind 一次、
- * 订阅重渲染、字段渲染、门控、卸载丢弃）；**真实集成**由验证实例端到端验收承担——
+ * 分工：**单元/接线层**用本替身验证本包的接线（模型装配、bind 一次、
+ * 订阅重渲染、字段渲染、启用条件、卸载丢弃）；**真实集成**由验证实例端到端验收承担——
  * 浏览器侧经冻结平台模块表拿到的是真 primitives。
  *
- * ## 忠实性口径
+ * ## 忠实性口径（基准 = 0.2.0-rc.2，验证实例同版部署）
  *
- * 以下实现**逐行转录**自 [0.1.7] `dsh-client-ui-primitives/lib/index.js`（行号为转录时
- * 亲读核对）：`settingsNumberField`/`settingsTextField` `:6500-6533`；`SettingsFormModel`
- * `:6541-6767`（含 `plan`/`save`/`stage`/`field`/`shell`/`actions`/`dispose`）；
- * `SettingsForm` `:6309-6347`；`SettingsValueField` `:6364-6434`；`Switch` `:3281-3295`。差异三处、都不改变
- * 语义：① `bind` 的快照店换成手写 mini store（官方用 zustand 的
- * `createSnapshotStore`，Node 侧同样不可达；对外面仍是
+ * 以下实现**逐行转录**自 [0.2.0-rc.2] `dsh-client-ui-primitives/lib/index.js`
+ * （行号为转录时亲读核对）：`settingsNumberField` `:7110-7124`；
+ * `settingsTextField` `:7131-7143`；`SettingsFormModel` `:7151-7377`（含
+ * `plan`/`save`/`stage`/`field`/`shell`/`actions`/`dispose`）；`SettingsForm`
+ * `:6918-6956`；`SettingsValueField` `:6973-7043`；`Switch` `:3394-3408`；
+ * `IconQuestionOutlineRegular` 定义 `:2352-2355`、公开导出 `:12381`。差异几处、
+ * 都不改变语义：① `bind` 的快照店换成手写 mini store（官方用 zustand 的
+ * `createSnapshotStore`，Node 侧同样不可达；对外仍是
  * `{getSnapshot, subscribe, set}`）；② 组件用 `React.createElement` 而非 `jsx()` 运行时，
- * 类名用可读字面量（测试断言结构/属性，不断言类名）；③ `SettingsValueField` 整体省略
- * help 子系统（helpButton/help region/helpId——本包不传 `help` prop，官方在 help 为
- * undefined 时输出与替身一致，见 `:6381`/`:6425` 的条件分支）。
+ * 类名用可读字面量（测试断言结构/属性，不断言类名）；③ `SettingsValueField`
+ * 整体省略 help 子系统（helpButton/help region/helpId——本包按 0.2.0-rc.2 基线，
+ * 字段壳全部走自绘 `FieldShell`，不使用该控件，替身仅为对照保留结构）；
+ * ④ `IconQuestionOutlineRegular` 只替形状（`size` 透传为 svg 尺寸），图标本体
+ * 由真机视觉验收承担。
  *
- * 实现审查应把本文件与官方源码逐行对照（这是它最大的风险面：替身漂移会让单元层
+ * 实现审查应把本文件与官方源码逐行对照（这是它最大的风险：替身漂移会让单元层
  * 假绿）。
  */
 
-/** 手写快照店：对外面 = `{getSnapshot, subscribe, set}`（官方 `createSnapshotStore` 的最小面）。 */
+/** 手写快照店：对外接口 = `{getSnapshot, subscribe, set}`（官方 `createSnapshotStore` 的最小集）。 */
 function createMiniStore(init) {
   let state = init;
   const listeners = new Set();
@@ -52,10 +56,11 @@ function createMiniStore(init) {
  *
  * @param {object} React - 与被测 client.js 同一份 React（测试里是 `makeReactShim` 的替身）。
  * @returns {object} `SettingsForm` / `SettingsValueField` / `SettingsFormModel` /
- *   `settingsNumberField` / `settingsTextField` / `Tag`。
+ *   `settingsNumberField` / `settingsTextField` / `Tag` / `Switch` /
+ *   `IconQuestionOutlineRegular`。
  */
 export function makePrimitivesDouble(React) {
-  /** [0.1.7] lib/index.js:6500-6514 —— 整数字段：空草稿清除，非有限数非法。 */
+  /** [0.2.0-rc.2] lib/index.js:7110-7124 —— 整数字段：空草稿清除，非有限数非法。 */
   function settingsNumberField(field) {
     return {
       field,
@@ -69,7 +74,7 @@ export function makePrimitivesDouble(React) {
     };
   }
 
-  /** [0.1.7] lib/index.js:6521-6533 —— 自由文本：空草稿清除（清空 = 复原同一手势）。 */
+  /** [0.2.0-rc.2] lib/index.js:7131-7143 —— 自由文本：空草稿清除（清空 = 复原同一手势）。 */
   function settingsTextField(field) {
     return {
       field,
@@ -81,7 +86,7 @@ export function makePrimitivesDouble(React) {
     };
   }
 
-  /** [0.1.7] lib/index.js:6541-6767 —— 暂存-保存模型（转录，`bind` 的 store 换手写 mini store）。 */
+  /** [0.2.0-rc.2] lib/index.js:7151-7377 —— 暂存-保存模型（转录，`bind` 的 store 换手写 mini store）。 */
   class SettingsFormModel {
     staged = new Map();
     listeners = new Set();
@@ -235,13 +240,30 @@ export function makePrimitivesDouble(React) {
     publish() { for (const listener of this.listeners) listener(); }
   }
 
-  /** [0.1.7] lib/index.js:3214 起 —— 徽标（替身只保留 tone 与内容）。 */
+  /** [0.2.0-rc.2] lib/index.js:3214 起 —— 徽标（替身只保留 tone 与内容）。 */
   function Tag({ tone = 'outline', children }) {
     return React.createElement('span', { 'data-tone': tone }, children);
   }
 
-  /** [0.1.7] lib/index.js:6364-6434 —— 值字段（结构/属性同形，类名用可读字面量；
-   * help 子系统整体省略——本包不传 `help`，官方 help 为 undefined 时输出与本替身一致）。 */
+  /** [0.2.0-rc.2] lib/index.js:2352-2355 —— 带圈问号图标（公开导出 :12381）。
+   * 替身只替形状：`size` 透传为 svg 尺寸，图标本体由真机视觉验收承担。 */
+  function IconQuestionOutlineRegular({ size }) {
+    return React.createElement('svg', {
+      'data-icon': 'question-outline-regular',
+      width: size, height: size,
+      viewBox: '0 0 24 24', fill: 'none', 'aria-hidden': true, focusable: false
+    }, React.createElement('path', {
+      d: 'M9.4 9a2.6 2.6 0 1 1 3.6 2.4c-.7.3-1 .9-1 1.6v.5',
+      stroke: 'currentColor', strokeWidth: 1, strokeLinecap: 'round', strokeLinejoin: 'round'
+    }), React.createElement('path', {
+      d: 'M12 17.2v.1', stroke: 'currentColor', strokeWidth: 1.4,
+      strokeLinecap: 'round'
+    }));
+  }
+
+  /** [0.2.0-rc.2] lib/index.js:6973-7043 —— 值字段（结构/属性同形，类名用可读字面量；
+   * help 子系统整体省略——本包字段壳已全部走自绘 `FieldShell`，不使用该控件，
+   * 替身仅为对照保留结构）。 */
   function SettingsValueField(props) {
     const messageId = `${props.id}-message`;
     const hasMessage = props.invalid || Boolean(props.hint);
@@ -278,7 +300,7 @@ export function makePrimitivesDouble(React) {
         : null);
   }
 
-  /** [0.1.7] lib/index.js:6309-6347 —— 表单框架（不可用/只读通告、页脚保存与卸载丢弃）。 */
+  /** [0.2.0-rc.2] lib/index.js:6918-6956 —— 表单框架（不可用/只读通告、页脚保存与卸载丢弃）。 */
   function SettingsForm(props) {
     const state = props.state;
     const labels = props.labels;
@@ -302,7 +324,7 @@ export function makePrimitivesDouble(React) {
         }, state.saving ? labels.saving : labels.save)));
   }
 
-  /** [0.1.7] lib/index.js:3281-3295 —— 开关：结构/属性同形转录（类名/thumb 子节点可读化）。 */
+  /** [0.2.0-rc.2] lib/index.js:3394-3408 —— 开关：结构/属性同形转录（类名/thumb 子节点可读化）。 */
   function Switch({ checked, onChange, label, disabled = false, title, className }) {
     return React.createElement('button', {
       type: 'button',
@@ -323,6 +345,7 @@ export function makePrimitivesDouble(React) {
     settingsNumberField,
     settingsTextField,
     Switch,
-    Tag
+    Tag,
+    IconQuestionOutlineRegular
   };
 }

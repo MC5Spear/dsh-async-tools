@@ -1,15 +1,15 @@
 /**
- * §26.3.9 agent 相位**路由判据**的纯函数（r39 N1 收紧；判据本体与取数分离——
+ * agent 相位**路由判据**的纯函数（判据本体与取数分离——
  * `verify/r24-judgements.mjs` 的同一成例：真机探针只取数，判据在这里，可被单测
  * 与变异证明能红）。
  *
- * ## 背景（docs/impl-review-r39.md N1：判据假绿）
+ * ## 背景：判据假绿的形态
  *
- * r39 前的旧判据是裸路由串匹配（`/zai/.test(t) && /glm-5\.3/.test(t)`）——继承
- * note 同样命中：R35 手术禁用宿主 tool-subagent 行后，两异步预设会话结构性无
- * 模型选择策略，带 provider/model 的调用被 `lib/agent.js` 按设计保守拒绝
- * （`error.noPolicy`）；真绿来自模型**免路由重试**的继承句柄 note（含同一路由
- * 串 + inherited 标记）。判据读数取决于模型是否恰好重试，不可复现。
+ * 裸路由串匹配（`/zai/.test(t) && /glm-5\.3/.test(t)`）会让**继承 note 同样命中**：
+ * 宿主 tool-subagent 行禁用的会话结构性无模型选择策略，带 provider/model 的调用
+ * 被 `lib/agent.js` 按设计保守拒绝（`error.noPolicy`）；此时真绿只能来自模型
+ * **免路由重试**的继承句柄 note（含同一路由串 + inherited 标记）——判据读数
+ * 取决于模型是否恰好重试，不可复现。
  *
  * ## 锚点来源（en/zh 两档同收；lib 措辞漂移由单测夹具先行变红）
  *
@@ -33,7 +33,7 @@ function escapeRegExp(text) {
  * note 是否报告**指定路由被接受**：路由串后必须紧跟 requested 标记
  * （en ` (requested)` / zh `（按请求）`）。
  *
- * 继承 note（同路由串 + inherited 标记）**必须不命中**——这正是 r39 前假绿的洞；
+ * 继承 note（同路由串 + inherited 标记）**必须不命中**；
  * 「继承 note 必红」由 `test/agent-judgements.test.mjs` 用 lib 真渲染文案钉住。
  *
  * @param {string} text - 工具结果文本（acceptance-017 `parseEvents` 的 results 项）。
@@ -64,9 +64,8 @@ export function inheritedRouteNote(text) {
 /**
  * 工具错误是否为「无 policy 会话的**可读拒绝**」（`error.noPolicy` 文案锚）。
  *
- * 这是两异步预设下结构性恒真的正向命题（宿主 tool-subagent 行禁用 → 无模型选择
- * 策略 → `lib/agent.js` 保守拒绝）；R40 恢复策略在位后指定路由被接受、本锚随之
- * 消失，判据届时退场。
+ * 这是宿主 tool-subagent 行禁用的会话（→ 无模型选择策略 → `lib/agent.js`
+ * 保守拒绝）下的正向命题。
  *
  * @param {string} text - 工具结果文本。
  * @returns {boolean} 判据成立与否。

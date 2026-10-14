@@ -3,11 +3,10 @@
  *
  * ## 为什么要自己写
  *
- * 复审报告里长期挂着"卡片是否真的渲染出 DOM —— 未验证（无浏览器）"。这个结论是错的：
  * 本机装了 Edge，而 Edge 支持 `--headless=new --remote-debugging-port`。
  * 不需要 playwright/puppeteer（都没装，也不该为一个探针去装）。
  *
- * `--dump-dom` 在 Edge 上试过、**不吐内容**（stdout/stderr 都是 0 字节），所以走 CDP：
+ * `--dump-dom` 在 Edge 上**不吐内容**（stdout/stderr 都是 0 字节），所以走 CDP：
  * `Runtime.evaluate` 才是可靠的取 DOM 方式——它拿的是 JS 求值结果，不依赖打印行为。
  *
  * 用法（一般由 probe-web-card.mjs 调用，不直接跑）：
@@ -29,7 +28,7 @@ const EDGE_CANDIDATES = [
 /**
  * 起一个无头浏览器并等它的调试端口就绪。
  *
- * ## 清理逻辑不是可选的——本会话因为它出过一次事故
+ * ## 清理逻辑不是可选的
  *
  * `child.kill()` **只杀主进程**，而 Edge 是**多进程**架构（浏览器进程 + GPU + 渲染器 +
  * 网络服务 + 崩溃处理器…，一个实例约 10 个进程）。只杀主进程会把其余留成孤儿。
@@ -40,13 +39,12 @@ const EDGE_CANDIDATES = [
  * **10 次 / 10 分钟 ⇒ 账户锁定 10 分钟**。账户一锁，NSSM 就用不了 `.\user` 拉起服务，
  * 验证实例的托管服务直接起不来（实测被锁了两次：01:20:46 与 01:46:02）。
  *
- * 两处修正：尽量少起进程与少碰系统服务，以及**按整棵进程树清理**。
+ * 现行做法：尽量少起进程与少碰系统服务，**按整棵进程树清理**。
  *
  * @param {string} browserPath - 浏览器可执行文件。
- * @param {string[]} [extraArgs] - 追加启动参数（默认空——R30 修正轮 ⑦ 加：真机读数
- *   证明 `Emulation.setLocaleOverride` 在本机 headless Edge 上不改变
- *   `navigator.language`，宿主语言模拟改用 `--lang` 启动开关；纯增量，既有调用方
- *   行为零变化）。
+ * @param {string[]} [extraArgs] - 追加启动参数（默认空——`Emulation.setLocaleOverride`
+ *   在本机 headless Edge 上不改变 `navigator.language`，宿主语言模拟用 `--lang`
+ *   启动开关）。
  * @returns {Promise<{process: import('node:child_process').ChildProcess, port: number, profile: string, close: () => void}>}
  */
 export async function launch(browserPath, extraArgs = []) {
@@ -117,20 +115,20 @@ function killTree(pid) {
 }
 
 /**
- * 按 profile 路径清掉残留进程（兜底）。
+ * 按 profile 路径清掉残留进程（回退手段）。
  *
  * 比 `killTree` 更狠：即使主进程已退出、树结构断了，也能靠命令行里的
  * `--user-data-dir` 精确找到本实例的残留子进程。**只动本实例的 profile。**
  *
  * ## 路径**不能**拼进 PowerShell 脚本里
  *
- * 第一版把路径插进 `-like '*<路径>*'`，并给反斜杠做了 PowerShell 转义（`\\`）。
- * 结果**匹配到 0 个进程**——因为命令行里的实际内容是单反斜杠
+ * 把路径插进 `-like '*<路径>*'` 并给反斜杠做 PowerShell 转义（`\\`），会
+ * **匹配到 0 个进程**——命令行里的实际内容是单反斜杠
  * （`--user-data-dir="C:\Users\...\cdp-XYZ"`），而转义过的模式要求双反斜杠。
  * `C:\` 在 PowerShell 里只在**双引号字符串**中才是转义，单引号串里它是字面量——
- * 转义反而把模式改坏了。
+ * 转义反而把模式改坏。
  *
- * 修法：路径走**环境变量**，脚本里只读 `$env:`，一个转义字符都不需要。
+ * 所以路径走**环境变量**，脚本里只读 `$env:`，一个转义字符都不需要。
  *
  * @param {string} profile - 本实例的临时 profile 路径。
  */
@@ -258,9 +256,7 @@ export async function waitFor(page, expression, predicate, timeoutMs = 8000) {
  *
  * 只读 `innerText` 的探针**只能证明文字在 DOM 里**，证明不了"人看得见"：
  * 元素可能被遮挡、宽度为 0、颜色与背景相同、藏在收起的抽屉里。
- * 本会话吃过这个亏——`probe-web-e2e-tools.mjs` 第一版按 `textContent` 找按钮，
- * 页面正文里明明有"异步模式"，却找不到那个按钮（它不是 `button`），
- * 于是四条断言全红，而**截图一眼就能看出真实布局**。
+ * **截图一眼就能看出真实布局**。
  *
  * `Page.captureScreenshot` 返回 base64；`captureBeyondViewport: true` 让它连
  * 视口外的内容一起截，配合 `Emulation.setDeviceMetricsOverride` 设一个足够的视口高度。

@@ -1,27 +1,29 @@
 /**
- * R34/R35 真机探针：async_workflow 编排工具与预设手术（设计 §34.5/§35.3）。
+ * async_workflow 编排工具与预设隔离的真机探针（需求 §2.4 后台编排、设计 §3.5 编排作业、
+ * §3.6 预设隔离）。
  *
- * 判据（全部取自验证实例——升级 0.2.0 之前，风险表 R31 行排序约束）：
+ * 判据（全部取自验证实例）：
  * - (a) 即时性·插话：编排脚本（6 agent 串行慢跑）+ yield_ms=60000；**同步点 =
  *   转录出现 async_workflow 的 tool/call**（本工具无审批环节，不存在
- *   approval/decided——F146 同型陷阱规避，审查 L-5）→ steer → tool/result
+ *   approval/decided，同步点只认 tool/call）→ steer → tool/result
  *   距 steer ≤ 5000 ms + 句柄 + 提前让出锚；结算后完成通知恰 1 条（前缀
  *   `(async-workflow: <name>)`）。
  * - (b) 即时性·abort：GUI 会话同景点「停止生成」→ ≤5 s（形状如实登记：handle
- *   为设计形状、aborted/empty 为 0.1.7 宿主改写 F145）+ run 存活 + 结算后完成
+ *   为设计形状、aborted/empty 为宿主改写——dsh-tools 在调用信号已中止时丢弃
+ *   工具返回值）+ run 存活 + 结算后完成
  *   通知恰 1 条（abort 的恢复通道）。
  * - (c) 呈现：任务卡 label=`meta.name`、progress=`meta.description`、结算后
- *   progress 清除（卡内断言——F147 教训：正文断言被提示词回显污染）。
- * - (d) 触顶：与 async_run 同池（owner 10，F143）——混编 11 连发（6 命令 +
+ *   progress 清除（卡内断言——正文断言会被提示词回显污染）。
+ * - (d) 触顶：与 async_run 同池（每 owner 出厂存活上限 10，设计 §3.5）——混编 11 连发（6 命令 +
  *   5 编排）第 11 条 startRefused（含 limit 与出路锚句）；收尾 session/cancel。
  * - (e) 预算内结算：短编排（1 agent 即回）→ 渲染文本 `workflow "x" completed
  *   (1 agent)` + Return value JSON + 零完成通知（活 waiter）。
- * - (f) 描述门槛（§35.3）：dsh-async / dsh-async-create 两预设 request/header
+ * - (f) 描述门槛（需求 §2.4：使用条件与替代入口说明）：dsh-async / dsh-async-create 两预设 request/header
  *   里 `async_workflow` 在场且描述含 p2 门槛短语、宿主 `workflow` 与
- *   `subagent` 系缺席；standard 对照：宿主 workflow 与 subagent 在场（R4 隔离）。
+ *   `subagent` 系缺席；standard 对照：宿主 workflow 与 subagent 在场（需求 §3.2 隔离对照）。
  * - (g) GUI 运行节点：转录出现 `tool-workflow/run-start`…`run-end` 四记录类型
- *   （recorder 复用面活体）；GUI 运行视图显示该 run（CDP 读）；不可达则按
- *   §34.1-1 降级路径如实登记（不冒充通过）。
+ *   （recorder 复用范围活体）；GUI 运行视图显示该 run（CDP 读）；不可达则记
+ *   未验证（需求 §8.1，不冒充通过）。
  *
  * 用法：node verify/probe-r34-async-workflow.mjs [--only=a,b,c,d,e,f,g]
  * （(b)(c)(g) 的 GUI 面需要 Edge/Chrome——找不到时如实 FAIL 'cdp-missing'。）
@@ -29,17 +31,17 @@
  *
  * ⚠️ 共享实例纪律：不动别人的设置与语言档；会话建在 dsh-async 预设下，
  * 锚句双档自适应（渲染文两种语言档都认）。
- * ⚠️ 时序锚（F146 同型）：本工具无审批环节——一切"窗口内"动作以转录出现
+ * ⚠️ 时序锚：本工具无审批环节——一切"窗口内"动作以转录出现
  * async_workflow 的 tool/call 为同步点，不是 approval/decided。
  * ⚠️ 通知计数只认 `user/message + source(tool-jobs, notice)` 且按消息 id 去重
- * （F148——request/header 自带工具描述示例会误报）。
+ * （request/header 自带工具描述示例会误报）。
  *
  * @module verify/probe-r34-async-workflow
  */
 import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { rpc, transcriptOf, localConfig } from './_rpc.mjs';
-import { newSession, prompt, waitTurnEnd, NS, PRESET } from './_r28-helpers.mjs';
+import { newSession, prompt, waitTurnEnd, elevateSession, NS, PRESET } from './_r28-helpers.mjs';
 import { findBrowser, launch, openPage, evaluate, waitFor } from './_visual/cdp.mjs';
 
 const LOG_DIR = join(localConfig.evidenceDir, 'logs');
@@ -48,9 +50,9 @@ const URL_LINE = readFileSync(localConfig.tokenFile, 'utf8').trim();
 const APP_URL = URL_LINE.slice(URL_LINE.indexOf('http'));
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
-/** 即时性窗口（与 §34.5 一致）：毫秒。 */
+/** 即时性窗口（与设计 §8.1 的 5000 ms 真实运行窗口一致）：毫秒。 */
 const IMMENSITY_MS = 5000;
-/** (a)(b) 的让出预算（预算路径必须排不出 ≤5 s 的返回）。 */
+/** (a)(b) 的首次等待时长（预算路径必须排不出 ≤5 s 的返回）。 */
 const YIELD_MS = 60000;
 /** tool/call 落转录后的入窗等待：注册+引擎启动毫秒级，2 s 足够落进让出窗口。 */
 const POST_CALL_MS = 2000;
@@ -66,7 +68,7 @@ const P2_PHRASE = /large multi-agent orchestration|大规模多代理编排/;
 /**
  * 编排脚本体：
  * - 慢跑（(a)(b)(c)(d)）：6 个 agent **串行**（每个真实派生 ~10-20 s，全程
- *   ~1-2 min > 让出预算）——子代理只回一个词，不跑命令（不受 F116 提权面牵连）。
+ *   ~1-2 min，超过首次等待时长）——子代理只回一个词，不跑命令（不涉及命令提权范围）。
  * - 快跑（(e)(g)）：1 个 agent 即回（预算内结算）。
  */
 const SLOW_SCRIPT = 'const out = []; for (const label of ["s1","s2","s3","s4","s5","s6"]) { out.push(await agent("reply with the single word ok", { label })); } return { done: out.length };';
@@ -81,7 +83,7 @@ const record = (id, ok, detail) => {
 /** 防撞尾缀：每轮 run 的 meta.name/标记唯一——旧 run 的同名会话不会再被扫中。 */
 const TAG = Date.now().toString(36).slice(-4);
 
-/** 发一条插话（steer：落 next-step，R12 判定口径）。 */
+/** 发一条插话（steer：落 next-step 的插话判定口径——排队消息不打断）。 */
 async function steer(sessionId, text) {
   await rpc('session/prompt', {
     request: {
@@ -137,7 +139,7 @@ async function waitWorkflowCalled(sessionId, n = 1) {
 }
 
 /**
- * 完成通知计数（F148 口径）：只认 `user/message + source(tool-jobs, notice)`，
+ * 完成通知计数：只认 `user/message + source(tool-jobs, notice)`，
  * 按消息 id 去重；文本需含 async-workflow 字样与完成语义。
  */
 function completionNotices(transcript) {
@@ -173,7 +175,7 @@ async function waitForNoticeCount(sessionId, expected, maxMs) {
   }
 }
 
-/** 结果形状分类（F145 两副面孔，如实登记）。 */
+/** 结果形状分类（设计形状与宿主改写两副面孔，如实登记）。 */
 function classifyResult(text) {
   if (HANDLE_ANCHOR.test(text) || EARLY_ANCHOR.test(text)) return 'handle';
   if (ABORT_ANCHOR.test(text)) return 'aborted';
@@ -182,7 +184,7 @@ function classifyResult(text) {
 }
 
 /**
- * 会话升档（F116 引擎版，用户裁定 2026-10-01：探针可经 GUI 自动化执行）：
+ * 会话升档（用户裁定 2026-10-01：探针可经 GUI 自动化执行）：
  * workflow 引擎的 PTC worker 按**父会话现行档位**取沙箱（dsh-workflow-ptc:632
  * `sandboxPolicy.resolve({session})`）；验证实例是托管服务、无 logon SID，受限档下
  * CreateRestrictedToken 必死（首跑实读：引擎同步抛 `workflow execution failed
@@ -217,9 +219,9 @@ function workflowPrompt(name, description, scriptBody, yieldMs, extra = '') {
   ].join('\n');
 }
 
-// —— CDP 面（GUI-first：RPC 建的会话不在 GUI 当前视图，F147） ——
+// —— CDP 面（GUI-first：RPC 建的会话不在 GUI 当前视图） ——
 
-/** GUI 会话内点按运行态控件（r32 现场标定：停止键 aria-label「停止生成」）。 */
+/** GUI 会话内点按运行态控件（现场标定：停止键 aria-label「停止生成」）。 */
 async function clickByLabel(page, labelRe) {
   const hit = await evaluate(page, `(() => {
     const re = ${String(labelRe)};
@@ -240,6 +242,34 @@ async function guiNewSession(page) {
     return true;
   })()`);
   await sleep(1500);
+}
+
+/**
+ * 0.2.0 起 GUI「新建会话」落**标准模式**（新任务页 seat 默认），预设只有
+ * developerTools 的 seat 菜单一条 GUI 路；探针改走同一 remote 的 RPC 面：
+ * 取 `session/list` 里最新的 blank 会话（新任务页焦点在的就是它），
+ * `agentPresets/select` 给它定 dsh-async（宿主只拒「已开始」的会话；
+ * diag 2026-10-09 全程证实：select 采纳→composer 发词→async_workflow 真被调）。
+ * 先清掉其余 blank（空会话、无历史可失），让「复用 or 新建」都收敛到同一个
+ * 焦点会话。@returns 定好预设的 blank 会话 id——composer 发出的词就落在它里面。
+ */
+async function guiBlankSession(page, presetId) {
+  const blanksNewestFirst = async () => (await rpc('session/list', { _request: {} })).items
+    .filter((item) => item.blank === true)
+    .sort((a, b) => Number(b.updatedAt ?? 0) - Number(a.updatedAt ?? 0));
+  for (const row of (await blanksNewestFirst()).slice(1)) {
+    await rpc('session/cancel', { request: { sessionId: row.sessionId } }).catch(() => {});
+  }
+  await guiNewSession(page);
+  let sid = '';
+  for (let i = 0; i < 6 && sid === ''; i += 1) {
+    sid = (await blanksNewestFirst())[0]?.sessionId ?? '';
+    if (sid === '') await sleep(1500);
+  }
+  if (sid === '') throw new Error('session/list 未见 blank 会话（「新建会话」没建出？）');
+  const picked = await rpc('agentPresets/select', { agentId: sid, agentPreset: presetId });
+  if (picked !== presetId) throw new Error(`agentPresets/select 回执 ${JSON.stringify(picked)} ≠ ${presetId}`);
+  return sid;
 }
 
 /** GUI：向当前会话键入提示词并点发送（contenteditable 通道，r32 实测）。 */
@@ -289,7 +319,7 @@ async function findGuiSession(promptMark) {
 
 /**
  * 任务面板里目标作业卡的文本（卡=含 `async-workflow` 与 meta.name 的最深 div；
- * 断言只认卡内文本——正文级断言会被提示词回显污染，F147）。
+ * 断言只认卡内文本——正文级断言会被提示词回显污染）。
  */
 async function jobCardText(page, label) {
   const card = await evaluate(page, `(() => {
@@ -304,14 +334,19 @@ async function jobCardText(page, label) {
 
 // ── 判据实现 ───────────────────────────────────────────────────────────────
 
-/** (a) 即时性·插话（GUI 建会话+升档；插话走 RPC steer）。 */
-async function phaseA(page) {
+/** (a) 即时性·插话（RPC 定向建会话＋升档；插话走 RPC steer）。
+ *
+ * 2026-10-09 起 (a)(e) 不再经 GUI 建会话：0.2.0 的「新建会话」默认落**标准
+ * 模式**（新任务页 seat 默认；diag 链实证），提示词会打进 standard 会话——模型
+ * 只有宿主 workflow 可用，等不到 async_workflow 调用。
+ * 本两相判据全在转录侧（时序/形状/通知计数），会话管理改 RPC 显式预设＋
+ * `_r28-helpers.elevateSession`（GUI composer /permission 的同一提交事务）。
+ * (b)(c)(g) 的 GUI 断言仍 GUI-first；(d) 待同法改造。 */
+async function phaseA() {
   const name = `wf-r34a-${TAG}`;
-  await guiNewSession(page);
-  await guiEnsureFullAccess(page);
-  await guiSendText(page, workflowPrompt(name, 'R34 probe phase A', SLOW_SCRIPT, YIELD_MS));
-  const sessionId = await findGuiSession(name);
-  await assertElevated(sessionId);
+  const sessionId = await newSession(PRESET);
+  await elevateSession(sessionId);
+  await prompt(sessionId, workflowPrompt(name, 'R34 probe phase A', SLOW_SCRIPT, YIELD_MS));
   await waitWorkflowCalled(sessionId);
   await sleep(POST_CALL_MS);
   const t0 = Date.now();
@@ -334,11 +369,12 @@ async function phaseA(page) {
 /** (b) 即时性·GUI 停止（abort 不接 cancel；恢复通道=完成通知）。 */
 async function phaseB(page) {
   const name = `wf-r34b-${TAG}`;
-  await guiNewSession(page);
+  // 0.2.0：GUI 新建默认标准模式——blank 会话经 RPC 定 dsh-async（见
+  // guiBlankSession 头注），升档与提示词仍走 composer，断言与标准路径全同。
+  const sid = await guiBlankSession(page, PRESET);
   await guiSendText(page, '/permission danger-full-access');
   await sleep(3000);
   await guiSendText(page, workflowPrompt(name, 'R34 probe phase B', SLOW_SCRIPT, YIELD_MS));
-  const sid = await findGuiSession('wf-r34b');
   await waitWorkflowCalled(sid);
   await sleep(POST_CALL_MS);
   const stopT0 = Date.now();
@@ -354,7 +390,7 @@ async function phaseB(page) {
   const shape = classifyResult(text);
   record('b-1-immediacy', elapsed <= IMMENSITY_MS, `停止 → tool/result ${String(elapsed)} ms ≤ ${String(IMMENSITY_MS)} ms`);
   record('b-2-shape-honest', shape === 'handle' || shape === 'aborted' || shape === 'empty',
-    `形状如实登记=${shape}（handle=设计形状；aborted/empty=F145 宿主改写）；样例：${text.slice(0, 140)}`);
+    `形状如实登记=${shape}（handle=设计形状；aborted/empty=宿主改写）；样例：${text.slice(0, 140)}`);
   const notice = await waitForNoticeCount(sid, 1, 300000);
   record('b-3-run-survives', notice.count === 1,
     `abort 后 run 存活并由完成通知恢复：${String(notice.count)} 条（判据恰 1——cancelCalls=0 的真机体）`);
@@ -364,11 +400,10 @@ async function phaseB(page) {
 async function phaseC(page) {
   const name = `wf-r34c-${TAG}`;
   const desc = `R34 probe panel phase ${TAG}`;
-  await guiNewSession(page);
+  const sid = await guiBlankSession(page, PRESET);
   await guiSendText(page, '/permission danger-full-access');
   await sleep(3000);
   await guiSendText(page, workflowPrompt(name, desc, SLOW_SCRIPT, 1000));
-  const sid = await findGuiSession('wf-r34c');
   await waitWorkflowCalled(sid);
   await sleep(POST_CALL_MS);
   const opened = await clickByLabel(page, /个后台任务/);
@@ -387,43 +422,39 @@ async function phaseC(page) {
     `结算后卡内 progress 行清除、label 仍在（卡内实读：${settledCard.slice(0, 140)}）`);
 }
 
-/** (d) 触顶：与 async_run 同池混编 11 连发 → 第 11 条 startRefused。 */
-async function phaseD(page) {
-  // GUI 建会话+升档（升档顺带把审批档切到 never——11 连发无审批串行）。
-  await guiNewSession(page);
-  await guiEnsureFullAccess(page);
+/** (d) 触顶：与 async_run 同池混编 11 连发 → 第 11 条 startRefused。
+ * 2026-10-09 起会话管理同 (a)(e)：RPC 定向＋elevateSession（本部署审批档为
+ * 自动审批，无审批串行；判据全在转录侧）。 */
+async function phaseD() {
+  const sessionId = await newSession(PRESET);
+  await elevateSession(sessionId);
   // 触顶要同窗并存：6 条 sleep-600 命令 + 5 个慢编排（串行 3 agent，~40 s+）——
   // 首跑用快编排时第 11 条启动前已有 2 个结算完，在册数从未到 11。
-  await guiSendText(page,
+  await prompt(sessionId,
     'Fire 11 calls in ONE batch (same turn, back to back, no waiting between them): '
     + 'calls 1-6 are async_run, each running Start-Sleep -Seconds 600 with yield_ms=1000 and description "limit probe N" (N=1..6); '
     + `calls 7-11 are async_workflow, each with meta.name="wf-limit-N-${TAG}" (N=7..11), meta.description="limit probe N", `
     + `script='${SLOW_SCRIPT}' and yield_ms=1000. `
     + 'Do not retry failed calls. '
     + 'Then report exactly which calls returned a job_id and which failed, quoting each failure text verbatim.');
-  // 标记取提示词里真实出现的字面串（N 是占位符，不在提示词里展开）。
-  const sessionId = await findGuiSession(`wf-limit-N-${TAG}`);
-  await assertElevated(sessionId);
-  // 无审批（never 档）+ 让出：10 min 预算。
+  // 让出：10 min 预算。
   await waitTurnEnd(sessionId, 600000);
   const transcript = await transcriptOf(sessionId);
   const text = JSON.stringify(transcript.records ?? []);
   record('d-1-refused-anchor', REFUSED_ANCHOR.test(text), '第 11 条文案含「进程启动前被拒」锚（同池准入在先）');
-  record('d-2-limit-ten', /limit: 10|current limit: 10|当前上限:? 10/.test(text), '复述生效上限 10（F143 同池）');
+  record('d-2-limit-ten', /limit: 10|current limit: 10|当前上限:? 10/.test(text), '复述生效上限 10（与 async_run 同池，设计 §3.5）');
   record('d-3-way-out', /job_kill/.test(text), '给出 kill/等待出路');
   await rpc('session/cancel', { request: { sessionId } }).catch((error) => {
     console.log(`cleanup session/cancel: ${String(error?.message ?? error)}`);
   });
 }
 
-/** (e) 预算内结算：渲染文本形态 + 零完成通知。 */
-async function phaseE(page) {
+/** (e) 预算内结算：渲染文本形态 + 零完成通知（会话管理同 (a)：RPC 定向，2026-10-09）。 */
+async function phaseE() {
   const name = `wf-r34e-${TAG}`;
-  await guiNewSession(page);
-  await guiEnsureFullAccess(page);
-  await guiSendText(page, workflowPrompt(name, 'R34 probe phase E', FAST_SCRIPT, YIELD_MS));
-  const sessionId = await findGuiSession(name);
-  await assertElevated(sessionId);
+  const sessionId = await newSession(PRESET);
+  await elevateSession(sessionId);
+  await prompt(sessionId, workflowPrompt(name, 'R34 probe phase E', FAST_SCRIPT, YIELD_MS));
   await pollUntil(sessionId,
     (t) => toolResultTexts(t, 'async_workflow').length > 0, { maxMs: 180000 });
   const text = toolResultTexts(await transcriptOf(sessionId), 'async_workflow')[0] ?? '';
@@ -433,7 +464,7 @@ async function phaseE(page) {
   record('e-2-zero-notice', notice.count === 0, `预算内结算零完成通知（实得 ${String(notice.count)}——活 waiter 语义）`);
 }
 
-/** (f) 描述门槛（§35.3：双预设 + standard 对照）。 */
+/** (f) 描述门槛（需求 §2.4：双预设 + standard 对照）。 */
 const hasTool = (header, name) => header.includes(`"name":"${name}"`);
 async function checkPresetFace(presetId, expectAsyncFace) {
   const sessionId = await newSession(presetId);
@@ -450,7 +481,7 @@ async function checkPresetFace(presetId, expectAsyncFace) {
       `async_workflow 在场=${String(hasAsyncWorkflow)}；p2 门槛短语=${String(hasP2)}；宿主 workflow 缺席=${String(!hostWorkflow)}；subagent 系缺席=${String(!subagent)}`);
   } else {
     record(`f-${presetId}-contrast`, hostWorkflow && subagent,
-      `standard 对照：宿主 workflow 在场=${String(hostWorkflow)}；subagent 在场=${String(subagent)}（R4 隔离面）`);
+      `standard 对照：宿主 workflow 在场=${String(hostWorkflow)}；subagent 在场=${String(subagent)}（需求 §3.2 隔离对照）`);
   }
 }
 
@@ -460,13 +491,13 @@ async function phaseF() {
   await checkPresetFace('standard', false);
 }
 
-/** (g) recorder 复用面（四记录类型）+ GUI 运行视图（尽力而为）。 */
+/** (g) recorder 复用范围（四记录类型）+ GUI 运行视图（尽力而为）。 */
 async function phaseG(guiPage) {
   const name = `wf-r34g-${TAG}`;
-  await guiNewSession(guiPage);
-  await guiEnsureFullAccess(guiPage);
+  const sessionId = await guiBlankSession(guiPage, PRESET);
+  await guiSendText(guiPage, '/permission danger-full-access');
+  await sleep(3000);
   await guiSendText(guiPage, workflowPrompt(name, 'R34 probe phase G', FAST_SCRIPT, YIELD_MS));
-  const sessionId = await findGuiSession(name);
   await assertElevated(sessionId);
   await pollUntil(sessionId,
     (t) => toolResultTexts(t, 'async_workflow').length > 0, { maxMs: 180000 });
@@ -476,7 +507,7 @@ async function phaseG(guiPage) {
   record('g-1-records', present.length === 4,
     `四记录类型齐备：${present.join(', ')}（缺：${types.filter((t) => !present.includes(t)).join(', ') || '无'}）`);
   if (guiPage === null) {
-    record('g-2-gui', false, 'cdp-missing：无浏览器可连，GUI 运行视图未取证（按 §34.1-1 降级路径登记，不冒充）');
+    record('g-2-gui', false, 'cdp-missing：无浏览器可连，GUI 运行视图未取证（按需求 §8.1 如实降级登记，不冒充）');
     return;
   }
   try {
@@ -496,8 +527,9 @@ const summary = { ranAt: new Date().toISOString(), ns: NS, preset: PRESET, resul
 let browser = null;
 let page = null;
 try {
-  // 引擎相（a/b/c/d/e/g）都 GUI-first：升档只经 GUI composer（用户裁定 2026-10-01）。
-  const needGui = want('a') || want('b') || want('c') || want('d') || want('e') || want('g');
+  // GUI 只剩 (b)(c)(g) 的界面断言需要（停止键/任务卡/运行视图）；(a)(d)(e) 自
+  // 2026-10-09 起 RPC 定向（会话管理不走 GUI，默认权限即可跑）。
+  const needGui = want('b') || want('c') || want('g');
   if (needGui) {
     const browserPath = findBrowser();
     if (browserPath === undefined || browserPath === null) {
@@ -514,11 +546,11 @@ try {
     if (page === null) { record(id, false, 'cdp-missing：浏览器不可用，本相未取证'); return false; }
     return true;
   };
-  if (want('a') && guiReady('a-phase')) await phaseA(page);
+  if (want('a')) await phaseA();
   if (want('b') && guiReady('b-phase')) await phaseB(page);
   if (want('c') && guiReady('c-phase')) await phaseC(page);
-  if (want('d') && guiReady('d-phase')) await phaseD(page);
-  if (want('e') && guiReady('e-phase')) await phaseE(page);
+  if (want('d')) await phaseD();
+  if (want('e')) await phaseE();
   if (want('f')) await phaseF();
   if (want('g') && guiReady('g-phase')) await phaseG(page);
 } catch (error) {

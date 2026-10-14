@@ -1,7 +1,7 @@
 /**
- * 验证 P1-3：**校验只有一套判据**。
+ * 验证：**校验只有一套判据**。
  *
- * 缺陷形态（实现审查 R5）：`Config` 的数值字段没有下界约束，于是
+ * 防的缺陷形态：`Config` 的数值字段若没有下界约束，则
  * - 设置页放行 `-1` / `0` / 空串；
  * - 运行时 `resolveConfig` 才抛错，而那个错误被读取侧吞掉（`lib/settings.js` 的 catch），
  *   表现为"设置保存成功但工具行为没变"。
@@ -58,13 +58,13 @@ for (const [label, patch] of legal) {
 
 console.log('');
 console.log('=== 跨字段约束（schema 表达不了，由 resolveConfig 的判据兜）===');
-// r19-N5：判据已收敛进 lib/config.js（assertCrossFieldOrder，单一事实源），
-// 探针直测活路径的导出面。
+// 判据已收敛进 lib/config.js（assertCrossFieldOrder，单一事实源），
+// 探针直测活路径的导出接口。
 const { assertCrossFieldOrder } = await import('../lib/config.js');
 const crossIllegal = [
   ['minWaitMs > maxWaitMs', { minYieldMs: 1, maxYieldMs: 10, minWaitMs: 500, maxWaitMs: 100, defaultYieldMs: 5 }],
   ['defaultYieldMs 超出区间', { minYieldMs: 1, maxYieldMs: 10, minWaitMs: 1, maxWaitMs: 10, defaultYieldMs: 99 }],
-  // `defaultWaitMs` 的同类约束曾漏查（实现审查 R6 的 P1-3 残余）：漏了它，
+  // `defaultWaitMs` 的同类约束不可漏查：漏了它，
   // `defaultWaitMs: 999999` 会被设置页放行、存盘，然后在某次 async_wait_job 调用里被夹紧，
   // 使用者看到的是"我设了但没效果"。
   ['defaultWaitMs 超出区间', { minYieldMs: 1, maxYieldMs: 10, minWaitMs: 1, maxWaitMs: 10, defaultYieldMs: 5, defaultWaitMs: 99 }]

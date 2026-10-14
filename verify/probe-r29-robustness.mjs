@@ -1,26 +1,27 @@
 /**
- * R29 安全/健壮性/异常处理的真机判据（验证实例，design §31.9 真机段）。
+ * 安全/健壮性/异常处理的真机判据（验证实例；设置拒绝按需求 §5.1／§5.4 与设计 §5.4，
+ * 耗时上界按设计 §2.1 时间判据）。
  *
- * 四组判据（killed 不设真机必过项——F122：Windows 外杀不产生 POSIX signal，
- * 单测为准；g 的验收是文档核对，非机证）：
+ * 四组判据（killed 不设真机必过项——Windows 外杀不产生 POSIX signal，单测为准；
+ * 文档核对类项目不设机证）：
  *
- * 1. **卡片层拒绝·单字段**（Q4 第一道）：插件页 maxWaitMs 草稿输入 2147483648 →
- *    保存按钮禁用 + 字段原因文案带上界数字（R29-d：走官方 parse 通道）。
+ * 1. **卡片层拒绝·单字段**（第一道防线）：插件页 maxWaitMs 草稿输入 2147483648 →
+ *    保存按钮禁用 + 字段原因文案带上界数字（走官方 parse 通道）。
  * 2. **卡片层拒绝·配对**：pollIntervalMs 草稿 > maxWaitMs 草稿 → 保存禁用 +
- *    invalidPair 文案（壳层叠加，复审 N1 挂法）。
- * 3. **提交层拒绝**（第二道）：绕过卡片直写（RPC mutate）越界 maxWaitMs →
+ *    invalidPair 文案（壳层叠加）。
+ * 3. **提交层拒绝**（第二道防线）：绕过卡片直写（RPC mutate）越界 maxWaitMs →
  *    **网关按本包 schema 拒绝**（`settings/rejected` + schemastery 可读消息，含上界）
  *    + 回读值未变（未落盘）+ 工具描述不受影响。（2026-09-28 首跑实测：RPC
- *    settings/update 对字段级越界当场拒绝，比设计稿的"落盘 + errlog warn 兜底"
- *    更强；跨字段违例 schema 表达不了，仍走落盘 + loader warn，r19-N2 口径。）
+ *    settings/update 对字段级越界当场拒绝，比设计稿的"落盘 + errlog warn 兜住"
+ *    更强；跨字段违例 schema 表达不了，仍走落盘 + loader warn。）
  * 4. **等待总耗时上界**：20 秒命令（提权档真跑）+ yield 后 async_wait_job
  *    (wait_ms=1500) → running 结局，渲染句 "Waited N ms; the job is still
  *    running" 在场且 N ∈ [0.9×wait_ms, wait_ms + 3×pollIntervalMs + 容差]
  *    （wait-job 屏障是一次快照，不睡；容差吃 RTT/轮机抖动）。**执行档走提权**
- *    （F116：async_run 起新进程，受限档在验证实例死于 CreateRestrictedToken 前置；
- *    sandbox_permissions + justification 经批准 allowed-once，r28 同款口径），
+ *    （async_run 起新进程，受限档在验证实例死于 CreateRestrictedToken 前置；
+ *    sandbox_permissions + justification 经批准 allowed-once），
  *    async_wait_job 本身不碰执行器。命令取 20 秒——提权批准往返会吃掉数秒，
- *    更短的命令会在第 2 步前已完结（首跑实测翻车形态）。
+ *    更短的命令会在第 2 步前已完结。
  *
  * 状态复原：起手先把四个等待/轮询字段归位出厂默认并读回核对；探针只在 3 组做
  * 直写（且被网关拒绝、未落盘），结尾再回正读回。
@@ -152,8 +153,8 @@ try {
   // ── 2 提交层拒绝（直写） ─────────────────────────────────────────────
   // 实测语义（2026-09-28 首跑）：RPC settings/update 网关按本包 schema 校验 patch，
   // 字段级越界在网关就被拒（settings/rejected + schemastery 可读消息），到不了落盘——
-  // 这比设计稿的"落盘 + errlog warn 兜底"更强；跨字段违例 schema 表达不了，仍走
-  // 落盘 + loader warn（r19-N2 口径不变，F125 已按此读数更新）。
+  // 这比设计稿的"落盘 + errlog warn 兜住"更强；跨字段违例 schema 表达不了，仍走
+  // 落盘 + loader warn（口径不变）。
   console.log('· 3/4 真机 2：绕过卡片直写越界值（提交层网关拒绝）');
   const errBase = readFileSync(ERRLOG, 'utf8');
   let rejectText = '';
@@ -190,11 +191,11 @@ try {
     `async_run 描述等待区间片段=${(runDescText.match(/range \d+–\d+ ms/g) ?? []).join(' | ') || '(描述缺席)'}`);
 
   // ── 3 等待总耗时上界 ─────────────────────────────────────────────────
-  // 执行档（F116 + 用户裁定「走提权」，r28 同款口径）：async_run 起的是**新进程**，
+  // 执行档（用户裁定「走提权」，与 probe-r28 系探针同款口径）：async_run 起的是**新进程**，
   // 受限档在验证实例（托管服务 LocalSystem 无 logon SID）死于 CreateRestrictedToken
   // 前置——首跑实测确认。因此本组走提权档（sandbox_permissions + justification，
   // 经批准 allowed-once）；async_wait_job 本身不碰执行器，无需提权。
-  // 解析面：模型看到的是工具的**渲染文本**（running 结局 = note.waitAgain：
+  // 解析侧：模型看到的是工具的**渲染文本**（running 结局 = note.waitAgain：
   // "Waited N ms; the job is still running"），不是原始 JSON——锚定渲染句。
   // 命令取 20 秒：提权批准往返 + 模型出话延迟可能吃掉数秒，6 秒会在第 2 步前
   // 已完结（第三跑实测翻车形态）；20 秒保证等待窗口内仍在运行。

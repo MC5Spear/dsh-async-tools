@@ -1,24 +1,24 @@
 /**
- * 视觉探针（R27 整份重写）：**本包设置表单与官方设置表单的形态一致性**。
+ * 视觉探针：**本包设置表单与官方设置表单的形态一致性**（设计 §5.3 浏览器入口与官方表单）。
  *
  * ## 判据分三层
  *
  * 1. **computed style 并排对比**（可失败、可复现）：把本包插件页上的字段（官方
  *    `SettingsValueField` + 自绘枚举 select）与**官方设置页自己的**字段逐项比——
  *    度量（高度/圆角/字号/内边距/边框）、颜色（底色/文字色对主题变量的解析）。
- *    R27 起值字段控件已同源（官方组件），这条的余量主要落在**自绘的枚举 select**上；
+ *    值字段控件已同源（官方组件），这条的余量主要落在**自绘的枚举 select**上；
  *    允许的差异只有两项：官方没有的枚举控件、官方没有的秒数读数（生效 + 输入两段）。
- * 2. **结构判据**（§29.3 判据 1/2/11 的真机面）：四组全部字段（`lib/config.js` 现读，现为 16 个）
+ * 2. **结构判据**（设计 §5.3 的真机环境）：四组全部字段（`lib/config.js` 现读，现为 17 个）
  *    各 = label 行（for 绑定）+
  *    整行控件 + 说明行（aria-describedby 指向）；相邻字段之间 0.5px 分隔线（读计算样式）；
  *    页脚只有「保存」一个动作按钮。
- * 3. **截图**（给人看 + 给有视觉能力的子代理审）：深色与浅色主题各两张（顶部 + 底部）。
+ * 3. **截图**（给人看 + 给有视觉功能的子代理审）：深色与浅色主题各两张（顶部 + 底部）。
  *    断言接不了"看起来搭不搭"，那一层交给看图的人。
  *
  * ## 为什么必须真的开浏览器
  *
- * 第一版把颜色写死成浅色主题取值，深色下是一块白底黑框——而**单测与真机功能验收全绿**：
- * 那些判据验的是"保存有没有生效"，没有一条看颜色。
+ * 颜色取值若写死成浅色主题，深色下就是一块白底黑框——而单测与真机功能验收照样
+ * 全绿：那些判据验的是"保存有没有生效"，没有一条看颜色。
  *
  * 证据：判据读数与截图随脚本落盘到本机证据目录（logs/card-visual.json、shots/card-*.png）。
  * 用法：node verify/_visual/probe-card-visual.mjs（验证实例）
@@ -33,9 +33,8 @@ const localConfig = await loadLocalPlaneOrSkip('verify/_visual/probe-card-visual
 const { base: BASE, token } = instanceCredentials(localConfig);
 const SHOTS = join(localConfig.evidenceDir, 'shots');
 const LOGS = join(localConfig.evidenceDir, 'logs');
-// ⚠️ 四组**全要**。这里曾经只取 BUDGET + LANG 两组（12 个字段），
-// 于是 R28 的 `silentFailureGuard` 与 R30 的三个提问接管字段**从来没被这条视觉判据看过**——
-// 而它照样绿。判据少看几个字段不会报错，只会安静地少测；名单的单一来源是 `lib/config.js`。
+// ⚠️ 四组**全要**。判据少看几个字段不会报错，只会安静地少测；
+// 名单的单一来源是 `lib/config.js` 的四组键集合。
 const EXPECTED_KEYS = [...BUDGET_FIELD_KEYS, ...LANG_FIELD_KEYS, ...FLAG_FIELD_KEYS, ...ASK_FIELD_KEYS];
 
 const results = [];
@@ -97,7 +96,7 @@ try {
   await clickBy(`[...document.querySelectorAll('*')].find((n) => (n.getAttribute('aria-label') || '') === '查看 dsh-async-tools')`, '查看 dsh-async-tools');
   await sleep(3000);
 
-  // 本包表单的结构与度量（§29.3 判据 1/2 的真机面：读 DOM 与计算样式，不读源码文本）。
+  // 本包表单的结构与度量（设计 §5.3 的真机环境：读 DOM 与计算样式，不读源码文本）。
   const ours = await evaluate(page, `(() => {
     const pick = ${PICK};
     const section = document.querySelector('[data-plugin-config]');
@@ -264,7 +263,7 @@ try {
       : 'document.documentElement.removeAttribute("data-ds-dark-theme"), true');
     await sleep(1500);
 
-    // 控件底色跟主题走的硬证据：直接读我们字段在当前主题下的计算值。
+    // 控件底色跟主题走的实证：直接读本卡字段在当前主题下的计算值。
     const bg = await evaluate(page, `(() => {
       const ctl = document.querySelector('[data-plugin-config] input[id^="plugin-config-"], [data-plugin-config] select[id^="plugin-config-"]');
       return ctl === null ? '' : getComputedStyle(ctl).backgroundColor;

@@ -1,5 +1,5 @@
 /**
- * 无头 Edge 存活诊断（F115 的判据载体）：诊断「受限沙箱档位下 spawn 的 Edge 进程树早夭」。
+ * 无头 Edge 存活诊断（判据载体）：诊断「受限沙箱档位下 spawn 的 Edge 进程树早夭」。
  *
  * 两个子命令（用法：node verify/diag-headless-edge.mjs <frames|lifetime>）：
  *

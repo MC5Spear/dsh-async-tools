@@ -1,17 +1,17 @@
 /**
- * 别名变量检查（R27 判据 7）：`client.js` 里每个 `var(--dsw-alias-*)` 引用都必须落在
+ * 别名变量检查：`client.js` 里每个 `var(--dsw-alias-*)` 引用都必须落在
  * **定义表**内。
  *
  * ## 定义权威与取数方式
  *
- * 定义表不是抄进仓库的一份名单——那是会漂的第二份（design-review-r27-fixes §4 的裁决）。
- * 本脚本每次运行都从 theme 包的运行时源**现场枚举**定义名（F108：`dsh-client-ui-theme`
- * 运行时注入的 90 个名字；`--dsw-alias-label-error` / `-danger` / `-success` 都不在表里，
+ * 定义表不是抄进仓库的一份名单——那是会漂的第二份。
+ * 本脚本每次运行都从 theme 包的运行时源**现场枚举**定义名（`dsh-client-ui-theme`
+ * 运行时注入的名字全集；`--dsw-alias-label-error` / `-danger` / `-success` 都不在表里，
  * 官方 `.failed` 引用未定义的 `label-error` 落继承色是官方现行行为，本包不复制它的颜色
  * 引用）。
  *
  * 锚点目录与 `tools/_host-resolve.mjs` 同一套：`DSAT_HOST_MODULES` 覆盖 → 0.2.0 线
- * 运行树（R44 起 `dsh-0.2.0-rc.2`——指 0.1.7 树枚举不出 104 别名表，F167）。
+ * 运行树（`dsh-0.2.0-rc.2`；旧线树枚举不出完整的别名表）。
  * 找不到 theme 源时退出 2（宁可失败，不放假绿）。
  *
  * 用法：node tools/check-alias-tokens.mjs
@@ -25,10 +25,9 @@ import { candidateModules } from './_host-resolve.mjs';
 const ROOT = resolve(import.meta.dirname, '..');
 
 /**
- * theme 包运行时源的候选锚点目录（R29-f：统一走 `_host-resolve.candidateModules`
+ * theme 包运行时源的候选锚点目录（统一走 `_host-resolve.candidateModules`
  * ——`DSAT_HOST_MODULES` 覆盖 → `DSH_HOME/profiles` → `%APPDATA%/npm` 全局树，
- * 不再写死本机路径；F108 的枚举最初是在 0.1.7 预置树上做的，开发机把
- * `DSAT_HOST_MODULES` 指向它即可）。
+ * 不写死本机路径）。
  */
 const THEME_CANDIDATES = candidateModules(process.env.DSH_HOME ?? join(homedir(), '.dsh'));
 
@@ -53,13 +52,13 @@ function definedNames() {
 }
 
 const { dir, names } = (() => {
-  // N7（实现审查）：枚举失败 = 定义表不可判 → 本检查器**拒绝放行**（退出 2，
+  // 枚举失败 = 定义表不可判 → 本检查器**拒绝放行**（退出 2，
   // 与"检查完、有违规"的退出 1 区分）；报错里带上环境指引，而不是裸抛栈。
   try {
     return definedNames();
   } catch (error) {
     console.error(String(error instanceof Error ? error.message : error));
-    console.error('设 DSAT_HOST_MODULES 指向 0.2.0 线运行树的 node_modules（含 @deepseek-ai，R44 起 dsh-0.2.0-rc.2 树）后重试；机器路径不写进本文件（判据 12）。');
+    console.error('设 DSAT_HOST_MODULES 指向 0.2.0 线运行树的 node_modules（含 @deepseek-ai）后重试；机器路径不写进本文件。');
     process.exit(2);
   }
 })();

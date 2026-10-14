@@ -1,9 +1,9 @@
 /**
- * 编码体检判据的测试（R4 审查 #7 的验收口径 A–D）。
+ * 编码体检判据的测试（验收口径 A–D）。
  *
- * 为什么这些用例必须存在：`tools/check-encoding.mjs` 是**验证手段本身**。本项目三次文件损坏
- * 里，前两次它没抓住（只查 `U+FFFD`，而双重编码的字节完全合法、`U+FFFD` 计数为 0），
- * 第三次才发现。一个报"全部正常"的扫描器，必须能回答"它能失败吗"。
+ * 为什么这些用例必须存在：`tools/check-encoding.mjs` 是**验证手段本身**。只查
+ * `U+FFFD` 抓不住双重编码（字节完全合法、`U+FFFD` 计数为 0）。
+ * 一个报"全部正常"的扫描器，必须能回答"它能失败吗"。
  *
  * 样本来源：本机 CP936 样本生成脚本（.NET 的 **CP936**）生成真实双重编码文本
  * （Node 没有内置 CP936 解码器；用 latin1 模拟出来的"乱码"不含汉字，调参无意义）。
@@ -20,8 +20,8 @@ const DOUBLE_ENCODED_LONG = '杩欐槸涓€涓甯哥殑涓枃鎶€鏈枃妗ｆ
 test('编码判据（#7 断言 A）：短的双重编码文件必须被判 DOUBLE-ENC', () => {
   const verdict = inspectText(DOUBLE_ENCODED_SAMPLE);
   assert.ok(verdict.han > 0, '样本本身必须含汉字（否则测的是别的东西）');
-  // 上一版门槛是 han >= 50，这个样本只有 11 个汉字，会被整个跳过（漏报 1）。
-  assert.ok(verdict.han < 50, `样本汉字数应小于旧门槛 50，实际 ${String(verdict.han)}`);
+  // 样本只有 11 个汉字——门槛若按汉字绝对数（han >= 50）设，短文件会被整个跳过（漏报）。
+  assert.ok(verdict.han < 50, `样本汉字数应小于 50（短文件不得被跳过），实际 ${String(verdict.han)}`);
   assert.equal(verdict.doubleEncoded, true, `短双重编码被漏报了：占比=${verdict.ratio.toFixed(3)}`);
 });
 
@@ -52,8 +52,8 @@ test('编码判据（#7 断言 C）：CRLF 必须被报出来（而不只是打�
   assert.equal(verdict.crlf, 2, 'CR 计数必须被回报，CLI 才能把它计入退出码');
 });
 
-test('编码判据（#7 断言 D）：字表规模与声明一致（注释不再虚报 3500）', () => {
-  // 上一版注释写"一级常用字表（3500 字）"，实测只有 1171，没有任何东西会因此变红。
+test('编码判据（#7 断言 D）：字表规模与声明一致', () => {
+  // 声明的规模与字表实际大小脱节时没有任何东西会变红——这里把两者钉在一起。
   assert.doesNotThrow(() => { assertBaseline(); }, '字表规模与声明不符');
   assert.equal(COMMON_CHARS.size, 1171, '字表规模变了就要同步改 DECLARED_COMMON_COUNT');
 });

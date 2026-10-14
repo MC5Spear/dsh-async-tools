@@ -1,17 +1,17 @@
 /**
- * R25 的真机判据：**两块文案各自独立切换**（展示面 = 设置表单可见文案，Agent 面 = 模型收到的工具描述）。
+ * 两个语言开关独立性的真机判据（需求 §5.3）：**两块文案各自独立切换**（展示侧 = 设置表单可见文案，Agent 侧 = 模型收到的工具描述）。
  *
  * 判据本体在 `verify/lang-judgements.mjs`（纯函数，`verify/mutate-lang.mjs` 证明能红）；这里只取数：
  *
  * 1. **出厂态**：页面读设置表单的字段标签与控件身份（`id` 去前缀）；新会话读 `request/header` 里
  *    `async_run` 的描述（模型实际收到的串）。
  * 2. **只改 `agentLang` → `zh`**（走 RPC 写入宿主行设置，与真实保存同一条链）：新会话的描述必须
- *    换成中文档；**表单文案必须逐字不变**（agentLang 不得影响展示面）。
+ *    换成中文档；**表单文案必须逐字不变**（agentLang 不得影响展示侧）。
  * 3. **只改 `uiLang` → `en`**（走**页面本身**：改下拉 + 点保存，证明这个控件真的可用）：表单文案必须
  *    整体换成英文档、字段身份不变；**工具描述必须逐字不变**（uiLang 不得影响 Agent 面）。
  * 4. **复原**：两个开关回 `auto` / `en` 并回读比对（验证实例是共享资源，不留脏状态）。
  *
- * 前置：验证实例在跑（loopback 打开）、包名在 profile 的 dependencies 与 bundles 里（F98）。
+ * 前置：验证实例在跑（loopback 打开）、包名在 profile 的 dependencies 与 bundles 里。
  * 证据：判据读数与截图随脚本落盘到本机证据目录（logs/lang-independence.json、shots/lang-*.png）。
  * 用法：node verify/probe-lang-independence.mjs
  */
@@ -67,7 +67,7 @@ async function newSession() {
   return created.sessionId;
 }
 
-/** 发一条不触发工具的提示（只发不等——判据要的是模型**收到**的工具面，不是这轮的答案）。 */
+/** 发一条不触发工具的提示（只发不等——判据要的是模型**收到**的工具清单，不是这轮的答案）。 */
 async function prompt(sessionId) {
   await rpc('session/prompt', {
     request: {
@@ -83,7 +83,7 @@ async function prompt(sessionId) {
 /**
  * 等第一条 `request/header` 入账。
  *
- * 判据只需要"请求真的发出去了"这一刻（工具面就在这条事件里），所以不去等整轮跑完——
+ * 判据只需要"请求真的发出去了"这一刻（工具清单就在这条事件里），所以不去等整轮跑完——
  * 等轮次结束要靠轮询 `session/list` 的 `running`，短轮次会整段错过 running 窗口而白等到超时。
  *
  * @param {string} sessionId - 会话。
@@ -95,7 +95,7 @@ async function waitForHeader(sessionId) {
     if ((transcript.records ?? []).some((record) => record.event?.type === 'request/header')) return transcript;
     await sleep(1500);
   }
-  throw new Error('等待 request/header 超时——模型面取不到，判据无法成立');
+  throw new Error('等待 request/header 超时——模型侧取不到，判据无法成立');
 }
 
 /** 取新会话里模型实际收到的 `async_run` 描述（形状照 `acceptance-017.mjs` 的 `faceOf`）。 */
@@ -109,7 +109,7 @@ async function runDescription() {
     const tool = tools.find((t) => t.name === 'async_run');
     if (tool !== undefined) return { sessionId, description: String(tool.description ?? '') };
   }
-  throw new Error('第一条 request/header 里没有 async_run——模型面取不到，判据无法成立');
+  throw new Error('第一条 request/header 里没有 async_run——模型侧取不到，判据无法成立');
 }
 
 mkdirSync(SHOTS, { recursive: true });
@@ -139,7 +139,7 @@ try {
     await clickBy(`[...document.querySelectorAll('*')].find((n) => (n.getAttribute('aria-label') || '') === '查看 dsh-async-tools')`, '查看 dsh-async-tools');
     await sleep(2500);
   };
-  /** 读设置表单的可见标签、字段身份，以及下拉的**当前显示值**（R27 起控件身份 = id 去前缀）。 */
+  /** 读设置表单的可见标签、字段身份，以及下拉的**当前显示值**（控件身份 = id 去前缀，设计 §5.5）。 */
   const readForm = () => evaluate(page, `(() => {
     const section = document.querySelector('[data-plugin-config]');
     if (section === null) return { labels: [], names: [], selectValues: [] };
@@ -158,11 +158,11 @@ try {
   const reset = judgeLangRestored((await readNs()).value);
   check('⓪ 起始态是 auto / en（回读比对）', reset.ok, reset.detail);
 
-  console.log('· 1/4 出厂态：读表单 + 读模型面描述');
+  console.log('· 1/4 出厂态：读表单 + 读模型侧描述');
   await openPluginPage();
   const form0 = await readForm();
   // 无覆盖时下拉必须显示**生效值**（不是空串——空串在下拉里没有对应选项，会渲染成白板）。
-  check('③b 两个语言下拉显示的是生效值（impl-review-r24 N2）',
+  check('③b 两个语言下拉显示的是生效值',
     JSON.stringify(form0.selectValues) === JSON.stringify([['uiLang', 'auto'], ['agentLang', 'en']]),
     `读数=${JSON.stringify(form0.selectValues)}`);
   const desc0 = await runDescription();
@@ -205,7 +205,7 @@ try {
   await screenshot(page, `${SHOTS}\\lang-03-uilang-en.png`);
 
   console.log('· 4/4 判据 + 复原');
-  // 四组全取：这条判据要证的正是"换语言**不动**字段面"，
+  // 四组全取：这条判据要证的正是"换语言**不动**字段集合"，
   // 只数两组（12 个）的话，开关与提问接管四个字段的在场/缺席它根本看不见。
   const expectedFields = BUDGET_FIELD_KEYS.length + LANG_FIELD_KEYS.length
     + FLAG_FIELD_KEYS.length + ASK_FIELD_KEYS.length;

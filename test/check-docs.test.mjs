@@ -1,27 +1,26 @@
 /**
  * `tools/check-docs.mjs` 的判据测试。
  *
- * 为什么需要这个文件：这个脚本原来的问题**不是"漏了某个名字"**，而是"打印了却不失败"。
- * 两轮复审各发现一次同类形态：
+ * 为什么需要这个文件：这个脚本的失效形态**不是"漏了某个名字"**，而是"打印了却不失败"：
  *   - 白名单默认放行 → 新建一份带「勘误」的现行文档被静默放过、退出 0；
  *   - `bad` 把已登记档案排除 → 给档案加未闭合围栏只打印 WARN、退出 0。
- * 两次都是"输出看起来在报问题，退出码却说是好的"。**光靠人读输出发现不了**，
+ * 两种形态都是"输出看起来在报问题，退出码却说是好的"。**光靠人读输出发现不了**，
  * 必须有一条能失败的断言——本文件里的 C1–C8 就是那几条。
  *
  * 做法：在包外的一次性副本上跑检查函数。不复制整包（那要几秒），
- * 只把它的输入（`docs/`、`README.md`、`verify/README.md`、本机平面语料目录）
- * 铺到一个临时目录里——检查只读这些相对路径，所以沙箱是自洽的。
+ * 只把它的输入（`docs/`、`README.md`、`verify/README.md`、本机侧语料目录）
+ * 铺到一个临时目录里——检查只读这些相对路径，所以沙箱是前后一致的。
  *
- * ## 进程内调用（§26.4）
+ * ## 进程内调用
  *
- * 原来用 `execFileSync` 起子进程跑脚本——沙箱下 spawn EPERM，`error.status ?? 1`
- * 兜成退出 1、输出为空，C1–C4 全部**假红**（与被检查的文档无关）。脚本因此改成了
+ * 用 `execFileSync` 起子进程跑脚本在沙箱下不可行：spawn EPERM，`error.status ?? 1`
+ * 兜成退出 1、输出为空，C1–C4 会全部**假红**（与被检查的文档无关）。脚本因此是
  * 可导入函数（`checkDocs(root)`，CLI 入口只在直接执行时生效），`runChecker` 直接调用它。
  *
- * ## 两个平面（单仓双平面重构后）
+ * ## 可选本机材料输入
  *
- * 语料（过程稿、事实登记簿、交付索引）从公开面 `docs/` 下沉到了不被跟踪的
- * `<LOCAL_DIR>/docs/`。检查器因此多了一个"可以整个不在"的输入，本文件的沙箱
+ * 语料（过程稿、事实登记簿、交付索引）不由本公开仓跟踪。
+ * `<LOCAL_DIR>/docs/` 是"可以整个不在"的检查输入，本文件的沙箱
  * 把它铺出来，C7/C8 专门盯它缺席与为空两种形态。
  */
 import test from 'node:test';
@@ -54,7 +53,7 @@ const CURRENT_DOCS = ['requirements.md', 'design.md'];
  */
 const CURRENT_OUTSIDE_DOCS = ['verify/README.md', 'CHANGELOG.md', 'CONTRIBUTING.md'];
 
-/** 沙箱语料里铺的两份合成档案（**不**取真实语料——那是本机平面的数据，且会随轮次改名）。 */
+/** 沙箱语料里铺的两份合成档案（**不**取真实语料——那是本机侧的数据，且会随轮次改名）。 */
 const SAMPLE_CORPUS = {
   'impl-review-sample.md': '# 合成审查稿\n\n围栏配对：\n\n```text\nok\n```\n',
   'research-sample.md': '# 合成调研稿\n\n围栏配对：\n\n```text\nok\n```\n'
@@ -103,7 +102,7 @@ test('C1 check-docs：干净时退出 0', async (t) => {
 test('C2 check-docs：未分类的新文档必须让它退出 1（白名单默认放行的假绿）', async (t) => {
   const box = await sandbox();
   t.after(box.cleanup);
-  // 复刻实测：新建一份带「勘误」的现行文档。旧版把它当档案，静默放过、退出 0。
+  // 场景：新建一份带「勘误」的现行文档——若被当档案静默放过、退出 0，即白名单默认放行的假绿。
   writeFileSync(join(box.dir, 'docs', 'PROBE.md'), '# 探针\n\n这是一处勘误。\n', 'utf8');
   const { code, out } = box.runChecker();
   assert.equal(code, 1, `未分类的新文档必须让检查失败，实际退出 ${String(code)}`);
@@ -113,7 +112,7 @@ test('C2 check-docs：未分类的新文档必须让它退出 1（白名单默�
 test('C3 check-docs：语料的结构问题也必须让它退出 1（档案豁免的假绿）', async (t) => {
   const box = await sandbox();
   t.after(box.cleanup);
-  // 复刻实测：给一份**档案**加未闭合围栏。旧版 `bad` 把档案排除，于是打印 WARN 却退出 0
+  // 场景：给一份**档案**加未闭合围栏。若把档案排除在 `bad` 之外，就会打印 WARN 却退出 0
   // ——"打印了却不失败"。现在语料是就地清点的，所以这条判据对每一份语料都成立。
   const archive = join(box.corpusDir, 'impl-review-sample.md');
   const before = readFileSync(archive, 'utf8');
@@ -149,7 +148,7 @@ test('C8 check-docs：语料目录在但一份 .md 都没有时必须退出 1（
 test('C5 check-docs：只准读那几个相对路径（新增输入必须同步改本文件的 sandbox）', async (t) => {
   const box = await sandbox();
   t.after(box.cleanup);
-  // 一次复审指出：真正的盲区不是"测旧版脚本"（每次都现拷），而是**输入契约没写下来**——
+  // 真正的盲区不是"测旧版脚本"（每次都现拷），而是**输入契约没写下来**——
   // `sandbox()` 只铺固定几样，脚本一旦多读一份文件，沙箱里就读不到，
   // 于是要么假红、要么那条判据在沙箱里失去意义，而**没有人会被提醒**。
   // 这条断言就是那个提醒：脚本读的字面量路径必须只有 `'docs'`。
@@ -169,15 +168,15 @@ test('C5 check-docs：只准读那几个相对路径（新增输入必须同步�
     assert.ok(docs.includes(name), `docs/${name} 必须在盘上（脚本的现行名单里有它）`);
   }
   assert.ok(existsSync(join(ROOT, 'README.md')), 'README.md 必须在盘上（脚本的现行名单里有它）');
-  // 公开面 `docs/` 只放需求稿与设计稿：多于现行名单就是有人把过程稿放回来了。
+  // 公开范围 `docs/` 只放需求稿与设计稿：多于现行名单就是有人把过程稿放回来了。
   assert.equal(docs.length, CURRENT_DOCS.length,
-    `公开面 docs/ 只应剩 ${String(CURRENT_DOCS.length)} 份现行文档，实际 ${String(docs.length)} 份：${docs.join('、')}`);
+    `公开范围 docs/ 只应剩 ${String(CURRENT_DOCS.length)} 份现行文档，实际 ${String(docs.length)} 份：${docs.join('、')}`);
   void box;
 });
 
 test('C6 现行文档、测试与工具里引用的探针必须都在盘上（档案豁免）', () => {
-  // 一次复审指出：提交信息里那句"全包扫描确认被引用的 5 个探针全部存在"**与事实不符**——
-  // 当时只扫了子集（现行文档 + 两个测试文件），漏掉了 `tools/` 下的探针自己。
+  // 盲区形态：只扫子集（现行文档 + 两个测试文件）会漏掉 `tools/` 下的探针自己，
+  // 引用了不存在的探针却不自知。
   //
   // 口径：**现行范围**（README、现行文档、test/、tools/）里引用的 `tools/probe-*.mjs`
   // 必须在盘上——引用了不存在的探针，读者按图索骥会扑空。

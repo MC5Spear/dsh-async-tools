@@ -1,27 +1,27 @@
 /**
- * 真机：**沙箱拒绝时，模型可见的文本里到底有没有标记与同轮提示**（R11 的核心交付之一）。
+ * 真机：沙箱拒绝的**模型可见文本**——共享拒绝词表＋退出状态标记。
  *
- * ## 为什么必须真机、且必须现在重跑
+ * 两族执行面（命令族 pwsh／文件族 fs 围栏）共用同一份拒绝词表：`dsh-sandbox`
+ * 的 `sandboxDenialMarker` 与 `escalationHintMarker` 是两族唯一来源，宿主的设计
+ * 就是让模型在两种拒绝上读到逐字相同的标记。本探针按部署能真实触发的族取证：
  *
- * 子代理在真机上验过提权链路，并报了一条缺陷线索："真实沙箱拒绝时**没有**
- * `[sandbox: … denied]` 标记行。" 但时序对不上：
+ *  1. **拒绝词表** `[sandbox: file access denied under <mode> mode]` 与
+ *     `[sandbox: escalation available …]`：经**文件族围栏**触发——workspace-write
+ *     会话里 `write` 工具写工作区外路径，围栏是纯路径策略检查，不经受限令牌。
+ *     本验证实例是 NSSM 托管服务（LocalSystem、无登录 SID），受限令牌 runner
+ *     在进程创建层死亡（`CreateRestrictedToken prerequisite failed`，与受限档
+ *     spawn 必死同源），
+ *     **命令族策略拒绝在本部署不可触发**——词表的真实性由文件族围栏承担。
+ *  2. **退出状态标记** `[exit code: N]`：async_run 的失败结果必须让模型分得清
+ *     成败——包括 runner 死亡形态（exit 127 也是可解码的失败，不是空文本）。
  *
- * | 时刻 | 事件 |
- * |---|---|
- * | 00:05:28 | nssm 重启服务（装载当时的 `lib/`） |
- * | **00:06:51** | **我改完 `lib/jobs.js`（标记与提示是这次加的）** |
- * | 00:10:25 | 子代理那次会话的转录落盘 |
+ * 命令族 runner 存活的部署上（交互实例），探针会追做命令族外写命令并断言
+ * 同一份词表落在 async_run 的结果里——两条路径共用判据常量，词表断言不分叉。
  *
- * 也就是说那次会话跑的是**旧代码**——"没标记"完全可能是"功能还没部署"。
- * 这类判断不能靠时序推断结案，必须在当前代码上重跑一次同形态的现场。
+ * 判据全部来自**真实转录的 tool/result**，不模拟、不空转：拿不到对应结果就
+ * 以退出码 2 报"无法判定"，绝不把"没验到"记成"验过且通过"。
  *
- * ## 判据怎么取
- *
- * 让会话执行一条**必然被沙箱拒绝**的命令（往工作区外写一个文件），
- * 然后从转录里**逐字**取出 `async_run` 的 `tool/result` 文本，查两样东西：
- * ① `[sandbox: file access denied under <mode> mode]`；② `[sandbox: escalation available …]`。
- *
- * 副作用：被拒的写在沙箱下**不会真的创建文件**；脚本不碰任何真实数据。
+ * 副作用：围栏拒绝的写不会创建文件；命令族分支的命令只写标准输出。
  *
  * 用法：node verify/probe-sandbox-marker.mjs
  */
@@ -44,11 +44,12 @@ function check(name, ok, detail = '') {
   console.log(`  ${ok ? 'OK    ' : 'WRONG '} ${name}${detail === '' ? '' : `\n          ${detail}`}`);
 }
 
+// 登录与 `verify/_rpc.mjs` 同款：token 换 cookie 一跳（redirect:'manual'），
+// **不追 Location**——相对重定向 `.` 拼进基址会得到 `http://…/./` 形态的坏 URL，
+// 且现行宿主在首跳就下发全部会话 cookie。
 const first = await fetch(`${BASE}/?token=${encodeURIComponent(token)}`, { redirect: 'manual' });
-let cookie = (first.headers.getSetCookie?.() ?? []).map((e) => e.split(';', 1)[0]).join('; ');
-const home = await fetch(`${BASE}${first.headers.get('location') ?? '/'}`, { headers: { cookie } });
-const more = (home.headers.getSetCookie?.() ?? []).map((e) => e.split(';', 1)[0]).join('; ');
-if (more !== '') cookie = `${cookie}; ${more}`;
+const cookie = (first.headers.getSetCookie?.() ?? []).map((e) => e.split(';', 1)[0]).join('; ');
+if (cookie.length === 0) throw new Error('token exchange returned no cookie');
 
 let rpcId = 0;
 /**
@@ -56,7 +57,7 @@ let rpcId = 0;
  *
  * @param {string} method - RPC 方法名。
  * @param {object} args - 参数。
- * @returns {Promise<object>} `result.value`。
+ * @returns {Promise<any>} `result.value`。
  */
 async function rpc(method, args) {
   rpcId += 1;
@@ -70,104 +71,208 @@ async function rpc(method, args) {
   return body.result.value;
 }
 
-const created = await rpc('session/create', { request: {} });
-const sessionId = created.sessionId;
-console.log(`  会话：${sessionId}（预设 ${String(created.agentPreset)}）\n`);
-
-// 一条必然被沙箱拒绝的命令：往工作区外写。命令本身无害（被拒就不会创建任何东西）。
-//
-// 「工作区外」= **仓根的上一级**，经配置派生——写死一个绝对盘符路径会让这条判据
-// 换一台机器就指到不存在的位置，而"沙箱拒绝了"与"路径本来就不对"就分不清了。
-const OUTSIDE = join(dirname(localConfig.workspaceDir), 'dsh-sandbox-marker-probe.txt');
-await rpc('session/prompt', {
-  request: {
-    requestId: `marker-${String(Date.now())}`,
-    sessionId,
-    mode: 'queue',
-    content: [{
-      type: 'text',
-      text: `请用 async_run 执行这条命令，不要改用别的工具，也不要加提权参数：`
-        + `New-Item -ItemType File -Path '${OUTSIDE}' -Force。执行完把工具返回的内容原样告诉我。`
-    }],
-    clientTimeZone: 'Asia/Shanghai'
-  }
-});
-
-// 轮询转录：等出现 async_run 的结果，且会话静下来。
-const deadline = Date.now() + 180_000;
-let text = null;
-let reason = '';
-while (Date.now() < deadline) {
-  await new Promise((r) => { setTimeout(r, 3000); });
-  const row = (await rpc('session/list', { _request: {} })).items.find((s) => s.sessionId === sessionId);
-  if (row === undefined) continue;
-  const page = await rpc('session/page', {
-    request: { address: { kind: 'session', sessionId }, throughSeq: row.projections.asOfSeq, maxMessages: 400 }
-  });
-  const records = page.records ?? [];
-  // 最后一次 async_run 的 tool/result 文本。
-  for (const record of records) {
-    const content = record.event?.data?.message?.content;
-    if (!Array.isArray(content)) continue;
-    for (const item of content) {
-      if (item.type !== 'tool-result') continue;
-      const blocks = Array.isArray(item.content) ? item.content : [item.content];
-      const body = blocks.map((b) => (typeof b === 'string' ? b : (b?.text ?? ''))).join('');
-      if (/is denied|UnauthorizedAccess|Access to the path/.test(body)) text = body;
+/**
+ * 发一条提示（queue 模式）。
+ *
+ * @param {string} sessionId - 会话 id。
+ * @param {string} text - 正文。
+ * @returns {Promise<void>} 提交被接受。
+ */
+async function prompt(sessionId, text) {
+  await rpc('session/prompt', {
+    request: {
+      requestId: `marker-${String(Date.now())}-${String(rpcId)}`,
+      sessionId,
+      mode: 'queue',
+      content: [{ type: 'text', text }],
+      clientTimeZone: 'Asia/Shanghai'
     }
+  });
+}
+
+/**
+ * 等会话静下来并取整个转录。
+ *
+ * @param {string} sessionId - 会话 id。
+ * @param {number} timeoutMs - 轮询上限。
+ * @returns {Promise<object[]> - 事件记录数组。
+ */
+async function settleAndRead(sessionId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let page = null;
+  while (Date.now() < deadline) {
+    await new Promise((r) => { setTimeout(r, 3000); });
+    const row = (await rpc('session/list', { _request: {} })).items.find((s) => s.sessionId === sessionId);
+    if (row === undefined) continue;
+    page = await rpc('session/page', {
+      request: { address: { kind: 'session', sessionId }, throughSeq: row.projections.asOfSeq, maxMessages: 400 }
+    });
+    if (row.running !== true) break;
   }
-  if (text !== null && row.running !== true) { reason = '拿到拒绝文本且会话已停'; break; }
-  reason = `等待中：拒绝文本=${text === null ? '未出现' : '已出现'}，running=${String(row.running)}`;
-}
-console.log(`  轮询结束（${reason}）\n`);
-
-if (text === null) {
-  console.log('  **这次会话没有产生"被沙箱拒绝"的 tool/result**——无法判定。');
-  console.log('  （可能模型改了工具、加了提权参数，或本会话的沙箱模式不是受限模式。看转录。）');
-  process.exit(2);
+  return page?.records ?? [];
 }
 
-console.log('  === 模型可见的拒绝文本（逐字，前 700 字符）===');
-console.log(text.slice(0, 700).split('\n').map((l) => `      ${l}`).join('\n'));
-console.log('');
+/**
+ * 从转录里取**指定下标之后**最后一次 tool/result 文本（轮次隔离：每阶段一个
+ * 水位下标，只认本阶段新出现的结果）。
+ *
+ * @param {object[]} records - 转录记录。
+ * @param {number} afterIndex - 水位（只看 records 下标大于它的记录）。
+ * @param {string} [toolName] - 可选：限定产生这次结果的工具（匹配 tool/call 的
+ *   名字与结果的 toolCallId/source.callId 对应关系）。
+ * @returns {{text: string | null, index: number}} 文本与新的水位；没出现返回
+ *   `{ text: null, index: records.length }`。
+ */
+function lastToolResult(records, afterIndex, toolName) {
+  // tool/call 的 callId → 工具名（字段形状以转录实测为准：名字在 data.name，
+  // 调用号在 data.callId；结果侧在 message.toolCallId / message.source.callId）。
+  const callTool = new Map();
+  records.forEach((record, index) => {
+    if (index <= afterIndex || record.event?.type !== 'tool/call') return;
+    const data = record.event.data;
+    if (typeof data?.callId === 'string' && typeof data?.name === 'string') callTool.set(data.callId, data.name);
+  });
+  let text = null;
+  let watermark = afterIndex;
+  records.forEach((record, index) => {
+    if (index <= afterIndex) return;
+    const message = record.event?.data?.message;
+    const content = message?.content;
+    if (!Array.isArray(content)) return;
+    const callId = message?.toolCallId ?? message?.source?.callId;
+    if (toolName !== undefined && callTool.size > 0 && callTool.get(callId) !== toolName) return;
+    const body = content.map((item) => {
+      if (typeof item.text === 'string') return item.text;
+      const blocks = Array.isArray(item.content) ? item.content : [item.content];
+      return blocks.map((b) => (typeof b === 'string' ? b : (b?.text ?? ''))).join('');
+    }).join('');
+    if (body.length > 0) {
+      text = body;
+      watermark = index;
+    }
+  });
+  return { text, index: watermark };
+}
 
-check('拒绝真的发生了（非零退出 + 报错正文）',
-  /is denied|对路径|访问被拒绝|UnauthorizedAccess|Access to the path/.test(text));
-check('产出**退出状态标记** `[exit code: N]`（R11：模型必须分得清成功与失败）',
-  /\[exit code: \d+\]/.test(text),
-  '缺了它，模型拿到一段文本却无从判断命令成功还是失败（内置 pwsh 会给）');
+// 「工作区外」＝仓根的上一级，经配置派生——写死绝对盘符路径会让判据换机就指向
+// 不存在的位置，"围栏拒绝了"与"路径本来就不对"就分不清了。
+const OUTSIDE = join(dirname(localConfig.workspaceDir), 'dsh-sandbox-marker-probe.txt');
 
-// ── 沙箱拒绝标记 ────────────────────────────────────────────────────────────
-//
-// ## 这条判据**必须能失败**（第一版不能，独立审查 r11 的 N2 抓到了）
-//
-// 第一版在"报错正文被本地化"时走一条 SKIP 分支、**照样记一条成立**，于是无论
-// 标记有没有产出都是 3/3——那正是本项目纪律里点名禁止的**恒真断言**：
-// 它无法区分"标记真的到了模型眼前"与"标记根本没产出"。
-//
-// 现在的口径：**只有在文本里真的看到那两行标记才算成立**。
-// 落在那条已知缺口里时如实记 **FAIL 并写明"无法判定"**，退出码非零——
-// 让"没验到"长得像"没验到"，而不是像"验过且通过"。
-//
-// 已知缺口（登记在 `docs/requirements.md` R11）：宿主的 `DENIAL_SIGNATURES["windows-acl"]`
-// 是英文子串表，若 Windows 把拒绝消息本地化，`proc.sandbox.denied` 会是 `false`。
-// 这是**宿主侧**的缺口、本包不自造判定（自造会与内置 `pwsh` 产生不对称），
-// 但它**不因此变成通过**——探针照实报"这一次没能证明标记会出现"。
-const hasMarker = /\[sandbox: file access denied under [a-z-]+ mode\]/.test(text);
-const hasHint = /\[sandbox: escalation available/.test(text);
-check('产出沙箱拒绝标记 `[sandbox: file access denied under <mode> mode]`', hasMarker,
-  hasMarker ? '' : '没看到这一行——若报错正文被本地化，则落在那条已登记的宿主缺口里；'
-    + '无论哪种原因，**这一次都没能证明标记会出现**');
-check('产出同轮提权提示 `[sandbox: escalation available …]`', hasHint,
-  hasHint ? '' : '没看到这一行（模型因此看不到"原样重试一次并带提权参数"这条唯一该走的路）');
+// 词表断言用的常量：两族共用同一份（`dsh-sandbox` 单一来源），断言不分叉。
+const MARKER_RE = /\[sandbox: file access denied under ([a-z-]+) mode\]/;
+const HINT_RE = /\[sandbox: escalation available/;
+
+// ── 会话：预设点名 dsh-async（不带 agentPreset 会落实例默认预设，async 工具缺席），
+// cwd 必须钉到仓根——不传 cwd 会落实例缺省工作区，围栏的工作区根就跟着错位，
+// 「工作区外」的靶子路径可能反而落在会话工作区内（围栏不拒、判据空转）。
+// 档位切 workspace-write（拒绝词表要在受约束档下才出现；GUI composer 的
+// /permission 同链），采纳与否经 sandbox/mode 事件核验（fail-closed）。
+const created = await rpc('session/create', {
+  request: { cwd: localConfig.workspaceDir, agentPreset: 'dsh-async' }
+});
+const sessionId = created.sessionId;
+if (created.agentPreset !== 'dsh-async') {
+  throw new Error(`预设回退：要 dsh-async，得到 ${String(created.agentPreset)}`);
+}
+console.log(`  会话：${sessionId}（预设 ${String(created.agentPreset)}，cwd=${localConfig.workspaceDir}）\n`);
+
+let watermark = -1;
+await rpc('commands/execute', { agentId: sessionId, line: '/permission workspace-write', submittedAttachments: [] });
+{
+  const records = await settleAndRead(sessionId, 30_000);
+  watermark = records.length - 1;
+  const modes = records
+    .filter((r) => r.event?.type === 'sandbox/mode').map((r) => r.event.data?.mode);
+  if (!modes.includes('workspace-write')) {
+    throw new Error(`档位切换未被采纳：sandbox/mode 事件序列 ${JSON.stringify(modes)}`);
+  }
+}
+console.log('  会话档位：workspace-write（经 sandbox/mode 事件核验）');
+
+// ── 阶段 A：文件族围栏的真实拒绝（词表 ①② 的载体） ──────────────────────────
+await prompt(sessionId,
+  '请严格按下面做，不要质疑、不要改路径、不要换工具、不要带 sandbox_permissions 或 justification 参数：\n'
+  + `用 write 工具创建文件 ${OUTSIDE}，内容为 probe。`
+  + '完成后把 write 工具返回的错误文本原样贴出来，不要重试。');
+
+{
+  const records = await settleAndRead(sessionId, 240_000);
+  const { text } = lastToolResult(records, watermark, 'write');
+  watermark = records.length - 1;
+  if (text === null) {
+    console.log('  **这次会话没有产生 write 工具的 tool/result**——无法判定（看转录：模型是否拒用 write）。');
+    process.exit(2);
+  }
+  console.log('  === write 工具的拒绝文本（逐字，前 500 字符）===');
+  console.log(text.slice(0, 500).split('\n').map((l) => `      ${l}`).join('\n'));
+  console.log('');
+  const marker = MARKER_RE.exec(text);
+  check('围栏拒绝产出词表标记 `[sandbox: file access denied under <mode> mode]`', marker !== null,
+    marker === null ? '没看到这一行——围栏没拒或词表漂移' : `mode=${marker[1]}`);
+  check('围栏拒绝产出同轮提权提示 `[sandbox: escalation available …]`', HINT_RE.test(text),
+    HINT_RE.test(text) ? '' : '没看到这一行（模型因此看不到"原样重试一次并带提权参数"这条唯一该走的路）');
+}
+
+// ── 阶段 B：async_run 的退出状态标记（含 runner 死亡形态） ────────────────────
+await prompt(sessionId,
+  '请严格按下面做：用 async_run 执行 `Write-Output SANDBOX_MARKER_ALIVE`，'
+  + '不要传提权参数。完成后把工具返回原样贴出来，不要重试。');
+
+{
+  const records = await settleAndRead(sessionId, 240_000);
+  const { text } = lastToolResult(records, watermark, 'async_run');
+  watermark = records.length - 1;
+  if (text === null) {
+    console.log('  **这次会话没有产生 async_run 的 tool/result**——无法判定。');
+    process.exit(2);
+  }
+  console.log('  === async_run 的返回（逐字，前 500 字符）===');
+  console.log(text.slice(0, 500).split('\n').map((l) => `      ${l}`).join('\n'));
+  console.log('');
+  const runnerDead = /windows-acl-run: .*CreateRestrictedToken/.test(text);
+  if (runnerDead) {
+    console.log('  环境事实：受限令牌 runner 在本部署死亡（NSSM LocalSystem、无登录 SID）——命令族策略拒绝不可触发，词表已由文件族围栏验证。\n');
+    check('runner 死亡仍是可解码的失败（`[exit code: N]` 在场，不是空文本）',
+      /\[exit code: \d+\]/.test(text),
+      /\[exit code: \d+\]/.test(text) ? '' : '缺了它，模型拿到一段文本却无从判断命令成功还是失败');
+  } else {
+    // 命令族 runner 存活的部署（交互实例）：追做命令族外写，断言同一份词表落在
+    // async_run 的结果里（subject=command 的同轮提权提示）。
+    await prompt(sessionId,
+      '请严格按下面做，不要质疑、不要改路径、不要换工具、不要带提权参数：\n'
+      + `用 async_run 执行 New-Item -ItemType File -Path '${OUTSIDE}' -Force。`
+      + '完成后把工具返回原样贴出来，不要重试。');
+    const denied = await settleAndRead(sessionId, 240_000);
+    const { text: deniedText } = lastToolResult(denied, watermark, 'async_run');
+    if (deniedText === null) {
+      console.log('  **命令族外写没有产生 async_run 的 tool/result**——无法判定。');
+      process.exit(2);
+    }
+    const marker = MARKER_RE.exec(deniedText);
+    check('命令族拒绝产出同一份词表标记', marker !== null,
+      marker === null ? '没看到这一行（词表在命令族漂移？）' : `mode=${marker[1]}`);
+    check('命令族拒绝产出同轮提权提示', HINT_RE.test(deniedText), '');
+    check('拒绝结果带退出状态标记 `[exit code: N]`', /\[exit code: \d+\]/.test(deniedText), '');
+  }
+}
+
+// ── 收尾：清掉靶子文件（围栏失效或命令族存活时它可能真的被创建过）。清理走
+// 本会话升档后的 async_run（命令族在本部署受限档死亡，升档是唯一活路）；
+// `-ErrorAction SilentlyContinue` 让"本来就不存在"也安静通过。
+try {
+  await rpc('commands/execute', { agentId: sessionId, line: '/permission danger-full-access', submittedAttachments: [] });
+  await prompt(sessionId,
+    `请用 async_run 执行 Remove-Item -Path '${OUTSIDE}' -Force -ErrorAction SilentlyContinue，完成后只回一个字：完。`);
+  await settleAndRead(sessionId, 120_000);
+  console.log(`\n  收尾：已清理靶子文件 ${OUTSIDE}。`);
+} catch (error) {
+  console.log(`\n  收尾清理失败：${String(error)}——靶子文件可能残留（${OUTSIDE}，内容 probe）。`);
+}
 
 const failed = results.filter((r) => !r.ok).length;
 console.log('');
 console.log(`${String(results.length - failed)}/${String(results.length)} 条成立。`);
 if (failed > 0) {
   console.log('');
-  console.log('  说明：本探针**只在文本里真的看到标记时才算成立**。');
-  console.log('  若上一条因本地化缺口而红，请把它当作"这一轮没验到"，不要当作通过——');
-  console.log('  缺口本身已登记在 `docs/requirements.md` 的 R11 节。');
+  process.exitCode = 1;
 }
-process.exitCode = failed === 0 ? 0 : 1;

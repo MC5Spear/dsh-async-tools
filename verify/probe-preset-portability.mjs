@@ -1,27 +1,23 @@
 /**
- * 守哪些需求：R6
- *
- * （这行是**声明**，由 `verify/check-requirement-coverage.mjs` 读。）
+ * 守哪条需求：需求 §3.2 可见性与隔离——「使用者可在自建预设按工具选择挂载」。
  *
  * ## 证明的是哪一句
  *
- * R6 明写：「**工具不限于本预设**：工具随**挂载它的那一行**生效，任何预设加同样的行
- * 就能得到它们（2026-09-17 起是四个工具），`dsh-async` 预设只是替使用者把四行写好的
- * 默认模板。本插件不提供、也不打算提供'只在某个预设里可见'的机制。」
+ * 需求 §3.2 明写：「工具行只在挂载它们的预设范围内注册」且「使用者可在自建预设
+ * 按工具选择挂载」——`dsh-async` 预设只是替使用者把四行写好的默认模板，
+ * 本包不提供"只在某个预设里可见"的机制。
  *
  * ## 为什么必须有这条反向证据
  *
- * 原有的全部证据都只在**一个方向**上说事：
+ * 其余证据都只在**一个方向**上说事：
  *
  * | 已有判据 | 它说的 |
  * |---|---|
- * | `R7-6 四个工具都在` | 我们的预设里有这四个工具 |
- * | `R7-7 standard 里不出现` | 我们**没有**把它们强行装到所有预设 |
+ * | 本包预设里四个工具都在 | 本包的预设里有这四个工具 |
+ * | standard 里不出现 | 本包**没有**把它们强行装到所有预设 |
  *
  * 两条合起来**证明不了**"别处也能有"。只靠这两条，一个"把工具**锁死在**本预设里"的
- * 实现同样能全绿——而那正好与 R6 相悖。更坏的是 `R7-7` 原来的判据名写作
- * 「standard **不含**这些工具」，读起来像"这些工具不许出现在 standard 里"，
- * **把模板读成了限制**。
+ * 实现同样能全绿——而那正好与 §3.2 相悖。
  *
  * ⇒ 本探针在**另一个预设 id** 下挂同样的四行，断言工具出现。
  * 这才是"预设是模板、不是限制"的证据。
@@ -93,14 +89,11 @@ if (existsSync(PROBE_DIR)) {
 }
 const source = readFileSync(`${SOURCE_DIR}\\agent.cordis.yml`, 'utf8');
 if (!source.includes('toolName: async_run')) {
-  console.log('**源预设里没有我们的工具行**——拿它复制证明不了任何事，本探针失效。');
+  console.log('**源预设里没有本包的工具行**——拿它复制证明不了任何事，本探针失效。');
   process.exit(2);
 }
-// ⚠️ 预设 id **就是目录名**，`agent.cordis.yml` 里没有 id 字段。
-//
-// 第一版我去改文件里的 `^id: dsh-async$`，结果守卫直接拦下（"没能改掉预设 id"）——
-// **守卫是对的**：那个替换永远匹配不到，而如果我没写守卫，探针就会拿
-// "和 dsh-async 完全同名"的目录去做实验，证明的东西是空的。
+// ⚠️ 预设 id **就是目录名**，`agent.cordis.yml` 里没有 id 字段（组合文件里改
+// `^id:` 永远匹配不到；探针目录若与 dsh-async 同名，实验证明的东西就是空的）。
 // ⇒ 复制组合文件原样即可；id 由下面的目录名给出。
 mkdirSync(PROBE_DIR, { recursive: true });
 writeFileSync(`${PROBE_DIR}\\agent.cordis.yml`, source, 'utf8');
@@ -132,10 +125,10 @@ try {
   // 等转录稳定（连续两拍记录条数相同）——同 `probe-settings-behavior-full` 的取样纪律。
   //
   // ⚠️ `session/page` 的 args 形状是
-  // `{ request: { address: { kind:'session', sessionId }, throughSeq, maxMessages } }`。
-  // 我第一版写成 `{ request: { sessionId } }`、第二版补了 `address` 但漏了 `throughSeq`，
-  // 两次都被网关硬拒：`wire field "request" failed boundary validation`。
-  // **形状错就是硬错，不会静默**——这一点值得记：它没有"看起来跑过了"的中间态。
+  // `{ request: { address: { kind:'session', sessionId }, throughSeq, maxMessages } }`——
+  // 少 `address`、少 `throughSeq` 都会被网关直接拒绝：
+  // `wire field "request" failed boundary validation`。
+  // **形状错就是实证错误，不会静默**：它没有"看起来跑过了"的中间态。
   const rowOf = async () => {
     const listing = await rpc('session/list', { _request: {} });
     return listing.items.find((item) => item.sessionId === sessionId);

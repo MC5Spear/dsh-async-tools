@@ -1,20 +1,19 @@
 /**
- * 本机配置加载器 —— **公开面唯一的"读本机事实"入口**。
+ * 本机配置加载器 —— **公开范围唯一的"读本机事实"入口**。
  *
  * ## 为什么要有它
  *
- * 本仓是单仓双平面（`OPENSOURCE-PREP.md` v3 §2）：产品代码、测试与工具、需求稿与设计稿
- * 是公开面；机器事实（宿主安装树在哪、验证实例在哪个端口、令牌文件在哪）属于本机平面，
- * 住在**不被跟踪**的 `.local/` 下。公开面里的脚本一律不许硬编码这些事实——它们经本模块
- * 取，取不到就按"本机面缺席"跳过。
+ * 产品代码、测试与工具、需求稿与设计稿属于公开范围；机器事实（宿主安装树、实例端口、
+ * 令牌文件位置）属于本机配置，**不进入本公开仓**。配置从 `.local/` 或环境变量读取，
+ * 公开脚本不得硬编码这些事实。本机环境缺席时文档化跳过，配置损坏时失败。
  *
- * ## 解析顺序（工单 §2 规则 2）
+ * ## 准入与字段来源
  *
- * 1. **环境变量**（最高优先，CI 与临时试验用）：`DSAT_HOST_MODULES` / `DSAT_INSTANCE_URL` /
- *    `DSAT_TOKEN_FILE`。`DSAT_HOST_MODULES` 是既有契约，保持可用。
- * 2. **`.local/config.mjs`**（开发机的常态来源，形状见 `tools/local-config.example.mjs`）。
- * 3. **文档化跳过**：两个来源都没有相关字段时，字段留 `undefined`，调用方打印一行
- *    `SKIP …` 并跳过该判据——成例是 `npm run test:offline` 的自跳过模式。
+ * 1. 先检查 `.local/` 与 `.local/config.mjs`，缺席/损坏处置如下；环境变量不绕过准入。
+ * 2. 准入后逐字段取非空环境变量优先、文件值备用；支持 `DSAT_HOST_MODULES` /
+ *    `DSAT_INSTANCE_URL` / `DSAT_TOKEN_FILE` 等。文件为 ESM 默认导出对象，示例为
+ *    `tools/local-config.example.mjs`。宿主解析钩子可单独用环境变量跑单测，与本入口不同。
+ * 3. 两个来源都没有相关字段时留 `undefined`，调用方打印理由并跳过相应本机判据。
  *
  * ## 缺席与损坏是两件事（这条分开是本模块的关键设计）
  *
@@ -25,11 +24,6 @@
  *
  * 若不分开，开发机上误删一次 `config.mjs` 就会让所有本机判据静默变绿——那正是
  * 本仓反复登记过的"假绿"形态（见 `verify/README.md` 的「判据必须在默认权限下可跑」一节）。
- *
- * ## 测试
- *
- * `test/local-config.test.mjs` 进程内喂合成输入，覆盖：env 优先于文件、
- * `hostModules` 缺省派生 `evidenceTree['020']`、缺席/损坏两种信号的区分。
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -37,7 +31,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const MODULE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** 本机平面的目录名（相对仓根）。 */
+/** 本机侧的目录名（相对仓根）。 */
 export const LOCAL_DIR = '.local';
 
 /** 本机配置文件的相对路径。 */
@@ -46,8 +40,8 @@ export const CONFIG_REL = '.local/config.mjs';
 /** `.local/` 整个不在：CI 与外部 clone 的正常形态，调用方按文档化跳过处理。 */
 export class LocalPlaneAbsent extends Error {
   constructor(root) {
-    super(`本机平面缺席：${join(root, LOCAL_DIR)} 不存在——`
-      + '这是 CI 与外部 clone 的正常形态，本机面判据按文档化跳过');
+    super(`本机环境缺席：${join(root, LOCAL_DIR)} 不存在——`
+      + '这是 CI 与外部 clone 的正常形态，本机侧判据按文档化跳过');
     this.name = 'LocalPlaneAbsent';
   }
 }
@@ -72,7 +66,7 @@ const ENV_FIELDS = [
   ['DSAT_TMP_DIR', 'tmpDir']
 ];
 /**
- * 本机平面是否在场（`.local/` 目录是否存在）。
+ * 本机环境是否在场（`.local/` 目录是否存在）。
  *
  * @param {string} [root] - 仓根。
  * @returns {boolean} 在场为 true。
@@ -97,7 +91,7 @@ export function localPlanePresent(root = MODULE_ROOT) {
  *   evidenceDir: string, workspaceDir: string,
  *   notes: string[]
  * }>} 归一化配置；缺席/不可用的字段为 `undefined`，`notes` 逐条说明来源与跳过理由。
- *   `evidenceDir` / `workspaceDir` 是**派生**字段（不是配置项）：前者固定指向本机平面的
+ *   `evidenceDir` / `workspaceDir` 是**派生**字段（不是配置项）：前者固定指向本机侧的
  *   证据目录（探针的落盘位置），后者是探针驱动远端会话时该用的工作目录。
  *   `siblingBundles` 是"这台部署的 profile 里除本包之外还应当挂着的包名"，
  *   缺省空数组——空数组的含义是"只断言本包自己"，这正是外部读者的形态。
@@ -141,7 +135,7 @@ export async function loadLocalConfig({ root = MODULE_ROOT, env = process.env } 
   const hostModules = pick('hostModules');
   const fileTrees = (fromFile.evidenceTree ?? {});
   /**
-   * 证据树三档（口径见 `.local/docs/facts.md` 顶部）：
+   * 证据树三档（口径见本机侧事实登记簿）：
    * `020` = 0.2.0 线运行树、`017` = 0.1.7 线树、`015` = 0.1.5 线（npm 全局树）。
    *
    * `020` 有**结构性缺省**：它就是 `hostModules` 下的 `@deepseek-ai` 域目录。
@@ -170,7 +164,7 @@ export async function loadLocalConfig({ root = MODULE_ROOT, env = process.env } 
   const evidenceDir = pick('evidenceDir') ?? join(root, LOCAL_DIR, 'evidence');
   const workspaceDir = pick('workspaceDir') ?? root;
   /**
-   * 运行期临时目录（派生）。探针在工作时要建/删的目录**落这里**，不要落回公开面：
+   * 运行期临时目录（派生）。探针在工作时要建/删的目录**落这里**，不要落回公开范围：
    * 那些目录是运行产物，而且被远端会话读写——放 `verify/` 下会让"包内"多出一堆
    * 只有跑过探针才存在的东西。
    */
@@ -222,7 +216,7 @@ export function instanceCredentials(config) {
 /**
  * 一行式诊断文本（把"这套判据读到的是哪棵树/哪个实例"打出来）。
  *
- * 本仓的一条既有教训：**假绿往往来自"读的不是你以为的那份东西"**。诊断行让这件事
+ * 一条固定风险：**假绿往往来自"读的不是你以为的那份东西"**。诊断行让这件事
  * 一眼可见，不必再去猜。
  *
  * @param {Awaited<ReturnType<typeof loadLocalConfig>>} config - 已装载的配置。
@@ -249,7 +243,7 @@ export function describeConfig(config) {
 }
 
 /**
- * CLI 判据的本机面入口：能装载就返回配置；**本机平面整个不在**时打印一行 `SKIP …`
+ * CLI 判据的本机侧入口：能装载就返回配置；**本机环境整个不在**时打印一行 `SKIP …`
  * 并结束进程（退出码 0）。
  *
  * ⚠️ 本函数**会调用 `process.exit`**，所以只给 CLI 脚本用，不给库用。名字里的
@@ -267,7 +261,7 @@ export async function loadLocalPlaneOrSkip(what, options = {}) {
     if (!(error instanceof LocalPlaneAbsent)) throw error;
     console.log(`SKIP ${what}：${error.message}`);
     console.log('     本判据只对开发机上的活体实例/安装树有意义；'
-      + 'CI 与外部 clone 上没有本机平面，按跳过处理（不是失败）。');
+      + 'CI 与外部 clone 上没有本机环境，按跳过处理（不是失败）。');
     process.exit(0);
   }
 }

@@ -1,49 +1,54 @@
 /**
- * R32/R33 真机探针：async_run 执行即注册与可打断的首次等待（设计 §33.6）。
+ * async_run 执行即注册与可打断的首次等待的真机探针（需求 §2.2.1）。
  *
- * 判据（需求 §6 R32/R33 行；全部取自验证实例——升级 0.2.0 之前，风险表 R31 行排序约束）：
- * - (a) 即时性·插话：55 s 命令 + yield_ms=60000；让出窗口内（审批落定后）steer →
- *       async_run 的 tool/result 距 steer 发出 ≤ 5000 ms（预算路径被预算值排除）；
- *       结果形状如实登记（handle/early 为设计形状；`Error: tool call aborted` 或空文
- *       为 0.1.7 宿主对中止调用的改写形状——dsh-tools dispatchToolBody 在调用信号已
- *       中止时丢弃工具返回值，F145 语义；恢复通道=完成通知）；结算后完成通知恰 1 条。
- * - (b) 即时性·GUI 停止：GUI 会话内长让出（运行态发送键换装「停止生成」——
- *       2026-09-30 现场标定：aria-label=停止生成、与发送同槽 uV2eYG_primary）→ 点击后
- *       tool/result 距点击 ≤ 5000 ms、形状=中止改写（F145 活体）；作业存活（结算照常
- *       发生）+ 结算后完成通知恰 1 条（abort 的恢复通道）。
- * - (c) 呈现：任务面板（「N 个后台任务运行中」入口，QsffPG_trigger——现场标定）
- *       任务卡 label=命令原文、running 期 progress 行=description；结算后 progress 消失、
- *       命令仍在卡上。
- * - (d) 触顶：占满 owner 名额（10，F143）→ 第 11 条 async_run 的错误文案
- *       含「进程启动前被拒」锚 + limit 10 + 作业出路。睡眠 600 s——11 次审批
- *       （approve-for-me LLM 评审，实测 15-46 s/次）串行占满整轮，短睡眠会在
- *       第 11 条前释放名额；取证后 session/cancel 清理沉睡作业。
+ * 判据（需求 §2.2.1；时序与形状锚取自验证实例实读）：
+ * - (a) 即时性·插话：55 s 命令 + yield_ms=60000；让出窗口内（async_run 调用
+ *       落转录后）steer → async_run 的 tool/result 距 steer 发出 ≤ 5000 ms
+ *       （预算路径被预算值排除）；结果形状如实登记（handle/early 为设计形状；
+ *       `Error: tool call aborted` 或空文为宿主对中止调用的改写形状——
+ *       dsh-tools dispatchToolBody 在调用信号已中止时丢弃工具返回值；
+ *       恢复通道=完成通知）；结算后完成通知恰 1 条。
+ * - (b) 即时性·GUI 停止：GUI 会话内长让出（运行态发送键换装「停止生成」，
+ *       aria-label 现场标定）→ 点击后 tool/result 距点击 ≤ 5000 ms、形状如实
+ *       登记（handle=设计形状；aborted/empty=宿主改写）；作业存活（结算
+ *       照常发生）+ 结算后完成通知恰 1 条（abort 的恢复通道）。
+ * - (c) 呈现：任务面板（「N 个后台任务运行中」入口）任务卡 label=命令原文、
+ *       running 期 progress 行=description；结算后 progress 消失、命令仍在。
+ * - (d) 触顶：占满 owner 名额（10，设计 §3.5 出厂上限）→ 第 11 条 async_run 的错误文案
+ *       含「进程启动前被拒」锚 + limit 10 + 作业出路。睡眠 600 s——名额必须
+ *       在第 11 条发出时仍被占住，短睡眠会提前释放；取证后 session/cancel
+ *       清理沉睡作业。
  * - (e) 短命令：预算内 completed 形状与现行一致（输出原样）；终态卡在场
  *       （2026-09-30 裁定接受）；该路径零完成通知（(f) 前半）。
  * - (f) 通知计数：(a)/(b) 各恰 1 条；(e) 0 条。
  *
- * ⚠️ 时序锚（2026-09-30 实测，r32 首跑两连败的根因）：本部署每次提权都要过
- * approve-for-me 的 LLM 评审（15-46 s），审批发生在工具体入口、先于注册与让出。
- * 插话/停止/读面板必须等转录出现 `approval/decided` 再动作，否则落在审批窗口——
- * steer 会中止步骤信号，工具体还没注册任何作业，什么判据都取不到。
+ * ⚠️ 时序锚：会话先整体升档（GUI 面＝composer `/permission danger-full-access`；
+ * RPC 面＝`_r28-helpers.elevateSession`——同一 remote 提交事务），审批档随升档
+ * 切 never。插话/停止/读面板的同步点＝转录出现 async_run 的 tool/call 后 2 s
+ * （工具体注册+spawn 在调用后毫秒级完成）；动作过早会中止步骤信号，工具体
+ * 还没注册任何作业，什么判据都取不到。
  *
- * ⚠️ (b)(c) 走 GUI-first（RPC 建的会话不在 GUI 当前视图，停止键与面板入口都够不着）：
- * 在 GUI 里新建会话、键入提示词、点发送；会话 id 事后从 RPC 侧定位
- * （running=true 优先，提示词标记兜底）。
+ * ⚠️ (b)(c) 走 GUI-first（RPC 建的会话不在 GUI 当前视图，停止键与面板入口
+ * 都够不着）。0.2.0 起 GUI「新建会话」默认落**标准模式**（新任务页 seat
+ * 默认），GUI 侧可行路径＝blank 会话（session/list `blank:true` 最新者）→
+ * RPC `agentPresets/select` 定 dsh-async → composer 发词（`guiBlankSession`
+ * 辅助，2026-10-09 diag 链实证）。
  *
  * 用法：node verify/probe-r32-run-interruptible.mjs [--only=a,b,c,d,e]
- * （(b)(c) 需要 Edge/Chrome——找不到时如实记 FAIL 'cdp-missing'，不冒充通过。）
+ * （(b)(c) 需要 Edge/Chrome——找不到时如实记 FAIL 'cdp-missing'，不冒充通过；
+ * 含 (b)(c) 的整跑按 2026-10-09 惯例整跑提权 danger-full-access：受限档下
+ * 无头浏览器 spawn 在进程创建层必死。）
  * 证据落本机证据目录 logs/r32-run-interruptible.json。
  *
- * ⚠️ 共享实例纪律（r30 教训）：不动别人的设置与语言档；本探针只读设置作对照，
+ * ⚠️ 共享实例纪律：不动别人的设置与语言档；本探针只读设置作对照，
  * 会话建在 dsh-async 预设下，锚句双档自适应（转录里的渲染文两种语言档都认）。
  *
  * @module verify/probe-r32-run-interruptible
  */
 import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 import { rpc, transcriptOf, localConfig } from './_rpc.mjs';
-import { newSession, prompt, waitTurnEnd, NS, PRESET } from './_r28-helpers.mjs';
+import { newSession, prompt, waitTurnEnd, elevateSession, NS, PRESET } from './_r28-helpers.mjs';
 import { findBrowser, launch, openPage, evaluate, waitFor } from './_visual/cdp.mjs';
 
 const LOG_DIR = join(localConfig.evidenceDir, 'logs');
@@ -51,18 +56,16 @@ const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
 /** 即时性窗口（需求 §6 已钉死）：毫秒。 */
 const IMMENSITY_MS = 5000;
-/** (a)(b) 的长跑命令与让出预算（预算路径必须排不出 ≤5 s 的返回）。 */
+/** (a)(b) 的长跑命令与首次等待时长（预算路径必须排不出 ≤5 s 的返回）。 */
 const LONG_RUN_SECONDS = 55;
 const YIELD_MS = 60000;
-/** 审批落定后的入窗等待：注册+spawn 在审批后毫秒级完成，2 s 足够落进让出窗口。 */
-const POST_APPROVAL_MS = 2000;
+/** 调用落转录后的入窗等待：注册+spawn 在调用后毫秒级完成，2 s 足够落进让出窗口。 */
+const POST_CALL_MS = 2000;
 /** 语法判据锚（渲染文双档：实例语言档未知，两种都认）。 */
 const EARLY_ANCHOR = /ended early: a user message arrived|让出提前结束：有用户消息到达/;
 const HANDLE_ANCHOR = /async_wait_job\(job_id="/;
 const ABORT_ANCHOR = /Error: tool call aborted/;
 const REFUSED_ANCHOR = /refused before the process launched|进程启动前被拒绝/;
-/** 审批评审预算：实测 15-46 s/次，留 3 倍余量。 */
-const APPROVAL_BUDGET_MS = 150000;
 
 const results = [];
 const record = (id, ok, detail) => {
@@ -70,7 +73,7 @@ const record = (id, ok, detail) => {
   console[ok ? 'log' : 'error'](`${ok ? 'PASS' : 'FAIL'} ${id}: ${detail}`);
 };
 
-/** 发一条插话（steer：落 next-step，R12 判定口径——排队消息不打断）。 */
+/** 发一条插话（steer：落 next-step 的插话判定口径——排队消息不打断）。 */
 async function steer(sessionId, text) {
   await rpc('session/prompt', {
     request: {
@@ -100,14 +103,9 @@ function runResultTexts(transcript) {
   return texts;
 }
 
-/** 转录里某工具的调用次数（配对辅助）。 */
+/** 转录里某工具的调用次数（配对辅助＋同步点）。 */
 function toolCallsOf(transcript, name) {
   return (transcript.records ?? []).filter((r) => r.event?.type === 'tool/call' && r.event.data?.name === name).length;
-}
-
-/** 转录里 approval/decided 记录数（时序锚：审批落定后才是让出窗口）。 */
-function approvalsDecided(transcript) {
-  return (transcript.records ?? []).filter((r) => r.event?.type === 'approval/decided').length;
 }
 
 /** 轮询转录直到谓词命中；返回 { transcript, elapsedMs }（elapsed 从 t0 起算）。 */
@@ -121,16 +119,16 @@ async function pollUntil(sessionId, predicate, { maxMs = 90000, everyMs = 500, t
 }
 
 /**
- * 等到第 n 次审批落定（approval/decided ≥ n）——工具体在审批后才注册作业、
- * 进入让出竞速；本探针一切"窗口内"动作都以此为同步点。
+ * 等到转录出现首个 async_run 调用——工具体在调用后注册作业、进入让出竞速；
+ * 本探针一切"窗口内"动作都以此为同步点。
  */
-async function waitApproved(sessionId, n) {
-  return pollUntil(sessionId, (t) => approvalsDecided(t) >= n, { maxMs: APPROVAL_BUDGET_MS });
+async function waitRunCalled(sessionId) {
+  await pollUntil(sessionId, (t) => toolCallsOf(t, 'async_run') >= 1, { maxMs: 120000 });
 }
 
 /**
- * 完成通知计数：只认**通知注入面**——`user/message` 且 `source.kind === 'tool-jobs'`、
- * `form === 'notice'`（0.1.7 实测形状；按消息 id 去重，splice 镜像不重复计）。
+ * 完成通知计数：只认**通知注入侧**——`user/message` 且 `source.kind === 'tool-jobs'`、
+ * `form === 'notice'`（实测形状；按消息 id 去重，splice 镜像不重复计）。
  * 不匹配 assistant/tool 记录（模型复述不算通知，r34-O6），也不匹配 request/header
  * 与 system/message——工具描述自带 `async_wait_job(job_id="async-command-…")` 示例与
  * 「完成」字样，正文级匹配会把请求头当成通知（2026-09-30 (e) 首跑实读误报）。
@@ -169,9 +167,9 @@ async function waitForNoticeCount(sessionId, expected, maxMs) {
 }
 
 /**
- * 结果形状分类（如实登记 0.1.7 的两副面孔）：
- * - `handle`/`early`：设计形状（R32-d 让出句柄 / 插话提前结束注记）。
- * - `aborted`：宿主改写（dsh-tools 在调用信号已中止时丢弃返回值，F145）。
+ * 结果形状分类（如实登记两副面孔）：
+ * - `handle`/`early`：设计形状（让出句柄 / 插话提前结束注记）。
+ * - `aborted`：宿主改写（dsh-tools 在调用信号已中止时丢弃返回值）。
  * - `empty`：中止后提交的空文本（r32 首跑实读形状）。
  */
 function classifyResult(text) {
@@ -187,9 +185,9 @@ const URL_LINE = readFileSync(localConfig.tokenFile, 'utf8').trim();
 const APP_URL = URL_LINE.slice(URL_LINE.indexOf('http'));
 
 /**
- * GUI 会话内点按运行态控件（现场标定 2026-09-30）：
- * - 停止键：aria-label「停止生成」，与发送键同槽（uV2eYG_primary）；
- * - 任务面板入口：aria-label 匹配 /个后台任务/（QsffPG_trigger）。
+ * GUI 会话内点按运行态控件（现场标定）：
+ * - 停止键：aria-label「停止生成」，运行态与发送键同槽换装；
+ * - 任务面板入口：aria-label 匹配 /个后台任务/。
  */
 async function clickByLabel(page, labelRe) {
   const hit = await evaluate(page, `(() => {
@@ -203,14 +201,45 @@ async function clickByLabel(page, labelRe) {
   return typeof hit === 'string' ? hit : '';
 }
 
-/** GUI：新建会话 → 键入提示词 → 点发送（contenteditable 通道，2026-09-30 实测）。 */
-async function guiNewSessionSend(page, text) {
+/** GUI：新建会话（一次）。 */
+async function guiNewSession(page) {
   await evaluate(page, `(() => {
     const b = [...document.querySelectorAll('button')].find((el) => (el.getAttribute('aria-label') || '') === '新建会话');
     if (b) b.click();
     return true;
   })()`);
   await sleep(1500);
+}
+
+/**
+ * 0.2.0 起 GUI「新建会话」落**标准模式**（新任务页 seat 默认），预设只有
+ * developerTools 的 seat 菜单一条 GUI 路；探针改走同一 remote 的 RPC 面：
+ * 取 `session/list` 里最新的 blank 会话（新任务页焦点在的就是它），
+ * `agentPresets/select` 给它定 dsh-async（宿主只拒「已开始」的会话）。
+ * 先清掉其余 blank（空会话、无历史可失），让「复用 or 新建」都收敛到同一个
+ * 焦点会话。@returns 定好预设的 blank 会话 id——composer 发出的词就落在它里面。
+ */
+async function guiBlankSession(page, presetId) {
+  const blanksNewestFirst = async () => (await rpc('session/list', { _request: {} })).items
+    .filter((item) => item.blank === true)
+    .sort((a, b) => Number(b.updatedAt ?? 0) - Number(a.updatedAt ?? 0));
+  for (const row of (await blanksNewestFirst()).slice(1)) {
+    await rpc('session/cancel', { request: { sessionId: row.sessionId } }).catch(() => {});
+  }
+  await guiNewSession(page);
+  let sid = '';
+  for (let i = 0; i < 6 && sid === ''; i += 1) {
+    sid = (await blanksNewestFirst())[0]?.sessionId ?? '';
+    if (sid === '') await sleep(1500);
+  }
+  if (sid === '') throw new Error('session/list 未见 blank 会话（「新建会话」没建出？）');
+  const picked = await rpc('agentPresets/select', { agentId: sid, agentPreset: presetId });
+  if (picked !== presetId) throw new Error(`agentPresets/select 回执 ${JSON.stringify(picked)} ≠ ${presetId}`);
+  return sid;
+}
+
+/** GUI：向当前会话键入提示词并点发送（contenteditable 通道，实测）。 */
+async function guiSendText(page, text) {
   const typed = await evaluate(page, `(() => {
     const area = document.querySelector('textarea') || document.querySelector('[contenteditable="true"]');
     if (!area) return 'no-input';
@@ -232,99 +261,12 @@ async function guiNewSessionSend(page, text) {
   if (!sent) throw new Error('发送失败（发送键始终禁用或缺失）');
 }
 
-/** RPC 侧定位 GUI 新建的会话：running=true 优先，提示词标记兜底。 */
-async function findGuiSession(promptMark) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < 60000) {
-    await sleep(2500);
-    const listing = await rpc('session/list', { _request: {} });
-    const runningRow = listing.items.find((r) => r.running === true);
-    if (runningRow !== undefined) return runningRow.sessionId;
-    for (const row of listing.items.slice(-8).reverse()) {
-      const t = await transcriptOf(row.sessionId).catch(() => null);
-      if (t === null) continue;
-      const hit = (t.records ?? []).some((r) => r.event?.type === 'user/message'
-        && JSON.stringify(r.event.data ?? {}).includes(promptMark));
-      if (hit) return row.sessionId;
-    }
-  }
-  throw new Error('GUI 会话未能在 RPC 侧定位（60 s 内无 running 行也无提示词命中）');
-}
-
-/** 任务面板可见文本（打开「后台任务」面板后读全文）。 */
-async function panelText(page) {
-  const text = await evaluate(page, 'document.body.innerText');
-  return typeof text === 'string' ? text : '';
-}
-
-// —— 判据实现 ——
-
-// —— 提权前置句（F116 环境锚：验证实例是托管服务 LocalSystem 账户、无 logon SID，
-// 受限档在进程创建层必死 `CreateRestrictedToken prerequisite failed`——r28/r30 真机
-// 读数的既定处置是提示词里显式走 danger-full-access，且必须点名枚举值：模型会
-// 自己挑"最保守"的 workspace-write（r32 首跑实读），同级提权等于没提）。 ——
-const ESCALATE = 'Pass sandbox_permissions="danger-full-access" and justification="The restricted sandbox cannot spawn processes from this service session (known deployment constraint)." on every async_run call in this task. ';
-/** 中止后防重试句：模型见到 aborted 错误会自行重试（r32 首跑实读），污染通知计数。 */
-const NO_RETRY = 'If a call returns an error mentioning "tool call aborted" or an empty result, do NOT retry or re-run it — just reply ack. ';
-
-/** (a) 即时性·插话 + 句柄形状。 */
-async function criterionA(sessionId) {
-  await prompt(sessionId,
-    ESCALATE + NO_RETRY
-    + `Run this exact command with async_run (yield_ms=${String(YIELD_MS)}): Start-Sleep -Seconds ${String(LONG_RUN_SECONDS)}. `
-    + 'While it yields, do nothing else and do not call any other tool — wait. '
-    + 'If the yield ever ends early with a handle note, do NOT call async_wait_job and do NOT wait for the job — just reply ack and finish your turn.');
-  // 时序锚：等审批落定（注册与让出窗口在此之后才开始）。
-  await waitApproved(sessionId, 1);
-  await sleep(POST_APPROVAL_MS);
-
-  const steerT0 = Date.now();
-  await steer(sessionId, 'Status check: reply with just the word "ack" and end your turn. Do not call async_wait_job or any other tool; do not wait for the job.');
-  const { elapsedMs, transcript } = await pollUntil(sessionId,
-    (t) => runResultTexts(t).length >= 1,
-    { t0: steerT0, maxMs: 30000 });
-  const result = runResultTexts(transcript).at(-1) ?? '(none)';
-  const shape = classifyResult(result);
-
-  record('a-1-immediacy', elapsedMs <= IMMENSITY_MS,
-    `steer → tool/result ${String(elapsedMs)} ms（判据 ≤${String(IMMENSITY_MS)} ms；预算 ${String(YIELD_MS)} ms 排除预算路径）`);
-  record('a-2-wait-ended', true,
-    `插话结束首次等待：结果形状=${shape}（handle/early=设计形状；aborted/empty=0.1.7 宿主对中止调用的改写，F145）；样例：${result.slice(0, 160)}`);
-  if (shape === 'handle') {
-    record('a-3-early-anchor', EARLY_ANCHOR.test(result), '提前让出注记（earlyByUser）在场');
-  }
-  return { steerToResultMs: elapsedMs, shape, resultHead: result.slice(0, 200) };
-}
-
-/** (b) 即时性·GUI 停止 + abort 改写 + 恢复通道（作业存活 → 完成通知恰 1）。 */
-async function criterionB(page) {
-  await guiNewSessionSend(page,
-    ESCALATE + NO_RETRY
-    + `Run this exact command with async_run (yield_ms=${String(YIELD_MS)}): Start-Sleep -Seconds ${String(LONG_RUN_SECONDS)}. `
-    + 'While it yields, do nothing else and do not call any other tool — wait.');
-  const sid = await findGuiSession('Start-Sleep -Seconds 55');
-  await waitApproved(sid, 1);
-  await sleep(POST_APPROVAL_MS);
-
-  const stopT0 = Date.now();
-  const hit = await clickByLabel(page, /^(停止生成|停止|Stop generation|Stop|⏹)$/);
-  if (hit === '') {
-    record('b-0-stop-click', false, '未找到「停止生成」键（运行态发送键换装现场已标定，重跑仍失配则再标定）');
-    return { sessionId: sid };
-  }
-  console.log(`stop clicked: ${hit}`);
-  const { elapsedMs, transcript } = await pollUntil(sid,
-    (t) => runResultTexts(t).length >= 1,
-    { t0: stopT0, maxMs: 30000 });
-  const result = runResultTexts(transcript).at(-1) ?? '(none)';
-  const shape = classifyResult(result);
-  record('b-1-immediacy', elapsedMs <= IMMENSITY_MS, `停止 → 结果 ${String(elapsedMs)} ms ≤ ${String(IMMENSITY_MS)} ms（形状 ${shape}）`);
-  record('b-2-aborted-rewrite', ABORT_ANCHOR.test(result),
-    `F145：中止改写（Error: tool call aborted）。实读形状=${shape}；样例：${result.slice(0, 140)}`);
-  const notice = await waitForNoticeCount(sid, 1, (LONG_RUN_SECONDS + 30) * 1000);
-  record('b-3-job-survives', notice.count === 1,
-    `abort 后作业存活并由完成通知恢复：${String(notice.count)} 条（判据恰 1）`);
-  return { sessionId: sid, shape };
+/** RPC 侧核对某会话已升档（只读；升档动作只经 composer /permission 或 elevateSession）。 */
+async function assertElevated(sessionId) {
+  const transcript = await transcriptOf(sessionId);
+  const elevated = (transcript.records ?? []).some((r) => r.event?.type === 'sandbox/mode'
+    && r.event.data?.mode === 'danger-full-access');
+  if (!elevated) throw new Error('会话升档失败：转录无 sandbox/mode danger-full-access（/permission 未被接受？）');
 }
 
 /**
@@ -343,16 +285,89 @@ async function jobCardText(page, command) {
   return typeof card === 'string' ? card : '';
 }
 
+// —— 判据实现 ——
+
+/** 中止后防重试句：模型见到 aborted 错误会自行重试（首跑实读），污染通知计数。 */
+const NO_RETRY = 'If a call returns an error mentioning "tool call aborted" or an empty result, do NOT retry or re-run it — just reply ack. ';
+
+/** (a) 即时性·插话 + 句柄形状。 */
+async function criterionA(sessionId) {
+  await elevateSession(sessionId);
+  await prompt(sessionId,
+    NO_RETRY
+    + `Run this exact command with async_run (yield_ms=${String(YIELD_MS)}): Start-Sleep -Seconds ${String(LONG_RUN_SECONDS)}. `
+    + 'While it yields, do nothing else and do not call any other tool — wait. '
+    + 'If the yield ever ends early with a handle note, do NOT call async_wait_job and do NOT wait for the job — just reply ack and finish your turn.');
+  // 时序锚：等调用落转录（注册与让出窗口在此之后才开始）。
+  await waitRunCalled(sessionId);
+  await sleep(POST_CALL_MS);
+
+  const steerT0 = Date.now();
+  await steer(sessionId, 'Status check: reply with just the word "ack" and end your turn. Do not call async_wait_job or any other tool; do not wait for the job.');
+  const { elapsedMs, transcript } = await pollUntil(sessionId,
+    (t) => runResultTexts(t).length >= 1,
+    { t0: steerT0, maxMs: 30000 });
+  const result = runResultTexts(transcript).at(-1) ?? '(none)';
+  const shape = classifyResult(result);
+
+  record('a-1-immediacy', elapsedMs <= IMMENSITY_MS,
+    `steer → tool/result ${String(elapsedMs)} ms（判据 ≤${String(IMMENSITY_MS)} ms；预算 ${String(YIELD_MS)} ms 排除预算路径）`);
+  record('a-2-wait-ended', true,
+    `插话结束首次等待：结果形状=${shape}（handle/early=设计形状；aborted/empty=宿主对中止调用的改写）；样例：${result.slice(0, 160)}`);
+  if (shape === 'handle') {
+    record('a-3-early-anchor', EARLY_ANCHOR.test(result), '提前让出注记（earlyByUser）在场');
+  }
+  return { steerToResultMs: elapsedMs, shape, resultHead: result.slice(0, 200) };
+}
+
+/** (b) 即时性·GUI 停止 + abort 形状 + 恢复通道（作业存活 → 完成通知恰 1）。 */
+async function criterionB(page) {
+  // 0.2.0：GUI 新建默认标准模式——blank 会话经 RPC 定 dsh-async（见
+  // guiBlankSession 头注），升档与提示词仍走 composer，断言与标准路径全同。
+  const sid = await guiBlankSession(page, PRESET);
+  await guiSendText(page, '/permission danger-full-access');
+  await sleep(3000);
+  await assertElevated(sid);
+  await guiSendText(page,
+    NO_RETRY
+    + `Run this exact command with async_run (yield_ms=${String(YIELD_MS)}): Start-Sleep -Seconds ${String(LONG_RUN_SECONDS)}. `
+    + 'While it yields, do nothing else and do not call any other tool — wait.');
+  await waitRunCalled(sid);
+  await sleep(POST_CALL_MS);
+
+  const stopT0 = Date.now();
+  const hit = await clickByLabel(page, /^(停止生成|停止|Stop generation|Stop|⏹)$/);
+  if (hit === '') {
+    record('b-0-stop-click', false, '未找到「停止生成」键（运行态发送键换装现场已标定，重跑仍失配则再标定）');
+    return { sessionId: sid };
+  }
+  console.log(`stop clicked: ${hit}`);
+  const { elapsedMs, transcript } = await pollUntil(sid,
+    (t) => runResultTexts(t).length >= 1,
+    { t0: stopT0, maxMs: 30000 });
+  const result = runResultTexts(transcript).at(-1) ?? '(none)';
+  const shape = classifyResult(result);
+  record('b-1-immediacy', elapsedMs <= IMMENSITY_MS, `停止 → 结果 ${String(elapsedMs)} ms ≤ ${String(IMMENSITY_MS)} ms（形状 ${shape}）`);
+  record('b-2-shape-honest', shape === 'handle' || shape === 'aborted' || shape === 'empty',
+    `中止形状如实登记=${shape}（handle=设计形状；aborted/empty=宿主改写）；样例：${result.slice(0, 140)}`);
+  const notice = await waitForNoticeCount(sid, 1, (LONG_RUN_SECONDS + 30) * 1000);
+  record('b-3-job-survives', notice.count === 1,
+    `abort 后作业存活并由完成通知恢复：${String(notice.count)} 条（判据恰 1）`);
+  return { sessionId: sid, shape };
+}
+
 /** (c) 呈现：任务卡 label=命令原文 + progress=description；结算后 progress 消失。 */
 async function criterionC(page) {
   const command = 'Write-Output "r32-panel" ; Start-Sleep -Seconds 25';
-  await guiNewSessionSend(page,
-    ESCALATE
-    + `Run this exact command with async_run (yield_ms=30000): ${command} `
+  const sid = await guiBlankSession(page, PRESET);
+  await guiSendText(page, '/permission danger-full-access');
+  await sleep(3000);
+  await assertElevated(sid);
+  await guiSendText(page,
+    `Run this exact command with async_run (yield_ms=30000): ${command} `
     + 'Description must be exactly: probe panel row');
-  const sid = await findGuiSession('r32-panel');
-  await waitApproved(sid, 1);
-  await sleep(POST_APPROVAL_MS);
+  await waitRunCalled(sid);
+  await sleep(POST_CALL_MS);
 
   // 打开任务面板（入口：「N 个后台任务运行中」）。
   const opened = await clickByLabel(page, /个后台任务/);
@@ -378,22 +393,22 @@ async function criterionC(page) {
   return { sessionId: sid };
 }
 
-/** (d) 触顶：11 连发占满 owner 名额（10，F143）→ 第 11 条准入拒绝文案。 */
+/** (d) 触顶：11 连发占满 owner 名额（10，设计 §3.5）→ 第 11 条准入拒绝文案。 */
 async function criterionD(sessionId) {
+  await elevateSession(sessionId);
   await prompt(sessionId,
-    ESCALATE
-    + 'Fire 11 async_run calls in ONE batch (same turn, no waiting between them, issue them back to back), '
+    'Fire 11 async_run calls in ONE batch (same turn, no waiting between them, issue them back to back), '
     + 'each running Start-Sleep -Seconds 600 with yield_ms=1000 and description "limit probe N" (N=1..11). '
     + 'Do not retry failed calls. '
     + 'Then report exactly which calls returned a job_id and which failed, quoting each failure text verbatim.');
-  // 11 次审批串行（15-46 s/次）+ 11×1 s 让出：预算 3 倍余量。
-  await waitTurnEnd(sessionId, 900000);
+  // 升档后审批档 never：11 连发无审批串行，10 min 预算只留给让出与收尾。
+  await waitTurnEnd(sessionId, 600000);
   const transcript = await transcriptOf(sessionId);
   const text = JSON.stringify(transcript.records ?? []);
   record('d-1-refused-anchor', REFUSED_ANCHOR.test(text), '第 11 条文案含「进程启动前被拒」锚（准入在先、无进程可杀）');
-  record('d-2-limit-ten', /limit: 10|current limit: 10|当前上限:? 10/.test(text), '复述生效上限 10（F143）');
+  record('d-2-limit-ten', /limit: 10|current limit: 10|当前上限:? 10/.test(text), '复述生效上限 10（设计 §3.5）');
   record('d-3-way-out', /job_kill/.test(text), '给出 kill/等待出路');
-  // 清理：沉睡作业随会话取消而终止（F26 条件④）。
+  // 清理：沉睡作业随会话取消而终止（设计 §7.1：owner 处置取消作业）。
   await rpc('session/cancel', { request: { sessionId } }).catch((error) => {
     console.log(`cleanup session/cancel: ${String(error?.message ?? error)}`);
   });
@@ -401,9 +416,9 @@ async function criterionD(sessionId) {
 
 /** (e) 短命令：预算内 completed 形状不变 + 零完成通知（(f) 前半）。 */
 async function criterionE(sessionId) {
+  await elevateSession(sessionId);
   await prompt(sessionId,
-    ESCALATE
-    + 'Run this exact command with async_run (do not pass yield_ms): Write-Output "short-ok". Reply with its exit code only.');
+    'Run this exact command with async_run (do not pass yield_ms): Write-Output "short-ok". Reply with its exit code only.');
   await waitTurnEnd(sessionId, 180000);
   const transcript = await transcriptOf(sessionId);
   const last = runResultTexts(transcript).at(-1) ?? '';
@@ -447,7 +462,7 @@ try {
     const notice = await waitForNoticeCount(sid, 1, (LONG_RUN_SECONDS + 30) * 1000);
     summary.criteria.a = { sessionId: sid, noticeCount: notice.count, ...reading };
     record('f-a-one-notice', notice.count === 1,
-      `插话路径结算后完成通知 ${String(notice.count)} 条（判据恰 1——撤销在先、结算照发；若模型自建 async_wait_job 等到结算，则按 R32-e 活 waiter 语义应为 0——提示词已明令禁止，见头注）`);
+      `插话路径结算后完成通知 ${String(notice.count)} 条（判据恰 1——撤销在先、结算照发；若模型自建 async_wait_job 等到结算，则按 (e) 相活 waiter 语义应为 0——提示词已明令禁止，见头注）`);
   }
   if (want('d')) {
     const sid = await newSession(PRESET);
@@ -469,6 +484,6 @@ try {
   summary.fail = results.length - pass;
   summary.results = results;
   writeFileSync(`${LOG_DIR}\\r32-run-interruptible.json`, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
-  console.log(`\nR32/R33 真机探针：${String(pass)}/${String(results.length)}（证据 verify/logs/r32-run-interruptible.json）`);
+  console.log(`\n真机探针：${String(pass)}/${String(results.length)}（证据 verify/logs/r32-run-interruptible.json）`);
   process.exitCode = results.every((r) => r.ok) ? 0 : 1;
 }

@@ -1,13 +1,14 @@
 /**
- * 变异：把未定义的别名变量写回 `client.js`，要求判据 7（`tools/check-alias-tokens.mjs`）
+ * 变异：把未定义的别名变量写回 `client.js`，要求 `tools/check-alias-tokens.mjs`
  * 变红。
  *
- * 两条变异对应 §29.4 ⑥：① 放回 `label-danger`（R27 之前自绘错误色真实用过的死名字，
- * 全树零定义）；② 把 `label-error` 写成引用
- * （官方 `.failed` 引用的那个未定义名字——照抄它就是复刻 R27 item 10 要消灭的缺陷）。
+ * 两条变异对应未定义别名 token 的两种退化：
+ * ① 放回 `label-danger`（自绘错误色用过的死名字，全树零定义）；
+ * ② 把 `label-error` 写成引用（官方 `.failed` 引用的那个未定义名字——照抄它
+ * 就是复刻本判据要消灭的缺陷）。
  *
  * ⚠️ 本脚本会原地改写真实的 `client.js`，跑完在 `finally` 里写回
- * 并核对摘要。任何 SKIP 按失败处理（`dsh-plugin-workflow` 纪律 11）。
+ * 并核对摘要。任何 SKIP 按失败处理。
  *
  * 用法：node verify/mutate-alias-tokens.mjs（需可捕获子进程输出——默认沙箱下 EPERM，
  * 见 verify/README.md 的「判据必须在默认权限下可跑」与既有 mutate-card-theme 的先例）
@@ -65,7 +66,7 @@ try {
   } else {
     writeFileSync(TARGET, mutated1, 'utf8');
     const after = runChecker();
-    console.log(`${after.red ? 'CAUGHT' : 'MISSED'}  ① label-danger 放回（R27 之前的真实死名字）  ${after.summary}`);
+    console.log(`${after.red ? 'CAUGHT' : 'MISSED'}  ① label-danger 放回（主题未定义的死名字）  ${after.summary}`);
     ok = after.red && ok;
   }
 

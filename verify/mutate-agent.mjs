@@ -1,13 +1,13 @@
 /**
- * 守哪些需求：R13（async_agent 永远后台、立返、零等待原语）+ R14（persona 硬规则锚句）
+ * 守哪条需求：需求 §2.3.1（async_agent 永远后台、立返、零等待原语）+ §3.1（persona 强制规则锚句）
  *
  * 两个变异，方向互补：
  * - M1 **前台形态回潮**：把 `startContinuable` 换成宿主的非 continuable 前台 `start`
  *   → 必须红在 test/agent.test.mjs 的"零前台哨兵"上（哨兵记录调用并抛可读错误，
- *   r14 审查 D10——红因一目了然，不是泛型 TypeError）。
- * - M2 **硬规则被删**：把预设模板 persona 里的 DELEGATION RULES 段整段删掉
- *   → 必须红在 `tools/validate-preset.mjs` 的 R14 锚句判据上（校验目标是**包内补丁文件**
- *   `presets/dsh-async.patch.yml`，不是已安装副本——已安装件受 R9"从不覆盖"保护，本就该由使用者自管）。
+ *   红因一目了然，不是泛型 TypeError）。
+ * - M2 **强制规则被删**：把预设模板 persona 里的 DELEGATION RULES 段整段删掉
+ *   → 必须红在 `tools/validate-preset.mjs` 的 persona 锚句判据上（校验目标是**包内补丁文件**
+ *   `presets/dsh-async.patch.yml`，不是已安装副本——已安装件按需求 §3.2 由使用者自管）。
  *
  * ⚠️ **本脚本会原地改写真实的 `lib/agent.js` 与 `presets/dsh-async.patch.yml`**，
  * 每个变异跑完立即写回，最后核对 sha256。
@@ -70,9 +70,8 @@ function runTests(timeoutMs) {
 /**
  * 跑预设校验器（默认校验包内补丁 `presets/dsh-async.patch.yml`）。退出码 0=绿、1=红；spawn 失败=没跑成。
  *
- * ⚠️ **不要给它传位置参数**：这里原来传的是 `presets/dsh-async`（0.1.5 的模板目录，已随 §20.3 退场），
- * 于是校验器对着一个不存在的路径退 1，基线永远是红的——独立复审（glm-5.3，2026-09-25）正是这样
- * 发现"这个脚本在任何环境下都是坏判据"的。
+ * ⚠️ **不要给它传位置参数**：位置参数会被当成模板目录路径，而模板目录形态已不存在——
+ * 校验器对着不存在的路径退 1，基线永远是红的，等于自造坏判据。
  * @returns {{state: 'green'|'red'|'didnt-run', summary: string, firstFail: string}} 结果。
  */
 function runPresetValidator() {
@@ -120,7 +119,7 @@ function restore() {
   }
 }
 
-// M1 的锚点：lib/agent.js 的派生调用（§18.2 步 4）。变异体走前台 start。
+// M1 的锚点：lib/agent.js 的派生调用（设计 §3.3 可续子代理）。变异体走前台 start。
 const M1_ANCHOR = [
   '      const { childId } = await ctx.subagents.startContinuable({',
   '        provider: providerName,',
@@ -134,10 +133,10 @@ const M1_MUTATED = [
   '      const { childId } = await ctx.subagents.start(providerName, { ...request, signal: exec.signal });'
 ].join('\n');
 /**
- * M2 变异：把 persona 的硬规则段整段删掉。
+ * M2 变异：把 persona 的强制规则段整段删掉。
  *
- * **按行首内容定位、不依赖缩进**：0.1.5 模板里这段是 6 空格缩进，现行补丁文件里是 16 空格——
- * 逐字锚点必然失配（独立复审 R3 就是在旧脚本上撞见这类过时目标的）。找不到就返回 null，
+ * **按行首内容定位、不依赖缩进**：补丁文件里该段的缩进层级随基线与嵌套深度变化，
+ * 逐字锚点会失配。找不到就返回 null，
  * 调用方按"变异失效＝失败"处理。
  * @param {string} source - 待变异的补丁文本。
  * @returns {string|null} 变异后的文本，或 null（锚点不在）。
@@ -180,7 +179,7 @@ try {
     }
   }
 
-  // ── M2：硬规则被删 ───────────────────────────────────────────────────────
+  // ── M2：强制规则被删 ───────────────────────────────────────────────────────
   const m2Body = mutateM2(templateOriginal);
   if (m2Body === null) {
     console.log('SKIP  找不到 M2 锚点（DELEGATION RULES 段），本变异失效——当失败处理。');
@@ -189,11 +188,11 @@ try {
     writeFileSync(TEMPLATE, m2Body, 'utf8');
     const after = runPresetValidator();
     if (after.state === 'didnt-run') {
-      console.log(`DIDNT-RUN  M2 硬规则被删  ${after.summary} —— 环境没跑成校验，不算 CAUGHT（fail-closed）`);
+      console.log(`DIDNT-RUN  M2 强制规则被删  ${after.summary} —— 环境没跑成校验，不算 CAUGHT（fail-closed）`);
       ok = false;
     } else {
       const caught = after.state === 'red';
-      console.log(`${caught ? 'CAUGHT' : 'MISSED'}  M2 删掉 persona 硬规则段（R14 锚句）  ${after.summary}`);
+      console.log(`${caught ? 'CAUGHT' : 'MISSED'}  M2 删掉 persona 强制规则段（persona 锚句）  ${after.summary}`);
       if (after.firstFail !== '') console.log(`        ${after.firstFail}`);
       ok = caught && ok;
     }
@@ -202,6 +201,6 @@ try {
   restore();
 }
 console.log('');
-console.log(ok ? '变异被抓住：R13 的后台形态与 R14 的锚句都有能失败的判据。' : '**变异逃逸或没跑成**——判据是恒真的，或环境不可用。');
+console.log(ok ? '变异被抓住：后台形态与 persona 锚句都有能失败的判据。' : '**变异逃逸或没跑成**——判据是恒真的，或环境不可用。');
 console.log('还原完成，摘要一致。');
 process.exitCode = ok ? 0 : 1;

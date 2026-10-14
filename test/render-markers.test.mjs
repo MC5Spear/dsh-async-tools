@@ -1,9 +1,9 @@
 /**
- * R11 / R8：`async_run` 的完成分支必须把**退出状态**给模型看。
+ * `async_run` 的完成分支必须把**退出状态**给模型看。
  *
- * ## 这条判据挡的缺口（真机验证时由独立子代理读转录发现）
+ * ## 这条判据挡的缺口
  *
- * 子代理的原话："value 里有 exit_code，但 `output.render` 只发 output，
+ * 真机转录可证："value 里有 exit_code，但 `output.render` 只发 output，
  * **模型看不到** `exit code: 0`。"
  *
  * 它是对的，而且比"少一行字"严重：**模型只看得见 `render` 的输出**

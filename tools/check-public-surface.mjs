@@ -1,26 +1,25 @@
 /**
- * 公开面边界检查器（`OPENSOURCE-PREP.md` v3 WP0-5）。
+ * 公开范围边界检查器。
  *
  * ## 它挡什么
  *
- * 本仓是**单仓双平面**：公开面（产品代码、测试与工具、需求稿与设计稿、verify 脚本）
- * 与本机平面（`.local/`，不被跟踪）。两类事故会让这个分法失效：
+ * 本公开范围包括产品代码、测试与工具、需求稿与设计稿、verify 脚本；
+ * 本机材料（`.local/`）不由本公开仓跟踪。两类错误会破坏这个边界：
  *
- * 1. **本机事实漏进公开面**——机器路径、实例端口、服务名、用户名。它们不会让任何测试
+ * 1. **本机事实漏进公开范围**——机器路径、实例端口、服务名、用户名。它们不会让任何测试
  *    变红，只会在推上 GitHub 之后把开发机的样子泄露出去。
  * 2. **公开文档引用未公开内容**——读者点开需求稿，里面写着"见 `docs/facts.md` F65"，
- *    而 `facts.md` 不在仓库里。文档于是**不可读**，这是自包含原则（工单 §2 规则 4）要挡的。
+ *    而 `facts.md` 不在仓库里。文档于是**不可读**，这是自包含原则要挡的。
  *
- * `OPENSOURCE-PREP.md` 把这件事拆成 WP1（人工清查）与 WP3（文档改写），但那两张工单
- * 都是一次性的：**一次清查不会在下一次提交时继续生效**。本检查器把判据固化成常驻的，
+ * 一次性的人工清查不会在下一次提交时继续生效。本检查器把判据固化成常驻的，
  * 进 `npm run check` 与 CI——加一行代码、改一句文档，它当场红。
  *
  * ## 三类判据
  *
  * - **结构**：`.gitignore` 必须有 `.local/` 条目；非注释条目**只能**是本表登记的这几条
- *   （规则 1「一扇门」：新文件诞生即定归属，不再新增零散 ignore 条目）；`.local/` 这个
+ *   （规则 1「单一例外目录」：新文件诞生即定归属，不再新增零散 ignore 条目）；`.local/` 这个
  *   字面只许出现在配置加载器、它的形状示例、以及本检查器自己的变异脚本里。
- * - **本机指纹零命中**：全部进入公开面的文件逐个扫指纹表（每条带理由）。
+ * - **本机指纹零命中**：全部进入公开范围的文件逐个扫指纹表（每条带理由）。
  * - **内部引用零命中**：公开文档（`.md`）扫内部引用表——下沉的语料文件名、事实编号、
  *   过程稿名、历史运行产物路径。
  *
@@ -28,14 +27,14 @@
  *
  * 两条理由，都不是洁癖：
  *
- * 1. **沙箱**：本仓的既有教训是"默认沙箱下子进程管道捕获一律 EPERM"
+ * 1. **沙箱**：默认沙箱下子进程管道捕获一律 EPERM
  *    （`verify/README.md`「判据必须在默认权限下可跑」一节）。`git ls-files` 要么起子进程
  *    捕获输出（判据的红绿只反映权限），要么把输出写进临时文件（多一个可失败环节）。
  * 2. **遍历跳过表可以从 `.gitignore` 自己推导**——前提是 `.gitignore` 真的只有那几条。
  *    于是"遍历范围"与"忽略规则"不可能各说各话，而这条前提本身就是结构判据的一部分。
  *
  * 代价是**未被忽略的未跟踪文件也会被扫**。这是**有意的**：一个还没 `git add` 的新文件
- * 正是最可能带着本机路径溜进公开面的东西；等它被跟踪才拦，已经晚了一步。
+ * 正是最可能带着本机路径溜进公开范围的东西；等它被跟踪才拦，已经晚了一步。
  *
  * ## 双入口形态
  *
@@ -51,27 +50,26 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const MODULE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** 本机平面的目录名。 */
+/** 本机侧的目录名。 */
 const LOCAL_DIR = '.local';
 
 /**
  * `.gitignore` 允许出现的**非注释条目全集**。
  *
- * 规则 1「一扇门」的机械落点：本仓对本机内容只有 `.local/` 一条，外加运行期必需的
- * `node_modules/` 与编辑器产物。多出一条就红——零散 ignore 条目会让"这东西属于哪个平面"
- * 变成一件要靠记忆回答的事（`.gitignore` 曾经有 73 行，其中 20 多条各自挡一个目录）。
+ * 规则 1「单一例外目录」的机械落点：本仓对本机内容只有 `.local/` 一条，外加运行期必需的
+ * `node_modules/` 与编辑器产物。多出一条就红——零散 ignore 条目会让"这东西属于哪一层"
+ * 变成一件要靠记忆回答的事。
  */
 const GITIGNORE_ALLOWED = new Set([`${LOCAL_DIR}/`, 'node_modules/', '.vscode/', 'Thumbs.db', 'Desktop.ini']);
 
-/** 本机指纹表：每条都带"为什么它不该出现在公开面"。 */
+/** 本机指纹表：每条都带"为什么它不该出现在公开范围"。 */
 const FINGERPRINTS = [
   // ⚠️ 分隔符要用 `[\\/]+`（一个或多个）而不是 `[\\/]`：**JS 源码里的 Windows 路径是转义的**，
   // 写成 `'D:\\P\\dsh-x'` 时源文本里是 `D:\\P\\dsh-x`——两个反斜杠。只认单个分隔符会让
   // "可执行代码里的本机绝对路径"整类**漏检**（注释里是单反斜杠、字符串里是双反斜杠，
-  // 两种形态都得抓）。这条是子代理在 `tools/check-bare-filenames.mjs` 的 `EXTRA_ROOTS`
-  // 上实测出来的：checker 只报了它上一行的注释，没报那行真代码。
+  // 两种形态都得抓）。
   // ⚠️ 盘根目录名之后也不能只认分隔符：裸写盘根（后随标点、引号或行尾；转义形态
-  // `'D:\\P'` 引号紧随）曾经整类漏检——发布前独立盲审在公开面抓到四处真残留。
+  // `'D:\\P'` 引号紧随）会整类漏检。
   // 尾随断言改成「分隔符、非词字符或行尾」任一即中；词字符紧随（`C:\Program
   // Files` 的 `Pr`）不算，避免把浏览器安装路径误伤成本机盘根。
   { pattern: /[A-Z]:[\\/]+P(?=\W|$)/i, why: '本机开发盘路径（D:\\P\\… 与裸 D:\\P 都算）' },
@@ -80,12 +78,10 @@ const FINGERPRINTS = [
   { pattern: /\b38200\b/, why: '本机开发实例端口' },
   { pattern: /\b38192\b|\b38193\b|\b38194\b|\b38195\b/, why: '本机一次性探针实例端口' },
   // ⚠️ 服务名要**整体**匹配：`dsh-web-app` / `dsh-webhook` / `dsh-web-fetch-http` 是上游
-  // 公开包名，按子串匹配会把它们误判成本机指纹（第一版就是这么误报的，一次 30+ 条）。
+  // 公开包名，按子串匹配会把它们误判成本机指纹（一次能误报 30+ 条）。
   // 判据是"它是不是这台机器的服务名"，所以边界必须挡住 `-` 与词字符。
   { pattern: /(?<![\w-])dsh-web(?![\w-])/, why: '本机 NSSM 服务名（整体匹配；dsh-web-app 等上游包名不算）' },
   { pattern: /(?<![\w-])dsh-service(?![\w-])/, why: '本机服务家目录名' },
-  // （`dsh-approve-for-me` 的名字指纹曾在此列——兄弟仓同批转公开后它不再是本机事实，
-  //  公开文档现在直接互挂它的 GitHub 地址；它在本机的路径由上面那条盘符判据继续看守。）
   { pattern: /DESKTOP-[A-Z0-9]{4,}/i, why: '本机机器名前缀' }
 ];
 
@@ -123,7 +119,7 @@ export const PUBLIC_SURFACE_ALLOWLIST = new Map([
 /** 文档扩展名（内部引用判据只扫这些）。 */
 const DOC_EXTENSIONS = new Set(['.md', '.markdown']);
 
-/** 永远不进公开面遍历的目录（`.git` 是版本库元数据，不是内容）。 */
+/** 永远不进公开范围遍历的目录（`.git` 是版本库元数据，不是内容）。 */
 const ALWAYS_SKIP = new Set(['.git']);
 
 /**
@@ -196,7 +192,7 @@ function walk(root, skip) {
 }
 
 /**
- * 跑一遍公开面边界检查。
+ * 跑一遍公开范围边界检查。
  *
  * @param {string} [root] - 仓根。
  * @param {{ quiet?: boolean, scope?: string[] }} [options] - `quiet:true` 时不向 stdout 打印（测试用）；
@@ -222,14 +218,14 @@ export function checkPublicSurface(root = MODULE_ROOT, { quiet = false, scope } 
   const ignorePath = join(root, '.gitignore');
   let ignoreText = '';
   if (!existsSync(ignorePath)) {
-    note('.gitignore', '结构', 0, '', '`.gitignore` 不存在——两个平面无从区分');
+    note('.gitignore', '结构', 0, '', '`.gitignore` 不存在——两个层无从区分');
   } else {
     ignoreText = readFileSync(ignorePath, 'utf8');
     const entries = ignoreText.split('\n')
       .map((l) => l.trim())
       .filter((l) => l.length > 0 && !l.startsWith('#'));
     if (!entries.includes(`${LOCAL_DIR}/`)) {
-      note('.gitignore', '结构', 0, '', `缺 \`${LOCAL_DIR}/\` 条目——本机平面会漏进版本库`);
+      note('.gitignore', '结构', 0, '', `缺 \`${LOCAL_DIR}/\` 条目——本机侧会漏进版本库`);
     }
     for (const entry of entries) {
       if (!GITIGNORE_ALLOWED.has(entry)) {
@@ -257,7 +253,7 @@ export function checkPublicSurface(root = MODULE_ROOT, { quiet = false, scope } 
       continue;
     }
     // NUL 字节 = 二进制（截图、字体、归档）。二进制里可能嵌着可见文本，
-    // 但本仓公开面不该有二进制，真有的话由结构判据另行处理。
+    // 但本仓公开范围不该有二进制，真有的话由结构判据另行处理。
     if (text.includes('\u0000')) { binarySkipped += 1; continue; }
 
     const exempt = PUBLIC_SURFACE_ALLOWLIST.has(file);
@@ -279,7 +275,7 @@ export function checkPublicSurface(root = MODULE_ROOT, { quiet = false, scope } 
 
     // `.local/` 字面量：只有配置加载器与它的示例/证明可以写。
     //
-    // ⚠️ 只查**代码面**（剥掉注释）：注释里解释"配置落在哪个目录"是在讲机制，
+    // ⚠️ 只查**代码本体**（剥掉注释）：注释里解释"配置落在哪个目录"是在讲机制，
     // 不是在读本机事实。不剥的话，每个想告诉读者配置在哪的模块都得进豁免名单——
     // 那名单会迅速变成"所有提到了机制的文件"，判据也就废了。
     if (!exempt && !isDoc && stripComments(text).includes(`${LOCAL_DIR}/`)) {
@@ -315,8 +311,8 @@ export function checkPublicSurface(root = MODULE_ROOT, { quiet = false, scope } 
   say(`扫过 ${String(files.length)} 个文件（跳过二进制/超大 ${String(binarySkipped)} 个）；`
     + `豁免 ${String(PUBLIC_SURFACE_ALLOWLIST.size)} 个文件（逐条带理由）。`);
   say(findings.length === 0
-    ? '公开面边界检查通过：结构合规、指纹零命中、内部引用零命中。'
-    : `公开面边界检查不通过：${String(findings.length)} 处命中。`);
+    ? '公开范围边界检查通过：结构合规、指纹零命中、内部引用零命中。'
+    : `公开范围边界检查不通过：${String(findings.length)} 处命中。`);
 
   return {
     ok: findings.length === 0,

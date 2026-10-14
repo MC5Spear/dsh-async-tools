@@ -1,5 +1,5 @@
 /**
- * `async_agent` 的单元测试（设计 §18.5，R13/R14 的机制半边）。
+ * `async_agent` 的单元测试（需求 §2.3 子代理派生与 §3.1 预设 persona 的机制半边）。
  *
  * 假件纪律：
  * - 假 `subagents` 只实现被测代码真正调用的 `getProvider` / `startContinuable`；
@@ -7,7 +7,7 @@
  *   `startContinuable` 换成 `start` 时，红因一目了然而不是泛型 TypeError；
  * - **零等待原语记录器**：`timer`/`on` 只记录不干活——"立返"由
  *   `execute` 全程零调用来证明，形状断言证明不了"没等"；
- * - **假 `sessionProjections`**（R13 模型选择）：只实现 `stateOf`，形态可配——
+ * - **假 `sessionProjections`**（模型选择）：只实现 `stateOf`，形态可配——
  *   routes 数组（有 policy）/ null（投影初值）/ 'throw'（投影读取抛错）。父路由经
  *   `parentAgentOptionsForDelegation`（真函数）读 `agent.session.requestHeader()`
  *   ——与 driver 的 `resolveChildAgentOptions` 同一数据源，假件按宿主形态造。
@@ -57,7 +57,7 @@ function agentEnv({ providers, policy = null } = {}) {
   };
   const getProviderQueries = [];
   const continuables = [];
-  /** 前台哨兵：宿主工具的非 continuable 兜底路径（本插件不走，§18.1 取舍）。 */
+  /** 前台哨兵：宿主工具的非 continuable 回退路径（本插件不走，只经 startContinuable——设计 §3.3）。 */
   const foregroundStarts = [];
   const timerUses = [];
   const onUses = [];
@@ -127,7 +127,7 @@ const EXEC_AGENT = {
   }
 };
 const EXEC = { agent: EXEC_AGENT };
-/** 白名单形态：本会话事故复现口径——`zai/glm-5.3` 在白名单、父路由不在。 */
+/** 白名单形态：`zai/glm-5.3` 在白名单、父路由不在。 */
 const POLICY = [{ provider: 'zai', model: 'glm-5.3' }];
 
 test('async_agent：立返 started + agent_id，note 含可复制的等待调用与生效数字（R13/R5）', async () => {
@@ -169,7 +169,7 @@ test('async_agent：startContinuable 恰一次，request 逐字段对齐宿主�
   assert.equal(call.request.label, '标签甲');
   assert.deepEqual(call.request.prompt, [{ type: 'text', text: '任务书。' }]);
   assert.equal(call.request.parent, EXEC_AGENT, 'parent 必须是 exec.agent（:491）');
-  // 参数面=结构保证：request 的键集恰好是 label/prompt/parent——透传键一概不得出现。
+  // 参数集合=结构保证：request 的键集恰好是 label/prompt/parent——透传键一概不得出现。
   assert.deepEqual(Object.keys(call.request).sort(), ['label', 'parent', 'prompt']);
 });
 
@@ -219,7 +219,7 @@ test('async_agent：未声明键显式报错并零派生——零容忍的对冲
     const args = { description: 'x', prompt: 'y', ...extra };
     const promise = tool.execute(args, EXEC);
     // 错误要点名实际键名、枚举支持键（D8：两个半句都锁——删掉"supported"枚举半句
-    // 会把模型引向宿主 subagent 工具参数面的错误猜测）。
+    // 会把模型引向宿主 subagent 工具参数集合的错误猜测）。
     await assert.rejects(
       promise,
       new RegExp(`unsupported argument\\(s\\): ${Object.keys(extra).join(', ').replace(/[.()*+?^${}|[\]\\]/g, '\\$&')}`)
@@ -249,9 +249,9 @@ test('async_agent：指定路由但 provider 未声明 agentOptions 能力 → �
     ),
     /"legacy" does not honor agentOptions.*requested route would be silently ignored/
   );
-  assert.deepEqual(env.continuables, [], '能力不达标不得派生');
+  assert.deepEqual(env.continuables, [], '功能不达标不得派生');
 
-  // 同一 provider 不指定路由时不受影响（能力预检只约束显式选择）。
+  // 同一 provider 不指定路由时不受影响（功能预检只约束显式选择）。
   const pass = await tool.execute({ description: 'x', prompt: 'y' }, EXEC);
   assert.equal(pass.status, 'started');
 });
@@ -291,7 +291,7 @@ test('async_agent：白名单外的路由被拒且零派生（宿主同款文案
 
 test('async_agent：无 policy 的会话拒绝指定模型——null 与读取抛错两种形态（R13）', async () => {
   // ① 投影状态为 null（reducer 在但没 record）：宿主在此形态下不暴露模型参数，
-  //    本工具参数面常开，用运行时拒绝对齐同一管控口径。键未注册时宿主 stateOf
+  //    本工具参数集合常开，用运行时拒绝对齐同一管控口径。键未注册时宿主 stateOf
   //    返回 undefined（不抛），与 null 同被折叠为"无 policy"，同一断言覆盖。
   const envNull = agentEnv({ policy: null });
   const toolNull = createAgentTool(envNull.ctx, envNull.view);
@@ -329,15 +329,15 @@ test('async_agent：零前台（哨兵不动）+ 零等待原语（timer/on 零�
 
   await tool.execute({ description: '丙', prompt: '任务。' }, EXEC);
 
-  assert.deepEqual(env.foregroundStarts, [], '不得走前台 start（宿主的非 continuable 兜底路径）');
-  // R13 实现约束"不注册任何定时器、监听器、作业"：删掉这层保护（实现里加个定时器）
-  // 会让这里变红——这正是审查 D6 要求的落点。
+  assert.deepEqual(env.foregroundStarts, [], '不得走前台 start（宿主的非 continuable 回退路径）');
+  // 实现约束"不注册任何定时器、监听器、作业"：删掉这层保护（实现里加个定时器）
+  // 会让这里变红。
   assert.deepEqual(env.timerUses, [], 'async_agent 不得使用任何定时器（不等待就没有打断问题）');
   assert.deepEqual(env.onUses, [], 'async_agent 不得注册任何监听器（等待交给 async_wait_agent）');
 });
 
 test('async_agent：三种错误态互相可区分，且一个子代理都不派生（R13）', async () => {
-  // ① agent-less 驱动（与 R11 同款纪律）。
+  // ① agent-less 驱动（与单次提权用例同款纪律）。
   const envA = agentEnv();
   const toolA = createAgentTool(envA.ctx, envA.view);
   await assert.rejects(
@@ -452,6 +452,6 @@ test('async_agent：parameters 契约——两键必填、provider/model 可选�
   assert.deepEqual([...tool.parameters.required].sort(), ['description', 'prompt']);
   assert.deepEqual(Object.keys(tool.parameters.properties).sort(),
     ['description', 'model', 'prompt', 'provider'],
-    '参数面恰四键——run_in_background 一概不暴露（后台不是模型的选择），'
-      + '成对/非空/白名单三条纪律由执行层强制（§18.2 步 2-4）');
+    '参数集合恰四键——run_in_background 一概不暴露（后台不是模型的选择），'
+      + '成对/非空/白名单三条纪律由执行层强制（需求 §2.3.2、设计 §3.3）');
 });

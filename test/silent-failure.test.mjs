@@ -1,22 +1,22 @@
 /**
- * R28 静默失败三防线单测（需求 `docs/requirements.md` R28 / 设计 §30，判据 §30.7）。
+ * 静默失败防护三防线单测（需求 §6.3 可选静默失败防护）。
  *
  * ## 这条需求修的是什么
  *
  * 受限沙箱里外部 EXE 被捕获形态（`2>&1` / `$(...)` / 变量赋值 / `>`）包装后死在
- * **进程创建层**——零输出、零 `[exit code]` 标记；R11 的拒绝标记只覆盖
- * "看得见的拒绝"，这一类**看不见的死亡**此前没有任何防线。三道防线（a 结果侧
+ * **进程创建层**——零输出、零 `[exit code]` 标记；单次提权的拒绝标记只覆盖
+ * "看得见的拒绝"，这一类**看不见的死亡**没有其他防线。三道防线（a 结果侧
  * 自诊断 / b 描述侧警示段 / c 常驻纪律段）全部由同一个 volatile 布尔
  * `silentFailureGuard` 控制，默认关——关掉后三处都以**行为差异**消失。
  *
- * ## 判据 → 各挡什么（§30.7；判据 14 = 全量无回归，由独立测试子代理跑 `npm test`）
+ * ## 判据 → 各挡什么（判据 14 = 全量无回归：`npm test` 全量跑）
  *
  * | 判据 | 挡的缺陷形态 |
  * |---|---|
  * | 1 捕获形四模式 + 管道一票否决 | 把管道也当捕获形 ⇒ cmdlet 管道大量误触发（可失败 ①） |
  * | 2 签名 1 四条件缺一即无 + 裸调用对照 | 半截条件 ⇒ 出路（裸调用重试）自己都触发提醒 |
  * | 3 空白算空 | `  \n  ` 被当成"有输出" ⇒ 签名 1 失明 |
- * | 4 cmdlet 误发接受 + 条件式措辞 | 文案直陈失败 ⇒ 裁定接受的误发面变成谎报（可失败 ②） |
+ * | 4 cmdlet 误发接受 + 条件式措辞 | 文案直陈失败 ⇒ 裁定接受的误发情形变成谎报（可失败 ②） |
  * | 5 提权跑不产出 | 提权重试完还提醒 ⇒ 提示变成噪声 |
  * | 6 签名 2 锚对矩阵 | 单锚/大小写漂移 ⇒ 拒签名该出不出、不该出乱出 |
  * | 7 非空且无锚双断 | 输出正常还提醒 ⇒ 纯噪声 |
@@ -25,7 +25,7 @@
  * | 10 后台出口：detail 尾部 + 结算时刻读开关 | 注册时刻快照开关 ⇒ 后台作业吃不到翻转 |
  * | 11 b 段矩阵 + 就地增删 | 无执行器也拼/关不掉 ⇒ 走不通的指引或噪声（可失败 ⑥） |
  * | 12 c 段注册形状 + 快照缺席失效安全 | 注入常真/快照缺席抛错 ⇒ 默认关裁定被架空（可失败 ⑦） |
- * | 13 设置面：FIELDS 四组全部字段 + spec/归一矩阵 | 字段漂移/垃圾值不收敛 ⇒ 界面与配置链断档（可失败 ⑤） |
+ * | 13 设置范围：FIELDS 四组全部字段 + spec/归一矩阵 | 字段漂移/垃圾值不收敛 ⇒ 界面与配置链断档（可失败 ⑤） |
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -74,8 +74,7 @@ function confinedCtx() {
   f.installShellExecute(() => Promise.resolve(fakeProc({ text: 'ok' }).proc));
   f.ctx.shell.sandboxMode = 'workspace-write';
   // lib/jobs.js 的 execute 走 ctx.get('sandboxPolicy') 取放行策略（escalation.test.mjs:52
-  // 同款桩）：缺了会得到 `TypeError: ctx.get is not a function`，断言本体根本执行不到
-  // （render-markers.test.mjs 头注的同类教训）。
+  // 同款桩）：缺了会得到 `TypeError: ctx.get is not a function`，断言本体根本执行不到。
   f.ctx.get = (key) => {
     if (key === 'sandboxPolicy') {
       return { resolve: () => ({ mode: 'workspace-write' }) };
@@ -86,7 +85,7 @@ function confinedCtx() {
 }
 
 test('R28 判据1：捕获形四模式任一命中，管道一票否决，多语句整体判', () => {
-  // 四模式（§30.2 启发式，命令文本无管道时的命中面）。
+  // 四模式（启发式，命令文本无管道时的命中范围）。
   assert.equal(hasCaptureForm('node x.mjs 2>&1'), true, '2>&1');
   assert.equal(hasCaptureForm('echo $(git rev-parse HEAD)'), true, '$(...) 子表达式捕获');
   assert.equal(hasCaptureForm('$out = npm ls --depth=0'), true, '语句首变量赋值捕获');
@@ -99,7 +98,7 @@ test('R28 判据1：捕获形四模式任一命中，管道一票否决，多语
   assert.equal(hasCaptureForm('dir 2>&1 | Measure-Object'), false, 'cmdlet 管道 + 2>&1 ⇒ 否决');
   // 多语句整体判：任一语句命中即算（需求口径）。
   assert.equal(hasCaptureForm('echo hi; node x.mjs > out'), true, '多语句任一命中');
-  // 非命中面：`if ($x -eq 1)` 不是赋值；`--flag=1` 不是赋值。
+  // 非命中情形：`if ($x -eq 1)` 不是赋值；`--flag=1` 不是赋值。
   assert.equal(hasCaptureForm('Get-ChildItem'), false);
   assert.equal(hasCaptureForm('if ($x -eq 1) { echo hi }'), false, '比较符不误中赋值锚');
   assert.equal(hasCaptureForm('npm run x -- --flag=1'), false, '参数内等号不误中');
@@ -147,7 +146,7 @@ test('R28 判据3：纯空白结算算"空"（设计钉死口径）', () => {
     '纯空白（空格+换行）也算空——只有真实输出正文才算非空');
 });
 
-test('R28 判据4：cmdlet 误发面被接受，且文案必须是条件式（可失败 ②）', () => {
+test('R28 判据4：cmdlet 误报范围被接受，且文案必须是条件式（可失败 ②）', () => {
   // 用户裁定：纯 cmdlet（空目录 Get-ChildItem 2>&1）命中条件式提醒**接受**。
   const notes = silentFailureNotes({
     proc: { sandbox: { mode: 'workspace-write' } },
@@ -157,7 +156,7 @@ test('R28 判据4：cmdlet 误发面被接受，且文案必须是条件式（�
     guard: true,
     lang: 'en'
   });
-  assert.equal(notes.length, 1, '裁定接受的误发面要有用例钉住');
+  assert.equal(notes.length, 1, '裁定接受的误发范围要有用例钉住');
   // 条件式措辞锚：不断言失败，正向替代（裸调用重试 / sandbox_permissions）必须在场。
   assert.match(notes[0], /If the output you expected is missing/, '条件式开头（"若"）——直陈式必红');
   assert.match(notes[0], /may have been killed at process creation/, '推测语气，不是断言');
@@ -199,7 +198,7 @@ test('R28 判据6：签名 2 锚对矩阵——同对两枚都在场才命中，
   assert.equal(hasDenialAnchors('无法运行'), false, '单锚不触发（ZH）');
   assert.equal(hasDenialAnchors('Failed To Run — Access is denied'), false, '大小写敏感：改大小写不算命中');
   assert.equal(hasDenialAnchors(''), false, '空输出无锚');
-  // 签名 2 只有开关 + 锚对两道门：不设捕获形/空白/受限/执行器之门（需求"附加提示"口径）。
+  // 签名 2 只有开关 + 锚对两道关卡：不设捕获形/空白/受限/执行器的关卡（需求"附加提示"口径）。
   const notes = silentFailureNotes({
     proc: {}, collector: collector('failed to run: Access is denied'),
     command: 'anything', escalationModes: [], guard: true, lang: 'en'
@@ -240,22 +239,28 @@ test('R28 判据8：开关关 ⇒ 三防线同断（行为差异，不是存在�
   const conf = confinedCtx();
   const tool = createRunTool(conf.ctx, resolveConfig({ toolName: 'async_run', silentFailureGuard: false }));
   assert.doesNotMatch(tool.description, /die silently at process creation/, '关 ⇒ b 段不拼');
-  // c：纪律段组稿为空串（快照现读，段本体不注销）。
+  // c：纪律段组稿为空串（快照现读，段本体不注销）。c 段与
+  // 预设过滤共用一个三服务子 scope（systemPrompt+sessions+sessionProjections）。
   const snapHost = fakeCtx();
   const injectFns = new Map();
   snapHost.ctx.inject = (list, fn) => { injectFns.set(list.join(','), fn); };
   snapHost.ctx.effect = () => {};
   applyHostHalf(snapHost.ctx, resolveConfig({ silentFailureGuard: false }));
   const captured = {};
-  injectFns.get('systemPrompt')({ systemPrompt: { context: (entry) => { Object.assign(captured, entry); } } });
-  assert.equal(captured.text(), '', '关 ⇒ c 段文本为空串（渲染层过滤）');
+  const scopeFor = (preset) => ({
+    systemPrompt: { context: (entry) => { Object.assign(captured, entry); } },
+    sessions: { get: () => ({ id: 'session-1' }) },
+    sessionProjections: { stateOf: () => preset }
+  });
+  injectFns.get('systemPrompt,sessions,sessionProjections')(scopeFor('dsh-async'));
+  assert.equal(captured.text({ agent: { id: 'session-1' } }), '', '关 ⇒ c 段文本为空串（渲染层过滤）');
   clearSnapshot();
 });
 
 test('R28 判据9：前台出口——note 拼在标记之后且居尾；无值不写 note 键', async () => {
   const conf = confinedCtx();
   const config = resolveConfig({ toolName: 'async_run', silentFailureGuard: true });
-  // 拒绝结算（真实形态）：R11 标记 + 签名 2 直陈式同场——静默行必须在标记之后。
+  // 拒绝结算（真实形态）：提权拒绝标记 + 签名 2 直陈式同场——静默行必须在标记之后。
   const denied = fakeProc({ text: 'node: failed to run: Access is denied', exitCode: 1, status: 'running', autoResolve: false });
   denied.proc.sandbox = { mode: 'workspace-write', denied: true };
   conf.installShellExecute(() => Promise.resolve(denied.proc));
@@ -280,7 +285,7 @@ test('R28 判据9：前台出口——note 拼在标记之后且居尾；无值�
     .execute({ command: 'node x.mjs 2>&1', description: 'run node' }, exec);
   quiet.settle();
   const r2 = await pending2;
-  assert.match(r2.note, /may have been killed at process creation/, '签名 1 条件式提醒到达模型可见面');
+  assert.match(r2.note, /may have been killed at process creation/, '签名 1 条件式提醒到达模型可见文本');
 
   // 开关关：无任何 note ⇒ note 键不得出现（"没有内容时不能写 note: ''"的口径）。
   const conf3 = confinedCtx();
@@ -315,9 +320,9 @@ test('R28 判据10：后台出口——detail 尾部拼静默行，开关在结�
   await new Promise((r) => { setTimeout(r, 0); });
   const flippedOn = conf.jobsFake.views().at(-1);
   assert.equal(flippedOn.status, 'completed');
-  // 后台 detail 的退出码行是 N5 既有键 `exit code: {code}`（text.js 的 detail.exitCode，
+  // 后台 detail 的退出码行是既有键 `exit code: {code}`（text.js 的 detail.exitCode，
   // 无方括号）；带方括号的 `[exit code: N]` 是**前台** render 标记（render.exitCode）。
-  // 判据 10 只要求 note 行居尾 + 结算时刻现读（§30.7），不触碰后台首行既有格式。
+  // 判据 10 只要求 note 行居尾 + 结算时刻现读，不触碰后台首行既有格式。
   assert.ok(flippedOn.detail.startsWith('exit code: 1\n'), '退出码行在场（detail 首行，后台口径无方括号）');
   const onLines = flippedOn.detail.split('\n');
   assert.equal(onLines.at(-1).includes('Silent-failure guard:'), true, '静默行居 detail 尾部');
@@ -368,7 +373,7 @@ test('R28 判据11：b 段四组合矩阵 + 描述就地增删（不复制 c 的
     createRunTool(on.ctx, resolveConfig({ toolName: 'async_run', silentFailureGuard: true })).description,
     /Execution discipline for this deployment/, 'b 是紧凑警示段，不是纪律段复制');
 
-  // 就地增删：活视图翻转 + refreshToolDescriptions 重建（R10/R21 volatile 链的行为差异面）。
+  // 就地增删：活视图翻转 + refreshToolDescriptions 重建（volatile 链的行为差异）。
   const flip = confinedCtx();
   const current = { ...resolveConfig({ toolName: 'async_run', silentFailureGuard: false }) };
   const view = new Proxy({}, { get: (_target, key) => current[key] });
@@ -388,30 +393,41 @@ test('R28 判据12：c 段经 ctx.inject 注册 systemPrompt，文本每次组�
   const injectFns = new Map();
   const injectLists = [];
   const effects = [];
-  // fakeCtx 没有 inject/effect——宿主面接线在此补（先例：T12 对 settings.js 的补法）。
-  // R30 起 applyHostHalf 注册**两个**子 scope（systemPrompt + ask 接线）——按服务单
-  // 捕获，systemPrompt 仍只注册一次。
+  // fakeCtx 没有 inject/effect——宿主侧接线在此补（先例：T12 对 settings.js 的补法）。
+  // applyHostHalf 注册**两个**子 scope；c 段纪律与预设过滤共用
+  // 三服务 scope（systemPrompt+sessions+sessionProjections），ask 接线另立。
   f.ctx.inject = (list, fn) => { injectLists.push(list); injectFns.set(list.join(','), fn); };
   f.ctx.effect = (dispose) => { effects.push(dispose); };
   applyHostHalf(f.ctx, resolveConfig({ silentFailureGuard: false }));
   assert.equal(effects.length, 2, '快照源 + R30 ask 接线两个处置器挂到 ctx.effect');
-  assert.deepEqual(injectLists, [['systemPrompt'], ['sessions', 'sessionProjections', 'agents']],
-    'R28 c 段仍是 systemPrompt 单服务子 scope；R30 ask 接线另立三服务子 scope');
+  assert.deepEqual(injectLists, [['systemPrompt', 'sessions', 'sessionProjections'], ['sessions', 'sessionProjections', 'agents']],
+    'c 段是 systemPrompt+预设过滤三服务子 scope；R30 ask 接线另立三服务子 scope');
 
   const entry = {};
-  injectFns.get('systemPrompt')({ systemPrompt: { context: (e) => { Object.assign(entry, e); } } });
+  const assembly = { agent: { id: 'session-1' } };
+  const scopeFor = (preset) => ({
+    systemPrompt: { context: (e) => { Object.assign(entry, e); } },
+    sessions: { get: () => ({ id: 'session-1' }) },
+    sessionProjections: { stateOf: () => preset }
+  });
+  injectFns.get('systemPrompt,sessions,sessionProjections')(scopeFor('dsh-async'));
   assert.equal(entry.name, 'async-tools:discipline', '段名命名空间化（sandbox:policy 成例）');
   assert.equal(entry.order, 130, '段序 130（内置三名的 110/115/120 之后）');
   assert.equal(typeof entry.text, 'function', 'text 是函数——每次组稿现求');
 
   // 关：首播快照就是关 ⇒ 空串（段本体不注销，渲染层过滤空串段）。
-  assert.equal(entry.text(), '', '快照 guard=false ⇒ 空串');
+  assert.equal(entry.text(assembly), '', '快照 guard=false ⇒ 空串');
   // 快照缺席（宿主行卸载后）⇒ 失效安全方向 = 关，不抛错。
   clearSnapshot();
-  assert.equal(entry.text(), '', '快照缺席 ⇒ 空串，不抛');
+  assert.equal(entry.text(assembly), '', '快照缺席 ⇒ 空串，不抛');
+  // 预设过滤（需求 §6.3）：目标会话不在本包两预设之列 ⇒ 空串（标准/评审链不吃纪律段）。
+  seedSnapshot(resolveConfig({ silentFailureGuard: true, agentLang: 'en' }));
+  injectFns.get('systemPrompt,sessions,sessionProjections')(scopeFor('standard'));
+  assert.equal(entry.text(assembly), '', '预设 standard ⇒ 空串（c 段只对本包两预设生效）');
+  injectFns.get('systemPrompt,sessions,sessionProjections')(scopeFor('dsh-async'));
   // 开 + en：E2E 逐字锚句必须与词典键一致。
   seedSnapshot(resolveConfig({ silentFailureGuard: true, agentLang: 'en' }));
-  const en = entry.text();
+  const en = entry.text(assembly);
   assert.equal(en, t('en', 'discipline.block'), 'en 段文本 = 词典键逐字（真机验收锚句同源）');
   assert.match(en, /run it once as a bare call/);
   assert.match(en, /killed at process creation/);
@@ -419,7 +435,7 @@ test('R28 判据12：c 段经 ctx.inject 注册 systemPrompt，文本每次组�
   assert.match(en, /-Width/, '陷阱 13 纪律：改写法');
   // 开 + zh：agentLang 现行档决定语言。
   seedSnapshot(resolveConfig({ silentFailureGuard: true, agentLang: 'zh' }));
-  const zh = entry.text();
+  const zh = entry.text(assembly);
   assert.equal(zh, t('zh', 'discipline.block'), 'zh 段文本 = 词典键逐字');
   assert.match(zh, /裸调用重试一次/);
   assert.match(zh, /进程创建层被杀/);
@@ -428,15 +444,15 @@ test('R28 判据12：c 段经 ctx.inject 注册 systemPrompt，文本每次组�
   clearSnapshot();
 });
 
-test('R28 判据13：设置面 16 字段逐项在场 + flag spec 矩阵 + resolveConfig 归一', async () => {
+test('R28 判据13：设置界面 17 字段逐项在场 + flag spec 矩阵 + resolveConfig 归一', async () => {
   // —— 键集身份核对：FIELDS = 预算 + 语言 + 开关 + 提问四组之和（顺序也一致；
-  // R30 起开关组 2 枚、ASK 组 2 枚，13 → 16）。
+  // 开关组 2 枚、ASK 组 3 枚，合计 17）。
   const expectedKeys = [...BUDGET_FIELD_KEYS, ...LANG_FIELD_KEYS, ...FLAG_FIELD_KEYS, ...ASK_FIELD_KEYS];
-  assert.equal(expectedKeys.length, 16, '16 = 10 预算 + 2 语言 + 2 开关 + 2 提问');
+  assert.equal(expectedKeys.length, 17, '17 = 10 预算 + 2 语言 + 2 开关 + 3 提问');
   assert.equal(FLAG_FIELD_KEYS.length, 2);
   assert.equal(FLAG_FIELD_KEYS[0], 'silentFailureGuard');
   assert.equal(FLAG_FIELD_KEYS[1], 'askTakeover');
-  assert.deepEqual(ASK_FIELD_KEYS, ['askTimeoutMs', 'askUiSeat']);
+  assert.deepEqual(ASK_FIELD_KEYS, ['askTimeoutMs', 'askExtendMs', 'askUiSeat']);
 
   // —— 加载 client.js（CJS 包裹，浏览器侧无转译器——two-planes 的装载成例）。
   const ROOT = resolve(import.meta.dirname, '..');
@@ -468,7 +484,7 @@ test('R28 判据13：设置面 16 字段逐项在场 + flag spec 矩阵 + resolv
   assert.deepEqual(spec.parse(''), { kind: 'clear' }, '空草稿 = 恢复默认（回 false）');
   assert.equal(spec.parse('yes'), undefined, '非法草稿阻止保存');
 
-  // —— resolveConfig 归一（§30.1：严格 true 才开；缺省/垃圾一律关）。
+  // —— resolveConfig 归一（严格 true 才开；缺省/垃圾一律关）。
   assert.equal(resolveConfig({ silentFailureGuard: true }).silentFailureGuard, true);
   assert.equal(resolveConfig({ silentFailureGuard: false }).silentFailureGuard, false);
   assert.equal(resolveConfig({}).silentFailureGuard, false, '缺省 ⇒ 关（默认关裁定）');

@@ -1,29 +1,34 @@
 /**
- * R24/R27 浏览器侧判据：**设置面在插件页上真的可用**（不靠后端 API 自述）。
+ * 浏览器侧判据（设计 §5.3）：**设置区在插件页上真的可用**（不靠后端 API 自述）。
  *
  * 路径（全部在真实页面上做）：插件 → 「查看 dsh-async-tools」→ **本包插件页本身**。
- * 不进任何组件行子页——R24/R97 的落点是 `plugins.bundle.config`，宿主把该槽渲染在
+ * 不进任何组件行子页——设置区落点是 `plugins.bundle.config`，宿主把该槽渲染在
  * 插件页的**描述与组件行之间**（`dsh-client-ui-plugin-manager/lib/client.js:1915-1919`）。
  *
- * 判据段（§29.3 口径；控件身份 = `id`，读数 = 说明行两段）：
+ * 判据段（设计 §5.3 口径；控件身份 = `id`，读数 = 说明行两段）：
  * ① **放置**：页面是插件页（`[data-plugin-detail="dsh-async-tools"]`）、设置区在插件页内、
  *    排在组件行**之前**，且组件行里**没有** configure 控件；
- * ② 设置区渲染出四组全部字段（`[id^="plugin-config-"]`），逐项按 id 去前缀的身份核对；
+ * ② 设置区渲染出四组全部字段（值字段 `[id^="plugin-config-"]`；布尔官方 Switch 按行内
+ *    帮助锚的 aria-controls 身份读——设计 §5.5：Switch 无障碍名走 label 属性），逐项核对；
  * ③ 毫秒字段的说明行带秒数读数段（两段口径：生效段恒在；只数个数抓不到"读数挂错字段"）；
- * ④-0 **输入读数实时**（判据 10）：不保存、只在输入框键入 → 输入段当场变（含亚 10 ms 形状）；
+ * ④-0 **输入读数实时**：不保存、只在输入框键入 → 输入段当场变（含亚 10 ms 形状）；
  * ④ 改一个字段 → 保存 → 等待态 = 保存按钮从「保存中…」恢复且重新可点；成功判据 =
  *    字段回到生效值（活 section 值回填）+ profile patch 出现该覆盖 + 生效段跟着变成
  *    新值的换算（这条同时证明卡片订阅了控制器：不订阅就永远不会用新快照重渲染）；
  * ⑤ 复原（清空该字段再保存）→ 落盘覆盖消失、字段与两段读数回到默认值、清空时输入段
- *    换成 — 占位（不给秒数）。
+ *    换成 — 占位（不给秒数）；
+ * ⑥ 字段帮助（需求 §5.5/§5.6·设计 §5.5）：17 个字段各有带圈问号按钮（type=button、
+ *    aria-controls=<id>-help、aria-expanded=false、可访问名走 help.a11yName 模板）；
+ *    点击 defaultYieldMs 的按钮 → 展开区（role=region、\n\n 分段 ≥ 2、首段=技术标识行）、
+ *    控件 aria-describedby 并入帮助区 id、保存启用状态不变（无副作用）；再点收起。
  *
  * 证据：判据读数与截图随脚本落盘到本机证据目录（logs/r24-dom.json、shots/r24-0*.png）。
  * 用法：node verify/_visual/probe-r24-bundle-config.mjs
  */
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { launch, openPage, evaluate, findBrowser, waitFor, screenshot } from './cdp.mjs';
-import { judgeConfigForm, judgePlacement, judgeReadoutFollows, judgeRoundTrip } from '../r24-judgements.mjs';
+import { judgeConfigForm, judgeHelpButtons, judgeHelpInteraction, judgePlacement, judgeReadoutFollows, judgeRoundTrip } from '../r24-judgements.mjs';
 import { BUDGET_FIELD_KEYS, LANG_FIELD_KEYS, FLAG_FIELD_KEYS, ASK_FIELD_KEYS, MS_FIELD_KEYS } from '../../lib/config.js';
 import { instanceCredentials, loadLocalPlaneOrSkip } from '../../tools/_local-config.mjs';
 
@@ -81,11 +86,25 @@ try {
   const reading = await evaluate(page, `(() => {
     const bundleRoot = document.querySelector('[data-plugin-detail="dsh-async-tools"]');
     const section = document.querySelector('[data-plugin-config]');
-    // 只收控件本体（input/select）——按 id 前缀选会连说明行 p（*-message）一起捞进来，
-    // 身份就多了一倍。
+    // 只收控件本体——按 id 前缀选会连说明行 p（*-message）一起捞进来，身份就多了一倍。
+    // 值字段（input/select）按 id 前缀；布尔字段是官方 P.Switch（设计 §5.5：Switch 不吃
+    // id prop，无障碍名走 label 属性），其身份按**同字段容器**里帮助按钮的
+    // aria-controls（plugin-config-<key>-help）读出——行归属即身份。
     const controls = section === null
       ? []
       : [...section.querySelectorAll('input[id^="plugin-config-"], select[id^="plugin-config-"]')];
+    const flagKeys = [];
+    const flagWritable = [];
+    if (section !== null) {
+      for (const hb of section.querySelectorAll('.ats-help-button')) {
+        const container = hb.closest('.ats-enum-field');
+        const sw = container === null ? null : container.querySelector('button[role="switch"]');
+        if (sw !== null) {
+          flagKeys.push((hb.getAttribute('aria-controls') || '').replace('plugin-config-', '').replace(/-help$/, ''));
+          flagWritable.push(sw.disabled !== true);
+        }
+      }
+    }
     const messageOf = (ctl) => {
       const described = ctl.getAttribute('aria-describedby') || '';
       const node = described === '' ? null : document.getElementById(described);
@@ -113,12 +132,12 @@ try {
     return {
       pageKind: bundleRoot !== null ? 'bundle' : (section !== null ? 'row' : 'unknown'),
       sectionPresent: section !== null,
-      count: controls.length,
-      fieldCount: controls.length,
+      count: controls.length + flagKeys.length,
+      fieldCount: controls.length + flagKeys.length,
       rowsAfterSection: order,
       rowConfigureControls: rowControls.length,
-      keys: controls.map((n) => n.id.slice('plugin-config-'.length)),
-      writable: controls.map((n) => n.disabled !== true && n.readOnly !== true),
+      keys: [...controls.map((n) => n.id.slice('plugin-config-'.length)), ...flagKeys],
+      writable: [...controls.map((n) => n.disabled !== true && n.readOnly !== true), ...flagWritable],
       readouts: seconds,
       readoutFields: readoutKeys,
       labels: section === null ? [] : [...section.querySelectorAll('label[for^="plugin-config-"]')]
@@ -126,11 +145,23 @@ try {
       failed: document.querySelector('[data-plugin-config] .failed') !== null
     };
   })()`);
+  // —— ⑥ 字段帮助·静态判据：17 个按钮逐项按 aria-controls 身份核对（不只数个数）——
+  const helpReading = await evaluate(page, `(() => {
+    const section = document.querySelector('[data-plugin-config]');
+    const buttons = section === null ? [] : [...section.querySelectorAll('.ats-help-button')];
+    return {
+      helpButtons: buttons.map((b) => ({
+        controls: (b.getAttribute('aria-controls') || '').replace('plugin-config-', '').replace(/-help$/, ''),
+        type: b.getAttribute('type') || '',
+        expanded: b.getAttribute('aria-expanded') === 'true',
+        label: b.getAttribute('aria-label') || ''
+      }))
+    };
+  })()`);
   // 判据本体在 `verify/r24-judgements.mjs` 的纯函数里（取数在这里、判据在那里），
   // 这样 `verify/mutate-r24-ui.mjs` 能用变异证明这些判据可被改坏打成红。
-  // ⚠️ 四组**全要**（键集的单一来源是 `lib/config.js`）。这里曾经只取 BUDGET + LANG
-  // （12 个），于是 R28 的 `silentFailureGuard` 与 R30 的三个提问接管字段**从未被这条
-  // 界面判据看过**——而它照样绿。判据少看几个字段不会报错，只会安静地少测。
+  // ⚠️ 四组**全要**（键集的单一来源是 `lib/config.js`）。判据少看几个字段
+  // 不会报错，只会安静地少测。
   const EXPECTED_KEYS = [...BUDGET_FIELD_KEYS, ...LANG_FIELD_KEYS, ...FLAG_FIELD_KEYS, ...ASK_FIELD_KEYS];
   const placementVerdict = judgePlacement(reading, EXPECTED_KEYS);
   check('① 设置区在插件页上、排在组件行之前、组件行里没有 configure 控件',
@@ -138,6 +169,9 @@ try {
   const formVerdict = judgeConfigForm(reading, EXPECTED_KEYS, MS_FIELD_KEYS);
   check(`②③ 设置区逐项在场且可写（${String(EXPECTED_KEYS.length)} 个字段，四组全取，id 身份与代码一致）+ 秒数读数长在 ${String(MS_FIELD_KEYS.length)} 个毫秒字段上（两段口径）`,
     formVerdict.ok, `${formVerdict.detail}；标签=${reading.labels.join(', ').slice(0, 130)}`);
+  const helpVerdict = judgeHelpButtons(helpReading, EXPECTED_KEYS);
+  check(`⑥-a 字段帮助按钮逐项在场（${String(EXPECTED_KEYS.length)} 个，aria-controls 身份核对；需求 §5.5/§5.6）`,
+    helpVerdict.ok, helpVerdict.detail);
   await screenshot(page, `${SHOTS}\\r24-04-plugin-page-config.png`);
 
   /** 把目标字段写成 `value`（`''` = 清空）；按 id 定位，不按标签文本、不按下标。 */
@@ -154,7 +188,7 @@ try {
    * 读目标字段的两段读数与保存按钮态。
    * 两段 = 说明行 `<p>` 里的两个 span（生效段 `.ats-sec-effective` / 输入段
    * `.ats-sec-input`——值只写秒文本，空草稿占位 `—`；非法草稿整行换 invalidLabel，
-   * 两段都不在，这是官方行为面）。
+   * 两段都不在，这是官方行为）。
    */
   const readBack = () => evaluate(page, `(() => {
     const ctl = document.querySelector('#plugin-config-${FIELD}');
@@ -177,7 +211,7 @@ try {
   /** 点保存，并把动作结果返回（不忽略"没点到"——静默的 no-op 会让后面的判据看着像实现坏了）。 */
   const save = async () => clickBy(`[...document.querySelectorAll('[data-plugin-config] button')].find((b) => /^(保存|Save)$/.test(b.textContent.trim()))`, '保存');
   /**
-   * 等页面给出结果：保存按钮从「保存中…」恢复**且**重新可点（R27 口径——成功不弹文案，
+   * 等页面给出结果：保存按钮从「保存中…」恢复**且**重新可点（成功不弹文案，
    * 等待态只能看按钮；上限 ~15 秒）。
    */
   const waitForOutcome = async () => {
@@ -207,7 +241,7 @@ try {
     baseline.effective.endsWith(DEFAULT_SECONDS) && baseline.input.endsWith(DEFAULT_SECONDS),
     `生效段=${JSON.stringify(baseline.effective)} 输入段=${JSON.stringify(baseline.input)}`);
 
-  // ④-0 输入读数实时（判据 10 的核心，**不保存**）：键入 4 → 亚 10 ms；键入 4321 → 新值换算。
+  // ④-0 输入读数实时（核心是**不保存**）：键入 4 → 亚 10 ms；键入 4321 → 新值换算。
   const typedSub10 = await typeInto('4');
   await sleep(400);
   const sub10 = await readBack();
@@ -261,11 +295,67 @@ try {
     `动作=${restoreAction}；复原后仍命中=${String(hitFinal)}；${restored.detail}`);
   await screenshot(page, `${SHOTS}\\r24-07-plugin-page-restored.png`);
 
+  // —— ⑥-b 字段帮助·交互判据：开合 + aria + 无副作用（复原之后做——帮助开合不得
+  //    弄脏表单，此拍表单必须干净；保存按钮启用状态前后对照）——
+  const helpInteraction = await evaluate(page, `(() => {
+    const HELP_KEY = 'defaultYieldMs';
+    const button = document.querySelector('[aria-controls="plugin-config-' + HELP_KEY + '-help"]');
+    const ctl = document.getElementById('plugin-config-' + HELP_KEY);
+    const saveBtn = [...document.querySelectorAll('[data-plugin-config] button')]
+      .find((b) => b.disabled !== undefined && /保存|Save/.test(b.textContent || ''));
+    const saveDisabledBefore = saveBtn === undefined ? null : saveBtn.disabled === true;
+    if (button === null) return { error: 'no-button' };
+    button.click();
+    return { saveDisabledBefore, clicked: true };
+  })()`);
+  await sleep(300);
+  const opened = await evaluate(page, `(() => {
+    const region = document.getElementById('plugin-config-defaultYieldMs-help');
+    const button = document.querySelector('[aria-controls="plugin-config-defaultYieldMs-help"]');
+    const ctl = document.getElementById('plugin-config-defaultYieldMs');
+    const paragraphs = region === null ? 0 : region.querySelectorAll('p').length;
+    return {
+      open: {
+        present: region !== null,
+        role: region === null ? '' : (region.getAttribute('role') || ''),
+        paragraphs,
+        firstParagraph: region === null ? '' : (region.querySelector('p')?.textContent || ''),
+        expanded: button === null ? false : button.getAttribute('aria-expanded') === 'true',
+        describedby: ctl === null ? '' : (ctl.getAttribute('aria-describedby') || '')
+      }
+    };
+  })()`);
+  await screenshot(page, `${SHOTS}\\r24-08-help-open.png`);
+  const closed = await evaluate(page, `(() => {
+    document.querySelector('[aria-controls="plugin-config-defaultYieldMs-help"]').click();
+    return true;
+  })()`);
+  await sleep(300);
+  const closedReading = await evaluate(page, `(() => {
+    const region = document.getElementById('plugin-config-defaultYieldMs-help');
+    const button = document.querySelector('[aria-controls="plugin-config-defaultYieldMs-help"]');
+    const saveBtn = [...document.querySelectorAll('[data-plugin-config] button')]
+      .find((b) => b.disabled !== undefined && /保存|Save/.test(b.textContent || ''));
+    return {
+      closed: { present: region !== null, expanded: button === null ? true : button.getAttribute('aria-expanded') === 'true' },
+      saveDisabledAfter: saveBtn === undefined ? null : saveBtn.disabled === true
+    };
+  })()`);
+  const interactionVerdict = judgeHelpInteraction({
+    open: opened.open,
+    closed: closedReading.closed,
+    saveDisabledBefore: helpInteraction.saveDisabledBefore,
+    saveDisabledAfter: closedReading.saveDisabledAfter
+  });
+  check('⑥-b 帮助开合：展开区分段渲染+技术标识行首段、aria-expanded/describedby 并入、保存启用状态不变、再点收起',
+    helpInteraction.clicked === true && closed === true && interactionVerdict.ok,
+    interactionVerdict.detail);
+
   failed = results.filter((r) => !r.ok).length;
   console.log(`\n总判定：${String(results.length - failed)}/${String(results.length)} 通过`);
   mkdirSync(LOGS, { recursive: true });
   writeFileSync(join(LOGS, 'r24-dom.json'),
-    JSON.stringify({ at: new Date().toISOString(), base: BASE, field: FIELD, value: NEW_VALUE, reading, baseline, sub10, liveRead, afterSave, emptied, afterRestore, results }, null, 2), 'utf8');
+    JSON.stringify({ at: new Date().toISOString(), base: BASE, field: FIELD, value: NEW_VALUE, reading, helpReading, helpInteraction, opened, closedReading, baseline, sub10, liveRead, afterSave, emptied, afterRestore, results }, null, 2), 'utf8');
 } catch (error) {
   console.log('PROBE-ERROR', error instanceof Error ? error.message : String(error));
 } finally {

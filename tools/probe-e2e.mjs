@@ -1,20 +1,20 @@
 /**
- * 宿主接线自检（`npm run probe:e2e`）。
+ * 宿主接线自检（进程内起真 cordis Context 的冒烟检查）。
  *
- * ## 这不是 R7 的端到端证据
+ * ## 这不是端到端证据
  *
  * 本脚本**不启动任何进程、不连任何 dsh 实例、不碰验证实例**。它做三件事：
- * 1. 真 `@deepseek-ai/cordis` 起最小 Context，注册**替身**服务，把四行插件
+ * 1. 真 `@deepseek-ai/cordis` 起最小 Context，注册**替身**服务，把工具行插件
  *    （`config.toolName` = async_run / async_wait_job / async_wait_agent / async_agent）
  *    各挂一次并卸载；
  * 2. 断言各行各自注册了正确的工具名、描述里有生效的预算数字、`output.schema` 形状合法；
  * 3. 用替身 shell / jobs / subagents 走一遍四个工具的**返回值形状**。
  *
- * R7 要求的端到端（短命令 / 长命令让出 / 插话打断等待 / 子代理等待 / 预设隔离 /
- * native 呈现）必须在**验证实例**上由真实会话执行并留证——脚本自检替代不了它，
- * 正如 timer 的教训：假件替身要什么有什么，`inject` 漏 `timer` 也照样全绿。
+ * 真正的端到端（短命令 / 长命令让出 / 插话打断等待 / 子代理等待 / 预设隔离 /
+ * native 呈现）必须在**验证实例**上由真实会话执行并留证——脚本自检替代不了它：
+ * 假件替身要什么有什么，`inject` 漏 `timer` 也照样全绿。
  *
- * 用法：`node --import ./tools/_host-hooks.mjs tools/probe-e2e.mjs`；全通过退出码 0。
+ * 用法：以本文件为参数、`--import ./tools/_host-hooks.mjs` 起 node 直接执行；全通过退出码 0。
  */
 import { Context } from '@deepseek-ai/cordis';
 import { apply, Config, inject, name } from '../lib/index.js';
@@ -46,7 +46,7 @@ async function verify(label, check) {
 
 /**
  * 等插件 fiber 进入 ACTIVE（cordis 的 `_reload()` 先 `await Promise.resolve()`
- * 才执行 apply，见 `PKGS/cordis/src/fiber.ts:646-658`）。
+ * 才执行 apply，见 `@deepseek-ai/cordis` 的 `src/fiber.ts:646-658`）。
  * @param {object} fork - `ctx.plugin()` 的返回值。
  * @returns {Promise<number>} 最终状态。
  */
@@ -122,13 +122,12 @@ function makeContext() {
       { kind: 'child', id: 'child-probe', mode: 'continuable', label: 'probe', activity: 'inactive', hasChildren: false }
     ],
     interrupt: () => 'requested',
-    // async_agent 的执行面（§18.2）：替身 provider 支持 continuable。
+    // async_agent 的执行侧：替身 provider 支持 continuable。
     getProvider: (providerName) => ({ name: providerName, prepareContinuable() {} }),
     startContinuable: async () => ({ childId: 'child-probe-spawned' })
   });
   ctx.provide('timer', {
     // 保留延迟语义的真实定时器：让出竞速的胜者必须由"命令是否已结束"决定。
-    // 早期写成 queueMicrotask 抢先回调，短命令被误判成让出分支（探针当场变红）。
     timeout: (callback, delay) => {
       const handle = setTimeout(callback, delay ?? 5);
       return () => clearTimeout(handle);
@@ -142,7 +141,7 @@ function makeContext() {
  * 挂一行插件。
  * @param {object} env - `makeContext()` 的返回值。
  * @param {string} toolName - 本次注册的工具名。
- * @param {object} [config] - 额外的行配置（如收紧让出预算，免得探针真等 1 秒）。
+ * @param {object} [config] - 额外的行配置（如收紧首次等待预算，免得探针真等 1 秒）。
  * @returns {Promise<object>} 挂载环境与 fork。
  */
 async function mount(env, toolName, config = {}) {
@@ -181,7 +180,7 @@ for (const toolName of ['async_run', 'async_wait_job', 'async_wait_agent', 'asyn
   });
 
   // 三个等待/运行工具的 schema 是一层 oneOf 联合；async_agent 立返单形态，
-  // 是带 additionalProperties:false 的平对象（§18.2，r14 审查 D1）。
+  // 是带 additionalProperties:false 的平对象（宿主 schema 形状）。
   await verify(`${toolName}：output.schema 形状与工具形态匹配，且声明了 render`, () => {
     const tool = env.registered[0];
     if (typeof tool.output?.render !== 'function') throw new Error('缺少 output.render');
@@ -197,7 +196,7 @@ for (const toolName of ['async_run', 'async_wait_job', 'async_wait_agent', 'asyn
     return true;
   });
 
-  await verify(`${toolName}：描述里带生效的预算数字（补 F15 的缺口）`, () => {
+  await verify(`${toolName}：描述里带生效的预算数字`, () => {
     const tool = env.registered[0];
     if (!/\d+ ms/.test(tool.description)) throw new Error('描述里没有任何毫秒数字');
     return true;
@@ -207,7 +206,7 @@ for (const toolName of ['async_run', 'async_wait_job', 'async_wait_agent', 'asyn
 }
 
 // --- 卸载：disposer 必须注销工具 -------------------------------------------------
-await verify('卸载后工具被注销（R4 可逆性）', async () => {
+await verify('卸载后工具被注销（可逆卸载）', async () => {
   const env = makeContext();
   const { fork } = await mount(env, 'async_run');
   if (env.registered.length !== 1) throw new Error('挂载后没有注册');
@@ -217,7 +216,7 @@ await verify('卸载后工具被注销（R4 可逆性）', async () => {
 });
 
 // --- 四个工具的返回值形状（全部走替身，不启动进程） ------------------------------
-await verify('async_run：让出预算内结束 → completed + output，且请求带 dshEnv 与 workdir', async () => {
+await verify('async_run：首次等待内结束 → completed + output，且请求带 dshEnv 与 workdir', async () => {
   const env = makeContext();
   const { fork } = await mount(env, 'async_run');
   const result = await env.registered[0].execute(
@@ -234,7 +233,7 @@ await verify('async_run：让出预算内结束 → completed + output，且请�
   return true;
 });
 
-await verify('async_run：超出让出预算 → running + job_id + 可照抄的 async_wait_job 示例', async () => {
+await verify('async_run：超出首次等待 → running + job_id + 可照抄的 async_wait_job 示例', async () => {
   const env = makeContext();
   // 让命令永远不结束 → 走让出分支；替身 timer 立刻回调，让竞速确定性收敛。
   env.shell.start = () => ({
@@ -300,9 +299,9 @@ console.log('');
 if (failures.length > 0) {
   console.error(`接线自检失败 ${failures.length} 项：`);
   for (const failure of failures) console.error(`  - ${failure}`);
-  console.error('\n注意：这只是宿主接线自检，R7 的端到端证据必须在验证实例上取。');
+  console.error('\n注意：这只是宿主接线自检，端到端证据必须在验证实例上取。');
   process.exitCode = 1;
 } else {
   console.log('宿主接线自检全部通过。');
-  console.log('提醒：这不是 R7 的端到端证据——真实的让出/等待/打断行为必须在验证实例上由真实会话验证。');
+  console.log('提醒：这不是端到端证据——真实的让出/等待/打断行为必须在验证实例上由真实会话验证。');
 }

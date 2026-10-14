@@ -1,6 +1,6 @@
 /**
- * `verify/check-agent-policy.mjs` 的变异证明（§38.4；r22 判据：新判据必须自带
- * 「改坏必红」的用例）。进程内 import 纯函数（不起子进程——r22 沙箱教训在案）。
+ * `verify/check-agent-policy.mjs` 的变异证明（新判据必须自带「改坏必红」的用例）。
+ * 进程内 import 纯函数（不起子进程——沙箱禁止管道捕获子进程输出）。
  *
  * 11 处变异分打宿主锚与本包锚：改常量 / 换库 / 删校验 / 改短路 / 宿主侧漂移
  * （stateVersion、init）——任何一处没红就报 UNCAUGHT 并退出 1；BASELINE-GREEN
@@ -93,7 +93,7 @@ const MUTATIONS = [
     mutate: (t) => t.replace('assertRoutes(allowedModels);', '/* assertRoutes(allowedModels); */')
   },
   {
-    name: 'M7 本包删空名单 throw → O8 必红（D8 的看守面）',
+    name: 'M7 本包删空名单 throw → O8 必红（D8 的看守侧）',
     side: 'our',
     expect: /^O8 MISSING/m,
     mutate: (t) => t.replace(/if \(allowedModels\.length === 0\) throw new Error\(`\$\{POLICY_EVENT\} requires at least one route`\);/, '')
@@ -111,14 +111,14 @@ const MUTATIONS = [
     mutate: (t) => t.replace('init: () => null,', 'init: () => [],')
   },
   {
-    name: 'M10 本包事件类型串改值 → O12 必红（r41-N1：标识符锚不住串值）',
+    name: 'M10 本包事件类型串改值 → O12 必红（标识符锚不住串值）',
     side: 'our',
     expect: /^O12 MISSING/m,
     mutate: (t) => t.replace("export const POLICY_EVENT = 'subagent/model-selection-policy';",
       "export const POLICY_EVENT = 'other/event-type';")
   },
   {
-    name: 'M11 本包 zod import 注释化 → O3 必红（r41-N3：行锚不吃注释文本）',
+    name: 'M11 本包 zod import 注释化 → O3 必红（行锚不吃注释文本）',
     side: 'our',
     expect: /^O3 MISSING/m,
     mutate: (t) => t.replace("import { z } from 'zod';", "// import { z } from 'zod';")
@@ -146,5 +146,5 @@ for (const mutation of MUTATIONS) {
 
 console.log(uncaught === 0
   ? `全部 ${String(MUTATIONS.length)} 处变异被抓住（本包锚腿 + 宿主漂移腿 + 值锚/注释化腿）`
-  : `${String(uncaught)} 处未抓住——看守存在恒真面`);
+  : `${String(uncaught)} 处未抓住——看守存在恒真缺口`);
 process.exitCode = uncaught === 0 ? 0 : 1;

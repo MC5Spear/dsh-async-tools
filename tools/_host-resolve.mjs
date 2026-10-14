@@ -5,11 +5,11 @@
  * node_modules，因此离线单测要用本钩子换锚点：
  *   node --import ./tools/_host-hooks.mjs --test "test/*.test.mjs"
  *
- * 0.2.0 线适配（§23/§37.1；R44 换钉）：本包的 peer 已锁 `0.2.0-rc.2`，
+ * 0.2.0 线适配：本包的 peer 已锁 `0.2.0-rc.2`，
  * `@deepseek-ai/schemastery` 需要 `~3.18.4` 的 `.volatile()`——开发机请把
- * `DSAT_HOST_MODULES` 指向 0.2.0 线运行树（R44 起用服务 AppParameters 所指的那棵
+ * `DSAT_HOST_MODULES` 指向 0.2.0 线运行树（服务 AppParameters 所指的那棵
  * node_modules，位于服务家目录下；
- * 一次性 `setx` 即可，DELIVERY 有登记）。落到旧代际树时
+ * 一次性 `setx` 即可）。落到旧代际树时
  * `.volatile is not a function` 就是 "锚点错了"的诚实信号，而不是静默错版。
  *
  * 可用 `DSAT_HOST_MODULES` 覆盖锚点目录。
@@ -39,8 +39,8 @@ function usable(dir) {
 let anchorUrl;
 
 /**
- * 计算候选 node_modules 目录列表（R29-f：不写死本机路径——本包随包分发，
- * 机器路径只在开发机的 `DSAT_HOST_MODULES` 里；这里只留可推导的常规布局）。
+ * 计算候选 node_modules 目录列表（需求 §6.1 安全红线：不写死本机路径——本包随包
+ * 分发，机器路径只在开发机的 `DSAT_HOST_MODULES` 里；这里只留可推导的常规布局）。
  *
  * 候选次序（首个可用者胜）：`DSAT_HOST_MODULES` → `DSH_HOME/profiles` →
  * `%APPDATA%/npm` 全局安装树。`DSH_HOME` 缺省 `~/.dsh`（与宿主同款取法）。

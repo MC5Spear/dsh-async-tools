@@ -1,14 +1,14 @@
 /**
- * `async_workflow` 工具的单测（对应 `docs/design.md` §34，需求 R34）。
+ * `async_workflow` 工具的单测（对应设计 §3.5 编排作业）。
  *
- * 断言骨架（§34.5 单元面）：
- * - **执行即注册**（R34-b）：准入先于引擎启动；label=meta.name、kind=
- *   'async-workflow'、owner=会话 id；meta.description 进 progress 行（R34-g）；
+ * 断言骨架（单元层）：
+ * - **执行即注册**：准入先于引擎启动；label=meta.name、kind=
+ *   'async-workflow'、owner=会话 id；meta.description 进 progress 行；
  * - **引擎同步抛不冒充准入拒绝**：run() 内的同步错误按原样重抛（诚实工具错误：
- *   什么都没跑），宿主 start 的准入错误才包装成可读拒绝（R8 文案）；
- * - **首次等待＝五信号竞速**（R34-c）：结算/插话/迟到作答/abort/预算——任何信号
- *   只结束等待，run.cancel 只属于 job_kill（abort 不接，R34-e）；
- * - **宿主保真**（R34）：renderWorkflowResult 文本、jobOutcomeOf 三支、
+ *   什么都没跑），宿主 start 的准入错误才包装成可读拒绝；
+ * - **首次等待＝五信号竞速**：结算/插话/迟到作答/abort/预算——任何信号
+ *   只结束等待，run.cancel 只属于 job_kill（abort 不接）；
+ * - **宿主保真**：renderWorkflowResult 文本、jobOutcomeOf 三支、
  *   mirror 的 log 通道事件、recorder 的四类会话记录、append 失败永久停录。
  *
  * 引擎与注册表都是测试替身（`_helpers.mjs` 的 fakeCtx/fake jobs）；引擎替身只
@@ -24,7 +24,7 @@ import { checkedTool, fakeAgent, fakeCtx, freezeTimers, inboxPayload } from './_
 const createWorkflowTool = (ctx, config) => checkedTool(buildWorkflowTool(ctx, config));
 
 /**
- * 引擎替身：`start(spec)` 返回 run（result 悬置到测试调 `_resolve`）。探针面：
+ * 引擎替身：`start(spec)` 返回 run（result 悬置到测试调 `_resolve`）。探针：
  * `calls`（start 的 spec 序列）、`runs`（各 run）、每个 run 的
  * `cancelCalls`/`lastCancelReason`/`disposeCalls`。
  * 保真点：`cancel(reason)` 让 `result` 以 `stopReason:'cancelled'` 结算
@@ -78,7 +78,7 @@ const BASE_ARGS = {
   yield_ms: 600000
 };
 
-test('async_workflow（R34-a/b/g）：预算内完成 → 宿主同形结算文本；注册字段与呈现面齐全', async () => {
+test('async_workflow（R34-a/b/g）：预算内完成 → 宿主同形结算文本；注册字段与呈现层齐全', async () => {
   const { f, runs, agent, appends, tool } = rig();
   const exec = { agent, signal: new AbortController().signal };
   const pending = tool.execute(BASE_ARGS, exec);
@@ -92,15 +92,15 @@ test('async_workflow（R34-a/b/g）：预算内完成 → 宿主同形结算文�
     'workflow "wf-demo" completed (2 agents).\nReturn value:\n{\n  "ok": true\n}',
     '结算文本与宿主 renderResult 逐字同形（:204-209）'
   );
-  // R34-b：执行即注册——准入字段。
+  // 执行即注册——准入字段。
   assert.equal(f.jobsFake.registeredSpecs.length, 1, '执行即注册（哪怕预算内就结算）');
   const spec = f.jobsFake.registeredSpecs[0];
   assert.equal(spec.kind, 'async-workflow');
   assert.equal(spec.label, 'wf-demo', 'R34-g：label=meta.name');
   assert.equal(spec.owner, agent.id);
-  // R34-g：meta.description 进 progress 行。
+  // meta.description 进 progress 行。
   assert.equal(f.jobsFake.views()[0].progress, 'demo workflow for tests');
-  // R34-e 前半：预算内结算的等待是活 waiter → 宿主不补发完成通知。
+  // 预算内结算的等待是活 waiter → 宿主不补发完成通知。
   assert.equal(f.jobsFake.wasAwaited(spec === null ? '' : f.jobsFake.views()[0].id), true,
     '预算内结算 → awaited=true → 不补发通知');
   // recorder：run-start + run-end 两条会话记录（stopReason 在册）。
@@ -108,7 +108,7 @@ test('async_workflow（R34-a/b/g）：预算内完成 → 宿主同形结算文�
   assert.deepEqual(appends[appends.length - 1], ['tool-workflow/run-end', { runId: 'wf-run-1', stopReason: 'completed' }]);
   // dispose 在 done 链先于 finish（宿主次序）。
   assert.equal(runs[0].disposeCalls, 1, 'done 链先 dispose 引擎 run');
-  // 呈现面：generic 卡 + 标题 wf 名 + rawInput=script。
+  // 呈现层：generic 卡 + 标题 wf 名 + rawInput=script。
   const card = tool.presentCall(BASE_ARGS);
   assert.equal(card.card, 'generic');
   assert.equal(card.title, 'workflow: wf-demo');
@@ -152,9 +152,9 @@ test('async_workflow（R34-b）：引擎同步抛 → 原样重抛（不冒充�
   await assert.rejects(
     () => tool.execute(BASE_ARGS, { agent, signal: new AbortController().signal }),
     // 恰为原文（逐字相等）：包装成 startRefused 文案的变异在此必红——包装文案
-    // 嵌入宿主原文后不再逐字相等（实现审查 I-2 的负向红条件）。
+    // 嵌入宿主原文后不再逐字相等（负向红条件）。
     (error) => error.message === 'script failed to parse: unexpected token }',
-    '引擎的同步错误必须原样到达模型面（诚实：什么都没跑；非 startRefused 文案）'
+    '引擎的同步错误必须原样到达模型侧（诚实：什么都没跑；非 startRefused 文案）'
   );
   assert.equal(engineCalls, 1, '服务现读恰好一次');
 });
@@ -177,22 +177,22 @@ test('async_workflow（R34-a）：无 agent 语境 → 拒绝且零注册零引�
   await assert.rejects(
     () => tool.execute(BASE_ARGS, { signal: new AbortController().signal }),
     /async_workflow must be called from a model turn/,
-    '无 agent 语境拒绝（§34.1-3，与 async_run §33.2-1 同理）'
+    '无 agent 语境拒绝（设计 §3.1，与 async_run 同理）'
   );
   assert.equal(f.jobsFake.registeredSpecs.length, 0);
   assert.equal(engine.calls.length, 0);
 });
 
-test('async_workflow（R34-a/G-1）：workflowEngine 缺席 → 可读错误；工具仍注册', async () => {
+test('async_workflow（R34-a/需求 §3.2）：workflowEngine 缺席 → 可读错误；工具仍注册', async () => {
   const f = fakeCtx();
-  f.ctx.get = () => undefined; // 组外行/无引擎部署的恒 miss 形态（G-1）
+  f.ctx.get = () => undefined; // 组外行/无引擎部署的恒 miss 形态（需求 §3.2：可读拒绝）
   const agent = fakeAgent();
   agent.session.append = () => {};
   const tool = createWorkflowTool(f.ctx, resolveConfig({ toolName: 'async_workflow' }));
   await assert.rejects(
     () => tool.execute(BASE_ARGS, { agent, signal: new AbortController().signal }),
     /workflowEngine service is not available/,
-    '引擎缺席必须可读（装载面指引），不是 undefined 崩溃'
+    '引擎缺席必须可读（装载侧指引），不是 undefined 崩溃'
   );
   assert.equal(f.jobsFake.registeredSpecs.length, 0);
 });
@@ -230,8 +230,8 @@ test('async_workflow（R34-c·插话）：让出窗口内用户消息 → 句柄
   assert.equal(result.status, 'running', '插话 → 转后台句柄（恢复通道 = 完成通知）');
   assert.match(result.note, /ended early: a user message arrived/);
   assert.match(result.note, /async_wait_job\(job_id="/, '恢复示例照带');
-  // elapsed 双向域（实现审查 I-4）：下界 = 触发前的 5 ms 等待（t0 必须在引擎启动
-  // 之前的 execute 入口），上界 = 让出预算（这条路不是预算到期退出的）。
+  // elapsed 双向域：下界 = 触发前的 5 ms 等待（t0 必须在引擎启动
+  // 之前的 execute 入口），上界 = 首次等待预算（这条路不是预算到期退出的）。
   assert.ok(result.elapsed_ms >= 5, `t0 取点在 execute 入口（实得 ${String(result.elapsed_ms)}）`);
   assert.ok(result.elapsed_ms < 600000, '插话先于预算到期返回');
   assert.equal(runs[0].cancelCalls, 0, '插话只结束等待，绝不取消 run（同款）');
@@ -252,7 +252,7 @@ test('async_workflow（R34-c·迟到作答）：让出窗口内迟到作答 → 
 
   const result = await pending;
   assert.equal(result.status, 'running');
-  assert.match(result.note, /A late answer has arrived \(Late answer for color: red\)/, '与 wait 工具同键（§34.2-6）');
+  assert.match(result.note, /A late answer has arrived \(Late answer for color: red\)/, '与 wait 工具同键（需求 §4.4）');
   assert.ok(result.elapsed_ms >= 5, `t0 取点在 execute 入口（实得 ${String(result.elapsed_ms)}）`);
   assert.ok(result.elapsed_ms < 600000, '迟到先于预算到期返回');
   assert.equal(f.jobsFake.waitersOf(result.job_id), 0);
@@ -285,12 +285,12 @@ test('async_workflow（R34-c·预算）：yield 到期 → 句柄 + 预算口径
   const pending = tool.execute({ ...BASE_ARGS, yield_ms: 5 }, exec);
   const result = await pending;
 
-  assert.equal(result.status, 'running', '预算到期 → 句柄（默认让出 20 s 的同款语义）');
-  assert.match(result.note, /yield/, 'note 说明按预算让出');
+  assert.equal(result.status, 'running', '首次等待到期 → 作业编号（默认首次等待 20 s 的同款语义）');
+  assert.match(result.note, /first wait/, 'note 说明按首次等待到期让出');
   assert.match(result.note, /async_wait_job\(job_id="/);
-  // N4 同款口径：elapsed 覆盖整个**生效**让出窗口（t0 挪到等待开始之后、
-  // 或没等满 5 ms 的变异在此必红）。
-  assert.ok(result.elapsed_ms >= 5, `elapsed 覆盖生效让出窗口（实得 ${String(result.elapsed_ms)}）`);
+  // 与 async_run 的 elapsed 口径同款：elapsed 覆盖整个**生效**首次等待窗口（t0 挪到
+  // 等待开始之后、或没等满 5 ms 的变异在此必红）。
+  assert.ok(result.elapsed_ms >= 5, `elapsed 覆盖生效首次等待窗口（实得 ${String(result.elapsed_ms)}）`);
   assert.equal(runs[0].cancelCalls, 0, '预算让出绝不取消 run');
   assert.equal(f.jobsFake.views()[0].status, 'running');
   assert.equal(f.jobsFake.waitersOf(result.job_id), 0, '预算路同撤 waiter（四路同款，I-5）');
@@ -322,7 +322,7 @@ test('async_workflow（R34-d·mirror）：引擎生命周期事件 → 作业卡
   assert.match(logText, /agent #1 auditor started\n/, 'agent-start 文本（宿主 :29-31 同形）');
   assert.match(logText, /agent #1 final answer delivered\n/);
   assert.ok(!logText.includes('unrelated'), '他 run 的事件不得写进本作业卡');
-  // mirror.stop 的结算后防御（实现审查 I-13）：结算后再发事件，不得再进卡。
+  // mirror.stop 的结算后防御：结算后再发事件，不得再进卡。
   f.emit('workflow/log', { id: runId }, 'post-settle leak');
   f.emit('workflow/phase', { id: runId }, 'Post-Settle Phase');
   const read2 = f.ctx.jobs.read(jobId, agent.id);
@@ -349,7 +349,7 @@ test('async_workflow（R34-d·recorder）：四类会话记录在册（run-start
     ['tool-workflow/agent-end', { runId, seq: 1, outcome: 'final answer delivered' }],
     ['tool-workflow/run-end', { runId, stopReason: 'completed' }]
   ], '四类记录的载荷与宿主 recorder :83-124 同形');
-  // 结算后防御的落档半边（实现审查 I-13 后半）：finish+abandon 之后事件不再
+  // 结算后防御的落档半边：finish+abandon 之后事件不再
   // 进会话档案（漏停录的变异在此必红）。
   f.emit('workflow/agent-end', { id: runId }, { seq: 2, outcome: 'post-settle record' });
   assert.equal(appends.length, 4, '结算后 recorder 不再写任何记录');
@@ -358,7 +358,7 @@ test('async_workflow（R34-d·recorder）：四类会话记录在册（run-start
 test('async_workflow（R34-d/recordsRun）：PTC 子调度调用不写持久记录（宿主 :242/:395 同判定）', async () => {
   const { f, runs, agent, appends, tool } = rig();
   // exec.parent 是 PTC transport 的子调度标记——宿主只让顶层调用写档
-  // （README:88「记录只由顶层调用产生」）；实现审查 I-3 对齐。
+  // （README:88「记录只由顶层调用产生」），与宿主同判定。
   const exec = { agent, signal: new AbortController().signal, parent: {} };
   const pending = tool.execute(BASE_ARGS, exec);
   await new Promise((r) => { setTimeout(r, 5); });
@@ -367,7 +367,7 @@ test('async_workflow（R34-d/recordsRun）：PTC 子调度调用不写持久记�
   assert.equal(appends.length, 0, '子调度不写持久记录（run-start 也不写）');
 });
 
-test('async_workflow（R34-d·recorder 失败面）：append 抛错 → warn + 该 run 永久停录', async () => {
+test('async_workflow（R34-d·recorder 失败路径）：append 抛错 → warn + 该 run 永久停录', async () => {
   const f = fakeCtx();
   const { engine, runs } = fakeEngine();
   f.ctx.get = () => engine;
@@ -394,12 +394,26 @@ test('async_workflow（R34-d·recorder 失败面）：append 抛错 → warn + �
     '停录必须 warn（不是静默）');
 });
 
-test('async_workflow（R34-g）：超长返回值截断（宿主 renderResult 同款标记）', async () => {
+test('async_workflow（R34-g）：超长返回值截断——保首尾、标省略量（与读取路径同款）', async () => {
   const { f, runs, agent, tool } = rig({ maxResultChars: 40 });
   agent.session.append = () => {};
   const exec = { agent, signal: new AbortController().signal };
   const pending = tool.execute(BASE_ARGS, exec);
   runs[0]._resolve({ stopReason: 'completed', agentsStarted: 1, value: { blob: 'x'.repeat(200) } });
   const result = await pending;
-  assert.match(result.result, /… \[truncated: \d+ more characters\]/, '截断标记必须在场');
+  assert.equal(result.result.slice(0, 20), 'workflow "wf-demo" c', '头部说明与正文开头必须保留');
+  assert.match(result.result, /\[output truncated: 176 chars omitted\]/, '省略量标注必须在场（双语键 render.truncated）');
+  assert.ok(result.result.endsWith('"\n}'), 'JSON 尾部必须保留——尾部内容不得因首截断永久丢失（需求 §2.2.3）');
+});
+
+test('async_workflow（R34-g·zh）：完成渲染与截断标注随 agentLang 切换', async () => {
+  const { f, runs, agent, tool } = rig({ maxResultChars: 40, agentLang: 'zh' });
+  agent.session.append = () => {};
+  const exec = { agent, signal: new AbortController().signal };
+  const pending = tool.execute(BASE_ARGS, exec);
+  runs[0]._resolve({ stopReason: 'completed', agentsStarted: 2, value: { blob: 'x'.repeat(200) } });
+  const result = await pending;
+  assert.match(result.result, /workflow「wf-demo」已完成（2 个子代理）。/, '中文档头部说明必须为中文（需求 §5.3）');
+  assert.match(result.result, /\[输出已截断：省略 176 字符\]/, '截断标注必须随语言档切换');
+  assert.ok(result.result.endsWith('"\n}'), '中文档同样保首尾');
 });

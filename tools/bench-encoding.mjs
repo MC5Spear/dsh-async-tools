@@ -7,7 +7,7 @@
  * 用法：node tools/bench-encoding.mjs <样本目录>
  *
  * 样本目录**必须显式给**：样本是拿本机 .NET 的 CP936 现生成的临时物，没有可移植的
- * 默认落点；从前这里写死过一个本机路径，那是把"我的机器"当成了所有人都有的东西。
+ * 默认落点——本机路径不写死在脚本里，机器事实只经配置加载器取。
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';

@@ -1,19 +1,17 @@
 # dsh-async-tools bundle patch: one HOST-plane row (the "host role" of this package).
 #
-# 单包两角色（背景见 INCIDENT-2026-09-16-async-tools-host-deleted.md；
-# 0.1.7 口径）：行配置里**没有 `toolName`** 时，`lib/index.js` 把
+# 单包两角色（设计 §1.1/§1.3）：行配置里**没有 `toolName`** 时，`lib/index.js` 把
 # apply 分派给 `lib/host.js` 的 `applyHostHalf`——**把本行 config 物化成生效快照并
-# 跟随 volatile 提交刷新**（`lib/settings.js` 的 `attachSnapshotSource`，§21.2），
-# **不注册任何工具**。0.1.5 时代的"设置命名空间注册 + 预设生命周期"职责已随机制
-# 退场：前者由本行 Config 的 volatile 字段 + 插件页卡片承载（§21.4），后者归
-# loader（F66）。
+# 跟随 volatile 提交刷新**（`lib/settings.js` 的 `attachSnapshotSource`，设计 §5.1），
+# **不注册任何工具**。设置入口由本行 Config 的 volatile 字段 + 插件页卡片承载
+# （设计 §5.3/§5.4），预设生命周期归 loader（设计 §7.1）。
 #
 # ⚠️ 这一行的行名必须是**平名** `dsh-async-tools`：`dsh-client-modules` 只把平名包
 # 纳入客户端模块图（`exactPackageSpecifier` 不收带子路径的行名，该行会被静默跳过、
 # 卡片永不渲染且无报错）。卡片本体在包根的 `client.js`（`dsh.client` 声明的注入表）。
 #
 # ⚠️ 这一行**不得携带 `toolName`**：带了就会把它变成工具行——宿主平面的工具进
-# **全局工具层**，每个预设都会默认带上（R4 禁止）。`test/two-planes.test.mjs` 的 T5
+# **全局工具层**，每个预设都会默认带上（需求 §3.2）。`test/two-planes.test.mjs` 的 T5
 # 反向锁死本文件不得出现 `toolName`。
 # 预算字段的 `config:` 是**合法**的：它是"改出厂值"的正式入口（组合层，
 # schema 默认值 < 本行 config < 设置卡片的 volatile 提交；需要重启生效——组合树
@@ -21,9 +19,10 @@
 #
 # 宿主行**零服务依赖**（`lib/host.js` 不 inject 任何服务）：`'loader/volatile-update'`
 # 是 loader 派发给本 fiber 的事件，监听挂在宿主行自己的 ctx 上即可；静态 inject 的
-# 七个服务（tools / jobs / shell 执行器 / shellEnv / subagents / timer /
-# sessionProjections——R13 模型选择，F94）是**工具角色**的依赖，宿主行只是与工具行
-# 共用同一个 `lib/index.js` 入口。
+# 八个服务（tools / jobs / shell 执行器 / shellEnv / subagents / timer /
+# sessionProjections / agents——设计 §1.3；`agents` 供可续派生与注册表状态读取，
+# `sessionProjections` 供模型选择路由校验）是**工具角色**的依赖，宿主行只是与
+# 工具行共用同一个 `lib/index.js` 入口。
 - insert:
     - id: async-tools-host
       name: dsh-async-tools

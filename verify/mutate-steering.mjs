@@ -1,16 +1,17 @@
 /**
- * 守哪些需求：R12（打断信号只认"插话" steer；排队 queue 不打断）+ F10（kind 过滤线）
+ * 守哪条需求：需求 §2.1.2 消息唤醒与取消——打断信号只认"插话" steer，排队 queue
+ * 不打断（kind 过滤线）
  *
- * 三个变异，方向互补，缺一个就有无守卫的防线（r12 审查 N1 用变异 K 实证过缺 M3 的后果）：
+ * 三个变异，方向互补，缺一个就有无守卫的防线：
  * - M1 **旧实现回潮**：去掉 `isSteering` 落点判定（一切 `source.kind==='user'` 的插入都打断）
- *   → 必须红在"排队消息（next-turn）不打断等待"上。守的是 R12 的**新增**性质。
+ *   → 必须红在"排队消息（next-turn）不打断等待"上。守的是**新增**性质（排队不打断）。
  * - M2 **收窄过头**：`isSteering` 恒 false（谁都不打断）
  *   → 必须红在"插话打断"的正向用例上（挂起的 `await watcher.promise` 本身就是红）。
- *   守的是 R12 **没有顺手杀掉**的旧性质（F10/R2/R3 的插话打断路径）。
+ *   守的是**没有顺手杀掉**的旧性质（插话打断路径）。
  * - M3 **拆掉承重墙**：删掉 `source.kind !== USER_MESSAGE_SOURCE` 过滤——它看起来被 isSteering 顺带覆盖，
  *   但真机上 deferContext 的上下文消息（工具结果、subagent-settled 结算通知）恰恰落
  *   **next-step**（`dsh-agent-loop:1118`），删过滤 ⇒ 等待被自己的通知打断。
- *   → 必须红在"非 user 的 next-step 消息不打断（F10×R12）"上（r12 审查 N1 补的用例）。
+ *   → 必须红在"非 user 的 next-step 消息不打断"上。
  *
  * ⚠️ **本脚本会原地改写真实的 `lib/interrupts.js`**，跑完在 `finally` 里写回并核对摘要。
  *
@@ -36,7 +37,7 @@ const SPAWN_FAILURE_CODES = new Set(['EPERM', 'ENOENT', 'EACCES']);
 /**
  * 跑目标测试并回读结果。
  *
- * 三种结局必须分清（r12 审查 §四.5：把"没跑成"记成 CAUGHT 是假绿）：
+ * 三种结局必须分清（把"没跑成"记成 CAUGHT 是假绿）：
  * - 正常跑完退出 0 → 绿；
  * - 跑完非 0 退出（有 fail 摘要或 ✖ 行）或超时击杀（`error.killed`，M2 的挂起形态）→ **真红**；
  * - spawn 失败（`error.code` ∈ SPAWN_FAILURE_CODES，或 status 为 null 且无任何输出）→
@@ -94,13 +95,13 @@ function restore() {
   if (after !== hashBefore) throw new Error(`还原失败：${TARGET} 与变异前不一致，请 git checkout 恢复。`);
 }
 
-// M1 的锚点：watchUserInterrupt 里的落点判定行（R12 的核心新增）。
+// M1 的锚点：watchUserInterrupt 里的落点判定行（排队不打断的判定核心，需求 §2.1.2）。
 const M1_ANCHOR = '      if (!isSteering(agent, payload.message.id)) return;';
 const M1_MUTATED = '      /* mutated M1: 旧实现回潮——不看落点，一切 user 插入都打断 */';
 // M2 的锚点：isSteering 的正判行。
 const M2_ANCHOR = '  return nextStep.some((message) => message?.id === messageId);';
 const M2_MUTATED = '  return false; // mutated M2: 收窄过头——谁都不打断';
-// M3 的锚点：kind 过滤行（F10 的承重墙，r12 审查 N1 之前无守卫）。
+// M3 的锚点：kind 过滤行（判据的承重墙——见头注 M3）。
 // 现行实现用 USER_MESSAGE_SOURCE 常量（lib/interrupts.js 的 watchUserInterrupt）。
 const M3_ANCHOR = '      if (payload?.message?.source?.kind !== USER_MESSAGE_SOURCE) return;';
 const M3_MUTATED = '      /* mutated M3: 拆掉 kind 过滤——非 user 的 next-step 消息（结算通知等）也会打断 */';
@@ -142,6 +143,6 @@ try {
   restore();
 }
 console.log('');
-console.log(ok ? '变异被抓住：R12 的两个方向 + F10 承重墙都有能失败的判据。' : '**变异逃逸或没跑成**——判据是恒真的，或环境不可用。');
+console.log(ok ? '变异被抓住：排队不打断与插话打断两个方向 + kind 过滤承重墙都有能失败的判据。' : '**变异逃逸或没跑成**——判据是恒真的，或环境不可用。');
 console.log('还原完成，摘要一致。');
 process.exitCode = ok ? 0 : 1;

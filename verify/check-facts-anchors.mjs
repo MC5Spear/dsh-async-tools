@@ -12,19 +12,19 @@
  *
  * ## 语料与树根都不在代码里
  *
- * 登记簿住在**不被跟踪**的本机平面语料目录（`<LOCAL_DIR>/docs/`），三棵安装树经
+ * 登记簿不由本公开仓跟踪，检查时读取本机材料目录（`<LOCAL_DIR>/docs/`），三棵安装树经
  * `tools/_local-config.mjs` 从 `.local/config.mjs`（或环境变量）读。两样都可以缺：
  *
  * - 语料目录整个不在（CI、外部 clone）→ 打一行 `SKIP` 放过；
  * - 某一档树没配置 → 该档的引用**逐条**记为 `TREE-ABSENT` 并在末尾汇总，
- *   不计入硬错误（缺配置不是"引用坏了"）。
+ *   不计入实证错误（缺配置不是"引用坏了"）。
  *
  * ## 为什么要导出 `analyzeFacts`
  *
- * `verify/mutate-facts-anchors.mjs` 要用变异证明这个检查器**能红**。它原本靠 `spawnSync` 捕获
- * 本脚本的 stdout，而**沙箱禁止管道捕获子进程输出**（EPERM → status 为 null），于是默认沙箱下
- * 变异脚本会报出"4 处没被抓住 + 基线红"这种**假红**——独立复审就是这么撞上的。现在分析逻辑
- * 以纯函数导出、直接吃文本，变异脚本不再起子进程，默认沙箱下即可运行。
+ * `verify/mutate-facts-anchors.mjs` 要用变异证明这个检查器**能红**。
+ * **沙箱禁止管道捕获子进程输出**（EPERM → status 为 null），靠 `spawnSync` 捕获
+ * stdout 的形态在默认沙箱下必成假红。分析逻辑以纯函数导出、直接吃文本，
+ * 变异脚本不起子进程，默认沙箱下即可运行。
  *
  * 用法：`node verify/check-facts-anchors.mjs [--facts <路径>] [--tree020 <路径>] [--tree017 <路径>] [--tree015 <路径>]`
  */
@@ -45,7 +45,7 @@ const FIELDS = ['现行值', '依据', '核销日期', '更新入口'];
  * @param {string} text - 登记簿全文。
  * @param {{ tree020?: string, tree017?: string, tree015?: string, repoRoot?: string }} [options]
  *   三棵安装树与本仓根。**树可以是 `undefined`**：那一档的引用逐条记为 `TREE-ABSENT`
- *   并计入 `treeAbsent`，不算硬错误——缺配置与"引用坏了"是两件事，不能混。
+ *   并计入 `treeAbsent`，不算实证错误——缺配置与"引用坏了"是两件事，不能混。
  * @returns {{ citations: number, ok: number, viaRepoFallback: number, treeAbsent: number,
  *   hardErrors: number, fieldProblems: number, entryCount: number, report: string[] }}
  *   读数与逐行报告。
@@ -146,7 +146,7 @@ export function analyzeFacts(text, options = {}) {
       report.push(`  MISSING ${label}`);
       bad += 1;
     } else if (found.absent) {
-      // 这一档树没配置：**不是**引用坏了，是这台机器没告诉我们在哪。逐条列出、
+      // 这一档树没配置：**不是**引用坏了，是这台机器没登记树的位置。逐条列出、
       // 末尾汇总，让"跳过了多少"可见——静默跳过正是本仓点名过的假绿形态。
       report.push(`  TREE-ABSENT ${label}（${citation.tree} 档安装树无来源）`);
       treeAbsent += 1;
@@ -156,8 +156,8 @@ export function analyzeFacts(text, options = {}) {
     } else {
       if (found.fallback) {
         viaRepoFallback += 1;
-        // 回退到本仓意味着"包名那一段没能在安装树里落地"——可能是本包自己的文件（正常），
-        // 也可能是包名写错了（被回退掩盖）。逐条打出来，供人肉眼分辨（r22 的 M2 变异就是靠它暴露的）。
+        // 回退到本仓意味着"包名那一段没能在安装树里找到"——可能是本包自己的文件（正常），
+        // 也可能是包名写错了（被回退掩盖）。逐条打出来，供人肉眼分辨。
         report.push(`  REPO-FALLBACK ${label} → ${found.full}`);
       }
       ok += 1;
@@ -207,7 +207,7 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.
   }
 
   const config = await loadLocalPlaneOrSkip('verify/check-facts-anchors.mjs（事实依据可解析性）');
-  // 显式给了 `--facts` 就必须在（那是调用者的错）；没给就从本机平面的语料目录取，
+  // 显式给了 `--facts` 就必须在（那是调用者的错）；没给就从本机侧的语料目录取，
   // 取不到按文档化跳过——CI 与外部 clone 上本来就没有登记簿。
   const factsArg = argOf('--facts', undefined);
   const FACTS = factsArg ?? join(config.root, LOCAL_DIR, 'docs', 'facts.md');
@@ -216,7 +216,7 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.
       console.error(`--facts 指的文件不存在：${FACTS}`);
       process.exit(2);
     }
-    console.log(`SKIP verify/check-facts-anchors.mjs：本机平面的登记簿不在（${LOCAL_DIR}/docs/facts.md）`);
+    console.log(`SKIP verify/check-facts-anchors.mjs：本机侧的登记簿不在（${LOCAL_DIR}/docs/facts.md）`);
     console.log('     事实依据判据只对开发机上的语料有意义；CI 与外部 clone 上没有它，按跳过处理（不是失败）。');
     process.exit(0);
   }

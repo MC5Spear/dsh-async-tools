@@ -1,32 +1,33 @@
 /**
- * R28 静默失败陷阱三防线的真机判据（验证实例，§30.7 真机 1–4、6；真机 5 的重启半边在
+ * 静默失败三防线的真机判据（验证实例；需求 §6.3、设计 §6.2；重启保持半边在
  * `probe-r28-restart-persistence.mjs`——重启会换 token/cookie，必须另起进程重读）。
  *
- * 三条取证通道（c 段无转录通道的裁定沿 r17-1：`request/header` 只有 config/adapterDefaults/tools，
+ * 三条取证通道（c 段无转录通道：`request/header` 只有 config/adapterDefaults/tools，
  * systemPrompt 本体不可直接取证）：
  *
  * - **b 段**（描述警告）：新会话 `request/header` 里 `async_run` 描述含/不含
  *   `Caution (this deployment)` 段（en 档；zh 档锚在 `_r28-helpers.mjs` 对应 zh 常量）。
- * - **c 段**（纪律段）：**行为判据**——固定格式问答 + 定向断言（§12.3 修正 3 的既定口径：
- *   逐字引用系统提示会被提示保密策略拒），判别子与电池见 `_r28-helpers.mjs` 头注。
- * - **a 管线**（结果侧 note）：真机只跑良性误发面（空目录 `Get-ChildItem 2>&1`，内建
- *   cmdlet 进程内执行，无 0xC0000142、无桌面弹窗——需求 508–509 禁的是 EXE 捕获形），
+ * - **c 段**（纪律段）：**行为判据**——固定格式问答 + 定向断言（既定口径：
+ *   逐字引用系统提示会被提示保密策略拒），判别子与测试套件见 `_r28-helpers.mjs` 头注。
+ * - **a 管线**（结果侧 note）：真机只跑良性误发用例（空目录 `Get-ChildItem 2>&1`，内建
+ *   cmdlet 进程内执行——不受外部 EXE 捕获形在进程创建层被杀的牵连，无 0xC0000142、
+ *   无桌面弹窗），
  *   以及签名 2 的管道形（`git.exe` + `|`）。**执行档按用户裁定「走提权」**
  *   （2026-09-27）：验证实例是托管服务 LocalSystem，无 logon SID，受限沙箱结构性缺席
  *   （作业死于 `CreateRestrictedToken prerequisite failed`）——
  *   真机 a 管线一律**双档**取证：受限档跑一次记环境读数（127 死法 + 无 note，
  *   顺带断言**无误发**），提权档（`sandbox_permissions`+`justification`，经批准）真跑
- *   拿真实输出。签名 1/签名 2 的 **note 阳性渲染**在验证实例受限面上不可达，由
- *   `test-r28` 单测覆盖；锚句真实性由 F110 实测档案背书（doc-audit-r10.md）。
- *   提权档良性空输出 → 无 note 同时是需求 467–468（提权跑完再提醒 = 噪声）的真机证据。
+ *   拿真实输出。签名 1/签名 2 的 **note 阳性渲染**在验证实例受限环境下不可达，由
+ *   `test-r28` 单测覆盖；锚句真实性有实测档案背书。
+ *   提权档良性空输出 → 无 note，同时是需求 §6.3 签名条件（受限且未提权才提示）的真机证据。
  *
- * 状态机：OFF 基线 → 页面 Switch 翻转保存（证明控件可用，不走 RPC）→ 三面在场（含
- * standard 预设全局性）→ 签名 2 → RPC 关回 → 三面消失 → agentLang=zh → 中文纪律段。
+ * 状态机：OFF 基线 → 页面 Switch 翻转保存（证明控件可用，不走 RPC）→ 三项在场（含
+ * standard 预设全局性）→ 签名 2 → RPC 关回 → 三项消失 → agentLang=zh → 中文纪律段。
  * 收尾**故意留 silentFailureGuard=true**（真机 5 要验重启保持；由重启探针的 finally 复原
  * false），语言/界面档复原 auto/en。
  *
- * 电池噪声治理（r28-round3 实测）：在场类行为判据走 `askBatteryConsistent`——4294967295
- * 不可猜，主判别子（AVKILL+MEANS）命中即证明块在场，语言子矛盾的读数视为电池噪声，
+ * 测试套件噪声治理（实测口径）：在场类行为判据走 `askBatteryConsistent`——4294967295
+ * 不可猜，主判别子（AVKILL+MEANS）命中即证明块在场，语言子矛盾的读数视为测试套件噪声，
  * 换**新会话**重抽 ≤3 次、逐次记录进证据 JSON；缺席断言仍单发（幻觉出不可猜退出码
  * 结构上不可达，不重抽）。
  *
@@ -44,7 +45,7 @@ import {
   PRESET, EMPTY_DIR, BENIGN_COMMAND, readNs, patchNs, askBattery, askBatteryConsistent, fieldOf, commandRun
 } from './_r28-helpers.mjs';
 
-/** 签名 2 的管道形命令（F110 实测形：EXE + 管道）。 */
+/** 签名 2 的管道形命令（实测形：EXE + 管道）。 */
 const GIT_COMMAND = 'git --version | Select-String git';
 
 const { base: BASE, token } = instanceCredentials(localConfig);
@@ -94,7 +95,7 @@ try {
     await clickBy(`[...document.querySelectorAll('*')].find((n) => (n.getAttribute('aria-label') || '') === '查看 dsh-async-tools')`, '查看 dsh-async-tools');
     await sleep(2500);
   };
-  /** 读设置表单的开关面（R28 第 13 字段不是 input/select，控件本体是官方 Switch）。 */
+  /** 读设置表单的开关（`silentFailureGuard` 不是 input/select，控件本体是官方 Switch）。 */
   const readForm = () => evaluate(page, `(() => {
     const section = document.querySelector('[data-plugin-config]');
     if (section === null) return { names: [], switches: [] };
@@ -113,7 +114,7 @@ try {
   check('⓪ silentFailureGuard 出厂默认 false（回读）', start.value.silentFailureGuard === false,
     `读数=${JSON.stringify(start.value)}`);
 
-  console.log('· 1/6 真机 1：默认关——三面都不在场');
+  console.log('· 1/6 真机 1：默认关——三项都不在场');
   await openPluginPage();
   const form0 = await readForm();
   check('真机 1a 设置卡第 13 字段以官方 Switch 在场（aria-checked=false）',
@@ -131,7 +132,7 @@ try {
   check('真机 1d 问答轮零工具调用（判据只测系统提示）', off1.toolCalls === 0, `toolCalls=${String(off1.toolCalls)}`);
   const benign0c = await commandRun(BENIGN_COMMAND);
   log.benign0confined = { session: benign0c.sessionId, result: benign0c.result.slice(0, 400) };
-  check('真机 1e-受限 a 管线缺席 + F116 环境读数（127 死于 ACL 前置，无 note）',
+  check('真机 1e-受限 a 管线缺席 + 受限档环境读数（127 死于 ACL 前置，无 note）',
     benign0c.result.includes(ACL_FAIL) && !benign0c.result.includes(NOTE_EN),
     `环境锚=${String(benign0c.result.includes(ACL_FAIL))} 含note=${String(benign0c.result.includes(NOTE_EN))} 结果前 200 字=${JSON.stringify(benign0c.result.slice(0, 200))}`);
   const benign0e = await commandRun(BENIGN_COMMAND, { escalate: true });
@@ -141,7 +142,7 @@ try {
       && benign0e.approvals.length >= 1 && benign0e.approvals.every((o) => o === 'allowed-once'),
     `空输出=${String(benign0e.result.trim() === '')} 批准=${JSON.stringify(benign0e.approvals)} 含note=${String(benign0e.result.includes(NOTE_EN))}`);
 
-  console.log('· 2/6 真机 2：页面 Switch 翻转保存 → 开（不重启，三面在场 + 全局性）');
+  console.log('· 2/6 真机 2：页面 Switch 翻转保存 → 开（不重启，三项在场 + 全局性）');
   const flipped = await evaluate(page, `(() => {
     const sw = document.querySelector('[data-plugin-config] button[role="switch"]');
     if (sw === null) return 'no-switch';
@@ -174,7 +175,7 @@ try {
   check('真机 2c c 段全局性（standard 预设会话同样在场——宿主行注入，不挑预设；矛盾读数重抽 ≤3）',
     onStd.attempts.some((a) => a.consistent),
     `抽次=${String(onStd.attempts.length)} 逐次=${JSON.stringify(onStd.attempts)}`);
-  check('真机 2c′ standard 会话确实无 async_run（b 段判别面只属本包工具）',
+  check('真机 2c′ standard 会话确实无 async_run（b 段判别范围只属本包工具）',
     onStd.description === null,
     `async_run 描述${onStd.description === null ? '缺席（预期）' : '在场（意外）'}`);
   const benign1c = await commandRun(BENIGN_COMMAND);
@@ -184,7 +185,7 @@ try {
     `环境锚=${String(benign1c.result.includes(ACL_FAIL))} 含note=${String(benign1c.result.includes(NOTE_EN))} 结果前 200 字=${JSON.stringify(benign1c.result.slice(0, 200))}`);
   const benign1e = await commandRun(BENIGN_COMMAND, { escalate: true });
   log.benign1escalated = { session: benign1e.sessionId, result: benign1e.result.slice(0, 400), approvals: benign1e.approvals };
-  check('真机 2e a 管线提权豁免（guard=on，良性捕获形提权真跑空输出仍无 note——需求 467–468 噪声豁免）',
+  check('真机 2e a 管线提权豁免（guard=on，良性捕获形提权真跑空输出仍无 note——需求 §6.3 的噪声豁免：提权跑完不再提醒）',
     benign1e.result.trim() === '' && !benign1e.result.includes(NOTE_EN)
       && benign1e.approvals.length >= 1 && benign1e.approvals.every((o) => o === 'allowed-once'),
     `空输出=${String(benign1e.result.trim() === '')} 批准=${JSON.stringify(benign1e.approvals)} 含note=${String(benign1e.result.includes(NOTE_EN))}`);
@@ -192,7 +193,7 @@ try {
   console.log('· 3/6 真机 3：签名 2 管道形——受限档记环境读数；同命令提权重跑真执行（用户裁定「走提权」）');
   const s3c = await commandRun(GIT_COMMAND);
   log.s3confined = { session: s3c.sessionId, result: s3c.result.slice(0, 500) };
-  check('真机 3a 受限档管道形（F116 死法在场；锚对不在、无 note——本机受限面上无真拒绝可复现）',
+  check('真机 3a 受限档管道形（受限档死法在场；锚对不在、无 note——本机受限环境下无真拒绝可复现）',
     s3c.result.includes(ACL_FAIL)
       && !s3c.result.includes(ANCHOR_FAIL) && !s3c.result.includes(ANCHOR_DENIED)
       && !s3c.result.includes(NOTE_EN),
@@ -204,10 +205,10 @@ try {
       && s3e.approvals.length >= 1 && s3e.approvals.every((o) => o === 'allowed-once'),
     `版本输出=${String(/git version \d/.test(s3e.result))} 批准=${JSON.stringify(s3e.approvals)} 含note=${String(s3e.result.includes(NOTE_EN))} 结果前 200 字=${JSON.stringify(s3e.result.slice(0, 200))}`);
   log.s3coverage = {
-    note: '签名 1/签名 2 的 note 阳性渲染在验证实例受限面上不可达（F116：LocalSystem 无 logon SID，受限沙箱结构性缺席）；阳性渲染由 test-r28 单测覆盖（含四条件判定与锚对匹配），锚句真实性由 F110 实测档案背书（2026-09-27 审查子代理复现）'
+    note: '签名 1/签名 2 的 note 阳性渲染在验证实例受限环境下不可达（LocalSystem 无 logon SID，受限沙箱结构性缺席）；阳性渲染由 test-r28 单测覆盖（含四条件判定与锚对匹配），锚句真实性有实测档案背书（2026-09-27 复现）'
   };
 
-  console.log('· 4/6 真机 4：关回（RPC 写 false，不重启）——三面同时消失');
+  console.log('· 4/6 真机 4：关回（RPC 写 false，不重启）——三项同时消失');
   await patchNs({ silentFailureGuard: false });
   await sleep(1500);
   const off2 = await askBattery(PRESET);

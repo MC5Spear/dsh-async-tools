@@ -4,10 +4,10 @@
 # 是两种真实的使用形态——贡献者多半装了 DSH，外部读者多半没装。只测一种的话，
 # 另一种会在别人机器上第一次跑就红。
 #
-# - `with-host`：装出宿主树当锚，跑**全量**电池与全部检查器。
+# - `with-host`：装出宿主树当锚，跑**全量**测试套件与全部检查器。
 # - `offline`：**故意不装**宿主，跑离线形态——接线类用例必须**自跳过并打印理由**，
-#   而不是整片崩掉。这条曾经真的崩过（`lib/ask-takeover.js` 的宿主 import 在加载期
-#   就让四个测试文件 `ERR_MODULE_NOT_FOUND`），所以它是一个**回归钉子**。
+#   而不是整片崩掉（防线：`lib/ask-takeover.js` 的宿主 import 若在加载期失败，
+#   整片测试文件会 `ERR_MODULE_NOT_FOUND`——离线作业就是这个防线的回归钉子）。
 #
 # ⚠️ **`--legacy-peer-deps` 是离线作业的要害，别删。**
 # 本包的九个 `@deepseek-ai/dsh*` 是 `peerDependencies`，而 **npm 7+ 默认自动安装 peer**：
@@ -20,7 +20,7 @@
 # 前提是要验的，不是假定的：少了它，宿主锚缺席时接线用例会全部自跳过，
 # 作业照样绿，而它其实什么都没测。
 #
-# 为什么用 windows-latest：本包的行为面里有 Windows 特有的部分（沙箱提权键、
+# 为什么用 windows-latest：本包的行为范围里有 Windows 特有的部分（沙箱提权键、
 # 捕获形命令的静默失败、PowerShell 的行尾与编码），那些判据在 Linux 上不成立。
 name: CI
 
@@ -38,7 +38,7 @@ concurrency:
 
 jobs:
   with-host:
-    name: 全量电池（宿主锚 ${{ matrix.node }}）
+    name: 全量测试套件（宿主锚 ${{ matrix.node }}）
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -71,7 +71,7 @@ jobs:
 
       # 解析钩子按 DSAT_HOST_MODULES 找锚。这里用 Actions 的 env 给，
       # **不要**用 --env-file：Node 的 --env-file 不覆盖已存在的同名环境变量。
-      - name: 电池（全量）
+      - name: 测试套件（全量）
         run: npm run test:inproc
         env:
           DSAT_HOST_MODULES: ${{ github.workspace }}/node_modules
@@ -115,10 +115,10 @@ jobs:
           }
           Write-Host "宿主锚不在场 ✔ 离线形态成立"
 
-      - name: 电池（离线）
+      - name: 测试套件（离线）
         run: npm run test:offline
 
-      # 公开面边界与编码体检不依赖宿主，两种形态都要过。
+      # 公开层边界与编码体检不依赖宿主，两种形态都要过。
       - name: 检查器（不需宿主锚的那几个）
         run: |
           npm run check:public-surface

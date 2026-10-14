@@ -3,8 +3,8 @@
  *
  * ## 为什么必须真机验
  *
- * 单测用替身构造 `sandboxMode`，因此验的是"我的代码在替身下行为正确"。
- * 而 R11 的第一道门槛是**组合层**：预设要真的挂一个**约束型**执行器
+ * 单测用替身构造 `sandboxMode`，验的是"本包代码在替身下行为正确"。
+ * 而单次提权（需求 §6.1）的第一道门槛是**组合层**：预设要真的挂一个**约束型**执行器
  * （`pwsh-sandbox`），`ctx.shell.sandboxMode` 才非 `undefined`，两个键才会被广告。
  * 这件事**任何替身都证明不了**——它是组合事实。
  *
@@ -30,12 +30,12 @@ function check(name, ok, detail = '') {
   console.log(`  ${ok ? 'OK    ' : 'WRONG '} ${name}${detail === '' ? '' : `\n          ${detail}`}`);
 }
 
+// 登录与 `verify/_rpc.mjs` 同款：token 换 cookie 一跳（redirect:'manual'），
+// **不追 Location**——相对重定向 `.` 拼进基址会得到 `http://…/./` 形态的坏 URL，
+// 且现行宿主在首跳就下发全部会话 cookie。
 const first = await fetch(`${BASE}/?token=${encodeURIComponent(token)}`, { redirect: 'manual' });
-let cookie = (first.headers.getSetCookie?.() ?? []).map((e) => e.split(';', 1)[0]).join('; ');
-const loc = first.headers.get('location');
-const home = await fetch(`${BASE}${loc ?? '/'}`, { headers: { cookie } });
-const more = (home.headers.getSetCookie?.() ?? []).map((e) => e.split(';', 1)[0]).join('; ');
-if (more !== '') cookie = `${cookie}; ${more}`;
+const cookie = (first.headers.getSetCookie?.() ?? []).map((e) => e.split(';', 1)[0]).join('; ');
+if (cookie.length === 0) throw new Error('token exchange returned no cookie');
 
 let rpcId = 0;
 /**
@@ -57,9 +57,14 @@ async function rpc(method, args) {
   return body.result.value;
 }
 
-// 开一个会话，停在"模型已收到工具表"那一刻。
-const created = await rpc('session/create', { request: {} });
+// 开一个会话，停在"模型已收到工具表"那一刻。预设必须点名 `dsh-async`——
+// 不带 agentPreset 会落实例默认预设（standard），工具表里没有 async_run，
+// 判据全部空转（0/0）。probe-agent-e2e 的 newSession 同款防回退断言。
+const created = await rpc('session/create', { request: { agentPreset: 'dsh-async' } });
 const sessionId = created.sessionId ?? created.session?.sessionId ?? created.id;
+if (created.agentPreset !== 'dsh-async') {
+  throw new Error(`预设回退：要 dsh-async，得到 ${String(created.agentPreset)}`);
+}
 console.log(`  会话：${sessionId}`);
 await rpc('session/prompt', {
   request: {
@@ -76,7 +81,7 @@ const deadline = Date.now() + 90_000;
 let header = null;
 while (Date.now() < deadline && header === null) {
   await new Promise((r) => { setTimeout(r, 2500); });
-  // ⚠️ `session/list` 的行在 **`items`** 里（第一版写成 `sessions`，于是永远找不到会话，
+  // ⚠️ `session/list` 的行在 **`items`** 里（写成 `sessions` 会永远找不到会话，
   // 表现为"没拿到 request/header"——像个超时，其实是取错了键）。
   const row = (await rpc('session/list', { _request: {} })).items.find((s) => s.sessionId === sessionId);
   if (row === undefined) continue;
@@ -114,7 +119,7 @@ if (run !== undefined) {
       /one-shot retry/i.test(props.sandbox_permissions.description ?? ''),
       String(props.sandbox_permissions.description ?? '').slice(0, 90));
   }
-  // 与内置 pwsh 对齐：同一种能力在同一个部署里不该只有一半工具有。
+  // 与内置 pwsh 对齐：同一种功能在同一个部署里不该只有一半工具有。
   const pwsh = tools.find((t) => t.name === 'pwsh');
   if (pwsh !== undefined) {
     const pwshProps = pwsh.parameters?.properties ?? {};

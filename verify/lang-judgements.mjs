@@ -1,5 +1,5 @@
 /**
- * R25 双开关的**纯函数**判据：展示面文案与 Agent 面文案各自独立切换。
+ * 双语言开关（需求 §5.3）的**纯函数**判据：展示侧文案与 Agent 侧文案各自独立切换。
  *
  * 取数在 `verify/probe-lang-independence.mjs`（真机：页面 DOM + 每次新会话的 `request/header`），
  * 判据在这里，所以 `verify/mutate-lang.mjs` 能用变异证明每一条都能被改坏打成红。
@@ -16,7 +16,7 @@ function same(a, b) {
 }
 
 /**
- * R25 的判据：两个方向各自"换了自己那块"且"没动对方那块"。
+ * 需求 §5.3 的判据：两个方向各自"换了自己那块"且"没动对方那块"。
  *
  * 读数来源与命名（`0` = 出厂态、`1` = 只改 `agentLang` 之后、`2` = 再改 `uiLang` 之后）：
  * - `labels*`：设置表单的可见字段标签（`[data-plugin-config] label` 的文本序列）；
@@ -37,7 +37,7 @@ export function judgeLangIndependence(reading) {
     uiSwitch: !same(reading.labels2, reading.labels1)
       && cjkCount(reading.labels2) === 0 && cjkCount(reading.labels1) > 0,
     agentInvariant: reading.desc2 === reading.desc1,
-    // 字段身份不随语言变（语言只换文案，不换字段面）。
+    // 字段身份不随语言变（语言只换文案，不换字段集合）。
     identity: same(reading.names0, reading.names2) && reading.names0.length === reading.expectedFields
   };
   const ok = parts.agentSwitch && parts.uiInvariant && parts.uiSwitch
