@@ -25,7 +25,7 @@
 /**
  * 插话文案：等待被打断，且**工作对象不受影响**。
  *
- * 出处 `lib/text.js` 的 `note.interrupted`（两语逐字，zh :287 / en :110）：
+ * 出处 `lib/text.js` 的 `note.interrupted`（两语逐字；行号不锚——键名即锚，插行不漂）：
  * `等待被打断：一条用户消息已到达，将出现在你的下一条输入里（已等待 {waitedMs} ms）。{subject} 仍在后台运行，完全不受影响。…`
  * `Wait interrupted: a user message has arrived and will appear in your next input (waited {waitedMs} ms). {subject} is still running in the background and is completely unaffected. …`
  *
@@ -46,30 +46,31 @@ export const SUBJECT_UNTOUCHED = /仍在后台运行[，\s]{0,3}完全不受影�
  *
  * | 标记 | 出处（zh / en 同键） |
  * |---|---|
- * | `已不在运行中` / `is no longer observed running` | `lib/text.js` 的 `note.settled`（`settledNote`，两个渠道共用） |
- * | `已结束当前工作（状态转为空闲）` / `finished its current work (status turned idle)` | `lib/text.js` 的 `via.idle`（结算通知渠道） |
- * | `已有进展且当前不再处于运行态` / `made progress and is currently no longer in a running state` | `lib/text.js` 的 `via.recheck`（activity 复查渠道） |
+ * | `不再被观察到在运行` / `is no longer observed running` | `lib/text.js` 的 `note.settled`（`settledNote`，两个渠道共用） |
+ * | `完成了当前工作（状态转为 idle）` / `finished its current work (status turned idle)` | `lib/text.js` 的 `via.idle`（结算通知渠道） |
+ * | `有进展，当前不处于运行态` / `made progress and is currently no longer in a running state` | `lib/text.js` 的 `via.recheck`（activity 复查渠道） |
  */
 export const CHILD_SETTLED = [
-  /已不在运行中|is no longer observed running/,
-  /已结束当前工作（状态转为空闲）|finished its current work \(status turned idle\)/,
-  /已有进展且当前不再处于运行态|made progress and is currently no longer in a running state/
+  /不再被观察到在运行|is no longer observed running/,
+  /完成了当前工作（状态转为 idle）|finished its current work \(status turned idle\)/,
+  /有进展，当前不处于运行态|made progress and is currently no longer in a running state/
 ];
 
 /**
  * `async_wait_job` 的**结局**标记：取回的是终态输出。
  *
  * 出处 `lib/wait-job.js` 的 `settledResult`——终态时返回 `status` + `output`；
- * 端到端里可观察的稳定特征是输出末尾的退出码那行（`lib/output.js` 拼的）。
+ * 端到端里可观察的稳定特征是输出末尾的退出码那行（`lib/jobs.js` 的
+ * `exitStatusMarker`/`exitLine` 拼的；文案键 `render.exitCode`/`detail.exitCode`
+ * 在 `lib/text.js`，两语都有）。
  */
-export const JOB_SETTLED = /exit code: \d+/;
+export const JOB_SETTLED = /exit code: \d+|退出码[:：]\s*\d+/;
 
-/** 等待预算到期（非终态）的文案。出处 `lib/text.js` 的 `note.waitAgain`
- *  （两语逐字，zh :281 / en :104）。 */
+/** 等待预算到期（非终态）的文案。出处 `lib/text.js` 的 `note.waitAgain`（两语逐字；键名即锚）。 */
 export const WAIT_AGAIN = /仍在运行（不受影响）|is still running \(unaffected\)/;
 
 /**
  * `async_run` 超预算**让出句柄**的文案。出处 `lib/text.js` 的 `note.yield.running`
- * （两语逐字，zh :275 / en :98）。判据要认的半句：「命令/The command 仍在运行」。
+ * （两语逐字；键名即锚）。判据要认的半句：「命令/The command 仍在运行」。
  */
 export const YIELD_RUNNING = /命令仍在运行|command is still running/;

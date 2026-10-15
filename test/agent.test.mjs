@@ -284,7 +284,7 @@ test('async_agent：白名单外的路由被拒且零派生（宿主同款文案
   const tool = createAgentTool(env.ctx, env.view);
   await assert.rejects(
     tool.execute({ description: 'x', prompt: 'y', provider: 'zai', model: 'glm-4.9' }, EXEC),
-    /child LLM route "zai\/glm-4\.9" is not allowed for this Session/
+    /child LLM route "zai\/glm-4\.9" is not allowed for this session/
   );
   assert.deepEqual(env.continuables, [], '越界路由不得派生');
 });

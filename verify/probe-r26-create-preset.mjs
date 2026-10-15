@@ -233,7 +233,7 @@ async function phaseFace() {
 
   // ③+④ 派生→有界等待→插话打断。
   // 长子任务刻意做**慢**（约 2000 字输出，flash 也要写半分钟以上）——400 字太快，
-  // 首轮实测等待在插话送达前就正常返回了（无打断证据，④a 假红）。
+  // 实测等待在插话送达前就正常返回了（无打断证据，④a 假红）。
   const TASK = [
     '请严格按步做，每步 finish 前不要做别的：',
     '第 1 步：用 async_agent 派生一个子代理，prompt 让它「计算 17×23 并只回答这个数字」，不要传 provider/model。',
@@ -317,7 +317,7 @@ async function phaseFace() {
     interrupted.length >= 1,
     interrupted.length === 0 ? '未见打断文案' : JSON.stringify(interrupted[0].slice(0, 120)));
   // ④b 子代理未被打断杀：2000 字短文完整到达（len>150 排除只含任务描述的短结算文案；
-  // 首轮实测 settle 文案只有 ~60 字，短文本体 500+ 字）。
+  // 实测 settle 文案只有 ~60 字，短文本体 500+ 字）。
   const essayMessage = childMessages.find((m) => m.text.length > 150 && /异步/.test(m.text));
   record('④b 子代理照跑到底（2000 字短文完整到达）',
     essayMessage !== undefined,

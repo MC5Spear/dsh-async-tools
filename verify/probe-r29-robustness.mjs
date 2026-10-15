@@ -11,7 +11,7 @@
  *    invalidPair 文案（壳层叠加）。
  * 3. **提交层拒绝**（第二道防线）：绕过卡片直写（RPC mutate）越界 maxWaitMs →
  *    **网关按本包 schema 拒绝**（`settings/rejected` + schemastery 可读消息，含上界）
- *    + 回读值未变（未落盘）+ 工具描述不受影响。（首跑实测：RPC
+ *    + 回读值未变（未落盘）+ 工具描述不受影响。（实测：RPC
  *    settings/update 对字段级越界当场拒绝，比设计稿的"落盘 + errlog warn 承接"
  *    更强；跨字段违例 schema 表达不了，仍走落盘 + loader warn。）
  * 4. **等待总耗时上界**：20 秒命令（提权档真跑）+ yield 后 async_wait_job
@@ -151,7 +151,7 @@ try {
     `读数=${String(afterReload.value.maxWaitMs)}`);
 
   // ── 2 提交层拒绝（直写） ─────────────────────────────────────────────
-  // 实测语义（首跑）：RPC settings/update 网关按本包 schema 校验 patch，
+  // 实测语义：RPC settings/update 网关按本包 schema 校验 patch，
   // 字段级越界在网关就被拒（settings/rejected + schemastery 可读消息），到不了落盘——
   // 这比设计稿的"落盘 + errlog warn 承接"更强；跨字段违例 schema 表达不了，仍走
   // 落盘 + loader warn（口径不变）。

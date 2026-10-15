@@ -8,7 +8,7 @@
  *     （user/message 出现）？——这是"收窄后 queue 消息还能不能被投递"的宿主侧地基。
  *
  * 用法：node verify/probe-queue-baseline.mjs
- * 证据：verify/logs/queue-baseline.json + 控制台 RECORD 行。退出码恒 0。
+ * 证据：证据目录（配置加载器的 evidenceDir）下 logs/queue-baseline.json + 控制台 RECORD 行。退出码恒 0。
  */
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';

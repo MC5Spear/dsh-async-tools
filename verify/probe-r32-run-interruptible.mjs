@@ -131,7 +131,7 @@ async function waitRunCalled(sessionId) {
  * `form === 'notice'`（实测形状；按消息 id 去重，splice 镜像不重复计）。
  * 不匹配 assistant/tool 记录（模型复述不算通知，r34-O6），也不匹配 request/header
  * 与 system/message——工具描述自带 `async_wait_job(job_id="async-command-…")` 示例与
- * 「完成」字样，正文级匹配会把请求头当成通知（(e) 首跑实读的误报形态）。
+ * 「完成」字样，正文级匹配会把请求头当成通知（(e) 实读的误报形态）。
  */
 function completionNotices(transcript) {
   const seen = new Set();
@@ -170,7 +170,7 @@ async function waitForNoticeCount(sessionId, expected, maxMs) {
  * 结果形状分类（如实登记两副面孔）：
  * - `handle`/`early`：设计形状（让出句柄 / 插话提前结束注记）。
  * - `aborted`：宿主改写（dsh-tools 在调用信号已中止时丢弃返回值）。
- * - `empty`：中止后提交的空文本（r32 首跑实读形状）。
+ * - `empty`：中止后提交的空文本（中止后提交的实读形状）。
  */
 function classifyResult(text) {
   if (HANDLE_ANCHOR.test(text) || EARLY_ANCHOR.test(text)) return 'handle';
@@ -287,7 +287,7 @@ async function jobCardText(page, command) {
 
 // —— 判据实现 ——
 
-/** 中止后防重试句：模型见到 aborted 错误会自行重试（首跑实读），污染通知计数。 */
+/** 中止后防重试句：模型见到 aborted 错误会自行重试（实读形态），污染通知计数。 */
 const NO_RETRY = 'If a call returns an error mentioning "tool call aborted" or an empty result, do NOT retry or re-run it — just reply ack. ';
 
 /** (a) 即时性·插话 + 句柄形状。 */
@@ -484,6 +484,6 @@ try {
   summary.fail = results.length - pass;
   summary.results = results;
   writeFileSync(`${LOG_DIR}\\r32-run-interruptible.json`, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
-  console.log(`\n真机探针：${String(pass)}/${String(results.length)}（证据 verify/logs/r32-run-interruptible.json）`);
+  console.log(`\n真机探针：${String(pass)}/${String(results.length)}（证据目录 logs/r32-run-interruptible.json）`);
   process.exitCode = results.every((r) => r.ok) ? 0 : 1;
 }

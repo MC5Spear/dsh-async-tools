@@ -596,7 +596,7 @@ test('T10：宿主侧的 volatile 提交必须真的到达预设工具的描述'
   //    再在 **fiber 自己的 ctx** 上派发事件（loader 也是 `fiber.ctx.emit`，cordis 的
   //    事件向上冒泡，从根 ctx 派发到不了 fiber 的监听）——快照必须重播、描述必须就地刷新。
   assert.equal(typeof hostFork.config.maxWaitMs?.get, 'function',
-    'fiber.config 的 volatile 字段必须是 Ref（Schema.resolve 包的 createVolatile）——不是的话就地提交链路不成立');
+    'fiber.config 的 volatile 字段必须是 Ref（Schema.resolve 包的 createVolatile）——不是的话就地提交链不成立');
   const before = tool.description;
   updateVolatile(hostFork.config.maxWaitMs, createVolatile(130000));
   updateVolatile(hostFork.config.defaultYieldMs, createVolatile(5000));

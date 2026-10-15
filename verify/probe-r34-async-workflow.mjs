@@ -187,7 +187,7 @@ function classifyResult(text) {
  * 会话升档（用户裁定：探针可经 GUI 自动化执行）：
  * workflow 引擎的 PTC worker 按**父会话现行档位**取沙箱（dsh-workflow-ptc:632
  * `sandboxPolicy.resolve({session})`）；验证实例是托管服务、无 logon SID，受限档下
- * CreateRestrictedToken 必死（首跑实读：引擎同步抛 `workflow execution failed
+ * CreateRestrictedToken 必死（实读：引擎同步抛 `workflow execution failed
  * (sandbox-unavailable)`）。`/permission danger-full-access` 经 GUI composer 提交
  * （命令弹出层认领，dsh-client-ui-commands 的 submit 事务）——顺带把审批档切到
  * never，(d) 的混编 async_run 免去 15-46 s/次的审批串行。
@@ -429,7 +429,7 @@ async function phaseD() {
   const sessionId = await newSession(PRESET);
   await elevateSession(sessionId);
   // 触顶要同窗并存：6 条 sleep-600 命令 + 5 个慢编排（串行 3 agent，~40 s+）——
-  // 首跑用快编排时第 11 条启动前已有 2 个结算完，在册数从未到 11。
+  // 用快编排时第 11 条启动前已有 2 个结算完，在册数从未到 11。
   await prompt(sessionId,
     'Fire 11 calls in ONE batch (same turn, back to back, no waiting between them): '
     + 'calls 1-6 are async_run, each running Start-Sleep -Seconds 600 with yield_ms=1000 and description "limit probe N" (N=1..6); '

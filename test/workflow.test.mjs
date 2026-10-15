@@ -199,6 +199,26 @@ test('async_workflow（R34-a/需求 §3.2）：workflowEngine 缺席 → 可读�
   assert.equal(f.jobsFake.registeredSpecs.length, 0);
 });
 
+test('async_workflow（盲测 F4/需求 §2.1.3）：空 meta.name → 自解释前置错误；零注册零引擎', async () => {
+  // 宿主 jobs.start 对空 label 抛「invalid job label」——若不在插件侧先拦，
+  // 这句参数校验错误会被准入拒绝包装带上"存活的作业…用 job_kill"的触顶出路，
+  // 误导模型去杀无关作业。前置校验必须先于注册（变异：删前置校验 → 本测红）。
+  const { f, engine, agent, tool } = rig();
+  for (const badName of ['', '   ']) {
+    await assert.rejects(
+      () => tool.execute(
+        { ...BASE_ARGS, meta: { ...BASE_ARGS.meta, name: badName } },
+        { agent, signal: new AbortController().signal }
+      ),
+      (error) => /meta\.name must be a non-empty string/.test(error.message)
+        && !/job_kill|存活的作业/.test(error.message),
+      '空 name 必须给自解释错误，不得复用准入触顶模板'
+    );
+  }
+  assert.equal(f.jobsFake.registeredSpecs.length, 0, '零注册（启动前拒绝）');
+  assert.equal(engine.calls.length, 0, '引擎不得启动');
+});
+
 test('async_workflow（R34-c·killed）：job_kill → run.cancel 一次；返回 killed 形状', async () => {
   const { f, runs, agent, tool } = rig();
   freezeTimers(f.ctx);

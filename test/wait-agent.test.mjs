@@ -216,8 +216,8 @@ test('async_wait_agent：结算通知（带 senderSessionId）→ settled', asyn
   // "子代理 X 已结束"。settled 的 note 若对每个 id 都这么写，会与本条路径前半句的
   // "不再观察到它在运行"正面对冲。
   //
-  // 断言要盯住**无条件断言**这一形态，而不是"已结束"这三个字：`agent/status` 那条路径的
-  // "该子代理已结束当前工作（状态转为空闲）"是**有依据的观察**（收到了 idle 事件），
+  // 断言要盯住**无条件断言**这一形态，而不是"完成"这类词：`agent/status` 那条路径的
+  // "该子代理完成了当前工作（状态转为 idle）"是**有依据的观察**（收到了 idle 事件），
   // 把它也算违规就成了过宽断言，会红在一个合法的句子上。
   assert.doesNotMatch(result.note, new RegExp(`子代理 ${CHILD} 已结束`), '不许无条件断言"子代理已结束"');
 });
@@ -242,7 +242,7 @@ test('async_wait_agent：别个子代理的结算通知不得结束本次等待'
   f.emit('agent/inbox/inserted', settledNotice());
   const result = await pending;
   assert.equal(result.status, 'settled');
-  // "已结束当前工作（状态转为空闲）"是**有依据的观察**（收到了 idle 事件），允许存在；
+  // "完成了当前工作（状态转为 idle）"是**有依据的观察**（收到了 idle 事件），允许存在；
   // 不许存在的是无条件的"子代理 X 已结束"。
   assert.doesNotMatch(result.note, new RegExp(`子代理 ${CHILD} 已结束`), '不许无条件断言"子代理已结束"');
 });
@@ -260,7 +260,7 @@ test('async_wait_agent：agent/status 的 idle 是可达的提前返回通道', 
   const result = await pending;
   assert.equal(result.status, 'settled');
   assert.match(result.note, /status turned idle/, '必须注明信号来源，便于模型理解语义差异');
-  // 这条路径的"该子代理已结束当前工作（状态转为空闲）"是**有依据的观察**，允许存在；
+  // 这条路径的"该子代理完成了当前工作（状态转为 idle）"是**有依据的观察**，允许存在；
   // 不许存在的是无条件的"子代理 X 已结束"。
   assert.doesNotMatch(result.note, new RegExp(`子代理 ${CHILD} 已结束`), '不许无条件断言"子代理已结束"');
 });

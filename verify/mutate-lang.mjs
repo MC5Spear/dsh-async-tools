@@ -29,7 +29,7 @@ const LABELS_ZH = ['默认首次等待时长（毫秒）', '首次等待时长�
 const LABELS_EN = ['Default first-wait duration (ms)', 'First-wait lower bound (ms)', 'Plugin interface language', 'Agent-facing text language'];
 const NAMES = ['defaultYieldMs', 'minYieldMs', 'uiLang', 'agentLang'];
 const DESC_EN = 'Run a PowerShell command with a first-wait budget. The first wait defaults to 20000 ms;';
-const DESC_ZH = '带首次等待预算地运行一条 PowerShell 命令。首次等待默认为 20000 ms；';
+const DESC_ZH = '以首次等待预算运行一条 PowerShell 命令。首次等待默认为 20000 ms；';
 
 const baseline = () => ({
   labels0: [...LABELS_ZH],
