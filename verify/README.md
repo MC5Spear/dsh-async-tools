@@ -58,8 +58,8 @@ npm run check:agent-policy
 | [`probe-escalation-advertised.mjs`](<probe-escalation-advertised.mjs>) | 真实模型工具schema中提权键，不代替实际审批 |
 | [`probe-sandbox-marker.mjs`](<probe-sandbox-marker.mjs>) | 沙箱拒绝的模型可见词表（文件族围栏承载）与退出状态标记；本部署命令族受限 runner 死亡时如实记环境事实，不冒称命令族已验 |
 | [`probe-lang-independence.mjs`](<probe-lang-independence.mjs>) | 页面文案与真实描述的双向对照，改共享语言设置；抽样描述不能冒称五工具全文均核验 |
-| [`probe-card-visual.mjs`](<_visual/probe-card-visual.mjs>) | 真实DOM、计算样式和截图对比官方控件；起浏览器、每主题分别核验 |
-| [`probe-r24-bundle-config.mjs`](<_visual/probe-r24-bundle-config.mjs>) | 插件页表单位置、字段身份、秒数与保存恢复；起浏览器并写共享设置，字段期望含延长配置（`askExtendMs`） |
+| [`probe-card-visual.mjs`](<_visual/probe-card-visual.mjs>) | 真实DOM、计算样式和截图对比官方控件；起浏览器、每主题分别核验（须 danger-full-access 或非受限环境，受限令牌下浏览器必早夭） |
+| [`probe-r24-bundle-config.mjs`](<_visual/probe-r24-bundle-config.mjs>) | 插件页表单位置、字段身份、秒数与保存恢复；起浏览器并写共享设置，字段期望含延长配置（`askExtendMs`）；同上运行前提 |
 | [`acceptance-017.mjs`](<acceptance-017.mjs>) | 工具、管理、行为、路由和设置等相位；文件名只是标识，不是兼容基准，具体相位副作用先读 |
 | [`probe-r26-create-preset.mjs`](<probe-r26-create-preset.mjs>) | 两预设目录及流程；drill／both涉及声明拆装和重新装载，仅维护窗口运行 |
 | [`probe-r28-silent-failure.mjs`](<probe-r28-silent-failure.mjs>) | 三处防护和语言，改共享设置；现有全局纪律断言不能作为需求限定预设范围的通过证据 |

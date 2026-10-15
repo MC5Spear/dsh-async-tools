@@ -40,6 +40,11 @@ const EDGE_CANDIDATES = [
  *
  * 现行做法：尽量少起进程与少碰系统服务，**按整棵进程树清理**。
  *
+ * **运行前提**：受限沙箱档（workspace-write 及更窄）的 WRITE_RESTRICTED + Low
+ * 完整性令牌会拒绝 Chromium 多进程所需的写类 `OpenProcess`（stderr 见
+ * `crashpad_client_win.cc ... OpenProcess: 拒绝访问 (0x5)`），浏览器**必早夭**——
+ * 本模块的一切只在 `danger-full-access` 或非受限执行环境里可用。
+ *
  * @param {string} browserPath - 浏览器可执行文件。
  * @param {string[]} [extraArgs] - 追加启动参数（默认空——`Emulation.setLocaleOverride`
  *   在本机 headless Edge 上不改变 `navigator.language`，宿主语言模拟用 `--lang`
@@ -64,7 +69,14 @@ export async function launch(browserPath, extraArgs = []) {
     `--user-data-dir=${profile}`,
     ...extraArgs,
     'about:blank'
-  ], { stdio: 'ignore' });
+    // stderr 收尾巴（不是丢弃）：受限令牌下 Edge 的早夭只有 stderr 里有真因
+    // （crashpad OpenProcess 0x5），不带进错误文本就会被误读成慢启动或端口占用。
+  ], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const stderrLines = [];
+  child.stderr?.on('data', (chunk) => {
+    for (const line of String(chunk).split(/\r?\n/)) if (line.trim() !== '') stderrLines.push(line.trim());
+    if (stderrLines.length > 20) stderrLines.splice(0, stderrLines.length - 20);
+  });
 
   // 等端口就绪：轮询 `/json/version`。
   const deadline = Date.now() + 30_000;
@@ -77,8 +89,18 @@ export async function launch(browserPath, extraArgs = []) {
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   if (!ready) {
+    // 失败路径与 close() 同款完整清理（只杀主进程会留 profile 残目录与孤儿进程）。
     killTree(child.pid);
-    throw new Error(`浏览器调试端口 ${String(port)} 在 30 秒内没就绪`);
+    try { child.kill(); } catch { /* 已退出 */ }
+    sweepByProfile(profile);
+    try { rmSync(profile, { recursive: true, force: true }); } catch { /* 占用中，留着 */ }
+    const tail = stderrLines.slice(-3).join(' | ');
+    throw new Error(
+      `浏览器调试端口 ${String(port)} 在 30 秒内没就绪`
+      + `${tail === '' ? '' : `；stderr 尾部：${tail}`}`
+      + '（受限沙箱档下 Edge 会在进程创建层早夭——见 verify/diag-headless-edge.mjs；'
+      + '视觉探针需 danger-full-access 或非受限环境运行）'
+    );
   }
   return {
     process: child,

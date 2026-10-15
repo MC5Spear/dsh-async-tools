@@ -256,6 +256,10 @@ try {
     typedLive === 'typed' && liveRead.input.endsWith(NEW_SECONDS)
       && liveRead.effective.endsWith(DEFAULT_SECONDS),
     `输入段=${JSON.stringify(liveRead.input)}`);
+  // 截图前把目标字段滚进视口——fullPage 截图不总可靠（历史轮次三张图逐字节相同，
+  // 目标字段在视口外），视觉证据必须真的包含被断言的字段。
+  await evaluate(page, `document.getElementById('plugin-config-${FIELD}')?.scrollIntoView({ block: 'center' }), true`);
+  await sleep(300);
   await screenshot(page, `${SHOTS}\\r24-05-plugin-page-typed.png`);
 
   // ④ 改值 → 保存 → 落盘 + 字段回生效值 + 生效段跟着变
@@ -272,6 +276,8 @@ try {
   });
   check('④c 保存后生效段跟着变成新值换算、输入段随草稿清空回到生效值（证明卡片订阅了控制器）',
     followed.ok, followed.detail);
+  await evaluate(page, `document.getElementById('plugin-config-${FIELD}')?.scrollIntoView({ block: 'center' }), true`);
+  await sleep(300);
   await screenshot(page, `${SHOTS}\\r24-06-plugin-page-saved.png`);
 
   // ⑤ 复原：清空该字段再保存（清空输入段先换成 — 占位——不给秒数）
@@ -293,6 +299,8 @@ try {
   check('⑤ 复原后落盘覆盖消失、字段回到默认值、两段读数回到默认换算',
     restoreAction === 'clicked' && !hitFinal && restored.ok && afterRestore.controlValue === '500',
     `动作=${restoreAction}；复原后仍命中=${String(hitFinal)}；${restored.detail}`);
+  await evaluate(page, `document.getElementById('plugin-config-${FIELD}')?.scrollIntoView({ block: 'center' }), true`);
+  await sleep(300);
   await screenshot(page, `${SHOTS}\\r24-07-plugin-page-restored.png`);
 
   // —— ⑥-b 字段帮助·交互判据：开合 + aria + 无副作用（复原之后做——帮助开合不得
@@ -325,6 +333,8 @@ try {
       }
     };
   })()`);
+  await evaluate(page, `document.getElementById('plugin-config-defaultYieldMs-help')?.scrollIntoView({ block: 'center' }), true`);
+  await sleep(300);
   await screenshot(page, `${SHOTS}\\r24-08-help-open.png`);
   const closed = await evaluate(page, `(() => {
     document.querySelector('[aria-controls="plugin-config-defaultYieldMs-help"]').click();
