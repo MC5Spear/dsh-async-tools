@@ -171,8 +171,8 @@ export function createFakeJobs({ now = () => Date.now() } = {}) {
       void Promise.resolve(hooks.done).then(
         (outcome) => settle(job, outcome ?? { status: 'completed' }),
         // 宿主 `[0.2.0-rc.2] dsh-jobs-local/lib/index.js:472-478`：done 拒绝 → 作业按 failed 结算。
-        // 本包生产者的 done 自分类（jobs.js 的 done 链不拒绝），此分支是替身对齐
-        // 宿主契约的回退路径——没有它，done 拒绝在 fake 上变成 unhandled rejection
+        // 本包生产者的 done 自分类（jobs.js 的 done 链不拒绝），此分支是替身与宿主
+        // 契约保持一致的回退路径——没有它，done 拒绝在 fake 上变成 unhandled rejection
         // 且作业永不结算。
         (error) => settle(job, { status: 'failed', detail: String(error?.message ?? error) })
       );
@@ -603,7 +603,7 @@ const TARGET_TO_PROPERTY = { 'next-turn': 'nextTurn', 'next-step': 'nextStep' };
  *   （模拟 `followup`/`steer` 的插入副作用）。
  *   期望打断的用例必须传 `'next-step'`（需求 §2.1.2：只有插话落点打断）。
  *
- *   ⚠️ **不带 `target` 的消息不落任何列表**——这与真机上 deferContext 的上下文消息
+ *   **不带 `target` 的消息不落任何列表**——这与真机上 deferContext 的上下文消息
  *   （`source.kind:'plugin'` 的工具结果、`subagent-settled` 结算通知，**恰恰 splice 进
  *   next-step**）形态不同。要建模后者必须显式传 `target: 'next-step'`，
  *   否则 `isSteering` 的落点判定会"顺带"挡住它们。

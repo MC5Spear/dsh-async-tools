@@ -17,7 +17,7 @@
  *
  * 三条都取自**真实请求体 / 真实工具返回值**：零浏览器，全程信封 RPC。
  *
- * ⚠️ **探针必须还原设置**（`finally` 里无条件写回并读回核对）：探针改的是
+ * **探针必须还原设置**（`finally` 里无条件写回并读回核对）：探针改的是
  * 验证实例的真实配置，留在改过的状态会污染后续真机判据。
  *
  * 用法：
@@ -120,7 +120,7 @@ async function transcriptOf(sessionId) {
 /**
  * 从转录里取 `async_wait_job` 的工具结果原文。
  *
- * ⚠️ 字段与形状以转录实测为准：`tool/call` 的调用号在 `data.callId`；
+ * 字段与形状以转录实测为准：`tool/call` 的调用号在 `data.callId`；
  * `tool/result` 的调用号在 `message.toolCallId`（`message.source.callId` 同值）；
  * 结果块现行形状是 `type: "text"`（text 直挂块上），旧形状 `type: "tool-result"`
  * （嵌套 content 数组）一并兼容。
@@ -241,7 +241,7 @@ const evidence = { base: BASE, checks, runs: [] };
 try {
   // ── 开跑前先**从基线出发** ────────────────────────────────────────────────
   //
-  // ⚠️ 探针若只"读现状"就往下走：被外部切断（跑批超时 kill）时还原写在 `finally`
+  // 探针若只"读现状"就往下走：被外部切断（跑批超时 kill）时还原写在 `finally`
   // 里不会跑完，验证实例被留在改过的设置上，判据照样全绿；下一次跑又从脏值
   // 出发，**脏状态会累积**。
   //
@@ -327,7 +327,7 @@ try {
   const cutResults = allResults(pageCut);
   const cutText = cutResults.reduce((a, b) => (a.length >= b.length ? a : b), '');
   evidence.runs.push({ label: '截断', chars: cutText.length, hasNote: /\[output truncated|\[输出已截断/.test(cutText) });
-  // ⚠️ 判据标签**不写具体数字**：数字写进标签会随实现漂移（例如把某次观测到的
+  // 判据标签**不写具体数字**：数字写进标签会随实现漂移（例如把某次观测到的
   // 输出长度误当默认值）；真实读数由下面的 `detail` 现场打出来。
   check('改成 500 之后模型收到的文本变短了（与默认预算下的同一条命令相比）',
     cutText.length < 3000,
@@ -338,7 +338,7 @@ try {
 
   // ── ③ 描述里的数字：模型收到的那份请求体里，**四个工具**的数字都必须跟着变 ──
   //
-  // ⚠️ 各工具的预算片段**形态互不相同**，五条替换规则里每条只对一部分工具生效
+  // 各工具的预算片段**形态互不相同**，五条替换规则里每条只对一部分工具生效
   // （见 `lib/index.js` 里那张表）。只验一个工具，等于放过了其他——而 `async_run`
   // 恰好是唯一带**两个不同区间**（让出 + 等待）的那个，最容易写错。
   // `async_agent` 正文无预算区间，只有尾摘要——它入 (c) 组。
@@ -390,13 +390,13 @@ try {
 
   // ── ④ 让出区间**也要跟着变**（补上第 (b) 条的区分力）────────────────────────
   //
-  // ⚠️ 第 (b) 条只改 `maxWaitMs`，让出区间全程停在默认值 ⇒ 它只能证明
+  // 第 (b) 条只改 `maxWaitMs`，让出区间全程停在默认值 ⇒ 它只能证明
   // "让出区间**没被写错**"，**证明不了"让出区间会跟着设置变"**。
   // 这两个结论的强度差得很远：前者在一个"让出区间永远是默认值"的实现上也会绿。
   //
   // 所以再改一次设置，**只动让出区间**，然后从真实请求体里读回来。`async_run` 是
   // 唯一有 `yieldDigest` 的工具，这条也是唯一能覆盖第③条替换规则的判据。
-  // ⚠️ `defaultWaitMs` 必须跟着 `maxWaitMs` 一起收窄——跨字段校验会拒掉
+  // `defaultWaitMs` 必须跟着 `maxWaitMs` 一起收窄——跨字段校验会拒掉
   // "默认值落在区间外"的组合（`settings/rejected`：`defaultWaitMs (30000) 必须在 250–2000 ms 之内`）。
   // 那条校验本身是 `test/two-planes.test.mjs` T7b 在守的东西，这里撞上它说明它在工作。
   await writeSettings({ ...DEFAULTS, maxWaitMs: 2000, defaultWaitMs: 2000, minYieldMs: 1500, maxYieldMs: 450000, defaultYieldMs: 7000, agentLang: 'zh' });

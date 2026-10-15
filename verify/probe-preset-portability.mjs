@@ -30,8 +30,8 @@
  * 3. 断言四个工具都在（若本插件真的"只在某个预设里可见"，这里必然缺失）；
  * 4. **无论成败都删掉那个临时预设目录**，并复核删干净了。
  *
- * ⚠️ 只碰它自己建的那个目录：目录名是固定常量，删除前会核对**里面确实只有本探针写的文件**。
- * ⚠️ 用法：node verify/probe-preset-portability.mjs
+ * 只碰它自己建的那个目录：目录名是固定常量，删除前会核对**里面确实只有本探针写的文件**。
+ * 用法：node verify/probe-preset-portability.mjs
  */
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -92,7 +92,7 @@ if (!source.includes('toolName: async_run')) {
   console.log('**源预设里没有本包的工具行**——拿它复制证明不了任何事，本探针失效。');
   process.exit(2);
 }
-// ⚠️ 预设 id **就是目录名**，`agent.cordis.yml` 里没有 id 字段（组合文件里改
+// 预设 id **就是目录名**，`agent.cordis.yml` 里没有 id 字段（组合文件里改
 // `^id:` 永远匹配不到；探针目录若与 dsh-async 同名，实验证明的东西就是空的）。
 // ⇒ 复制组合文件原样即可；id 由下面的目录名给出。
 mkdirSync(PROBE_DIR, { recursive: true });
@@ -124,7 +124,7 @@ try {
 
   // 等转录稳定（连续两拍记录条数相同）——同 `probe-settings-behavior-full` 的取样纪律。
   //
-  // ⚠️ `session/page` 的 args 形状是
+  // `session/page` 的 args 形状是
   // `{ request: { address: { kind:'session', sessionId }, throughSeq, maxMessages } }`——
   // 少 `address`、少 `throughSeq` 都会被网关直接拒绝：
   // `wire field "request" failed boundary validation`。

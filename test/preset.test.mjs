@@ -41,9 +41,9 @@ const baselineCreate = readFileSync(PATCH_CREATE, 'utf8');
  *  （与 `tools/_host-resolve.mjs` 同一套候选），**不写死机器路径**——公开仓的 CI 用
  *  `npm install @deepseek-ai/dsh@0.2.0-rc.2` 提供这个包。
  *
- *  2026-10-03 实测：npm 公开发布版与本机安装树的两份文件**逐字节相同**
- *  （sha256 相同；standard 7511 B、cordis 8089 B）。锚点取哪一边期望集都一致
- *  （两文件与 [0.1.7] 树逐字节相同的既有核对继续成立）。 */
+ *  npm 公开发布版与本机安装树的两份文件**逐字节相同**（sha256 相同；
+ *  standard 7511 B、cordis 8089 B——基线漂移会先在这里露头）。锚点取哪边
+ *  期望集都一致（两文件与 [0.1.7] 树逐字节相同的既有核对继续成立）。 */
 const WEB_APP_PRESETS = candidateModules(process.env.DSH_HOME ?? join(homedir(), '.dsh'))
   .map((dir) => join(dir, '@deepseek-ai', 'dsh-web-app', 'presets'))
   .find((dir) => existsSync(join(dir, 'standard.patch.yml')));
@@ -215,7 +215,7 @@ test('validate-preset：多出基线期望之外的行必须拦住（P3，③ �
     '报错必须点名多出的行');
 });
 
-test('validate-preset：tool-subagent 翻回启用必须拦住（P4，⑧ 裁决 A 结构性差异）', async () => {
+test('validate-preset：tool-subagent 翻回启用必须拦住（P4，⑧ 结构性差异裁定）', async () => {
   const result = await validateMutation((text) => text
     .replace("              - id: tool-subagent\n                name: '@deepseek-ai/dsh-tool-subagent'\n                disabled: true\n",
       "              - id: tool-subagent\n                name: '@deepseek-ai/dsh-tool-subagent'\n"),

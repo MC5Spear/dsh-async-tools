@@ -10,13 +10,13 @@
  * - ③ 数字字段的 parse 恒返回 set（非法草稿也放行）→ 非法草稿判据必红；
  * - ④ 空暂存也发一次 mutate → 写次数判据必红（写次数失控）；
  * - ⑤ 把 failed 恒置假 → 失败可见判据必红（失败被吞）；
- * - ⑦ `shell()` 退化成恒 {dirty:true, saving:false} → 准入控制与「保存中…」判据必红；
- * - ⑧ 输入读数的取数改成生效值（不接 `model.field(key).text`）→ 输入读数判据必红；
- * - ⑨ 两段读数加"只在可写时渲染"条件 → 只读部署读数判据必红（只读部署读数消失）；
- * - ⑩ 删掉空文本分支（空输入当非数字处理）→ 输入读数的空姿态必红；
- * - ⑪ `onDiscard` 传 noop → 卸载丢弃判据必红（断线）。
+ * - ⑥ `shell()` 退化成恒 {dirty:true, saving:false} → 准入控制与「保存中…」判据必红；
+ * - ⑦ 输入读数的取数改成生效值（不接 `model.field(key).text`）→ 输入读数判据必红；
+ * - ⑧ 两段读数加"只在可写时渲染"条件 → 只读部署读数判据必红（只读部署读数消失）；
+ * - ⑨ 删掉空文本分支（空输入当非数字处理）→ 输入读数的空姿态必红；
+ * - ⑩ `onDiscard` 传 noop → 卸载丢弃判据必红（断线）。
  *
- * ⚠️ 本脚本会原地改写真实的 `client.js`，跑完在 `finally` 里写回
+ * 本脚本会原地改写真实的 `client.js`，跑完在 `finally` 里写回
  * 并核对摘要。任何 SKIP 按失败处理。跑测试要捕获子进程
  * 输出——默认沙箱下 EPERM，需带提权运行（同 `mutate-card-theme.mjs`）。
  *
@@ -68,12 +68,13 @@ function restore() {
 const MUTATIONS = [
   {
     id: '①',
-    what: '值字段换回自绘 input（绕开官方控件；自绘控件不带 label 绑定/说明行/徽标）',
-    apply: (text) => text.replace('var P = require("@deepseek-ai/dsh-client-ui-primitives");',
-      'var P = Object.assign({}, require("@deepseek-ai/dsh-client-ui-primitives"),'
-      + ' { SettingsValueField: function (props) { return React.createElement("input",'
-      + ' { className: "mutated-input", id: props.id, value: props.text,'
-      + ' onChange: function (event) { props.onEdit(event.target.value); } }); } });')
+    what: '值字段绕开自绘壳（裸 input：无 label 绑定、无说明行/读数、无徽标）',
+    // 现行架构（设计 §5.5）：17 个字段统一走自绘 FieldShell（label 绑定/说明行/徽标
+    // 都在壳上），不再使用官方 SettingsValueField——旧变异打在已死的调用上恒绿。
+    // 等价的缺陷回潮＝值字段分支提前 return 裸 input，壳的三件套全部丢失。
+    apply: (text) => text.replace(
+      '    control = React.createElement("input", {\n      id: props.id,\n      className: "ats-value-input",',
+      '    return React.createElement("input", { // mutated \u2460: \u503c\u5b57\u6bb5\u7ed5\u5f00\u81ea\u7ed8\u58f3\uff08\u65e0 label \u7ed1\u5b9a/\u8bf4\u660e\u884c/\u5fbd\u6807\uff09\n      value: props.text,\n      onChange: function (event) { props.onEdit(event.target.value); } });\n    control = React.createElement("input", {\n      id: props.id,\n      className: "ats-value-input",')
   },
   {
     id: '②',
@@ -107,21 +108,21 @@ const MUTATIONS = [
       'state: { ...state.shell, failed: false, invalid: state.shell.invalid === true || pairViolated(state) },')
   },
   {
-    id: '⑦',
+    id: '⑥',
     what: 'shell 退化成常量（无改动也可点保存、保存中不换文案）',
     apply: (text) => text.replace('var state = { shell: model.shell(), uiLang: uiLangOf(snapshot), fields: {}, effective: {} };',
       'var state = { shell: { available: true, writable: snapshot.writable, dirty: true,'
       + ' invalid: false, saving: false, failed: false }, uiLang: uiLangOf(snapshot), fields: {}, effective: {} };')
   },
   {
-    id: '⑧',
+    id: '⑦',
     what: '输入读数的取数改成生效值（不接 model.field(key).text——输入读数的核心退化）',
     apply: (text) => text.replace(
       'var hint = composeHint(t, field, state.effective[field.key], fieldState.text);',
       'var hint = composeHint(t, field, state.effective[field.key], String(state.effective[field.key]));')
   },
   {
-    id: '⑨',
+    id: '⑧',
     what: '两段读数只在可写时渲染（只读部署读数消失）',
     apply: (text) => text.replace(
       'var hint = composeHint(t, field, state.effective[field.key], fieldState.text);',
@@ -129,12 +130,12 @@ const MUTATIONS = [
       + ' fieldState.text) : t("hint." + field.key);')
   },
   {
-    id: '⑩',
+    id: '⑨',
     what: '删掉空文本分支（空输入当非数字处理——输入读数的空姿态退化）',
     apply: (text) => text.replace('  if (text === "") return { fill: READOUT_PLACEHOLDER, invalid: false };\n', '')
   },
   {
-    id: '⑪',
+    id: '⑩',
     what: 'onDiscard 传 noop（卸载丢弃断线：接线侧失效）',
     apply: (text) => text.replace('onDiscard: actions.discard', 'onDiscard: function () {}')
   }
@@ -142,7 +143,7 @@ const MUTATIONS = [
 
 const baseline = runTests();
 if (baseline.red) {
-  console.log(`BASELINE-RED  未变异时 ${TEST} 就是红的（${baseline.summary}）——先修基线；⚠️ 若摘要为空且本脚本以 2 退出，更可能是默认沙箱禁止捕获子进程输出（EPERM）：本脚本要跑测试文件，需带提权运行（规范见 verify/README.md 的「判据必须在默认权限下可跑」）。`);
+  console.log(`BASELINE-RED  未变异时 ${TEST} 就是红的（${baseline.summary}）——先修基线；若摘要为空且本脚本以 2 退出，更可能是默认沙箱禁止捕获子进程输出（EPERM）：本脚本要跑测试文件，需带提权运行（规范见 verify/README.md 的「判据必须在默认权限下可跑」）。`);
   process.exit(2);
 }
 console.log(`基线：未变异时 ${TEST} 全绿（${baseline.summary}）。`);

@@ -10,7 +10,7 @@
  * - M3 **恒无分隔**：增量与 `result` 直接拼接 → 必须红在「非换行结尾的增量
  *   恰一个换行」的精确文本断言上。守分隔规则的边界二。
  *
- * ⚠️ **本脚本会原地改写真实的 `lib/wait-job.js`**，跑完在 `finally` 里写回并核对摘要。
+ * **本脚本会原地改写真实的 `lib/wait-job.js`**，跑完在 `finally` 里写回并核对摘要。
  *
  * 用法：node verify/mutate-atb01-final-result.mjs
  * （会跑 `node --test` 测试文件：受限沙箱下按「没跑成不算 CAUGHT」fail-closed，

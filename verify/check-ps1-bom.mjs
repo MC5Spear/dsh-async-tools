@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 const VERIFY = dirname(fileURLToPath(import.meta.url));
 const REPO = dirname(VERIFY);
 const SKIP_DIRS = new Set(['_tmp', '_scratch', '_lab', 'backup', 'node_modules', 'shots', 'logs']);
-// 按前缀判过程产物目录：改名成 `_scratch_REMOVED_*` 后精确相等会失效（2026-09-18 实测）。
+// 按前缀判过程产物目录：改名成 `_scratch_REMOVED_*` 后精确相等会失效。
 const isSkippedDir = (name) => SKIP_DIRS.has(name) || name.startsWith('_scratch');
 
 const walk = (dir, out = []) => {

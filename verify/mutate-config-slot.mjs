@@ -18,7 +18,7 @@
  * - **M6 表单改读 `props.form`**：bundle 槽**不传** `form` ⇒ 渲染出一张空卡，且不报错；
  * - **M7 不订阅控制器**：快照换新后卡片再也不重渲染，保存后页面停在旧值。
  *
- * ⚠️ 本脚本**只在内存里**改写源码文本、喂给纯函数判据：不落盘、不需要还原、不 spawn 子进程，
+ * 本脚本**只在内存里**改写源码文本、喂给纯函数判据：不落盘、不需要还原、不 spawn 子进程，
  * 因此默认权限沙箱下可跑（见 `verify/README.md` 的「判据必须在默认权限下可跑」）。
  * 同一批性质在 `test/two-planes.test.mjs` 的 T5/T16/T18 里各有一条断言（`npm run test:inproc` 跑）。
  *
@@ -72,14 +72,14 @@ const MUTATIONS = [
     // 锚点带上下文锚到 createCardModel 的取控制器行（设置卡片的活路径）：`var scope =
     // ctx.configForms.get(ENTRY);` 在 client.js 里有两处（另一处在 createAskModel，
     // 提问接管侧加入）——裸字符串 replace 只换第一处时第二处会把源码级判据喂绿
-    // （2026-10-02 实测发现的既有逃逸）。
+    // （既有逃逸形态，变异以此加固）。
     apply: (text) => text.replace(
       'function createCardModel(ctx) {\n  var scope = ctx.configForms.get(ENTRY);',
       'function createCardModel(ctx) {\n  var scope = props.form !== undefined && props.form.state !== undefined ? props.form : undefined;')
   },
   {
     id: 'M7',
-    what: '卡片不订阅模型的快照店（快照换新后再也不重渲染）',
+    what: '卡片不订阅模型的快照存储（快照换新后再也不重渲染）',
     apply: (text) => text.replace(
       'var state = React.useSyncExternalStore(card.store.subscribe, card.store.getSnapshot);',
       'var state = React.useSyncExternalStore(function () { return function () {}; }, card.store.getSnapshot);')

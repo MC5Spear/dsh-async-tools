@@ -11,11 +11,11 @@
  * 否则判据会随文件的 BOM 有无而给出完全不同的结论——而 BOM 的取舍是**另一个**问题。
  *
  * ## 顺带一个事实
- *
- * `verify/` 下的 `.ps1` 里，`probe-service-signal.ps1` 有 BOM、`probe-service-signal-disposer.ps1` 没有。
- * 前者被 PowerShell 正确读取（BOM 指明 UTF-8），后者的中文注释在 PS 5.1 里会乱码。
- * 后者还能跑，是因为它的**代码部分**恰好没有依赖中文串做判定。
- * 这一条登记为待办，不在本判据里自动修（改 BOM 会动到 git diff 与字节）。
+
+ * 现存 `.ps1` 的 BOM 状态由本判据的"无 BOM"名单**现查现报**（`bomless` 行）——
+ * 无 BOM 时 Windows PowerShell 5.1 按 ANSI(CP936) 解码，中文注释会乱码；
+ * 代码部分不依赖中文串做判定时仍能跑。是否补 BOM 登记为待办，
+ * 不在本判据里自动修（改 BOM 会动到 git diff 与字节）。
  *
  * 用法：node verify/check-ps1-syntax.mjs
  */
@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 
 const VERIFY = dirname(fileURLToPath(import.meta.url));
 const SKIP_DIRS = new Set(['_tmp', '_scratch', '_lab', 'backup', 'node_modules', 'shots', 'logs']);
-// 按前缀判过程产物目录：改名成 `_scratch_REMOVED_*` 后精确相等会失效（2026-09-18 实测）。
+// 按前缀判过程产物目录：改名成 `_scratch_REMOVED_*` 后精确相等会失效。
 const isSkippedDir = (name) => SKIP_DIRS.has(name) || name.startsWith('_scratch');
 
 const walk = (dir, out = []) => {
@@ -89,7 +89,7 @@ for (const file of files) {
   const hasBom = bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF;
   // 一律按 UTF-8 读，**并剥掉开头的 BOM**。
   //
-  // ⚠️ 必须剥。同文件三口径实测（`verify/_scratch/ps1-three-ways.ps1`）：
+  // 必须剥。同文件三口径对照实验（过程产物，不随仓）：
   //     ParseFile                    → 0 错（直接读文件）
   //     ParseInput(Get-Content -Raw) → 0 错（PS 自己读，会剥 BOM）
   //     ParseInput(UTF8.GetString)   → 1 错 ← **纯 UTF-8 解码，BOM 留成 U+FEFF 字符**
@@ -111,7 +111,7 @@ for (const file of files) {
 console.log(`扫了 ${String(files.length)} 个 PowerShell 脚本（文本由 Node 以 UTF-8 读入，写成带 BOM 的临时文件后交给 ParseFile）。`);
 if (bomless.length > 0) {
   console.log(`无 BOM 的 ${String(bomless.length)} 个：${bomless.join(', ')}`);
-  console.log('  ⚠️ 无 BOM 时，Windows PowerShell 5.1 会按 ANSI(CP936) 读这些文件；');
+  console.log('  无 BOM 时，Windows PowerShell 5.1 会按 ANSI(CP936) 读这些文件；');
   console.log('     中文注释会乱码。本判据不受影响（它由 Node 解码），但**运行时**会受影响。');
 }
 console.log('');

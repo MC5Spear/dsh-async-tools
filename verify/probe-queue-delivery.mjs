@@ -65,7 +65,7 @@ function userTextOf(event) {
 }
 
 /** 全部工具结果文本（0.2.0 转录形状：渲染文本块 type:'text'，句柄在 message.toolCallId
- *  ——旧 'tool-result' 块形状在转录 0 次出现，2026-10-09 实测，与 async-e2e 同款形状判据）。 */
+ *  ——旧 'tool-result' 块形状在现行转录中 0 次出现，与 async-e2e 同款形状判据）。 */
 function toolResultTexts(page) {
   const texts = [];
   for (const record of page.records) {

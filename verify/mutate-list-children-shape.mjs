@@ -3,7 +3,7 @@
  *
  * ## 为什么必须做这一步
  *
- * 2026-09-25 的真机缺陷（`async_wait_agent` 对刚派发的子代理报 `unknown subagent`、
+ * 真机缺陷（`async_wait_agent` 对刚派发的子代理报 `unknown subagent`、
  * `Known children:` 空清单）根因就是**行形状漂移**。三个变异各自对应一种真实退化：
  *
  * - **M1 只认 `kind === 'child'`**：0.1.7 的 catalog 行没有 `kind`，过滤后一行不剩
@@ -12,7 +12,7 @@
  * - **M3 不排除诊断行**：`kind: 'diagnostic'` 的行被当成可等待的子代理
  *   ⇒ 对一条读不出来的记录进入等待，而不是给出 not_found。
  *
- * ⚠️ **本脚本会原地改写真实的 `lib/wait-agent.js`**，跑完在
+ * **本脚本会原地改写真实的 `lib/wait-agent.js`**，跑完在
  * `finally` 里写回并核对摘要。
  *
  * 用法：node verify/mutate-list-children-shape.mjs
@@ -44,8 +44,8 @@ const MUTATIONS = [
     id: 'M2',
     what: '纠错清单按 kind === "child" 过滤（真机现象：Known children 为空）',
     apply: (text) => text.replace(
-      '    return entries.map(describeEntry);',
-      "    return entries.filter((entry) => entry?.kind === 'child').map(describeEntry);")
+      '    return entries.map((entry) => describeEntry(entry, lang));',
+      "    return entries.filter((entry) => entry?.kind === 'child').map((entry) => describeEntry(entry, lang));")
   },
   {
     id: 'M3',
@@ -87,7 +87,7 @@ function restore() {
 
 const baseline = runTests();
 if (baseline.red) {
-  console.log(`BASELINE-RED  未变异时 ${TEST} 就是红的（${baseline.summary}）——先修基线；⚠️ 若括号里是空的、且本脚本以 2 退出，更可能是默认沙箱禁止捕获子进程输出（EPERM）：本脚本要跑测试文件，需带提权运行。规范见 verify/README.md 的「判据必须在默认权限下可跑」。`);
+  console.log(`BASELINE-RED  未变异时 ${TEST} 就是红的（${baseline.summary}）——先修基线；若括号里是空的、且本脚本以 2 退出，更可能是默认沙箱禁止捕获子进程输出（EPERM）：本脚本要跑测试文件，需带提权运行。规范见 verify/README.md 的「判据必须在默认权限下可跑」。`);
   process.exit(2);
 }
 console.log(`基线：未变异时 ${TEST} 全绿（${baseline.summary}）。`);

@@ -9,12 +9,13 @@
 #   而不是整片崩掉（防线：`lib/ask-takeover.js` 的宿主 import 若在加载期失败，
 #   整片测试文件会 `ERR_MODULE_NOT_FOUND`——离线作业就是这个防线的回归钉子）。
 #
-# ⚠️ **`--legacy-peer-deps` 是离线作业的要害，别删。**
+# **`--legacy-peer-deps` 是离线作业的要害，别删。**
 # 本包的九个 `@deepseek-ai/dsh*` 是 `peerDependencies`，而 **npm 7+ 默认自动安装 peer**：
-# 实测一条 `npm install` 就把整棵宿主树（**230+ 个包**）拉进 `node_modules`。
-# 不加这个开关，"离线作业"根本不离线——两个作业会退化成同一件事，而这一点**从绿上看不出来**。
-# 加了之后实测只装 **4 个包**（schemastery / zod / @standard-schema / 一个只含 schemastery 的
-# `@deepseek-ai`），`node_modules/@deepseek-ai/dsh-tools` 确实不在。
+# 一条 `npm install` 就会把整棵宿主树（约 230 个包，以 npm 解析结果为准）拉进
+# `node_modules`。不加这个开关，"离线作业"根本不离线——两个作业会退化成同一件事，
+# 而这一点**从绿上看不出来**。加了之后只装极小集合（schemastery / zod /
+# @standard-schema / 一个只含 schemastery 的 `@deepseek-ai`；离线作业的「断言」
+# 步骤会核实 `node_modules/@deepseek-ai/dsh-tools` 确实不在）。
 #
 # 两个作业都在跑测试**之前**断言自己的前提（见各自的「断言」步骤）——
 # 前提是要验的，不是假定的：少了它，宿主锚缺席时接线用例会全部自跳过，

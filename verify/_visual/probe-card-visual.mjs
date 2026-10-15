@@ -33,7 +33,7 @@ const localConfig = await loadLocalPlaneOrSkip('verify/_visual/probe-card-visual
 const { base: BASE, token } = instanceCredentials(localConfig);
 const SHOTS = join(localConfig.evidenceDir, 'shots');
 const LOGS = join(localConfig.evidenceDir, 'logs');
-// ⚠️ 四组**全要**。判据少看几个字段不会报错，只会安静地少测；
+// 四组**全要**。判据少看几个字段不会报错，只会安静地少测；
 // 名单的单一来源是 `lib/config.js` 的四组键集合。
 const EXPECTED_KEYS = [...BUDGET_FIELD_KEYS, ...LANG_FIELD_KEYS, ...FLAG_FIELD_KEYS, ...ASK_FIELD_KEYS];
 

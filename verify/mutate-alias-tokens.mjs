@@ -7,7 +7,7 @@
  * ② 把 `label-error` 写成引用（官方 `.failed` 引用的那个未定义名字——照抄它
  * 就是复刻本判据要消灭的缺陷）。
  *
- * ⚠️ 本脚本会原地改写真实的 `client.js`，跑完在 `finally` 里写回
+ * 本脚本会原地改写真实的 `client.js`，跑完在 `finally` 里写回
  * 并核对摘要。任何 SKIP 按失败处理。
  *
  * 用法：node verify/mutate-alias-tokens.mjs（需可捕获子进程输出——默认沙箱下 EPERM，
@@ -71,9 +71,10 @@ try {
   }
 
   // ② 照抄官方 .failed：把 label-error 写成引用（它零定义、只被官方引用过）。
+  //    锚按**源码字面**写（规则跨两个字符串字面量，拼接发生在运行期）。
   const mutated2 = original.replace(
-    '.ats-enum-select[aria-invalid=\'true\']{border-color:var(--dsw-alias-state-error-primary)}',
-    ".ats-enum-select[aria-invalid='true']{border-color:var(--dsw-alias-label-error)}");
+    '.ats-enum-select[aria-invalid=\'true\'],.ats-value-input[aria-invalid=\'true\']{"\n  + "border-color:var(--dsw-alias-state-error-primary)}',
+    ".ats-enum-select[aria-invalid='true'],.ats-value-input[aria-invalid='true']{\"\n  + \"border-color:var(--dsw-alias-label-error)}");
   if (mutated2 === original) {
     console.log('SKIP  找不到枚举非法边框的锚点，变异②失效——当失败处理。');
     ok = false;

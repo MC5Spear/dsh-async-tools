@@ -69,18 +69,25 @@ const collector = (text) => ({ text: () => text });
  * 造一个"约束执行器"上下文（照 `escalation.test.mjs` 的 confinedCtx 收窄）：
  * `sandboxMode` 必须在**创建工具之前**设好（参数表在构造期读一次）。
  */
-function confinedCtx() {
+function confinedCtx(presetOf = 'dsh-async') {
   const f = fakeCtx();
   f.installShellExecute(() => Promise.resolve(fakeProc({ text: 'ok' }).proc));
   f.ctx.shell.sandboxMode = 'workspace-write';
   // lib/jobs.js 的 execute 走 ctx.get('sandboxPolicy') 取放行策略（escalation.test.mjs:52
   // 同款桩）：缺了会得到 `TypeError: ctx.get is not a function`，断言本体根本执行不到。
+  // F3 范围判定（需求 §6.2/§6.3）：结果诊断只对归属本包预设的调用主体生效——
+  // 桩按 inOwnPreset 的读取路径（sessions.get → sessionProjections.stateOf('agentPreset')）
+  // 把调用主体映射到指定预设（默认 dsh-async；范围负面对照传别的）。
   f.ctx.get = (key) => {
     if (key === 'sandboxPolicy') {
       return { resolve: () => ({ mode: 'workspace-write' }) };
     }
+    if (key === 'sessions') {
+      return { get: (id) => ({ id }) };
+    }
     return undefined;
   };
+  f.ctx.sessionProjections = { stateOf: () => presetOf };
   return f;
 }
 
@@ -237,7 +244,7 @@ test('R28 判据8：开关关 ⇒ 三防线同断（行为差异，不是存在�
     'guard 缺席 ⇒ 签名 1 不产出（失效安全方向 = 关）');
   // b：描述侧警示段消失。
   const conf = confinedCtx();
-  const tool = createRunTool(conf.ctx, resolveConfig({ toolName: 'async_run', silentFailureGuard: false }));
+  const tool = createRunTool(conf.ctx, resolveConfig({ toolName: 'async_run', silentFailureGuard: false, owningPreset: 'dsh-async' }));
   assert.doesNotMatch(tool.description, /die silently at process creation/, '关 ⇒ b 段不拼');
   // c：纪律段组稿为空串（快照现读，段本体不注销）。c 段与
   // 预设过滤共用一个三服务子 scope（systemPrompt+sessions+sessionProjections）。
@@ -346,36 +353,90 @@ test('R28 判据10：后台出口——detail 尾部拼静默行，开关在结�
   assert.equal(flippedOff.detail.includes('Silent-failure guard:'), false, '结算时刻开关已关 ⇒ 无静默行');
 });
 
-test('R28 判据11：b 段四组合矩阵 + 描述就地增删（不复制 c 的纪律文本）', (t) => {
+test('F3（范围判定·前台）：调用主体不在本包预设 ⇒ 结果诊断不产生（开关开也一样）', async () => {
+  // confinedCtx('standard')：sessions.get 命中但 agentPreset 不是本包两预设——
+  // guardActiveFor 走 inOwnPreset 判 false，前台 note 不拼静默行。
+  const conf = confinedCtx('standard');
+  const quiet = fakeProc({ text: '', exitCode: 1, status: 'running', autoResolve: false });
+  quiet.proc.sandbox = { mode: 'workspace-write' };
+  conf.installShellExecute(() => Promise.resolve(quiet.proc));
+  const pending = createRunTool(conf.ctx, resolveConfig({ toolName: 'async_run', silentFailureGuard: true }))
+    .execute({ command: 'node x.mjs 2>&1', description: 'run node' }, exec);
+  quiet.settle();
+  const result = await pending;
+  assert.equal('note' in result, false, '非归属主体的前台返回不得拼静默行（键都不出现）');
+});
+
+test('F3（范围判定·后台）：结算时刻主体不在本包预设 ⇒ detail 无静默行；服务缺席同样关闭', async () => {
+  const conf = confinedCtx('standard');
+  conf.ctx.timer.timeout = (callback) => { const h = setTimeout(callback, 0); return () => clearTimeout(h); };
+  const quiet = fakeProc({ text: '', exitCode: 1, status: 'running', autoResolve: false });
+  quiet.proc.sandbox = { mode: 'workspace-write' };
+  conf.installShellExecute(() => Promise.resolve(quiet.proc));
+  const result = await createRunTool(conf.ctx, resolveConfig({ toolName: 'async_run', silentFailureGuard: true }))
+    .execute({ command: 'node x.mjs 2>&1', description: 'long', yield_ms: 1 }, exec);
+  assert.equal(result.status, 'running');
+  quiet.settle();
+  await new Promise((r) => { setTimeout(r, 0); });
+  const view = conf.jobsFake.views().at(-1);
+  assert.equal(view.status, 'completed');
+  assert.equal(view.detail.includes('Silent-failure guard:'), false, '非归属主体的后台 detail 无静默行');
+
+  // 失效安全方向＝关：sessions 服务整个缺席（无预设可读）——同样不产生诊断。
+  const bare = confinedCtx();
+  bare.ctx.get = (key) => (key === 'sandboxPolicy' ? { resolve: () => ({ mode: 'workspace-write' }) } : undefined);
+  bare.ctx.sessionProjections = undefined;
+  bare.ctx.timer.timeout = (callback) => { const h = setTimeout(callback, 0); return () => clearTimeout(h); };
+  const quiet3 = fakeProc({ text: '', exitCode: 1, status: 'running', autoResolve: false });
+  quiet3.proc.sandbox = { mode: 'workspace-write' };
+  bare.installShellExecute(() => Promise.resolve(quiet3.proc));
+  await createRunTool(bare.ctx, resolveConfig({ toolName: 'async_run', silentFailureGuard: true }))
+    .execute({ command: 'node x.mjs 2>&1', description: 'long', yield_ms: 1 }, exec);
+  quiet3.settle();
+  await new Promise((r) => { setTimeout(r, 0); });
+  const bareView = bare.jobsFake.views().at(-1);
+  assert.equal(bareView.status, 'completed');
+  assert.equal(bareView.detail.includes('Silent-failure guard:'), false, '服务缺席 ⇒ 范围不可判定 ⇒ 不产生诊断（失效安全＝关）');
+});
+
+test('R28 判据11：b 段五门组合矩阵 + 描述就地增删（不复制 c 的纪律文本）', (t) => {
   if (hostIndex === undefined) { t.skip('宿主包不可解析（离线环境），本用例跳过'); return; }
   const warnAnchor = /can die silently at process creation/;
-  // (执行器在场 × 开关开) 才拼——四组合。
+  // 归属前提：F3 之后警示段是**三门**——执行器在场 × 开关开 × 行有归属声明
+  // （owningPreset；需求 §6.2：自定义行不适用本包纪律段）。
+  const owned = { toolName: 'async_run', silentFailureGuard: true, owningPreset: 'dsh-async' };
   const on = confinedCtx();
   assert.match(
-    createRunTool(on.ctx, resolveConfig({ toolName: 'async_run', silentFailureGuard: true })).description,
-    warnAnchor, '有执行器 + 开 ⇒ b 段在场');
+    createRunTool(on.ctx, resolveConfig({ ...owned })).description,
+    warnAnchor, '有执行器 + 开 + 归属 ⇒ b 段在场');
   const off = confinedCtx();
   assert.doesNotMatch(
-    createRunTool(off.ctx, resolveConfig({ toolName: 'async_run', silentFailureGuard: false })).description,
+    createRunTool(off.ctx, resolveConfig({ ...owned, silentFailureGuard: false })).description,
     warnAnchor, '有执行器 + 关 ⇒ 不拼');
   const plainOn = fakeCtx();
   plainOn.installShellExecute(() => Promise.resolve(fakeProc({ text: 'ok' }).proc));
   assert.doesNotMatch(
-    createRunTool(plainOn.ctx, resolveConfig({ toolName: 'async_run', silentFailureGuard: true })).description,
-    warnAnchor, '无执行器 + 开 ⇒ 不拼（不给走不通的指引）');
+    createRunTool(plainOn.ctx, resolveConfig({ ...owned })).description,
+    warnAnchor, '无执行器 + 开 + 归属 ⇒ 不拼（不给走不通的指引）');
   const plainOff = fakeCtx();
   plainOff.installShellExecute(() => Promise.resolve(fakeProc({ text: 'ok' }).proc));
   assert.doesNotMatch(
-    createRunTool(plainOff.ctx, resolveConfig({ toolName: 'async_run', silentFailureGuard: false })).description,
+    createRunTool(plainOff.ctx, resolveConfig({ ...owned, silentFailureGuard: false })).description,
     warnAnchor, '无执行器 + 关 ⇒ 不拼');
+  // F3 新判据：无归属声明的自定义行（owningPreset 缺席）——开关开、执行器在场
+  // 也不拼：警示描述的是**本包预设行**的部署形态，自定义行不适用。
+  const custom = confinedCtx();
+  assert.doesNotMatch(
+    createRunTool(custom.ctx, resolveConfig({ toolName: 'async_run', silentFailureGuard: true })).description,
+    warnAnchor, '无归属声明（自定义行）⇒ 不拼（需求 §6.2）');
   // b 段不得复制 c 的纪律文本（需求"不复制 c"条款）。
   assert.doesNotMatch(
-    createRunTool(on.ctx, resolveConfig({ toolName: 'async_run', silentFailureGuard: true })).description,
+    createRunTool(on.ctx, resolveConfig({ ...owned })).description,
     /Execution discipline for this deployment/, 'b 是紧凑警示段，不是纪律段复制');
 
   // 就地增删：活视图翻转 + refreshToolDescriptions 重建（volatile 链的行为差异）。
   const flip = confinedCtx();
-  const current = { ...resolveConfig({ toolName: 'async_run', silentFailureGuard: false }) };
+  const current = { ...resolveConfig({ ...owned, silentFailureGuard: false }) };
   const view = new Proxy({}, { get: (_target, key) => current[key] });
   const tool = createRunTool(flip.ctx, view);
   assert.doesNotMatch(tool.description, warnAnchor, '初始关');
@@ -385,6 +446,12 @@ test('R28 判据11：b 段四组合矩阵 + 描述就地增删（不复制 c 的
   current.silentFailureGuard = false;
   refreshToolDescriptions(tool, view);
   assert.doesNotMatch(tool.description, warnAnchor, '翻转关 + refresh ⇒ 警示段消失');
+  // 归属翻转：owningPreset 非本包预设时同样消失（行身份是装载期常量，这里只
+  // 锁视图传播——视图层现读，不缓存归属判定）。
+  current.silentFailureGuard = true;
+  current.owningPreset = undefined;
+  refreshToolDescriptions(tool, view);
+  assert.doesNotMatch(tool.description, warnAnchor, '归属不在本包两预设 ⇒ 警示段消失');
 });
 
 test('R28 判据12：c 段经 ctx.inject 注册 systemPrompt，文本每次组稿现读快照', (tc) => {

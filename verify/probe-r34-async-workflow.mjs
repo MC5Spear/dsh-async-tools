@@ -26,14 +26,14 @@
  *   未验证（需求 §8.1，不冒充通过）。
  *
  * 用法：node verify/probe-r34-async-workflow.mjs [--only=a,b,c,d,e,f,g]
- * （(b)(c)(g) 的 GUI 面需要 Edge/Chrome——找不到时如实 FAIL 'cdp-missing'。）
+ * （(b)(c)(g) 的 GUI 侧需要 Edge/Chrome——找不到时如实 FAIL 'cdp-missing'。）
  * 证据落本机证据目录 logs/r34-async-workflow.json。
  *
- * ⚠️ 共享实例纪律：不动别人的设置与语言档；会话建在 dsh-async 预设下，
+ * 共享实例纪律：不动别人的设置与语言档；会话建在 dsh-async 预设下，
  * 锚句双档自适应（渲染文两种语言档都认）。
- * ⚠️ 时序锚：本工具无审批环节——一切"窗口内"动作以转录出现
+ * 时序锚：本工具无审批环节——一切"窗口内"动作以转录出现
  * async_workflow 的 tool/call 为同步点，不是 approval/decided。
- * ⚠️ 通知计数只认 `user/message + source(tool-jobs, notice)` 且按消息 id 去重
+ * 通知计数只认 `user/message + source(tool-jobs, notice)` 且按消息 id 去重
  * （request/header 自带工具描述示例会误报）。
  *
  * @module verify/probe-r34-async-workflow
@@ -184,7 +184,7 @@ function classifyResult(text) {
 }
 
 /**
- * 会话升档（用户裁定 2026-10-01：探针可经 GUI 自动化执行）：
+ * 会话升档（用户裁定：探针可经 GUI 自动化执行）：
  * workflow 引擎的 PTC worker 按**父会话现行档位**取沙箱（dsh-workflow-ptc:632
  * `sandboxPolicy.resolve({session})`）；验证实例是托管服务、无 logon SID，受限档下
  * CreateRestrictedToken 必死（首跑实读：引擎同步抛 `workflow execution failed
@@ -249,7 +249,7 @@ async function guiNewSession(page) {
  * developerTools 的 seat 菜单一条 GUI 路；探针改走同一 remote 的 RPC 面：
  * 取 `session/list` 里最新的 blank 会话（新任务页焦点在的就是它），
  * `agentPresets/select` 给它定 dsh-async（宿主只拒「已开始」的会话；
- * diag 2026-10-09 全程证实：select 采纳→composer 发词→async_workflow 真被调）。
+ * diag 链全程证实：select 采纳→composer 发词→async_workflow 真被调）。
  * 先清掉其余 blank（空会话、无历史可失），让「复用 or 新建」都收敛到同一个
  * 焦点会话。@returns 定好预设的 blank 会话 id——composer 发出的词就落在它里面。
  */
@@ -336,7 +336,7 @@ async function jobCardText(page, label) {
 
 /** (a) 即时性·插话（RPC 定向建会话＋升档；插话走 RPC steer）。
  *
- * 2026-10-09 起 (a)(e) 不再经 GUI 建会话：0.2.0 的「新建会话」默认落**标准
+ * (a)(e) 不经 GUI 建会话：0.2.0 的「新建会话」默认落**标准
  * 模式**（新任务页 seat 默认；diag 链实证），提示词会打进 standard 会话——模型
  * 只有宿主 workflow 可用，等不到 async_workflow 调用。
  * 本两相判据全在转录侧（时序/形状/通知计数），会话管理改 RPC 显式预设＋
@@ -423,7 +423,7 @@ async function phaseC(page) {
 }
 
 /** (d) 触顶：与 async_run 同池混编 11 连发 → 第 11 条 startRefused。
- * 2026-10-09 起会话管理同 (a)(e)：RPC 定向＋elevateSession（本部署审批档为
+ * 会话管理同 (a)(e)：RPC 定向＋elevateSession（本部署审批档为
  * 自动审批，无审批串行；判据全在转录侧）。 */
 async function phaseD() {
   const sessionId = await newSession(PRESET);
@@ -449,7 +449,7 @@ async function phaseD() {
   });
 }
 
-/** (e) 预算内结算：渲染文本形态 + 零完成通知（会话管理同 (a)：RPC 定向，2026-10-09）。 */
+/** (e) 预算内结算：渲染文本形态 + 零完成通知（会话管理同 (a)：RPC 定向）。 */
 async function phaseE() {
   const name = `wf-r34e-${TAG}`;
   const sessionId = await newSession(PRESET);
@@ -514,7 +514,7 @@ async function phaseG(guiPage) {
     const runView = await evaluate(guiPage, 'document.body.innerText');
     record('g-2-gui', runView.includes(name), `GUI 运行视图显示 ${name}`);
   } catch (error) {
-    record('g-2-gui', false, `GUI 面取证失败：${String(error?.message ?? error)}（如实登记）`);
+    record('g-2-gui', false, `GUI 侧取证失败：${String(error?.message ?? error)}（如实登记）`);
   }
 }
 
@@ -527,13 +527,13 @@ const summary = { ranAt: new Date().toISOString(), ns: NS, preset: PRESET, resul
 let browser = null;
 let page = null;
 try {
-  // GUI 只剩 (b)(c)(g) 的界面断言需要（停止键/任务卡/运行视图）；(a)(d)(e) 自
-  // 2026-10-09 起 RPC 定向（会话管理不走 GUI，默认权限即可跑）。
+  // GUI 只剩 (b)(c)(g) 的界面断言需要（停止键/任务卡/运行视图）；(a)(d)(e)
+  // RPC 定向（会话管理不走 GUI，默认权限即可跑）。
   const needGui = want('b') || want('c') || want('g');
   if (needGui) {
     const browserPath = findBrowser();
     if (browserPath === undefined || browserPath === null) {
-      record('cdp-missing', false, '找不到 Edge/Chrome：GUI 面判据无法取证（如实记录，不冒充）');
+      record('cdp-missing', false, '找不到 Edge/Chrome：GUI 侧判据无法取证（如实记录，不冒充）');
     } else {
       browser = await launch(browserPath, ['--lang=zh-CN']);
       page = await openPage(browser.port, 'about:blank');

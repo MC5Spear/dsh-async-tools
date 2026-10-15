@@ -21,7 +21,7 @@
  * `plan`/`save`/`stage`/`field`/`shell`/`actions`/`dispose`）；`SettingsForm`
  * `:6918-6956`；`SettingsValueField` `:6973-7043`；`Switch` `:3394-3408`；
  * `IconQuestionOutlineRegular` 定义 `:2352-2355`、公开导出 `:12381`。差异几处、
- * 都不改变语义：① `bind` 的快照店换成手写 mini store（官方用 zustand 的
+ * 都不改变语义：① `bind` 的快照存储换成手写 mini store（官方用 zustand 的
  * `createSnapshotStore`，Node 侧同样不可达；对外仍是
  * `{getSnapshot, subscribe, set}`）；② 组件用 `React.createElement` 而非 `jsx()` 运行时，
  * 类名用可读字面量（测试断言结构/属性，不断言类名）；③ `SettingsValueField`
@@ -34,7 +34,7 @@
  * 假绿）。
  */
 
-/** 手写快照店：对外接口 = `{getSnapshot, subscribe, set}`（官方 `createSnapshotStore` 的最小集）。 */
+/** 手写快照存储：对外接口 = `{getSnapshot, subscribe, set}`（官方 `createSnapshotStore` 的最小集）。 */
 function createMiniStore(init) {
   let state = init;
   const listeners = new Set();

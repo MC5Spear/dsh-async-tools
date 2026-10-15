@@ -105,19 +105,21 @@ defineTest('R57 真实注册表①：workflow 先让出，wait 覆盖结算 → 
     const recovered = await pending;
 
     assert.equal(recovered.status, 'completed');
+    assert.ok(recovered.output.includes('[job completed]'),
+      '后台取回的可见输出有终态状态行（需求 §2.2.2；完成头只在直接结算路径渲染）');
     assert.ok(recovered.output.includes('AT_FINAL_PAYLOAD'),
       '最终 JSON 必须出现在模型可见输出里（一次消费通道被本次返回兑现）');
     assert.equal(recovered.output.split('AT_FINAL_PAYLOAD').length, 2,
       '恰一次：同一返回内不得重复拼接最终结果');
-    assert.ok(recovered.output.includes('workflow "at-r57-recovery" completed'),
-      '结算文本为宿主同形渲染（含 workflow 名与 agent 计数行）');
+    assert.match(String(recovered.detail ?? ''), /0 agents/,
+      '结算 detail 保留 agent 计数行（注册表把 outcome.detail 并入视图）');
 
     // 恰一次：一次性通道已被上面的交付消费，后续读取不得重复。
     const rawNext = rig.ctx.jobs.read(first.job_id, rig.parent.id);
     assert.equal(rawNext.result, undefined, '注册表裸读不再有 result（一次性通道已消费）');
     const again = await rig.waiter.execute({ job_id: first.job_id, wait_ms: 500 }, rig.exec());
     assert.equal(again.status, 'completed');
-    assert.equal(again.output, '', '交付后的再次读取不重复最终结果（游标已到尾、result 已交）');
+    assert.equal(again.output, '[job completed]\n', '交付后的再次读取不重复最终结果（游标已到尾、result 已交；状态行每次读取都在）');
   } finally {
     await rig.dispose();
   }
@@ -143,6 +145,7 @@ defineTest('R57 真实注册表②：workflow 已结算后再 wait → 最终 JS
     assert.equal(recovered.status, 'completed');
     assert.ok(recovered.output.includes('AT_FINAL_PAYLOAD'),
       '入口已终态分支同样交付一次性 result——屏障命中路径不丢');
+    assert.ok(recovered.output.includes('[job completed]'), '入口终态分支同样带状态行');
   } finally {
     await rig.dispose();
   }
@@ -165,11 +168,11 @@ defineTest('R57 真实注册表③：无 result 的普通命令作业——增�
 
     const first = await rig.waiter.execute({ job_id: jobId, wait_ms: 500 }, rig.exec());
     assert.equal(first.status, 'completed');
-    assert.equal(first.output, 'hello from cmd\n', '无 result 的作业：输出＝chunks 增量，不多不少');
+    assert.equal(first.output, '[job completed]\nhello from cmd\n', '无 result 的作业：输出＝状态行＋chunks 增量，不多不少');
     assert.equal(first.truncated, false);
 
     const second = await rig.waiter.execute({ job_id: jobId, wait_ms: 500 }, rig.exec());
-    assert.equal(second.output, '', '消费式游标：第二次读取无新增量（行为不变）');
+    assert.equal(second.output, '[job completed]\n', '消费式游标：第二次读取无新增量（状态行属诊断，每次读取都在）');
   } finally {
     await rig.dispose();
   }

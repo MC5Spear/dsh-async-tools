@@ -20,7 +20,8 @@
  * - 令牌默认从托管方的 token 文件读（路径经配置加载器取）：
  *   文件是**截断重写**的，所以每次跑都现读，不缓存。
  * - **实例被别的会话重启过也不许丢证据**：相位体包在 try/catch 里，无论成败都落
- *   `verify/logs/acc017-<phase>.{json,log}`；掉线的相位留下已完成判据 + `phaseError`。
+ *   证据目录（配置加载器的 `evidenceDir`）下 `logs/acc017-<phase>.{json,log}`；
+ *   掉线的相位留下已完成判据 + `phaseError`。
  *
  * @module verify/acceptance-017
  */
@@ -267,7 +268,7 @@ function sandboxModes(pageResult) {
  */
 async function newSessionUnconfined(preset) {
   const sid = await newSession(preset);
-  // ⚠️ `/permission` 必须走 `commands/execute` RPC（客户端同款通道）：slash 命令由
+  // `/permission` 必须走 `commands/execute` RPC（客户端同款通道）：slash 命令由
   // 客户端在提交前拦截执行、不经模型；塞进 session/prompt 只会变成一条普通用户
   // 消息（sandbox/mode 序列不动，命令零效果）。
   const executed = await rpc('commands/execute', {
@@ -490,7 +491,7 @@ async function phaseAgent() {
   say(`模型选择白名单改前：enabled=${String(selBefore.value.enabled)} allowedModels=${JSON.stringify(selBefore.value.allowedModels ?? [])}`);
   try {
     // 指定路由只在"会话有模型选择策略"时可用（需求 §2.3.2）；验证实例出厂 enabled=false，
-    // 先开白名单（含 zai/glm-5.3——用户 2026-09-25 指定的子代理路由）。
+    // 先开白名单（含 zai/glm-5.3——用户指定的子代理路由）。
     await rpc('settings/update', {
       ns: SEL_NS,
       patch: { enabled: true, allowedModels: [{ provider: 'zai', model: 'glm-5.3' }] }

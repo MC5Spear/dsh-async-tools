@@ -17,11 +17,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createWorkflowTool as buildWorkflowTool } from '../lib/workflow.js';
+import { createWaitJobTool as buildWaitJobTool } from '../lib/wait-job.js';
 import { resolveConfig } from '../lib/config.js';
 import { LATE_ANSWER_EVENT } from '../lib/interrupts.js';
 import { checkedTool, fakeAgent, fakeCtx, freezeTimers, inboxPayload } from './_helpers.mjs';
 
 const createWorkflowTool = (ctx, config) => checkedTool(buildWorkflowTool(ctx, config));
+const createWaitJobTool = (ctx, config) => checkedTool(buildWaitJobTool(ctx, config));
 
 /**
  * 引擎替身：`start(spec)` 返回 run（result 悬置到测试调 `_resolve`）。探针：
@@ -416,4 +418,57 @@ test('async_workflow（R34-g·zh）：完成渲染与截断标注随 agentLang �
   assert.match(result.result, /workflow「wf-demo」已完成（2 个子代理）。/, '中文档头部说明必须为中文（需求 §5.3）');
   assert.match(result.result, /\[输出已截断：省略 176 字符\]/, '截断标注必须随语言档切换');
   assert.ok(result.result.endsWith('"\n}'), '中文档同样保首尾');
+});
+
+// ---------------------------------------------------------------------------
+// F8/F9（需求 §2.2.3/§2.1.2）：注册表收原始 JSON（后台读取整体只裁一次，
+// 预算不被实施两次）；取消与预算到期分别说明。
+// ---------------------------------------------------------------------------
+
+test('async_workflow（F8）：注册表收原始 JSON，一次内容预算不被实施两次', async () => {
+  const { f, runs, agent, tool } = rig({ maxResultChars: 5 });
+  agent.session.append = () => {};
+  const exec = { agent, signal: new AbortController().signal };
+  const pending = tool.execute(BASE_ARGS, exec);
+  // 26 字符串值 → JSON 序列化恰 28 字符；预算 5 → 省略量按原始内容计＝23。
+  runs[0]._resolve({ stopReason: 'completed', agentsStarted: 1, value: 'x'.repeat(26) });
+  const result = await pending;
+
+  // 直接结算路径：完成头（状态提示另计）＋对原始 JSON 的单次裁剪。
+  assert.match(result.result, /\[output truncated: 23 chars omitted\]/,
+    '直接结算的省略量按原始 JSON 计算（28−5=23）');
+
+  // 注册表：outcome 存**原始序列化值**——由后台首次终态读取的省略量反推：
+  // 23＝28−5 只在原始整串上成立；若注册表存「完成头＋已裁文本」，省略量会按
+  // 那份更长文本重算（旧缺陷形态）。
+  const views = f.jobsFake.views();
+  const jobId = views[0].id;
+  await new Promise((resolve) => { setTimeout(resolve, 5); });
+  const waiter = createWaitJobTool(f.ctx, resolveConfig({ toolName: 'async_wait_job', maxResultChars: 5 }));
+  const again = await waiter.execute({ job_id: jobId, wait_ms: 30000 }, exec);
+  assert.equal(again.status, 'completed');
+  assert.equal(again.truncated, true, '原始 28 字符对预算 5 必须置 truncated');
+  assert.match(again.output, /\[output truncated: 23 chars omitted\]/,
+    '后台读取对「增量＋result」整体只裁一次——省略量不因前置裁剪膨胀（需求 §2.2.3）');
+  assert.ok(!again.output.includes('Return value:'), '完成头不进后台读取路径（它在直接结算路径渲染）');
+
+  // 一次性通道已消费：后续裸读无 result。
+  const rawNext = f.jobsFake.service.read(jobId, agent.id);
+  assert.equal(rawNext.result, undefined, '注册表裸读不再有 result（一次性通道已被首次终态读取消费）');
+});
+
+test('async_workflow（F9）：取消与预算到期分别说明——abort 的 note 不冒称超出预算', async () => {
+  const { f, agent, tool } = rig();
+  freezeTimers(f.ctx);
+  const controller = new AbortController();
+  const exec = { agent, signal: controller.signal };
+  const pending = tool.execute(BASE_ARGS, exec);
+  await new Promise((r) => { setTimeout(r, 5); });
+  controller.abort(new Error('tool call aborted'));
+
+  const result = await pending;
+  assert.equal(result.status, 'running');
+  assert.match(result.note, /cancelled during the first wait/, '内部结果按取消口径给原因（需求 §2.1.2）');
+  assert.doesNotMatch(result.note, /outlived the /, '不得把取消冒称超出预算');
+  assert.match(result.note, /was NOT terminated/, '命令/run 不被终止的口径保留');
 });

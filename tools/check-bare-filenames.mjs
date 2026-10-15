@@ -16,7 +16,7 @@
  * 以及 `verify/_scratch/`、`_tmp`、`logs`、`shots` 这些**过程产物**——它们不算交付树，
  * 指到那儿等于指不到）。
  *
- * ⚠️ **只按文件名比**，不要求唯一：文档写 `` `package.json` `` 时说的是"这一类清单文件"，
+ * **只按文件名比**，不要求唯一：文档写 `` `package.json` `` 时说的是"这一类清单文件"，
  * 不特指某一个。要求唯一会制造大量假阳性。
  *
  * 用法：node tools/check-bare-filenames.mjs
@@ -66,7 +66,7 @@ const CURRENT = [
 const SKIP_DIRS = new Set(['node_modules', '.git', '_scratch', '_tmp', 'logs', 'shots', 'backup', '_lab', LOCAL_DIR]);
 
 /**
- * ⚠️ 按**前缀**判过程产物目录，不是精确相等。
+ * 按**前缀**判过程产物目录，不是精确相等。
  *
  * 理由：过程产物目录一旦改名（例如 `_scratch` → `_scratch_REMOVED_日期`），
  * 精确相等的跳过名单当场失效，里面的上百个文件（旧检查器副本与旧文档快照）

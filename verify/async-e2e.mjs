@@ -21,7 +21,7 @@ import * as MESSAGE_MARKERS from './message-markers.mjs';
 import { rpc, rowOf, transcriptOf, localConfig } from './_rpc.mjs';
 import { NS, elevateSession } from './_r28-helpers.mjs';
 
-// ⚠️ 服务住在自己的家目录（服务家目录），**不在本包内**。实例坐标一律经配置加载器取——
+// 服务住在自己的家目录（服务家目录），**不在本包内**。实例坐标一律经配置加载器取——
 // 写死绝对路径（含从本文件位置推算服务目录的写法）在服务目录迁走之后集体失效。
 const CWD = localConfig.workspaceDir;
 const PRESET = 'dsh-async';
@@ -45,7 +45,7 @@ function contextBudget(page) {
 
 // ── 起跑前**确保设置是默认值** ────────────────────────────────────────────────
 //
-// ⚠️ **真机判据不能假设实例是干净的**：上游流程被外部中止时 `finally` 可能没跑完，
+// **真机判据不能假设实例是干净的**：上游流程被外部中止时 `finally` 可能没跑完，
 // 把改小的设置留在实例上——例如残留 `maxWaitMs=2000` 时每次等待被夹在 2 秒，
 // 插话窗口窄到本脚本的 2 秒轮询撞不进。起跑前先写一遍默认值并读回核对，
 // 把"上游留下的脏状态"从被测对象身上摘掉。
@@ -74,7 +74,7 @@ if (created.agentPreset !== PRESET) {
 
 // 会话升档（环境前置，机制与边界详见 `_r28-helpers.elevateSession` 头注）：
 // 本验证实例是 LocalSystem 托管服务，受限档下 async_run 的 pwsh spawn 必死
-// （2026-10-09 实测：exit 127，stderr `windows-acl-run: CreateRestrictedToken
+// （exit 127，stderr `windows-acl-run: CreateRestrictedToken
 // prerequisite failed`）。不升档，下面五步里的每一步 async_run 都到不了被测逻辑。
 await elevateSession(sessionId);
 console.log('会话已升档 danger-full-access（commands/execute RPC 侧，GUI composer 同链）');
@@ -146,7 +146,7 @@ for (;;) {
   //      ——那时它必然还在等（`wait_ms` 是 600000，而整轮只有几十秒）；
   //   ③ 此刻发插话，必然落在等待活跃期内。
   //
-  // ⚠️ 不要用 `record.time` 算"活跃了多久"——**转录记录的字段是 `event.time`，
+  // 不要用 `record.time` 算"活跃了多久"——**转录记录的字段是 `event.time`，
   // `record.time` 是 `undefined`** ⇒ 算出 `NaN`/`-1` ⇒ 条件恒假 ⇒
   // **插话一次都没发**，判据红得让人以为"打断坏了"。现行做法记"第几次轮询看到它"，
   // 不依赖任何时间字段。
@@ -155,7 +155,7 @@ for (;;) {
       const event = record.event;
       if (event?.type !== 'tool/call' || event.data?.name !== 'async_wait_job') continue;
       const args = String(event.data.arguments ?? '');
-      // ⚠️ 判据要**精确到长作业那一次**：`wait_ms` 是 600000。正则不能放宽到
+      // 判据要**精确到长作业那一次**：`wait_ms` 是 600000。正则不能放宽到
       // 任意 ≥5 位数字——会把第 3 步那个 20000 也匹配，"长作业的等待"在
       // 第 3 步就被认定、插话落在错误的窗口。
       if (/wait_ms"\s*:\s*6\d{5}\b/.test(args)) return args;
@@ -194,7 +194,7 @@ for (;;) {
         requestId: `req-${Math.random().toString(36).slice(2, 10)}`,
         sessionId,
         mode: 'steer',
-        // ⚠️ 插话文案**不能叫模型"不要调用任何工具"**：这条判据要的正是"打断之后
+        // 插话文案**不能叫模型"不要调用任何工具"**：这条判据要的正是"打断之后
         // 模型还能继续把那个作业等回来"（第 5 步）。模型若照做"不调用工具"，
         // 会话当场结束，第 5 步永远跑不到——**判据没错，是提示词自己把路堵了**。
         content: [{ type: 'text', text: '插话测试：这是一条用户新消息。请先回复一行 INTERRUPT_RECEIVED，'
@@ -258,7 +258,7 @@ for (const record of page.records) {
 
 // ── 判定 ─────────────────────────────────────────────────────────────────────
 //
-// ⚠️ 脚本必须有断言：只打印工具调用与结果、退出码恒 0 的形态比没有脚本更坏——
+// 脚本必须有断言：只打印工具调用与结果、退出码恒 0 的形态比没有脚本更坏——
 // 一次空转录、一次报错的工具调用，读数看起来都"有输出"，却会被当成
 // "让出→取回"的证据。
 //
@@ -332,9 +332,9 @@ judge('取回的输出证明进程正常结束：末尾输出完整、无截断�
 
 // ⑤ 插话：等待被中断，而作业**不受影响**（需求 §2.1.2 的不变量）。
 //
-// ⚠️ **断言文案必须来自真实返回**。真实返回原文形如
-//   「等待被打断：用户发来了新消息（已等待 1052 ms）。作业 async-command-6 仍在后台继续运行，
-//     没有受到任何影响。」
+// **断言文案必须来自真实返回**。真实返回的现行措辞形如
+//   「等待被打断：一条用户消息已到达，将出现在你的下一条输入里（已等待 N ms）。
+//     {subject} 仍在后台运行，完全不受影响。…」（`lib/text.js` 的 note.interrupted）
 // 断言模式必须照着真实返回写——自造英文关键词会匹配不到中文文案。
 //
 // 这条判据同时要求两半，缺一不可：
@@ -348,7 +348,7 @@ judge('用户插话让 async_wait_job 立即返回"等待被打断"（打断等�
     ? `没有一次等待被打断；取回文本=${waitTexts.map((t) => JSON.stringify(t.slice(0, 60))).join(' | ')}`
     : JSON.stringify(interruptNotes[0].slice(0, 110)));
 judge('打断的返回里明说作业仍在后台继续运行、没有受到影响（打断不等于打断工作）',
-  // 文案标记取自 `verify/message-markers.mjs`（逐字来自 `lib/output.js:71`）。
+  // 文案标记取自 `verify/message-markers.mjs`（逐字来自 `lib/text.js` 的 note.interrupted）。
   interruptNotes.some((t) => MESSAGE_MARKERS.SUBJECT_UNTOUCHED.test(t)),
   interruptNotes.length === 0 ? '（上一条已红）' : JSON.stringify(interruptNotes[0].slice(0, 130)));
 // 上面那条靠的是**返回里的措辞**，措辞可能"说得好听而事情没做"。这一条要实证：

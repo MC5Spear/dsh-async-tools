@@ -61,7 +61,7 @@ export function judgeDeliveredBytes(status, text) {
  * 那是恒真断言；② 全部在**剥掉注释**的文本上匹配（见 `stripComments`）。
  *
  * 订阅侧：控制器交给官方 `SettingsFormModel`（模型构造时订阅 scope），组件用
- * `useSyncExternalStore` 订阅模型的快照店（设计 §5.3：语义注册进官方模型，
+ * `useSyncExternalStore` 订阅模型的快照存储（设计 §5.3：语义注册进官方模型，
  * 只有控件本体自绘）。
  *
  * @param {string} text - `client.js` 的源码文本。

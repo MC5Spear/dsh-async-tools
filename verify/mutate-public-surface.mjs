@@ -25,7 +25,7 @@ import { tmpdir } from 'node:os';
 import { checkPublicSurface, PUBLIC_SURFACE_ALLOWLIST } from '../tools/check-public-surface.mjs';
 
 /**
- * 与检查器的豁免名单对齐：合成树里必须有这些文件，否则"名单该清"会让基线变红。
+ * 与检查器的豁免名单保持一致：合成树里必须有这些文件，否则"名单该清"会让基线变红。
  *
  * **从检查器 import 而不是抄一份**——抄的那份迟早与它漂开，而漂开的后果是
  * 变异证明在一棵"永远差一个文件"的树上跑，基线恒红、谁也不再信它。
@@ -149,7 +149,7 @@ mutation({
   name: 'M1 源码里种下本机开发盘路径 → 必须报「指纹」',
   family: '指纹',
   why: /开发盘路径/,
-  // ⚠️ 用**双反斜杠**写：JS 源码里的 Windows 路径是转义的，判据必须认这一个形态。
+  // 用**双反斜杠**写：JS 源码里的 Windows 路径是转义的，判据必须认这一个形态。
   // 只认单反斜杠会让"可执行代码里的本机绝对路径"整类漏检——转义形态必须一并认。
   patch: { source: "export const P = 'D:\\\\P\\\\somewhere\\\\repo';\n" }
 });

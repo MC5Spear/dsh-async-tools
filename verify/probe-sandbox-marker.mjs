@@ -1,7 +1,7 @@
 /**
  * 真机：沙箱拒绝的**模型可见文本**——共享拒绝词表＋退出状态标记。
  *
- * 两族执行面（命令族 pwsh／文件族 fs 围栏）共用同一份拒绝词表：`dsh-sandbox`
+ * 两类执行入口（命令类 pwsh／文件类 fs 围栏）共用同一份拒绝词表：`dsh-sandbox`
  * 的 `sandboxDenialMarker` 与 `escalationHintMarker` 是两族唯一来源，宿主的设计
  * 就是让模型在两种拒绝上读到逐字相同的标记。本探针按部署能真实触发的族取证：
  *
@@ -114,13 +114,13 @@ async function settleAndRead(sessionId, timeoutMs) {
 
 /**
  * 从转录里取**指定下标之后**最后一次 tool/result 文本（轮次隔离：每阶段一个
- * 水位下标，只认本阶段新出现的结果）。
+ * 截至下标，只认本阶段新出现的结果）。
  *
  * @param {object[]} records - 转录记录。
- * @param {number} afterIndex - 水位（只看 records 下标大于它的记录）。
+ * @param {number} afterIndex - 截至点（只看 records 下标大于它的记录）。
  * @param {string} [toolName] - 可选：限定产生这次结果的工具（匹配 tool/call 的
  *   名字与结果的 toolCallId/source.callId 对应关系）。
- * @returns {{text: string | null, index: number}} 文本与新的水位；没出现返回
+ * @returns {{text: string | null, index: number}} 文本与新的截至点；没出现返回
  *   `{ text: null, index: records.length }`。
  */
 function lastToolResult(records, afterIndex, toolName) {

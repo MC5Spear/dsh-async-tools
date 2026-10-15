@@ -9,7 +9,7 @@
  * c 段（纪律段）没有转录通道（`request/header` 只含 config/adapterDefaults/tools），
  * 取证走**行为判据**：固定格式问答 + 定向断言（逐字引用
  * 系统提示会被模型的提示保密策略拒）。判别子取纪律段第 2 条独有的退出码 `4294967295`
- * （不可猜）；问答轮以水位线断言零 tool/call。
+ * （不可猜）；问答轮以截至点断言零 tool/call。
  *
  * @module verify/_r28-helpers
  */
@@ -61,10 +61,10 @@ export async function patchNs(patch) {
  *
  * 为什么需要：验证实例是 NSSM 托管服务（LocalSystem，会话 0，无 logon SID），
  * 受限档下一切受约束 spawn 死于 `ACL_FAIL`（`CreateRestrictedToken prerequisite
- * failed`）——2026-10-09 实测 `async_run` 的 pwsh 与 workflow 引擎的 PTC worker
+ * failed`）——`async_run` 的 pwsh 与 workflow 引擎的 PTC worker
  * 同死（前者 exit 127、stderr 带 `windows-acl-run:` 前缀）。GUI composer 的
  * `/permission` 与 `commands/execute` RPC 是同一 remote 提交事务（纯准入语义、
- * command/run+command/done 持久留痕）；无浏览器面的探针经 RPC 面对**自己建的
+ * command/run+command/done 持久留痕）；不用浏览器的探针经 RPC 对**自己建的
  * 会话**执行同一命令。只升探针自己的会话，不碰实例共享设置。
  *
  * @param {string} sessionId - 探针自建会话的 id。
@@ -146,7 +146,7 @@ export function runDescriptionOf(transcript) {
 /**
  * 转录里 async_run 的**末条**结果文本（a 管线通道；同会话多次调用时取最新那次）。
  *
- * 形状（2026-09-27 在验证实例实测定案）：`tool/result` 的 `message.toolCallId` 与 `tool/call`
+ * 形状（验证实例实测定案）：`tool/result` 的 `message.toolCallId` 与 `tool/call`
  * 的 `callId` 配对；文本在 `message.content` 的 `type:'text'` 块里。同时兼容旧
  * `tool-result` 块嵌套形（`async_wait_job` 通道用过），两种形状都收。
  */

@@ -62,7 +62,7 @@ const SETTINGS_NS = NS;
 /**
  * 读当前生效的设置值。
  *
- * ⚠️ `settings/describe` **不接受 `namespace` 参数**（传了会被网关拒：
+ * `settings/describe` **不接受 `namespace` 参数**（传了会被网关拒：
  * `unexpected "namespace"`）。正确形状是传空对象、再从返回的 `namespaces` 里按 `ns` 找。
  *
  * @returns {Promise<object>} 该命名空间的值。
@@ -94,7 +94,7 @@ async function newSession(preset) {
   const created = await rpc('session/create', { request: { cwd: CWD, agentPreset: preset } });
   if (created.agentPreset !== preset) throw new Error(`预设回退：要 ${preset}，得到 ${String(created.agentPreset)}`);
   // 环境前置：本验证实例是 LocalSystem 托管服务（无 logon SID），受限档 spawn
-  // 必死于 CreateRestrictedToken——async_run 的 pwsh 同死（2026-10-09 实测 exit 127）。
+  // 必死于 CreateRestrictedToken——async_run 的 pwsh 同死（exit 127）。
   // 行为段都要跑真命令，dsh-async 会话建好即升档；standard 会话只读工具清单，不升。
   if (preset === 'dsh-async') await elevateSession(created.sessionId);
   return created.sessionId;
@@ -140,7 +140,7 @@ function parse(page) {
     if (event?.type === 'tool/call') calls.push({ name: String(event.data.name), args: String(event.data.arguments) });
     else if (event?.type === 'tool/result') {
       // 0.2.0 转录形状：渲染文本块（type:'text'，句柄在 message.toolCallId）——没有
-      // 'tool-result' 块（2026-10-09 实测旧形状 0 次出现，与 async-e2e 同款形状判据）。
+      // 'tool-result' 块（旧形状在现行转录中 0 次出现，与 async-e2e 同款形状判据）。
       results.push((event.data.message?.content ?? [])
         .filter((c) => c.type === 'text').map((c) => String(c.text ?? '')).join(''));
     } else if (event?.type === 'assistant/message') {
@@ -181,7 +181,7 @@ console.log('=== 1) 呈现模式与预设隔离 ===');
   // 真正被禁的是**泄漏**：宿主侧注册的工具进全局工具层，会出现在**每一个**预设里
   // （违反可逆边界）。"别人可以自愿加"与"本插件不可以强行装到所有预设"是两件事。
   //
-  // ⚠️ 判据名不可写成「standard 不含三个工具」——**行为对、读法错**：
+  // 判据名不可写成「standard 不含三个工具」——**行为对、读法错**：
   // 它会被读成"这三个工具不许出现在 standard 里"，也就是把**模板**读成了**限制**。
   // 而它在这里真正证明的是"本插件那一行没有落到宿主侧"。
   record('本插件**没有把工具强行装进所有预设**（standard 里不出现，即未泄漏到全局工具层）',

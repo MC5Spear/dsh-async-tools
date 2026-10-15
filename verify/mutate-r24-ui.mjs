@@ -45,7 +45,7 @@ mutation('M5 挂回官方槽 plugins.item 必须判不成立', true, () => judge
   '<script>class AsyncToolsBundleCard{}; slots.register({name:"plugins.item"})</script>'));
 
 // ── 第二段：插件页的设置区 DOM 读数（含放置） ─────────────────────────────
-// ⚠️ 四组**全要**（预算、语言、开关、提问接管）——少取一组，判据就少看那组字段，
+// 四组**全要**（预算、语言、开关、提问接管）——少取一组，判据就少看那组字段，
 // 变异照样全绿。键集的单一来源是 `lib/config.js`，别在这里另立一份。
 const KEYS = [...BUDGET_FIELD_KEYS, ...LANG_FIELD_KEYS, ...FLAG_FIELD_KEYS, ...ASK_FIELD_KEYS];
 const MS_KEYS = [...MS_FIELD_KEYS];
@@ -111,7 +111,7 @@ mutation('M21b 落盘没有该覆盖（页面看着回了值、盘上没有）�
   () => judgeRoundTrip('4321', false, '- id: async-tools-host\n', 'pollIntervalMs', '4321'));
 
 // ── 第四段：两段读数各自跟着变（生效段随保存、输入段随键入——需求 §5.4 的读数行为）──
-// 段形状（2026-09-26 用户裁定后）= `<标签>：<秒文本>`，秒文本三种形状（N s / < 0.01 s / —）。
+// 段形状（用户裁定）= `<标签>：<秒文本>`，秒文本三种形状（N s / < 0.01 s / —）。
 const seg = (label, seconds) => `${label}：${seconds}`;
 mutation('M22 基线：保存后生效段换新值换算、输入段等于当前草稿换算必须判成立', false,
   () => judgeReadoutFollows(

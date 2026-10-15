@@ -72,8 +72,9 @@ test('T1：设置快照链——宿主行播报、工具行读快照、任何地
 
   // ③ 快照模块的四个入口（seed/read/clear + 接线）——工具行的取值入口点名 readSnapshot。
   const entryCode = stripComments(read('lib/index.js'));
-  assert.match(entryCode, /makeConfigView\(\(\) => readSnapshot\(\) \?\? initial\)/,
-    '工具行取值必须是"快照优先、缺快照回退本行默认值"的活视图');
+  assert.match(entryCode,
+    /makeConfigView\(\(\) => \{\s*const snapshot = readSnapshot\(\);\s*return snapshot === undefined\s*\?\s*initial\s*: \{ \.\.\.snapshot, owningPreset: initial\.owningPreset \};\s*\}\)/,
+    '工具行取值必须是"快照优先、缺快照回退本行默认值"的活视图，且快照合并保留本行装载期的 owningPreset（行身份非 volatile，需求 §6.2）');
 });
 
 test('T2（R6）：宿主入口不注册任何工具', () => {
@@ -81,7 +82,7 @@ test('T2（R6）：宿主入口不注册任何工具', () => {
   assert.doesNotMatch(
     code,
     /tools\.register|ctx\.tools/,
-    // ⚠️ 措辞要准：**"可见"不等于"每个预设都会用"**——每个预设都有自己的工具列表，
+    // 措辞要准：**"可见"不等于"每个预设都会用"**——每个预设都有自己的工具列表，
     // 使用者可以取舍。被禁的是"**不经选择地默认塞给所有预设**"，差别在**同意**，不在功能取舍。
     'lib/host.js 不得接触工具表：宿主侧注册的工具会进全局工具层，于是**每个预设都默认带上它们**，不需要也无法拒绝'
   );
@@ -187,8 +188,9 @@ test('T3：改设置后模型看到的数字真的跟着变（行为差异，不
   // 交给工厂。变异 M3（把 `configView` 换成 `initial`）会在行为测试里逃过——因为它直接
   // 调工厂、绕过了接线，而工厂拿到的 Proxy 与快照在那条路径上读到相同的初始值。
   const wiring = stripComments(read('lib/index.js'));
-  assert.match(wiring, /const configView = makeConfigView\(\(\) => readSnapshot\(\) \?\? initial\)/,
-    '必须构造"快照优先、缺快照回退本行默认值"的活取值视图');
+  assert.match(wiring,
+    /const configView = makeConfigView\(\(\) => \{\s*const snapshot = readSnapshot\(\);\s*return snapshot === undefined\s*\?\s*initial\s*: \{ \.\.\.snapshot, owningPreset: initial\.owningPreset \};\s*\}\)/,
+    '必须构造"快照优先、缺快照回退本行默认值"的活取值视图（owningPreset 恒取装载期值）');
   assert.match(wiring, /factory\(ctx, configView\)/, '工厂必须拿到活视图，不能拿构造时的快照');
 });
 
@@ -265,13 +267,13 @@ test('T5：单包两形态正确——bundle 补丁数组、宿主行不带 tool
   assert.match(client, /var PACKAGE_NAME = "dsh-async-tools"/, '包名常量必须是平名 dsh-async-tools');
   assert.match(client, /whileServed\(\[ENTRY\]/, '注册必须包在 whileServed 守卫里（宿主行没装载就不注册，部署无痕）');
   // bundle 槽**不传** `form`：表单必须由卡片从控制器自取，读 `props.form` 会渲染空卡。
-  // 表单本体是官方 `SettingsFormModel`（scope = 控制器），重渲染走模型的快照店 +
+  // 表单本体是官方 `SettingsFormModel`（scope = 控制器），重渲染走模型的快照存储 +
   // `useSyncExternalStore`——订阅责任从卡片手写 effect 移到模型构造里。
   assert.match(client, /ctx\.configForms\.get\(ENTRY\)/, '表单必须由卡片自取控制器');
   assert.match(client, /new P\.SettingsFormModel\(scope, makeSpecs\(\)\)/,
     '控制器必须交给官方 SettingsFormModel（R27：暂存/差集/保存语义不自绘）');
   assert.match(client, /useSyncExternalStore\(card\.store\.subscribe, card\.store\.getSnapshot\)/,
-    '卡片必须订阅模型的快照店（bind 的 store）重渲染——不订阅就停在旧值');
+    '卡片必须订阅模型的快照存储（bind 的 store）重渲染——不订阅就停在旧值');
 });
 
 test('T6（R10）：浏览器半边不引入会被打包器执行不到的 ESM 语法', () => {
@@ -292,7 +294,7 @@ test('T7（R10）：校验只有一套判据 —— 非法值必须在 schema �
   // ① 设置页放行 `-1` / `0` / 空串；② 运行时 `resolveConfig` 才抛错并被吞掉。
   // 修法是把约束放进 schema —— 它同时就是设置页逐字段校验用的那份 schema。
   return import('../lib/config.js').then(({ Config }) => {
-    // ⚠️ **每个 patch 都必须带上 `toolName`**，否则 `toolName` 的 `.required()` 会让
+    // **每个 patch 都必须带上 `toolName`**，否则 `toolName` 的 `.required()` 会让
     // **每一条**都抛错——于是本用例变成恒真：它测的就成了"缺字段会被拒"，
     // 而不是"这一条约束会被拒"。"判据因为别的原因也成立"的坑会让用例恒真。
     //
@@ -423,7 +425,7 @@ test('T9：保存语义由官方模型承担——布尔为假即失败且草稿
   const actions = model.actions();
 
   // ③ 改一个字段 → 保存（宿主接受）：mutate 恰一次、带读取时的 revision、成功后草稿清空。
-  //    ⚠️ 官方 `actions().save` 是按钮接线的即发即弃形态（不返回 Promise）；可等待的
+  //    官方 `actions().save` 是按钮接线的即发即弃形态（不返回 Promise）；可等待的
   //    驱动走同一底层 `model.save()`（actions.save 调的就是它）。
   actions.edit('jobKind', 'my-kind');
   await model.save();
@@ -852,7 +854,7 @@ test('T16：plugins.bundle.config keyed 槽契约 + 毫秒换算秒读数', asyn
 
 /**
  * 最小 React 替身：实现卡片与表单组件用到的 `createElement` / `useState` / `useEffect`
- * / `useRef` / `useSyncExternalStore`（`useSyncExternalStore` 订阅模型的快照店，
+ * / `useRef` / `useSyncExternalStore`（`useSyncExternalStore` 订阅模型的快照存储，
  * `useRef` 承载卡片模型句柄与官方表单的卸载丢弃）。
  *
  * 为什么需要它：`page` 视图的值来自 `ctx.configForms.get(ns)` 的控制器（bundle 槽**不传**
@@ -891,7 +893,7 @@ function makeReactShim() {
       useState(initial) {
         const index = cursor;
         cursor += 1;
-        // ⚠️ 捕获**本次渲染所属组件**的 hook 槽：setter 在渲染之后才被调用（事件、effect、
+        // 捕获**本次渲染所属组件**的 hook 槽：setter 在渲染之后才被调用（事件、effect、
         // 订阅回调），那时 `store` 早已指向另一个组件——不捕获就会把状态写进别人的槽
         // （真实 React 的 setter 绑定它自己那个 fiber，这里照抄这条语义）。
         const own = store;

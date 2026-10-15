@@ -3,7 +3,7 @@
  *
  * 路径（全部在真实页面上做）：插件 → 「查看 dsh-async-tools」→ **本包插件页本身**。
  * 不进任何组件行子页——设置区落点是 `plugins.bundle.config`，宿主把该槽渲染在
- * 插件页的**描述与组件行之间**（`dsh-client-ui-plugin-manager/lib/client.js:1915-1919`）。
+ * 插件页的**描述与组件行之间**（`dsh-client-ui-plugin-manager/lib/client.js:2522`）。
  *
  * 判据段（设计 §5.3 口径；控件身份 = `id`，读数 = 说明行两段）：
  * ① **放置**：页面是插件页（`[data-plugin-detail="dsh-async-tools"]`）、设置区在插件页内、
@@ -160,7 +160,7 @@ try {
   })()`);
   // 判据本体在 `verify/r24-judgements.mjs` 的纯函数里（取数在这里、判据在那里），
   // 这样 `verify/mutate-r24-ui.mjs` 能用变异证明这些判据可被改坏打成红。
-  // ⚠️ 四组**全要**（键集的单一来源是 `lib/config.js`）。判据少看几个字段
+  // 四组**全要**（键集的单一来源是 `lib/config.js`）。判据少看几个字段
   // 不会报错，只会安静地少测。
   const EXPECTED_KEYS = [...BUDGET_FIELD_KEYS, ...LANG_FIELD_KEYS, ...FLAG_FIELD_KEYS, ...ASK_FIELD_KEYS];
   const placementVerdict = judgePlacement(reading, EXPECTED_KEYS);

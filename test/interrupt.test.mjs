@@ -80,7 +80,7 @@ test('watchWakeSignal：notice / relay 落在 next-step → 唤醒并带 via（�
 
 test('watchWakeSignal：上下文形态与无 form 消息即使落在 next-step 也不唤醒（×R12，M3 守卫）', async () => {
   // 真机上 deferContext 的上下文消息（工具结果等）恰恰 splice 进 **next-step**
-  // （dsh-agent-loop:1118）。所以本用例的非命中消息**必须带 `target: 'next-step'`**——
+  // （dsh-agent-loop:1154）。所以本用例的非命中消息**必须带 `target: 'next-step'`**——
   // 不带 target 的消息在假件里不落任何列表，测的只是"落点判定"，盖不住这条线
   // （详见 _helpers.mjs 的 inboxPayload 注释）。
   const { ctx, emit } = fakeCtx();
@@ -299,7 +299,7 @@ test('watchLateAnswer：起始检查 inbox 缺席按空处理（宁可多等一�
   watcher.dispose();
 });
 
-test('watchLateAnswer：起始检查 inbox getter 抛错按空兜住（不得把信号 promise 变 reject）', async () => {
+test('watchLateAnswer：起始检查 inbox getter 抛错按空承接（不得把信号 promise 变 reject）', async () => {
   const { ctx, emit } = fakeCtx();
   const agent = fakeAgent();
   Object.defineProperty(agent, 'inbox', {
@@ -376,7 +376,7 @@ test('（R30-d 互斥联测，通道轮）迟到作答专门分支与通用唤�
 
   // ③ 子代理结算通知：结算专门通道 resolve，通用唤醒同拍命中 via=notice——
   //    双通道并存是设计（§2.2：结算通知同时是唤醒集合成员），等待侧用优先级
-  //    裁决，不在信号层去重。（wake 通道在②已消费，此处新建一个验证。）
+  //    定胜负，不在信号层去重。（wake 通道在②已消费，此处新建一个验证。）
   const wake3 = watchWakeSignal(ctx, agent);
   emit('agent/inbox/inserted', inboxPayload({
     agent, sourceKind: 'subagent-settled', form: 'notice', senderSessionId: CHILD, text: 'finished', target: 'next-step'
@@ -438,7 +438,7 @@ test('preexistingWakeMessage（R55）：inbox 缺席或 getter 抛错按"无先�
     configurable: true,
     get() { throw new Error('projection registration is not active'); }
   });
-  assert.equal(preexistingWakeMessage(agent), null, 'getter 抛错按空兜住');
+  assert.equal(preexistingWakeMessage(agent), null, 'getter 抛错按空承接');
 });
 
 test('unclaimedSettlement（R55）：senderSessionId 精确命中——两个待处理列表都算未领取账本', () => {
@@ -476,7 +476,7 @@ test('preexistingWakeMessage（R56）：nextStep 列表 getter 抛错按"无先�
     configurable: true,
     get() { throw new Error('unreadable nextStep'); }
   });
-  assert.equal(preexistingWakeMessage(agent), null, '列表 getter 抛错按空兜住——宁可多等，不可错唤醒');
+  assert.equal(preexistingWakeMessage(agent), null, '列表 getter 抛错按空承接——宁可多等，不可错唤醒');
 });
 
 test('unclaimedSettlement（R56）：nextStep / nextTurn 列表 getter 抛错按"无结算通知"（不升格）', () => {

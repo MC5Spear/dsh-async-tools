@@ -30,7 +30,7 @@ import { LOCAL_DIR } from './_local-config.mjs';
 const SKIP_DIRS = new Set(['node_modules', '.git', LOCAL_DIR]);
 
 /**
- * ⚠️ 按**前缀**判过程产物目录，不是精确相等。
+ * 按**前缀**判过程产物目录，不是精确相等。
  *
  * 理由：过程产物目录一旦改名（例如 `_scratch` → `_scratch_REMOVED_日期`），
  * 精确相等的跳过名单**当场失效**——里面的上百个文件（旧检查器副本、旧文档快照）

@@ -10,10 +10,10 @@
  *   守的是**没有顺手杀掉**的旧性质（插话打断路径）。
  * - M3 **拆掉承重墙**：删掉 `source.kind !== USER_MESSAGE_SOURCE` 过滤——它看起来被 isSteering 顺带覆盖，
  *   但真机上 deferContext 的上下文消息（工具结果、subagent-settled 结算通知）恰恰落
- *   **next-step**（`dsh-agent-loop:1118`），删过滤 ⇒ 等待被自己的通知打断。
+ *   **next-step**（`dsh-agent-loop:1154`），删过滤 ⇒ 等待被自己的通知打断。
  *   → 必须红在"非 user 的 next-step 消息不打断"上。
  *
- * ⚠️ **本脚本会原地改写真实的 `lib/interrupts.js`**，跑完在 `finally` 里写回并核对摘要。
+ * **本脚本会原地改写真实的 `lib/interrupts.js`**，跑完在 `finally` 里写回并核对摘要。
  *
  * 用法：node verify/mutate-steering.mjs
  */
@@ -58,7 +58,7 @@ function runTests(timeoutMs) {
   }
   const out = `${error.stdout ?? ''}${error.stderr ?? ''}`;
   // 超时击杀算**真红**（M2 的用例本来就可能挂起——挂起本身就是失败）。
-  // ⚠️ Windows 上 execFileSync 的超时错误形态是 `code: 'ETIMEDOUT'`（实测），
+  // Windows 上 execFileSync 的超时错误形态是 `code: 'ETIMEDOUT'`（实测），
   // `killed` 不一定是 true；两种形态都按超时处理。
   const timedOut = error.killed === true || error.code === 'ETIMEDOUT';
   const spawnFailed = !timedOut
@@ -95,16 +95,16 @@ function restore() {
   if (after !== hashBefore) throw new Error(`还原失败：${TARGET} 与变异前不一致，请 git checkout 恢复。`);
 }
 
-// M1 的锚点：watchUserInterrupt 里的落点判定行（排队不打断的判定核心，需求 §2.1.2）。
-const M1_ANCHOR = '      if (!isSteering(agent, payload.message.id)) return;';
+// M1 的锚点：watchWakeSignal 里的落点判定行（排队不打断的判定核心，需求 §2.1.2）。
+const M1_ANCHOR = '      if (!isSteering(agent, wake.messageId)) return;';
 const M1_MUTATED = '      /* mutated M1: 旧实现回潮——不看落点，一切 user 插入都打断 */';
 // M2 的锚点：isSteering 的正判行。
 const M2_ANCHOR = '  return nextStep.some((message) => message?.id === messageId);';
 const M2_MUTATED = '  return false; // mutated M2: 收窄过头——谁都不打断';
-// M3 的锚点：kind 过滤行（判据的承重墙——见头注 M3）。
-// 现行实现用 USER_MESSAGE_SOURCE 常量（lib/interrupts.js 的 watchUserInterrupt）。
-const M3_ANCHOR = '      if (payload?.message?.source?.kind !== USER_MESSAGE_SOURCE) return;';
-const M3_MUTATED = '      /* mutated M3: 拆掉 kind 过滤——非 user 的 next-step 消息（结算通知等）也会打断 */';
+// M3 的锚点：classifyWake 的唤醒过滤行（判据的承重墙——非唤醒消息在此被挡，
+// 现行实现经 wakesWait 单一事实源起作用，见头注 M3）。
+const M3_ANCHOR = '  if (!wakesWait(message)) return null;';
+const M3_MUTATED = '  /* mutated M3: 拆掉唤醒过滤——非 user 的 next-step 消息（工具结果、结算通知）也归类为唤醒 */';
 
 const baseline = runTests(120000);
 if (baseline.state !== 'green') {

@@ -64,7 +64,7 @@ test('R11：退出码标记与沙箱标记**同时**出现时各占一行、都�
   const { proc, settle } = fakeProc({ text: 'OUT', exitCode: 1, status: 'running', autoResolve: false });
   proc.sandbox = { mode: 'workspace-write', denied: true };
   f.installShellExecute(() => Promise.resolve(proc));
-  // ⚠️ `ctx.get` 与 `sandboxMode` 都必须**在建工具之前**装好：
+  // `ctx.get` 与 `sandboxMode` 都必须**在建工具之前**装好：
   // 构造期就要读 `ctx.shell.sandboxMode` 来决定广告不广告提权字段；
   // 而 execute 里要 `ctx.get('sandboxPolicy')`。装晚了会得到
   // `TypeError: ctx.get is not a function`（量法陷阱）。

@@ -24,7 +24,7 @@ const VERIFY = dirname(fileURLToPath(import.meta.url));
 const REPO = dirname(VERIFY);
 const CHECK_ONLY = process.argv.includes('--check');
 const SKIP_DIRS = new Set(['_tmp', '_scratch', '_lab', 'backup', 'node_modules', 'shots', 'logs']);
-// 按前缀判过程产物目录：改名成 `_scratch_REMOVED_*` 后精确相等会失效（2026-09-18 实测）。
+// 按前缀判过程产物目录：改名成 `_scratch_REMOVED_*` 后精确相等会失效。
 const isSkippedDir = (name) => SKIP_DIRS.has(name) || name.startsWith('_scratch');
 
 const walk = (dir, out = []) => {
@@ -86,5 +86,5 @@ if (CHECK_ONLY) {
 console.log(`已补回 ${String(restored.length)} 个文件的 BOM：`);
 for (const rel of restored) console.log(`  FIXED  ${rel}`);
 console.log('');
-console.log('丢了 BOM 的后果（本会话踩过 4 次）：pwsh(PS7) 仍正常，powershell(PS5.1) 按 cp936 读，');
+console.log('丢了 BOM 的后果：pwsh(PS7) 仍正常，powershell(PS5.1) 按 cp936 读，');
 console.log('中文全乱、报一堆与真正问题无关的 "Missing closing \'}\'"。');

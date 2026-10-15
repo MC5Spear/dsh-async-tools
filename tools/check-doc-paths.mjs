@@ -49,7 +49,7 @@ const KNOWN_TOP = ['verify', 'docs', 'tools', 'lib', 'test', 'presets'];
 /**
  * 豁免：文档里确实写了、但**本仓内不该存在**的路径。每条必须带理由。
  *
- * ⚠️ 这不是"绕开检查"的口子：加一条之前先问"这个指针是不是该删/该改"。
+ * 这不是"绕开检查"的口子：加一条之前先问"这个指针是不是该删/该改"。
  *
  * **现在是空的，而且空是健康状态**：公开范围文档按定义只能指向仓内文件——所有
  * "服务家的某个文件""部署现场的文件"一类指针都随本机侧一起离开了公开范围
@@ -69,10 +69,10 @@ const notAFilePath = (raw) => (
 
 // 匹配绝对路径（`D:\...` / `C:/...`），并保留两侧边界。
 //
-// ⚠️ 扩展名交替里**长的一定要排在前面**：写成 `js|json` 会把 `package.json` 截成
+// 扩展名交替里**长的一定要排在前面**：写成 `js|json` 会把 `package.json` 截成
 // `package.js`，于是检查器报一条根本不存在的悬空指针（量法陷阱）。
 //
-// ⚠️ 盘符前必须挡住词字符（`(?<![\w])`）：README 顶部的 CI badge 是
+// 盘符前必须挡住词字符（`(?<![\w])`）：README 顶部的 CI badge 是
 // `https://github.com/<owner>/<repo>/actions/workflows/ci.yml/badge.svg`，
 // 它**结尾带 `.yml`**、而 `https:` 的 `s:` 恰好长得像盘符。URL 必须带协议头，
 // 方案名后面必然还是方案字符；真正的盘符前面只可能是行首/空白/引号/反引号
@@ -158,7 +158,7 @@ export function checkDocPaths(root = MODULE_ROOT, { quiet = false } = {}) {
     // 与路径同一类失效：脚本删了、文档还在让人跑它。探针类脚本被清理时
     // README 与 design.md 里的对应指引就会悬空。
     //
-    // ⚠️ 字符类**必须含 `-`**：脚本名常用连字符（`test:offline`、`final-acceptance`）。
+    // 字符类**必须含 `-`**：脚本名常用连字符（`test:offline`、`final-acceptance`）。
     // 写成 `[a-z0-9:]*` 会把 `check:docs-typo-…` 截成 `check:docs`
     // （存在 ⇒ 通过），**带连字符的名字整个漏检**——变异一跑就露馅了。
     for (const match of text.matchAll(/npm run ([a-z][a-z0-9:-]*)/g)) {

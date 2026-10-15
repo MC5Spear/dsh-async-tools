@@ -47,7 +47,7 @@ const { refreshToolDescriptions } = host ?? {};
  * @param {Array<{provider: string, model: string}> | null | 'throw'} [options.policy]
  *   `subagentModelSelectionPolicy` 投影形态：数组=白名单；null=有 reducer 无记录
  *   （"无 policy"；键未注册时宿主 stateOf 返回 undefined 不抛，同被实现折叠）；
- *   'throw'=投影读取抛错（如折叠异常，按"无 policy"兜住）。
+ *   'throw'=投影读取抛错（如折叠异常，按"无 policy"承接）。
  * @returns {object} 环境与探针。
  */
 function agentEnv({ providers, policy = null } = {}) {
@@ -233,7 +233,7 @@ test('async_agent：未声明键显式报错并零派生——零容忍的对冲
 });
 
 test('async_agent：指定路由但 provider 未声明 agentOptions 能力 → 当场报错且零派生（零容忍）', async () => {
-  // 假件形态对齐宿主注册表：后端对象带 capabilities 字典；spawn-in-process 声明
+  // 假件形状与宿主注册表保持一致：后端对象带 capabilities 字典；spawn-in-process 声明
   // agentOptions: true，这里造一个不声明的。
   const env = agentEnv({
     providers: { legacy: { name: 'legacy', prepareContinuable() {}, capabilities: {} } },
@@ -291,7 +291,7 @@ test('async_agent：白名单外的路由被拒且零派生（宿主同款文案
 
 test('async_agent：无 policy 的会话拒绝指定模型——null 与读取抛错两种形态（R13）', async () => {
   // ① 投影状态为 null（reducer 在但没 record）：宿主在此形态下不暴露模型参数，
-  //    本工具参数集合常开，用运行时拒绝对齐同一管控口径。键未注册时宿主 stateOf
+  //    本工具参数集合常开，用运行时拒绝与同一管控规则保持一致。键未注册时宿主 stateOf
   //    返回 undefined（不抛），与 null 同被折叠为"无 policy"，同一断言覆盖。
   const envNull = agentEnv({ policy: null });
   const toolNull = createAgentTool(envNull.ctx, envNull.view);
@@ -301,7 +301,7 @@ test('async_agent：无 policy 的会话拒绝指定模型——null 与读取�
   );
   assert.deepEqual(envNull.continuables, []);
 
-  // ② 投影读取抛错（如投影折叠异常）：异常被兜住，同样按"无 policy"拒绝。
+  // ② 投影读取抛错（如投影折叠异常）：异常被承接，同样按"无 policy"拒绝。
   const envThrow = agentEnv({ policy: 'throw' });
   const toolThrow = createAgentTool(envThrow.ctx, envThrow.view);
   await assert.rejects(

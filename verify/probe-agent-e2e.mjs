@@ -15,7 +15,7 @@
  *     （FALSE_ALLOWED=no 是 persona 独有的"无条件禁止"——宿主 subagent 工具描述是
  *     "需要前台时**可以**传 false"的条件允许，只学工具描述的模型会答 yes）。
  *     该轮断言零 tool/call，防止模型现读仓库里的模板污染来源。
- *     ⚠️ 口径边界：转录的 `request/header` 不含 systemPrompt，
+ *     口径边界：转录的 `request/header` 不含 systemPrompt，
  *     "规则段真的在系统提示里"这半边**真机不可直接取证**——由模板侧看守：
  *     validate-preset 五锚句 + `test/preset.test.mjs` + `verify/mutate-agent.mjs` M2。
  *  3. 隔离对照：standard 预设的会话里四个 async 工具**一个都没有**（需求 §1.2）。
@@ -108,7 +108,7 @@ async function seqOf(sessionId) {
 
 /** 按事件类型收集：tool/call、tool/result 文本、assistant 文本，以及**子代理中继消息**
  * （子代理的最终回答以 `user/message` 事件到达，`source.kind` 是 agent-message /
- * subagent-settled——只扫 assistant/message 会一无所获，2026-09-18 实测）。 */
+ * subagent-settled——只扫 assistant/message 会一无所获）。 */
 function parse(page, afterSeq = -1) {
   const calls = [];
   const results = [];

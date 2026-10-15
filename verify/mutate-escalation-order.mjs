@@ -10,7 +10,7 @@
  * | M1 | 把审批**挪到** `shell.resolve` 之后（顺序倒置） | `resolveCallsAtApproval[0] === 0` 变红 |
  * | M2 | 把"无 agent"那一步绕过（先判 `exec.agent` 为 undefined 时直接放行） | agent-less 用例变红 |
  *
- * ⚠️ 本脚本会原地改写真实的 `lib/jobs.js`，跑完在 `finally` 里写回并核对摘要。
+ * 本脚本会原地改写真实的 `lib/jobs.js`，跑完在 `finally` 里写回并核对摘要。
  *
  * 用法：node verify/mutate-escalation-order.mjs
  */
@@ -57,7 +57,7 @@ function restore() {
   if (after !== hashBefore) throw new Error(`还原失败：${TARGET} 与变异前不一致，请 git checkout 恢复。`);
 }
 
-/** M1：顺序倒置——把审批那两行挪到 `ctx.shell.resolve` 之后。 */
+/** M1：顺序倒置——把审批块挪到 `ctx.shell.resolve` 之后、注册准入之前。 */
 const M1_BLOCK = `      validateEscalationArgs(args.sandbox_permissions, args.justification);
       const approvedMode = args.sandbox_permissions !== undefined && args.justification !== undefined
         ? await approveRunEscalation(args.sandbox_permissions, args.justification, exec, sandboxPolicy)
@@ -68,7 +68,8 @@ const MUTATIONS = [
     name: 'M1 顺序倒置：审批挪到 shell.resolve 之后',
     anchor: M1_BLOCK,
     /**
-     * 把审批块剪掉、并在 `ctx.shell.resolve(` 之前重新插入到 spec 之后。
+     * 把审批块剪掉、并在 spec 解析之后（`shell.resolve` 已跑完、注册准入之前）
+     * 重新插回去。
      *
      * @param {string} text - 原文。
      * @returns {string|null} 变异体。
@@ -76,8 +77,8 @@ const MUTATIONS = [
     apply(text) {
       if (!text.includes(M1_BLOCK)) return null;
       const withoutBlock = text.replace(M1_BLOCK, '      const approvedMode = undefined;');
-      // 在 `const proc = ctx.shell.start(spec);` 之前把审批插回去 —— 那时 resolve 已经跑过了。
-      const at = withoutBlock.indexOf('      const proc = ctx.shell.start(spec);');
+      // 在注册准入（startForegroundJob）之前把审批插回去 —— 那时 resolve 已经跑过了。
+      const at = withoutBlock.indexOf('      const started = startForegroundJob(ctx, {');
       if (at < 0) return null;
       const late = `      const lateApproved = args.sandbox_permissions !== undefined && args.justification !== undefined
         ? await approveRunEscalation(args.sandbox_permissions, args.justification, exec, sandboxPolicy)
@@ -85,12 +86,23 @@ const MUTATIONS = [
       void lateApproved;\n`;
       return `${withoutBlock.slice(0, at)}${late}${withoutBlock.slice(at)}`;
     }
+  },
+  {
+    name: 'M2 agent-less 绕过：无 agent 检查短路成放行',
+    /** 把拒绝抛错换成静默放行（owner 落到 undefined，注册无主作业）。 */
+    apply(text) {
+      const block = `      if (exec.agent?.id === undefined) {
+        throw new Error(t(lang, 'error.noAgentRun'));
+      }`;
+      if (!text.includes(block)) return null;
+      return text.replace(block, '      if (exec.agent?.id === undefined) { void lang; }');
+    }
   }
 ];
 
 const baseline = runTests();
 if (baseline.red) {
-  console.log(`BASELINE-RED  未变异时 ${TEST} 就是红的（${baseline.summary}）——先修基线；⚠️ 若括号里是空的、且本脚本以 2 退出，更可能是默认沙箱禁止捕获子进程输出（EPERM）：本脚本要跑测试文件，需带提权运行。规范见 verify/README.md 的「判据必须在默认权限下可跑」。`);
+  console.log(`BASELINE-RED  未变异时 ${TEST} 就是红的（${baseline.summary}）——先修基线；若括号里是空的、且本脚本以 2 退出，更可能是默认沙箱禁止捕获子进程输出（EPERM）：本脚本要跑测试文件，需带提权运行。规范见 verify/README.md 的「判据必须在默认权限下可跑」。`);
   process.exit(2);
 }
 console.log(`基线：未变异时 ${TEST} 全绿（${baseline.summary}）。`);

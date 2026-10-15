@@ -9,7 +9,7 @@
  *   → 必须红在 `tools/validate-preset.mjs` 的 persona 锚句判据上（校验目标是**包内补丁文件**
  *   `presets/dsh-async.patch.yml`，不是已安装副本——已安装件按需求 §3.2 由使用者自管）。
  *
- * ⚠️ **本脚本会原地改写真实的 `lib/agent.js` 与 `presets/dsh-async.patch.yml`**，
+ * **本脚本会原地改写真实的 `lib/agent.js` 与 `presets/dsh-async.patch.yml`**，
  * 每个变异跑完立即写回，最后核对 sha256。
  *
  * 用法：node verify/mutate-agent.mjs
@@ -70,7 +70,7 @@ function runTests(timeoutMs) {
 /**
  * 跑预设校验器（默认校验包内补丁 `presets/dsh-async.patch.yml`）。退出码 0=绿、1=红；spawn 失败=没跑成。
  *
- * ⚠️ **不要给它传位置参数**：位置参数会被当成模板目录路径，而模板目录形态已不存在——
+ * **不要给它传位置参数**：位置参数会被当成模板目录路径，而模板目录形态已不存在——
  * 校验器对着不存在的路径退 1，基线永远是红的，等于自造坏判据。
  * @returns {{state: 'green'|'red'|'didnt-run', summary: string, firstFail: string}} 结果。
  */

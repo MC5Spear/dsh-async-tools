@@ -11,8 +11,8 @@
  *    invalidPair 文案（壳层叠加）。
  * 3. **提交层拒绝**（第二道防线）：绕过卡片直写（RPC mutate）越界 maxWaitMs →
  *    **网关按本包 schema 拒绝**（`settings/rejected` + schemastery 可读消息，含上界）
- *    + 回读值未变（未落盘）+ 工具描述不受影响。（2026-09-28 首跑实测：RPC
- *    settings/update 对字段级越界当场拒绝，比设计稿的"落盘 + errlog warn 兜住"
+ *    + 回读值未变（未落盘）+ 工具描述不受影响。（首跑实测：RPC
+ *    settings/update 对字段级越界当场拒绝，比设计稿的"落盘 + errlog warn 承接"
  *    更强；跨字段违例 schema 表达不了，仍走落盘 + loader warn。）
  * 4. **等待总耗时上界**：20 秒命令（提权档真跑）+ yield 后 async_wait_job
  *    (wait_ms=1500) → running 结局，渲染句 "Waited N ms; the job is still
@@ -123,7 +123,7 @@ try {
   await sleep(400);
   let form = await readFormState();
   let text = await sectionText();
-  check('1a-1 草稿输入落地（input.value）', form.hints?.find((h) => h.key === 'maxWaitMs')?.text === '2147483648',
+  check('1a-1 草稿输入已进输入框（input.value）', form.hints?.find((h) => h.key === 'maxWaitMs')?.text === '2147483648',
     `form=${JSON.stringify(form.hints?.find((h) => h.key === 'maxWaitMs'))}`);
   check('1a-2 保存按钮禁用', form.saveDisabled === 'true', `saveDisabled=${String(form.saveDisabled)} saveText=${form.saveText}`);
   check('1a-3 原因文案带上界数字（≤ 2147483647）', /2147483647/.test(text), text.slice(0, 400));
@@ -151,9 +151,9 @@ try {
     `读数=${String(afterReload.value.maxWaitMs)}`);
 
   // ── 2 提交层拒绝（直写） ─────────────────────────────────────────────
-  // 实测语义（2026-09-28 首跑）：RPC settings/update 网关按本包 schema 校验 patch，
+  // 实测语义（首跑）：RPC settings/update 网关按本包 schema 校验 patch，
   // 字段级越界在网关就被拒（settings/rejected + schemastery 可读消息），到不了落盘——
-  // 这比设计稿的"落盘 + errlog warn 兜住"更强；跨字段违例 schema 表达不了，仍走
+  // 这比设计稿的"落盘 + errlog warn 承接"更强；跨字段违例 schema 表达不了，仍走
   // 落盘 + loader warn（口径不变）。
   console.log('· 3/4 真机 2：绕过卡片直写越界值（提交层网关拒绝）');
   const errBase = readFileSync(ERRLOG, 'utf8');
@@ -174,7 +174,7 @@ try {
   const errLogged = /expected number <= 2147483647/.test(errNew) || /invalid config/.test(errNew);
   console.log(`  INFO  errlog 增量 ${String(errNew.length)} 字节；拒绝留痕=${String(errLogged)}（判据本体在 2-1 的 RPC 消息，留痕为旁证）`);
   // 工具行为不受影响：新会话的 async_run 描述里 wait 区间仍是 250–600000。
-  // （首跑实测：READY 会话的 transcript 投影偶尔还没带上 header 的工具描述——
+  // （READY 会话的 transcript 投影偶尔还没带上 header 的工具描述——
   // 缺席时等 2s 重取一次，仍缺席才按失败计。runDescriptionOf 返回**描述字符串**
   // （null = 无此工具/无 header），不是工具对象。）
   const sid = await newSession(PRESET);
@@ -193,12 +193,12 @@ try {
   // ── 3 等待总耗时上界 ─────────────────────────────────────────────────
   // 执行档（用户裁定「走提权」，与 probe-r28 系探针同款口径）：async_run 起的是**新进程**，
   // 受限档在验证实例（托管服务 LocalSystem 无 logon SID）死于 CreateRestrictedToken
-  // 前置——首跑实测确认。因此本组走提权档（sandbox_permissions + justification，
+  // 前置。因此本组走提权档（sandbox_permissions + justification，
   // 经批准 allowed-once）；async_wait_job 本身不碰执行器，无需提权。
   // 解析侧：模型看到的是工具的**渲染文本**（running 结局 = note.waitAgain：
   // "Waited N ms; the job is still running"），不是原始 JSON——锚定渲染句。
   // 命令取 20 秒：提权批准往返 + 模型出话延迟可能吃掉数秒，6 秒会在第 2 步前
-  // 已完结（第三跑实测翻车形态）；20 秒保证等待窗口内仍在运行。
+  // 已完结（实测翻车形态）；20 秒保证等待窗口内仍在运行。
   console.log('· 4/4 真机 3：async_wait_job 总耗时上界（20s 命令 + wait_ms=1500 → running）');
   const sid2 = await newSession(PRESET);
   const t0 = Date.now();

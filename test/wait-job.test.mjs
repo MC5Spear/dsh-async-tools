@@ -157,7 +157,7 @@ test('async_wait_job：作业已终态 → 屏障直接返回输出，不发起�
 
   const result = await tool.execute({ job_id: 'j-1', wait_ms: 30000 }, exec);
   assert.equal(result.status, 'completed');
-  assert.equal(result.output, 'done!', '输出 = chunks[].text 拼接（0.2.0-rc.2 JobRead）');
+  assert.equal(result.output, '[job completed]\ndone!', '输出 = 状态行 + chunks[].text 拼接（0.2.0-rc.2 JobRead；需求 §2.2.2 终态可见）');
   assert.equal(result.truncated, false);
   assert.equal(waitCalls.length, 0, '已终态时不得再等待');
 });
@@ -172,7 +172,7 @@ test('async_wait_job（0.2.0-rc.2）：多 chunk 拼接 + lossy 前缀标记', a
   const tool = createWaitJobTool(f.ctx, config);
 
   const result = await tool.execute({ job_id: 'j-1', wait_ms: 30000 }, exec);
-  assert.match(result.output, /^\[earlier output was partially dropped from memory\]/, 'lossy 必须有一行前缀标记');
+  assert.match(result.output, /^\[job completed\]\n\[earlier output was partially dropped from memory\]/, '状态行在前，lossy 紧随——两者都在内容之外');
   assert.match(result.output, /AAABBBE$/, 'chunks 按顺序拼接（含全部 channel）');
 });
 
@@ -273,7 +273,7 @@ test('async_wait_job（T2）：用户插话 → interrupted，作业一次都没
   assert.match(result.note, /job j-1 is still running in the background and is completely unaffected/);
   assert.match(result.note, /async_wait_job\(job_id="j-1", wait_ms=\.\.\.\) again/, '可复制的恢复调用');
 
-  // ★ 核心不变量：打断**等待**不得打断**工作**。
+  // 核心不变量：打断**等待**不得打断**工作**。
   assert.equal(probes.killCalls, 0, 'job_kill 一次都不能被调用');
   assert.equal(job.status, 'running', '作业必须还在跑');
   assert.equal(f.ctx.jobs.get('j-1', agent.id).status, 'running', '等待返回后作业仍必须可被 get 到');
@@ -365,7 +365,7 @@ test('async_wait_job：完成优先于打断——插话瞬间作业恰好终态
 
   const result = await pending;
   assert.equal(result.status, 'completed', '终态复查胜过 interrupted——模型不该重复等待一个已完成的作业');
-  assert.equal(result.output, 'job output');
+  assert.equal(result.output, '[job completed]\njob output');
   assert.match(result.detail, /a user message arrived during the wait; the job finished in the meantime/);
   agent.inbox.nextStep.length = 0; // 还原共享 fixture（等待入口会读它——设计 §2.2 入口扫描）
 });
@@ -381,7 +381,7 @@ test('async_wait_job：等待路径上 wait 被结算释放 → 终态结果', a
 
   const result = await tool.execute({ job_id: 'j-1', wait_ms: 5000 }, exec);
   assert.equal(result.status, 'completed');
-  assert.equal(result.output, 'job output');
+  assert.equal(result.output, '[job completed]\njob output');
   assert.match(result.detail, /exit code: 0/);
 });
 
@@ -519,7 +519,7 @@ test('R29-c（判据 4·读失败）：终态确认但 jobs.read 抛错 → 首�
   // 报错会让模型以为工具坏了；给出可读标记 + 空输出，模型再等一次即可重试。
   const result = await tool.execute({ job_id: 'j-1', wait_ms: 30000 }, exec);
   assert.equal(result.status, 'completed', '读失败不得改写作业终态');
-  assert.match(result.output, /^\[reading the job output failed/, '输出首行必须是 readFailed 标记');
+  assert.match(result.output, /^\[job completed\]\n\[reading the job output failed/, '状态行在前、readFailed 标记紧随（终态可见＋读失败线索并存）');
   assert.equal(result.truncated, false);
 });
 
@@ -631,7 +631,7 @@ test('R55（判据 5）：作业已终态 + 先到插话并存 → 完成结果�
 
   const result = await tool.execute({ job_id: 'j-1', wait_ms: 600000 }, exec);
   assert.equal(result.status, 'completed', '屏障终态判定先于起始检查——先到插话不得压过已完成的作业');
-  assert.equal(result.output, 'job output');
+  assert.equal(result.output, '[job completed]\njob output');
   assert.equal(probes.waitCalls.length, 0, '终态走屏障既有线，不接线');
   agent.inbox.nextStep.length = 0; // 还原共享 fixture
 });
@@ -649,7 +649,7 @@ test('R57（屏障已终态·分隔三分）：result 并入同一次返回—�
   const toolA = createWaitJobTool(fA.ctx, config);
   const a = await toolA.execute({ job_id: 'j-1', wait_ms: 30000 }, exec);
   assert.equal(a.status, 'completed');
-  assert.equal(a.output, 'partial line\nFINAL', '非换行结尾的增量与 result 之间恰一个换行');
+  assert.equal(a.output, '[job completed]\npartial line\nFINAL', '非换行结尾的增量与 result 之间恰一个换行（状态行在内容之外另起）');
   assert.equal(a.truncated, false);
 
   // 分支 b：增量以换行结尾 → 不追加第二个换行。
@@ -657,14 +657,14 @@ test('R57（屏障已终态·分隔三分）：result 并入同一次返回—�
   installJobs(fB, { status: 'completed', readChunks: [{ text: 'done\n', channel: 'stdout' }], readResult: 'FINAL' });
   const toolB = createWaitJobTool(fB.ctx, config);
   const b = await toolB.execute({ job_id: 'j-1', wait_ms: 30000 }, exec);
-  assert.equal(b.output, 'done\nFINAL', '增量已以换行结尾——不补分隔');
+  assert.equal(b.output, '[job completed]\ndone\nFINAL', '增量已以换行结尾——不补分隔');
 
   // 分支 c：无增量 → result 直接是输出（无分隔）。
   const fC = fakeCtx();
   installJobs(fC, { status: 'completed', readChunks: [], readResult: 'FINAL' });
   const toolC = createWaitJobTool(fC.ctx, config);
   const c = await toolC.execute({ job_id: 'j-1', wait_ms: 30000 }, exec);
-  assert.equal(c.output, 'FINAL', '仅 result 在场——无分隔直接输出');
+  assert.equal(c.output, '[job completed]\nFINAL', '仅 result 在场——无分隔直接输出');
 });
 
 test('R57（等待覆盖结算）：竞速由结算释放 → result 并入同一次返回（第二分支）', async () => {
@@ -683,7 +683,7 @@ test('R57（等待覆盖结算）：竞速由结算释放 → result 并入同�
   probes.job.detail = '0 agents';
   const result = await pending;
   assert.equal(result.status, 'completed');
-  assert.equal(result.output, 'log line\nFINAL', '等待路径的终态读取同样并入一次性 result');
+  assert.equal(result.output, '[job completed]\nlog line\nFINAL', '等待路径的终态读取同样并入一次性 result');
 });
 
 test('R29-c（判据 3·复查失败）：到期后的复查查询抛错 → 状态未证实文案，不宣称"仍在运行"', async () => {
@@ -739,10 +739,10 @@ test('R57（一次性·不重复）：交付后的再次读取不得重复 resul
   installJobs(f, { status: 'completed', readChunks: [{ text: 'out', channel: 'stdout' }], readResult: 'FINAL' });
   const tool = createWaitJobTool(f.ctx, config);
   const first = await tool.execute({ job_id: 'j-1', wait_ms: 30000 }, exec);
-  assert.equal(first.output, 'out\nFINAL', '首次终态读取交付 result');
+  assert.equal(first.output, '[job completed]\nout\nFINAL', '首次终态读取交付 result');
   const second = await tool.execute({ job_id: 'j-1', wait_ms: 30000 }, exec);
   assert.equal(second.status, 'completed');
-  assert.equal(second.output, 'out', 'result 只随首次终态读取交付——第二次不再拼接');
+  assert.equal(second.output, '[job completed]\nout', 'result 只随首次终态读取交付——第二次不再拼接（状态行每次读取都在，属诊断非内容）');
 });
 
 test('R57（空 result）：result 为空串且无增量 → 输出恰为空串', async () => {
@@ -751,7 +751,7 @@ test('R57（空 result）：result 为空串且无增量 → 输出恰为空串'
   const tool = createWaitJobTool(f.ctx, config);
   const result = await tool.execute({ job_id: 'j-1', wait_ms: 30000 }, exec);
   assert.equal(result.status, 'completed');
-  assert.equal(result.output, '', '空 result 与空增量的合并是空串');
+  assert.equal(result.output, '[job completed]\n', '空 result 与空增量的合并是空串（状态行另计，需求 §2.2.2 无内容也可见终态）');
   assert.equal(result.truncated, false);
 });
 
@@ -760,7 +760,7 @@ test('R57（空 result × 非空增量）：空串 result 视为在场——分�
   installJobs(f, { status: 'completed', readChunks: [{ text: 'out', channel: 'stdout' }], readResult: '' });
   const tool = createWaitJobTool(f.ctx, config);
   const result = await tool.execute({ job_id: 'j-1', wait_ms: 30000 }, exec);
-  assert.equal(result.output, 'out\n', '空串 result 在场：增量非换行结尾仍补恰一个换行（falsy 判定会漏掉这个分隔）');
+  assert.equal(result.output, '[job completed]\nout\n', '空串 result 在场：增量非换行结尾仍补恰一个换行（falsy 判定会漏掉这个分隔）');
 });
 
 test('R57（超长）：合并后的完整文本走 maxResultChars 裁剪——保头尾、标省略量、truncated 置真', async () => {
@@ -777,8 +777,8 @@ test('R57（超长）：合并后的完整文本走 maxResultChars 裁剪——�
   assert.equal(result.truncated, true, '合并后超限必须置 truncated');
   assert.equal(
     result.output,
-    `${'X'.repeat(36)}\n\n[output truncated: 61 chars omitted]\n\n${'Y'.repeat(24)}`,
-    '裁剪对象是「增量＋result」的合并后完整文本（保头尾，超长 result 同样被裁）'
+    `[job completed]\n${'X'.repeat(36)}\n\n[output truncated: 61 chars omitted]\n\n${'Y'.repeat(24)}`,
+    '裁剪对象是「增量＋result」的合并后完整文本（保头尾，超长 result 同样被裁）；状态行在裁剪之外（需求 §2.2.3 诊断另计）'
   );
 });
 
@@ -794,8 +794,8 @@ test('R57（lossy）：lossy 前缀仍排最前，其后是增量与 result 的�
   const result = await tool.execute({ job_id: 'j-1', wait_ms: 30000 }, exec);
   assert.equal(
     result.output,
-    '[earlier output was partially dropped from memory]\ntail out\nFINAL',
-    'lossy 前缀第一行；增量与 result 的合并紧随其后'
+    '[job completed]\n[earlier output was partially dropped from memory]\ntail out\nFINAL',
+    '状态行第一行、lossy 前缀第二行；增量与 result 的合并紧随其后'
   );
 });
 
@@ -820,10 +820,60 @@ test('R57（读失败）：read 抛错 → 首行标记、一次性通道未被�
   assert.equal(first.status, 'completed', '读失败不得改写作业终态');
   assert.equal(
     first.output,
-    '[reading the job output failed; the output below is empty — call async_wait_job again to retry]',
-    '读失败时本返回只有读失败标记（精确文本）'
+    '[job completed]\n[reading the job output failed; the output below is empty — call async_wait_job again to retry]',
+    '读失败时本返回有终态状态行＋读失败标记（精确文本；状态行在诊断首行）'
   );
 
   const second = await tool.execute({ job_id: 'j-1', wait_ms: 30000 }, exec);
-  assert.equal(second.output, 'out\nFINAL', '读失败不消费一次性通道——result 留待下一次成功的终态读取');
+  assert.equal(second.output, '[job completed]\nout\nFINAL', '读失败不消费一次性通道——result 留待下一次成功的终态读取');
+});
+
+// ---------------------------------------------------------------------------
+// F1/F7（需求 §2.2.2）：用户插话与终态并存时终态详情不被并存说明整体替换；
+// 无输出无详情的终态在可见文本中区分 completed/failed/killed（状态行在内容
+// 预算之外，双语完整）。
+// ---------------------------------------------------------------------------
+
+test('F1：用户插话唤醒与终态并存——终态详情保留，唤醒说明以附加行表达', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  const probes = installJobs(f, { waitDelayMs: 60000 });
+  const tool = createWaitJobTool(f.ctx, config);
+
+  const pending = tool.execute({ job_id: 'j-1', wait_ms: 600000 }, exec);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  probes.job.status = 'completed';
+  // 终态详情是一次性事实（退出原因/spill 找回线索）——整体替换即丢失。
+  probes.job.detail = 'exit code: 0; spill: C:/tmp/out.log';
+  f.emit('agent/inbox/inserted', inboxPayload({ agent, sourceKind: 'user', text: 'status?', target: 'next-step' }));
+
+  const result = await pending;
+  assert.equal(result.status, 'completed');
+  assert.match(result.detail, /exit code: 0; spill: C:\/tmp\/out\.log/, '终态详情不被并存说明整体替换');
+  assert.match(result.detail, /a user message arrived during the wait/, '唤醒说明在场');
+  assert.ok(
+    result.detail.indexOf('exit code: 0') < result.detail.indexOf('a user message arrived'),
+    '并存说明是附加行：终态详情在前、说明在后'
+  );
+  agent.inbox.nextStep.length = 0; // 还原共享 fixture
+});
+
+test('F7：无输出无详情时三种终态的可见文本互不相同（需求 §2.2.2）', async () => {
+  const markers = { completed: '[job completed]', failed: '[job failed]', killed: '[job killed]' };
+  for (const [status, marker] of Object.entries(markers)) {
+    const f = fakeCtx();
+    installJobs(f, { status, readChunks: [] });
+    const tool = createWaitJobTool(f.ctx, config);
+    const result = await tool.execute({ job_id: 'j-1', wait_ms: 30000 }, exec);
+    assert.equal(result.status, status);
+    assert.equal(result.output, `${marker}\n`, `${status}：状态行在无内容时独占输出——不依赖可选详情`);
+  }
+});
+
+test('F7：终态状态行双语完整（zh 档）', async () => {
+  const f = fakeCtx();
+  installJobs(f, { status: 'killed', readChunks: [] });
+  const tool = createWaitJobTool(f.ctx, resolveConfig({ toolName: 'async_run', agentLang: 'zh' }));
+  const result = await tool.execute({ job_id: 'j-1', wait_ms: 30000 }, exec);
+  assert.equal(result.output, '[作业已终止]\n', 'zh 档状态行不得静默回落英文（需求 §5.3 遗漏翻译不静默显示另一语言）');
 });

@@ -64,7 +64,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
  *     node_modules 根；CI 的 `npm install @deepseek-ai/dsh@0.2.0-rc.2` 就是这一种；
  *   - **嵌套形** `<base>/@deepseek-ai/dsh/node_modules/js-yaml/index.js`——全局安装树
  *     与运行树的形状（自带一份嵌套副本）。
- * 只认嵌套形会让「干净环境 + npm 锚」的预设用例整片全红（2026-10-03 实测 35 条），
+ * 只认嵌套形会让「干净环境 + npm 锚」的预设用例整片全红（实测 35 条失红），
  * 而本机开发树两种都在，所以这个缺口在开发机上永远看不见。
  */
 const HOST_HOME = process.env.DSH_HOME ?? join(homedir(), '.dsh');
@@ -294,6 +294,11 @@ export async function validatePatch(patchPath, { quiet = false, expectation } = 
     if (!actualToolNames.includes(expected)) fail(`toolName 五值缺 "${expected}"（实得 ${actualToolNames.join(', ') || '(无)'}）`);
   }
   if (dupToolNames.length > 0) fail(`toolName 有重复：${dupToolNames.join(',')}`);
+  // 归属声明（需求 §6.2）：五行必须各自携带 owningPreset 且等于本补丁的 config.id
+  // ——描述警示按行归属判定，漏声明＝警示对预设行静默消失，此处锁死。
+  if (!asyncRows.every((child) => child?.config?.owningPreset === configId)) {
+    fail(`五行 dsh-async-tools 的 owningPreset 必须全部等于 "${String(configId)}"（描述警示按行归属判定）`);
+  }
   // 行位：第五行是嵌套行，且在嵌套序列里紧跟 tool-workflow。
   const workflowAsyncRow = nestedRows.find((child) => child?.name === 'dsh-async-tools' && child?.config?.toolName === 'async_workflow');
   if (workflowAsyncRow === undefined) {
@@ -308,7 +313,7 @@ export async function validatePatch(patchPath, { quiet = false, expectation } = 
     }
   }
   if (asyncRows.length === 5 && dupToolNames.length === 0 && workflowAsyncRow !== undefined) {
-    emit(`OK    ④ 五行 dsh-async-tools（toolName：${actualToolNames.join(', ')}），async_workflow 钉在 delegation 组内 tool-workflow 行后`);
+    emit(`OK    ④ 五行 dsh-async-tools（toolName：${actualToolNames.join(', ')}，owningPreset=${String(configId)}），async_workflow 钉在 delegation 组内 tool-workflow 行后`);
   }
 
   // ── ⑤ persona prefix 锚句（期望随套；删任一句必红） ───────────────────

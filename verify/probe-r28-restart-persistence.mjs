@@ -31,7 +31,7 @@ import {
 
 const LOGS = join(localConfig.evidenceDir, 'logs');
 mkdirSync(LOGS, { recursive: true });
-// 空目录自管（r28-round3：主探针收尾会 rmSync 掉它——重启探针不重建，良性跑就变成
+// 空目录自管（主探针收尾会 rmSync 掉它——重启探针不重建，良性跑就变成
 // 「路径不存在」的 stderr，判据 5d 假红）。先清后建，幂等且保证真空。
 rmSync(EMPTY_DIR, { recursive: true, force: true });
 mkdirSync(EMPTY_DIR, { recursive: true });

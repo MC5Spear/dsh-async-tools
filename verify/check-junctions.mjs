@@ -15,7 +15,7 @@
  *
  * 对账段保留，形态是断言"树的消费者不许自带树根"——
  * 下面 `TREE_CONSUMERS` 列出的每个模块都必须引用配置加载器。自带绝对路径字面量的
- * 情形另有 `tools/check-public-surface.mjs` 从全局兜住（公开范围零本机指纹）。
+ * 情形另有 `tools/check-public-surface.mjs` 从全局承接（公开范围零本机指纹）。
  *
  * ## 与 `npm test` 的关系
  *

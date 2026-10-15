@@ -10,7 +10,7 @@
  * `var(--dsw-alias-bg-layer-3)` 改回 `#ffffff`——那正是深色主题下渲染成
  * 白底黑框的那类缺陷。
  *
- * ⚠️ **本脚本会原地改写真实的 `client.js`**（卡片就在
+ * **本脚本会原地改写真实的 `client.js`**（卡片就在
  * 本包根），跑完在 `finally` 里写回并核对摘要。
  *
  * 用法：node verify/mutate-card-theme.mjs
@@ -60,7 +60,7 @@ function restore() {
 
 const baseline = runTests();
 if (baseline.red) {
-  console.log(`BASELINE-RED  未变异时 ${TEST} 就是红的（${baseline.summary}）——先修基线；⚠️ 若括号里是空的、且本脚本以 2 退出，更可能是默认沙箱禁止捕获子进程输出（EPERM）：本脚本要跑测试文件，需带提权运行。规范见 verify/README.md 的「判据必须在默认权限下可跑」。`);
+  console.log(`BASELINE-RED  未变异时 ${TEST} 就是红的（${baseline.summary}）——先修基线；若括号里是空的、且本脚本以 2 退出，更可能是默认沙箱禁止捕获子进程输出（EPERM）：本脚本要跑测试文件，需带提权运行。规范见 verify/README.md 的「判据必须在默认权限下可跑」。`);
   process.exit(2);
 }
 console.log(`基线：未变异时 ${TEST} 全绿（${baseline.summary}）。`);
@@ -69,8 +69,8 @@ console.log('');
 let ok = true;
 try {
   const mutated = original
-    .replace('border-radius:8px;"\n  + "background:var(--dsw-alias-bg-layer-3);font:inherit;font-size:13px;line-height:1.5;"',
-      'border-radius:8px;"\n  + "background:#ffffff;font:inherit;font-size:13px;line-height:1.5;"');
+    .replace('border-radius:12px;"\n  + "background:var(--dsw-alias-bg-layer-3);font:inherit;font-size:13px;line-height:1.5;"',
+      'border-radius:12px;"\n  + "background:#ffffff;font:inherit;font-size:13px;line-height:1.5;"');
   if (mutated === original) {
     console.log('SKIP  找不到枚举 select 底色的锚点，本变异失效——当失败处理。');
     ok = false;

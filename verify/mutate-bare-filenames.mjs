@@ -6,7 +6,7 @@
  * 那条检查器挡的是"文档写光名字、文件已删"。一个不会失败的检查器
  * 在这里等于没写：它跑绿只能说明"没扫到"。本项目纪律：**恒真断言比缺测试更危险**。
  *
- * ⚠️ 本脚本会原地改写真实的 `docs/design.md`，跑完在 `finally` 里写回并核对摘要。
+ * 本脚本会原地改写真实的 `docs/design.md`，跑完在 `finally` 里写回并核对摘要。
  *
  * 用法：node verify/mutate-bare-filenames.mjs
  */
@@ -41,8 +41,8 @@ function restore() {
   if (after !== hashBefore) throw new Error(`还原失败：${TARGET} 与变异前不一致，请 git checkout 恢复。`);
 }
 
-/** 注入点：一个三级标题，插在它后面不破坏结构。 */
-const ANCHOR = '## 13. 风险与对策（设计层）';
+/** 注入点：一个二级标题，插在它后面不破坏结构（锚随设计文档现行章节走）。 */
+const ANCHOR = '## 10. 增补设计';
 /** 注入的光文件名：**不带路径前缀**且一定不存在。 */
 const DEAD = '\n（变异注入：`this-bare-name-does-not-exist-probe.mjs`）\n';
 

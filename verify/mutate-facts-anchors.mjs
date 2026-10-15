@@ -108,7 +108,7 @@ for (const mutation of MUTATIONS) {
 // 钉死单列不计——纯计数钉对「一修一增同数」有盲区，逐行签名下同数换文件的替换
 // 会因多重集不等而红；任何模式外的新错误（含 [020] 行）都让基线红。残余盲区
 // （如实声明）：同一条目**同一文件同一错误种类**的一修一增仍等数等形——此形态下
-// 基线误绿，靠 M1-M4 的行号级变异与 check-facts-anchors 的逐行报告从全局兜住。
+// 基线误绿，靠 M1-M4 的行号级变异与 check-facts-anchors 的逐行报告从全局承接。
 const LEGACY_SIGNATURES = [
   'MISSING|settings-form/lib/types/index.d.ts',
   'OUT-OF-RANGE|settings-form/lib/index.js',

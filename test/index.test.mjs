@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 /** `lib/` 目录的绝对路径。 */
 const LIB_DIR = fileURLToPath(new URL('../lib/', import.meta.url));
 
-/** cordis 的 `FiberState.ACTIVE`（`src/fiber.ts:147-154` 的 const enum，编译后为 2）。 */
+/** cordis 的 `FiberState.ACTIVE`（`@deepseek-ai/cordis` 4.0.4，`lib/types/fiber.d.ts:67-74` 的 const enum，ACTIVE = 2）。 */
 const ACTIVE = 2;
 
 /**
@@ -297,7 +297,8 @@ function makeContext(Context) {
 
 /**
  * 等插件 fiber 进入 ACTIVE：cordis 的 `_reload()` 先 `await Promise.resolve()`
- * 才执行 `apply`（`PKGS/cordis/src/fiber.ts:646-658`），因此推有限的微任务轮次就够，
+ * 才执行 `apply`（`@deepseek-ai/cordis` 4.0.4 `lib/index.js:1349-1358` 的
+ * `_reload` 链），因此推有限的微任务轮次就够，
  * 不是靠时间蒙。超限直接断言失败，不会静默放过一个没跑起来的插件。
  * @param {object} fork - `ctx.plugin()` 的返回值。
  */
@@ -505,7 +506,7 @@ test('T12：设置快照链的三种故障姿态——首播降级、刷新保�
   assert.equal(readSnapshot().maxResultChars, 30000, '首播快照来自活配置对象的物化解析');
 
   // volatile 提交后 config 变坏 → 保旧快照 + warn（不打掉、不静默）。
-  // ⚠️ 必须原地改字段：attachSnapshotSource 闭包捕获的是这个对象本身（真实调用链里
+  // 必须原地改字段：attachSnapshotSource 闭包捕获的是这个对象本身（真实调用链里
   // loader 也是对同一份 fiber.config 原地 `updateVolatile`，对象恒同一）。
   liveConfig.minWaitMs = 999999;
   liveConfig.maxWaitMs = 250;

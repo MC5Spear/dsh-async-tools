@@ -81,7 +81,7 @@ const deadline = Date.now() + 90_000;
 let header = null;
 while (Date.now() < deadline && header === null) {
   await new Promise((r) => { setTimeout(r, 2500); });
-  // ⚠️ `session/list` 的行在 **`items`** 里（写成 `sessions` 会永远找不到会话，
+  // `session/list` 的行在 **`items`** 里（写成 `sessions` 会永远找不到会话，
   // 表现为"没拿到 request/header"——像个超时，其实是取错了键）。
   const row = (await rpc('session/list', { _request: {} })).items.find((s) => s.sessionId === sessionId);
   if (row === undefined) continue;
@@ -119,7 +119,7 @@ if (run !== undefined) {
       /one-shot retry/i.test(props.sandbox_permissions.description ?? ''),
       String(props.sandbox_permissions.description ?? '').slice(0, 90));
   }
-  // 与内置 pwsh 对齐：同一种功能在同一个部署里不该只有一半工具有。
+  // 与内置 pwsh 保持一致：同一种功能在同一个部署里不该只有一半工具有。
   const pwsh = tools.find((t) => t.name === 'pwsh');
   if (pwsh !== undefined) {
     const pwshProps = pwsh.parameters?.properties ?? {};

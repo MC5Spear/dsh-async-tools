@@ -36,6 +36,17 @@ test('resolveConfig：askUiSeat 默认 sidebar（需求 §5.2），显式两档�
     /askUiSeat|invalid/i, '枚举外取值在 schema 层被拒（不静默回默认）');
 });
 
+test('resolveConfig：owningPreset 透传——无默认、非 volatile 的行身份字段（需求 §6.2）', () => {
+  // 行身份只在两份预设补丁的工具行上声明；resolve 不赋默认值（缺省 = 自定义行、
+  // 无归属），有则原样透传（不校验枚举：归属判定交给 TAKEOVER_PRESETS 的 has）。
+  assert.equal('owningPreset' in resolveConfig({ toolName: 'async_run' }), false,
+    '缺省不带键（自定义行语义，不是字符串 undefined）');
+  assert.equal(resolveConfig({ toolName: 'async_run', owningPreset: 'dsh-async' }).owningPreset, 'dsh-async');
+  assert.equal(resolveConfig({ toolName: 'async_run', owningPreset: 'dsh-async-create' }).owningPreset, 'dsh-async-create');
+  assert.equal(resolveConfig({ toolName: 'async_run', owningPreset: 'someone-elses' }).owningPreset, 'someone-elses',
+    '枚举外字符串原样透传（has 判定在后）');
+});
+
 test('resolveConfig：非法配置 fail-fast', () => {
   // 单值下界由 **schema** 拦（`Config` 的 `.min(1)`），错误消息来自 schemastery。
   // 这比"到 resolveConfig 才抛"更早、更清楚：设置页用的就是这份 schema，
@@ -93,7 +104,7 @@ test('resolveYield：缺省取默认值，超出范围被夹紧', () => {
 });
 
 test('Config schema 暴露 toolName 且只接受登记的全部工具名（五个）', () => {
-  // ⚠️ 遍历 `TOOL_NAMES` 而**不是手抄四个名字**：手抄清单在新增工具名时跟不上，
+  // 遍历 `TOOL_NAMES` 而**不是手抄四个名字**：手抄清单在新增工具名时跟不上，
   // "从登记表里删掉一个工具名"这类变异就**抓不住**（手抄清单里那个名字照样能过 `Config()`）。
   // 名单漏一项就是假绿，所以清单只能有一个来源。个数断言是第二道锁：
   // 加工具时它逼你回来确认一次。
@@ -115,7 +126,7 @@ test('toolName 缺省 = 宿主角色：不得抛错，也不得回填默认值�
   // - 缺省时入口分派到宿主半边，**一个工具都不注册**（`test/two-planes.test.mjs` 的
   //   T12 行为断言），"少写字段"仍然不等于"装上某个工具"。
   //
-  // ⚠️ 这条判据要能**失败**：若有人把 default 加回去，`Config({}).toolName` 变成
+  // 这条判据要能**失败**：若有人把 default 加回去，`Config({}).toolName` 变成
   // `'async_run'` ⇒ 本用例红；若把 `.required()` 加回去，`Config({})` 抛错 ⇒ 同样红。
   const empty = Config({});
   assert.equal(empty.toolName, undefined, '缺省 toolName 必须保持缺省，不得回填默认值');

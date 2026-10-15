@@ -9,7 +9,7 @@
  * 一个不会失败的检查器在这里等于没写：它跑绿只能说明"没扫到"，
  * 说明不了"扫到的都存在"。本项目纪律：**恒真断言比缺测试更危险**。
  *
- * ⚠️ 本脚本会原地改写真实的 `CONTRIBUTING.md` 与 `README.md`，每条跑完立刻写回并核对摘要。
+ * 本脚本会原地改写真实的 `CONTRIBUTING.md` 与 `README.md`，每条跑完立刻写回并核对摘要。
  *
  * 用法：node verify/mutate-doc-paths.mjs
  */
@@ -41,15 +41,15 @@ function run() {
   return { red: code !== 0, tail: lines.filter((l) => l.includes('→')).slice(0, 1).join('') || (lines.slice(-1)[0] ?? '') };
 }
 
-/** 注入点：`CONTRIBUTING.md` 里一个二级标题，插在它后面不会破坏结构。 */
-const ANCHOR = '## 二、跑起来';
+/** 注入点：`CONTRIBUTING.md` 里一个二级标题，插在它后面不会破坏结构（锚随现行章节走）。 */
+const ANCHOR = '## 3. 文档维护';
 /** 注入的指针：本仓相对路径且**一定不存在**。 */
 const DEAD = '\n（变异注入：`verify/this-file-does-not-exist-mutation-probe.mjs`）\n';
 
 /**
  * M2 用的替换：把 README 里一个**真实存在**的 npm 脚本名改成不存在的。
  *
- * ⚠️ 名字里**必须带连字符**：检查器的脚本名字符类若不含连字符，会把名字截成
+ * 名字里**必须带连字符**：检查器的脚本名字符类若不含连字符，会把名字截成
  * `check:docs`（存在 ⇒ 通过），变异逃逸；带连字符的名字演示"脚本名真的会被整个核对"。
  */
 const SCRIPT_FROM = 'npm run check:docs';

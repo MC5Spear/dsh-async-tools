@@ -9,7 +9,7 @@
  * `--dump-dom` 在 Edge 上**不吐内容**（stdout/stderr 都是 0 字节），所以走 CDP：
  * `Runtime.evaluate` 才是可靠的取 DOM 方式——它拿的是 JS 求值结果，不依赖打印行为。
  *
- * 用法（一般由 probe-web-card.mjs 调用，不直接跑）：
+ * 用法（一般由 probe-card-visual.mjs 调用，不直接跑）：
  *   node cdp.mjs <url> <表达式> [等待毫秒]
  */
 import { execFileSync, spawn } from 'node:child_process';
@@ -33,11 +33,10 @@ const EDGE_CANDIDATES = [
  * `child.kill()` **只杀主进程**，而 Edge 是**多进程**架构（浏览器进程 + GPU + 渲染器 +
  * 网络服务 + 崩溃处理器…，一个实例约 10 个进程）。只杀主进程会把其余留成孤儿。
  *
- * 实测后果：连跑几十次探针之后盘上积了 **379 个 msedge 进程**（40 个实例 × ~10）。
- * 更要紧的是——**每次启动无头 Edge 都会产生一条 4625 失败登录**
- * （`Logon Type: 2`、`Caller Process Name: msedge.exe`），而本地策略是
- * **10 次 / 10 分钟 ⇒ 账户锁定 10 分钟**。账户一锁，NSSM 就用不了 `.\user` 拉起服务，
- * 验证实例的托管服务直接起不来（实测被锁了两次：01:20:46 与 01:46:02）。
+ * 不清理的后果有两层：反复起实例会把多进程孤儿积在盘上；更要紧的是——
+ * **每次启动无头 Edge 都会产生一条 4625 失败登录**（`Logon Type: 2`、
+ * `Caller Process Name: msedge.exe`），本地账户策略按 **10 次 / 10 分钟 ⇒
+ * 锁定 10 分钟**，账户一锁 NSSM 就用不了 `.\user` 拉起托管服务。
  *
  * 现行做法：尽量少起进程与少碰系统服务，**按整棵进程树清理**。
  *
@@ -102,8 +101,8 @@ export async function launch(browserPath, extraArgs = []) {
  * 按 PID 杀整棵进程树。
  *
  * 用 `taskkill /T /F`：Windows 上这是唯一可靠的"连同子进程一起杀"的手段。
- * 试过用 `Invoke-CimMethod Terminate` 按父子关系递归——**不行**：主进程一死父子关系
- * 就断了，剩下的孤儿再也找不到（实测 379 个里只清掉 52 个）。
+ * 按父子关系递归（`Invoke-CimMethod Terminate`）**不可行**：主进程一死父子
+ * 关系就断，剩下的孤儿再也找不到。
  *
  * @param {number} pid - 根进程 PID。
  */
@@ -122,11 +121,12 @@ function killTree(pid) {
  *
  * ## 路径**不能**拼进 PowerShell 脚本里
  *
- * 把路径插进 `-like '*<路径>*'` 并给反斜杠做 PowerShell 转义（`\\`），会
+ * 把路径插进 `-like '*<路径>*'` 并给反斜杠做"转义"（`\\`），会
  * **匹配到 0 个进程**——命令行里的实际内容是单反斜杠
- * （`--user-data-dir="C:\Users\...\cdp-XYZ"`），而转义过的模式要求双反斜杠。
- * `C:\` 在 PowerShell 里只在**双引号字符串**中才是转义，单引号串里它是字面量——
- * 转义反而把模式改坏。
+ * （`--user-data-dir="C:\Users\...\cdp-XYZ"`），而双反斜杠的模式要求匹配
+ * 两个连续反斜杠。PowerShell 字符串的转义符是**反引号**：反斜杠在单引号
+ * 串里是字面量，在双引号串里也**不是**转义符——给它"转义"没有语言依据，
+ * 只会把模式改坏。
  *
  * 所以路径走**环境变量**，脚本里只读 `$env:`，一个转义字符都不需要。
  *

@@ -9,7 +9,7 @@
  * `form:'notice'` + `summary`，正文自含完整题目内容）经 `agent.followup()` 注入
  * （需求 §4.4）。总开关默认关——关时判定①恒不满足，零行为变化。
  *
- * ## 判据 → 各挡什么（J 编号与需求 §4 逐条对齐）
+ * ## 判据 → 各挡什么（J 编号与需求 §4 逐条对应）
  *
  * | 判据 | 挡的缺陷形态 |
  * |---|---|
@@ -30,7 +30,7 @@
  * | J18 客户端模型：准入控制/轮询/裸传/失败路径 | 包裹漂移、failed 静默 ⇒ 迟到答案无声丢失 |
  * | J19 座位渲染条件 + lostAnswers 计入 | 关/空/错座不消隐，报错名单永不显示 |
  * | J20 expired 批 TTL | 无限留列 ⇒ 内存与徽标双重无界 |
- * | J21 待答界面语言三档（auto 跟宿主） | auto 死写 en ⇒ 修正轮前的「恒英文」死角复发 |
+ * | J21 待答界面语言三档（auto 跟宿主） | auto 死写 en ⇒ 「恒英文」死角复发 |
  * | 单选替换 chips | 回退恒 toggle ⇒ 单选题可多选 |
  * | 注册 label 活词典 | label 硬编码 ⇒ 换语言不翻 |
  *
@@ -67,7 +67,7 @@ async function loadOfflineSafe(specifier) {
 
 const askModule = await loadOfflineSafe('../lib/ask-takeover.js');
 const hostModule = await loadOfflineSafe('../lib/host.js');
-const { AskBatchRegistry, AskTakeoverService, shouldTakeover } = askModule ?? {};
+const { AskBatchRegistry, AskTakeoverService, shouldTakeover, inOwnPreset } = askModule ?? {};
 const { applyHostHalf } = hostModule ?? {};
 
 /** 宿主链不可解析（离线环境）时整组跳过；可用时与 `test` 完全同形（断言不放宽）。 */
@@ -251,6 +251,24 @@ function mountListener({ timer, clock, config, services }) {
 
 // ── 判定序（J1–J5，经真实接线观察 next() 语义）────────────────────────────
 
+hostTest('inOwnPreset（F3 范围判定底座）：三态读取路径 + 失效安全方向＝关', () => {
+  // 与 shouldTakeover 判定②同一条读取路径（sessions.get → stateOf('agentPreset')），
+  // 供 lib/jobs.js 的结果诊断范围判定复用——两处口径必须一致。
+  const scope = (preset, session = { id: 's1' }) => ({
+    sessions: { get: (id) => (id === 's1' ? session : undefined) },
+    sessionProjections: { stateOf: () => preset }
+  });
+  assert.equal(inOwnPreset(scope('dsh-async'), 's1'), true, '本包主预设 ⇒ 归属');
+  assert.equal(inOwnPreset(scope('dsh-async-create'), 's1'), true, 'create 预设同样归属');
+  assert.equal(inOwnPreset(scope('standard'), 's1'), false, '其他预设 ⇒ 不归属');
+  assert.equal(inOwnPreset(scope('dsh-async'), 's-other'), false, '会话查无 ⇒ 不归属');
+  assert.equal(inOwnPreset({}, 's1'), false, '服务缺席 ⇒ 不归属（失效安全＝关）');
+  assert.equal(
+    inOwnPreset({ sessions: { get: () => { throw new Error('boom'); } }, sessionProjections: {} }, 's1'),
+    false, '读取抛错 ⇒ 不归属（不把异常泄给诊断路径）'
+  );
+});
+
 hostTest('J1：总开关关 → next() 被调、零接管（默认关 = 零行为的接线侧证据）', () => {
   try {
     const timer = fakeTimer();
@@ -391,6 +409,41 @@ hostTest('J14：state() 载荷形状 + 作答递减 + 清零出列 + expired 批
   state = registry.stateItems();
   assert.equal(state.items.length, 1, 'expired 批的 open 题仍上屏（迟到作答入口）');
   assert.equal(state.items[0].phase, 'expired', 'phase 转 expired');
+});
+
+hostTest('F4：到期后回调未及的提交必须复查真期限——按 gone 走迟到路径，不翻案', async () => {
+  // 竞态窗口：真钟已越过 expiresAt、到期回调尚未 fire（timer 排队/宿主繁忙）。
+  // 提交入口若只看批 phase（还是 open），会把过期提交当 delivered、用迟到答案
+  // 翻案一个已该超时放行的批——提交前必须复查 now >= expiresAt（需求 §4.3）。
+  const agent = fakeAgent('s-f4');
+  let clockNow = 1_000_000;
+  const { registry } = makeRegistry({ clock: () => clockNow });
+  const pending = registry.take(makeRequest(agent, [Q('q1')]), agent);
+  const { items } = registry.stateItems();
+  const batchId = items[0].batchId;
+  assert.equal(items[0].expiresAt, 1_005_000, '前置：到期点 = 1_000_000 + 5000 窗口');
+
+  clockNow = 1_005_001; // 真钟越过窗口；到期回调全程不 fire（竞态窗口敞开）
+  assert.equal(
+    registry.submitAnswer({ batchId, questionId: 'q1', selected: ['选项一'] }),
+    'gone',
+    '过期批的提交按 gone 退回——不得冒充 delivered 用迟到答案翻案'
+  );
+  assert.equal(
+    registry.submitIgnore({ batchId, questionId: 'q1' }),
+    'gone',
+    '忽略入口同样复查真期限（两条提交路径一个口径）'
+  );
+
+  const settled = await pending;
+  assert.ok(Array.isArray(settled.answers), '批经 expire 结清（幂等——两次提交只结一次）');
+  assert.deepEqual(
+    settled.answers.map((a) => [a.id, a.selected]),
+    [['q1', []]],
+    '超时合成不代答（selected 空），不是被迟到提交改写'
+  );
+  const state = registry.stateItems();
+  assert.equal(state.items[0].phase, 'expired', '批相转 expired——迟到作答入口仍可见');
 });
 
 // ── 超时与中止（J7/J8/J9）──────────────────────────────────────────────────
@@ -1341,7 +1394,7 @@ test('sidebar 注册 label 闭包——经 apply 产品路径，随快照语言�
   await Promise.resolve();
   await Promise.resolve();
   const sidebarReg = registrations.find((reg) => reg.meta.name === 'sidebar.footer.action' && reg.meta.id === 'async-tools-ask');
-  assert.ok(sidebarReg !== undefined, 'sidebar 座位注册经 apply 落地');
+  assert.ok(sidebarReg !== undefined, 'sidebar 座位注册经 apply 生效');
   assert.equal(typeof sidebarReg.meta.label, 'function', 'label 是函数（宿主重读接口）');
   // 快照语言缺省（auto，无 uiLang 键）→ 回退 en 词典档。
   assert.equal(sidebarReg.meta.label(), product.DICTIONARIES.en['ask.title'], 'label() 走词典（缺省档）');
@@ -1968,17 +2021,18 @@ test('E7：客户端组头延长按钮——extend 裸传 {sessionId}、失败�
   await Promise.resolve();
   assert.deepEqual(extendCalls, [[{ sessionId: 's-ext' }]], 'extend 载荷裸传（组键 sessionId）');
   assert.ok(stateCalls.length > stateCallsBefore, '成功 → 立即补一次轮询（新期限经 serverNow 校准显示）');
-  assert.equal(model.store.getSnapshot().callFailed, false, '成功不置失败旗标');
+  assert.equal(model.store.getSnapshot().callFailed, null, '成功清回无失败态（null，不残留类别旗标）');
 
-  // ③ 失败路径：回执 ok:false → callFailed 旗标（面板顶报错通道），不假报加时成功。
+  // ③ 失败路径：回执 ok:false → callFailed='extend'（面板顶按类别报错），不假报加时成功。
   extendResult = { ok: false };
   toggles[0].props.onClick();
   await Promise.resolve();
   await Promise.resolve();
-  assert.equal(model.store.getSnapshot().callFailed, true, '失败 → callFailed=true（面板顶报错）');
+  assert.equal(model.store.getSnapshot().callFailed, 'extend', "失败 → callFailed='extend'（面板顶报错按类别）");
   const panel2 = renderComp(() => product.AskList({ ask: model }));
   const failedLine = panel2.children.find((child) => child?.props?.className === 'ats-ask-failed');
   assert.ok(failedLine !== undefined, '失败文案渲染在面板顶');
+  assert.equal(failedLine.children[0], product.DICTIONARIES.en['ask.extendFailed'], '延长失败用专门文案（不与轮询失败混用）');
 
   model.dispose();
 });

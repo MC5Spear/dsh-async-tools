@@ -197,7 +197,7 @@ test('C6 现行文档、测试与工具里引用的探针必须都在盘上（�
   const missing = [];
   for (const relative of files) {
     const text = readFileSync(join(ROOT, relative), 'utf8');
-    // ⚠️ 只认**本包相对写法** `tools/probe-*.mjs`——它才是"读者会在本仓里找"的那种引用。
+    // 只认**本包相对写法** `tools/probe-*.mjs`——它才是"读者会在本仓里找"的那种引用。
     // 负向后顾排除前面还有路径分隔符或盘符的情形：写全绝对路径指的是**别的仓**里的文件。
     for (const match of text.matchAll(/(?<![\w\\/:.])tools\/(probe-[a-z0-9-]+\.mjs)/g)) {
       if (!existsSync(join(ROOT, 'tools', match[1]))) missing.push(`${relative} → ${match[1]}`);

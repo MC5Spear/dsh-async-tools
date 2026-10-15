@@ -47,7 +47,7 @@ function confinedCtx(outcome = 'allowed-once', options = {}) {
   const resolveCallsAtApproval = [];
   f.installShellResolve((request) => { seen.push(request); return request; });
   f.installShellExecute(() => Promise.resolve(fakeProc({ text: 'ok' }).proc));
-  // ⚠️ 必须在**创建工具之前**设好：参数表在构造期读一次 `sandboxMode`。
+  // 必须在**创建工具之前**设好：参数表在构造期读一次 `sandboxMode`。
   f.ctx.shell.sandboxMode = 'workspace-write';
   f.ctx.get = (key) => {
     if (key === 'sandboxPolicy') {
@@ -73,7 +73,7 @@ function confinedCtx(outcome = 'allowed-once', options = {}) {
 test('R11：有约束执行器时，参数表广告 sandbox_permissions 与 justification', () => {
   const { f } = confinedCtx();
   const tool = createRunTool(f.ctx, config);
-  // ⚠️ `defineTool` 会把参数描述表**转成 JSON Schema**，键在 `parameters.properties` 下，
+  // `defineTool` 会把参数描述表**转成 JSON Schema**，键在 `parameters.properties` 下，
   // 不在 `parameters` 顶层。若写成 `'sandbox_permissions' in tool.parameters`，
   // 断言的是 JSON Schema 的三个顶层键之一，永远为 false。
   const props = tool.parameters.properties;
@@ -139,7 +139,7 @@ test('R11：**先问审批、再启动进程**——审批发生在进程创建�
   assert.equal(seen.length, 1, '获批后必须真的启动进程');
   // ## 顺序断言（这一条才是"顺序"的判据）
   //
-  // ⚠️ 若只断言了事后计数 + reason 文本，注释却写着"用审批那一刻还没有任何 resolve
+  // 若只断言了事后计数 + reason 文本，注释却写着"用审批那一刻还没有任何 resolve
   // 记录表达顺序"——**那段断言根本不存在**。后果：把审批整体挪到 `ctx.shell.start()` 之后，
   // 那几条断言**全绿**。
   //
@@ -241,29 +241,32 @@ test('R11：没有审批服务 → 抛出可读错误且不启动进程', async 
   assert.equal(seen.length, 1, '没有审批服务不该影响普通调用');
 });
 
-test('同级模式免审批直接放行；更窄/不支持的模式仍抛出（0.2.0-rc.2 语义）', async () => {
-  // ⚠️ 宿主语义（[0.2.0-rc.2] `dsh-sandbox/lib/index.js:90-92`，docstring 明文：
-  // "Repeating the call's effective mode returns it without approval"）：
-  // 同级**免弹窗**返回当前模式（合理：请求自己已有的权限不该打扰用户），
-  // 只有**更窄或不在加宽梯上**的模式才抛。
+test('同级与更窄目标都在启动前可读拒绝、零注册零启动（需求 §6.1）', async () => {
+  // 本包口径严于宿主助手：宿主 `approveEscalation` 对**同级**免审批直接放行
+  // （[0.2.0-rc.2] `dsh-sandbox/lib/index.js:101` 早退）；需求 §6.1 要求非严格
+  // 加宽一律**启动前**可读拒绝——同级不是加宽请求，更窄/不在梯上同样拒绝，
+  // 两类都给本包口径的双语文案，进程一个都不起。
   const { f, seen, asks } = confinedCtx('allowed-once');
   const tool = createRunTool(f.ctx, config);
 
-  // ① 同级：不抛、不弹审批、照常执行。
-  const same = await tool.execute({
-    command: 'x', description: 'x',
-    sandbox_permissions: 'workspace-write', justification: 'same level'
-  }, exec);
-  assert.equal(same.status, 'completed', '同级模式应免审批直接放行（0.2.0-rc.2）');
-  assert.equal(asks.length, 0, '同级不得弹审批——请求自己已有的权限不该打扰用户');
-  assert.equal(seen.length, 1);
+  // ① 同级：可读拒绝、不弹审批、不启动。
+  await assert.rejects(
+    tool.execute({
+      command: 'x', description: 'x',
+      sandbox_permissions: 'workspace-write', justification: 'same level'
+    }, exec),
+    (error) => {
+      assert.match(error.message, /equals this call's current sandbox mode|与本次调用的当前沙箱模式相同/,
+        '同级拒绝文案必须说明「与当前模式相同、不是加宽请求」');
+      return true;
+    }
+  );
+  assert.equal(asks.length, 0, '同级不该弹审批');
+  assert.equal(seen.length, 0, '同级拒绝必须零启动');
 
-  // ② 更窄（从 workspace-write 请求更窄的...这里用不存在的加宽关系表达）：
-  // confinedCtx 的策略恒为 workspace-write；danger-full-access 是唯一更宽档。
-  // 直接验证"不在加宽梯上的目标仍抛"：把策略改成 danger-full-access，使
-  // workspace-write 成为更窄目标（下两行即做这件事）。
+  // ② 更窄：把当前策略改成 danger-full-access，使 workspace-write 成为更窄
+  // 目标——同样启动前拒绝（不依赖宿主助手对该类的报错文案）。
   const narrower = confinedCtx('allowed-once');
-  // 把当前策略改成 danger-full-access，使 workspace-write 变成"更窄"目标。
   narrower.f.ctx.get = (key) => {
     if (key === 'sandboxPolicy') return { resolve: () => ({ mode: 'danger-full-access' }) };
     if (key === 'approval') return { request: async (req) => { narrower.asks.push(req); return 'allowed-once'; } };
@@ -275,10 +278,14 @@ test('同级模式免审批直接放行；更窄/不支持的模式仍抛出（0
       command: 'x', description: 'x',
       sandbox_permissions: 'workspace-write', justification: 'narrower target'
     }, exec),
-    /is not strictly wider/,
-    '从 danger-full-access 往 workspace-write 不是加宽，必须抛出'
+    (error) => {
+      assert.match(error.message, /is not strictly wider|不比本次调用的当前模式/,
+        '更窄目标拒绝文案必须说明「不是严格更宽」');
+      return true;
+    }
   );
   assert.equal(narrower.asks.length, 0, '不该走到审批——梯判定在审批之前');
+  assert.equal(narrower.seen.length, 0, '更窄拒绝必须零启动');
 });
 
 test('R11：有约束但选不出更宽目标时，未广告的键仍被挡下', async () => {
@@ -365,11 +372,11 @@ test('R11：让出后的作业结局**同样**带沙箱标记（"让出后才发
   assert.match(view.detail, /escalation available/);
 });
 
-test('R11：审批未决期间 GUI 停止 → 挂监听处的已中止短路接管，不等满预算', async () => {
-  // 入口关卡（exec.signal.aborted 检查）与挂 abort 监听之间唯一的 await 是提权
-  // 审批。宿主审批契约只承诺 signal 骑在请求上（escalation.d.ts:106-107），各
-  // 审批服务是否因 abort 取消请求不在本包可控范围——挂监听后补一枪已中止短路
-  // （已中止信号挂监听永不触发），把窗口压成零。
+test('R11：审批未决期间 GUI 停止 → 迟到获准仍零注册零启动（需求 §6.1 取消复查）', async () => {
+  // 宿主审批契约只承诺 signal 骑在请求上（escalation.d.ts:106-107），各审批
+  // 服务是否因 abort 取消请求不在本包可控范围——审批返回后必须**复查取消**：
+  // 不尊重 signal 的服务在停止之后才返回 allowed-once 时，注册与启动仍为零，
+  // 按取消原因拒绝（入口关卡同一口径；此刻进程未启动，抛错即诚实）。
   const f = fakeCtx();
   const seen = [];
   let grantApproval;
@@ -397,9 +404,8 @@ test('R11：审批未决期间 GUI 停止 → 挂监听处的已中止短路接�
   execAbort.abort(new Error('tool call aborted')); // GUI 停止到达（审批仍未决）
   grantApproval('allowed-once'); // 审批稍后才放行
 
-  const result = await pending;
-  assert.equal(result.status, 'running',
-    'abort 分支按句柄口径返回——不得等满 yield 预算（默认 20000 ms 会直接超时本用例）');
-  assert.equal(seen.length, 1, '审批放行后照常走到执行准备（放行不是取消）');
-  assert.equal(f.jobsFake.waitersOf(result.job_id), 0, 'wait 已被摘除（恢复通道=结算通知）');
+  await assert.rejects(pending, /tool call aborted/,
+    '审批迟到返回不能把已取消的调用变成执行——按取消原因拒绝');
+  assert.equal(seen.length, 0, '零执行：shell 解析都没走到');
+  assert.equal(f.jobsFake.views().length, 0, '零注册：作业注册表没有任何视图');
 });

@@ -140,7 +140,7 @@ export async function loadLocalConfig({ root = MODULE_ROOT, env = process.env } 
    *
    * `020` 有**结构性缺省**：它就是 `hostModules` 下的 `@deepseek-ai` 域目录。
    * 这条缺省让"宿主锚"与"证据锚"不可能指向两棵不同的树，
-   * `verify/check-junctions.mjs` 的同根对账因此是构造性的而不是靠两处常量对齐。
+   * `verify/check-junctions.mjs` 的同根对账因此是构造性的，不靠让两处常量保持一致。
    */
   const evidenceTree = {
     '020': fileTrees['020'] ?? (hostModules === undefined ? undefined : join(hostModules, '@deepseek-ai')),
@@ -246,7 +246,7 @@ export function describeConfig(config) {
  * CLI 判据的本机侧入口：能装载就返回配置；**本机环境整个不在**时打印一行 `SKIP …`
  * 并结束进程（退出码 0）。
  *
- * ⚠️ 本函数**会调用 `process.exit`**，所以只给 CLI 脚本用，不给库用。名字里的
+ * 本函数**会调用 `process.exit`**，所以只给 CLI 脚本用，不给库用。名字里的
  * `OrSkip` 就是这件事的提示。`LocalConfigInvalid`（`.local/` 在但配置坏了）**不吞**——
  * 那是开发机配置错误，按红抛出。
  *

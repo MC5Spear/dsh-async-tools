@@ -9,7 +9,7 @@
 #   -Action Restore    ：从备份还原 package.json → 把 junction 改回来
 #   -Action Status     ：只读打印现状（不写任何文件）
 #
-# 用法（需在服务进程树之外执行；本会话的 pwsh 就在开发实例的树里）：
+# 用法（需在验证实例的服务进程树之外执行；跑在开发实例进程树里的会话不满足此前提）：
 #   pwsh -File verify\r17-uninstall.ps1 -Action Status -ProfileDir <服务家目录>\profiles\web -PackageName dsh-async-tools
 param(
   [Parameter(Mandatory = $true)][ValidateSet('Status', 'Uninstall', 'Restore')][string]$Action,

@@ -32,7 +32,7 @@ const MODULE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
  * 若一个脚本改的**不是交付实现**、而是**检查器自己**，它就没有"跑的测试文件"这一列可言，
  * 塞进表里会把表的语义搅浑。
  *
- * ⚠️ 豁免不是"漏登记的借口"：名单里的条目验的都是检查器自身
+ * 豁免不是"漏登记的借口"：名单里的条目验的都是检查器自身
  * （用变异证明那张表两头都能失败）。将来再有检查器的自测脚本，**不要默默加进来**——
  * 先判断它该不该有自己的"跑哪个测试文件"，判断不了就问。
  */
@@ -51,7 +51,7 @@ const EXEMPT_FROM_TABLE = new Map([
 // ── 从 README 的表里抽出"脚本"列的路径 ────────────────────────────────────
 //
 // 表行形如：`| verify/mutate-x.mjs | test/x.test.mjs | 覆盖 |`
-// ⚠️ 单元格**可以带反引号也可以不带**——若只认带反引号的形式，而 README 里
+// 单元格**可以带反引号也可以不带**——若只认带反引号的形式，而 README 里
 // 那一列没加，于是基线就假红。两种都收。
 // 只认首列是 `verify/mutate-*.mjs` 的表格行，正文里的顺带提及不算。
 const unquote = (cell) => cell.replace(/^`/, '').replace(/`$/, '').trim();
@@ -101,7 +101,7 @@ export function checkMutateIndex(root = MODULE_ROOT, { quiet = false } = {}) {
     if (!onDisk.has(script)) problems.push(`豁免名单里有 ${script}，但盘上不存在（名单该清）`);
   }
   // 表里声明的测试文件也要真的存在——列一个不存在的测试文件同样会让人扑空。
-  // ⚠️ 豁免项跳过这一列：它们登记在**另一张表**（"验什么"），第二列是说明文字不是测试文件。
+  // 豁免项跳过这一列：它们登记在**另一张表**（"验什么"），第二列是说明文字不是测试文件。
   for (const [script, test] of listed) {
     if (EXEMPT_FROM_TABLE.has(script)) continue;
     if (test === null) { problems.push(`${script} 那一行的"跑的测试文件"列不是 \`test/*.test.mjs\` 形式`); continue; }

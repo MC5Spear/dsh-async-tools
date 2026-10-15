@@ -25,7 +25,7 @@
 /**
  * 插话文案：等待被打断，且**工作对象不受影响**。
  *
- * 出处 `lib/text.js` 的 `note.interrupted`（两语逐字，zh :257 / en :104）：
+ * 出处 `lib/text.js` 的 `note.interrupted`（两语逐字，zh :287 / en :110）：
  * `等待被打断：一条用户消息已到达，将出现在你的下一条输入里（已等待 {waitedMs} ms）。{subject} 仍在后台运行，完全不受影响。…`
  * `Wait interrupted: a user message has arrived and will appear in your next input (waited {waitedMs} ms). {subject} is still running in the background and is completely unaffected. …`
  *
@@ -35,7 +35,7 @@
 export const WAIT_INTERRUPTED = /等待被打断|Wait interrupted/;
 /**
  * 插话文案里"对象未受影响"的那半句（同上出处，两语逐字）。
- * ⚠️ `${subject}` 在"仍在后台运行"**之前**；该半句自身两语都连续，模式里的小间隙
+ * `${subject}` 在"仍在后台运行"**之前**；该半句自身两语都连续，模式里的小间隙
  * 只是容错（英文「 and is 」、中文「，」）。
  */
 export const SUBJECT_UNTOUCHED = /仍在后台运行[，\s]{0,3}完全不受影响|is still running in the background[\s\S]{0,12}completely unaffected/;
@@ -65,11 +65,11 @@ export const CHILD_SETTLED = [
 export const JOB_SETTLED = /exit code: \d+/;
 
 /** 等待预算到期（非终态）的文案。出处 `lib/text.js` 的 `note.waitAgain`
- *  （两语逐字，zh :255 / en :102）。 */
+ *  （两语逐字，zh :281 / en :104）。 */
 export const WAIT_AGAIN = /仍在运行（不受影响）|is still running \(unaffected\)/;
 
 /**
  * `async_run` 超预算**让出句柄**的文案。出处 `lib/text.js` 的 `note.yield.running`
- * （两语逐字，zh :251 / en :98）。判据要认的半句：「命令/The command 仍在运行」。
+ * （两语逐字，zh :275 / en :98）。判据要认的半句：「命令/The command 仍在运行」。
  */
 export const YIELD_RUNNING = /命令仍在运行|command is still running/;

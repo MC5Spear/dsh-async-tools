@@ -20,7 +20,7 @@ var module = { exports: {} }; var exports = module.exports;
 // - 模型的 scope = `ctx.configForms.get(ENTRY)` 的控制器（控制器就是官方
 //   `SettingsFormScope`——`getSnapshot`/`subscribe`/`mutate`）。bundle 槽的 owner props
 //   只有 `{view}`、没有 `form`，所以卡片自取控制器；模型在构造时订阅 scope，
-//   组件经 `model.bind(...)` 的快照店 + `useSyncExternalStore` 重渲染（bind 只调一次）。
+//   组件经 `model.bind(...)` 的快照存储 + `useSyncExternalStore` 重渲染（bind 只调一次）。
 // - 枚举字段（uiLang/agentLang/askUiSeat）与布尔字段（silentFailureGuard/
 //   askTakeover）：语义注册进模型（`enumFieldSpec`/`flagFieldSpec` 形状同
 //   `SettingsFieldSpec`），控件本体分别是原生 select 与官方 `P.Switch`，壳与帮助
@@ -65,7 +65,7 @@ var NS = "settings.async-tools";
 // 字段表：key 与宿主 Config 的 volatile 字段一一对应；ms 字段的说明行带秒数读数。
 // 顺序 = `lib/config.js` 的 `BUDGET_FIELD_KEYS` 之后接 `LANG_FIELD_KEYS`，末尾接
 // `FLAG_FIELD_KEYS`（与 test/two-planes.test.mjs T19 的键集对账，静默失败开关字段在列）。
-// ⚠️ `toolName` 不在表里（它不是 volatile，不可用户写——写会被宿主拒绝
+// `toolName` 不在表里（它不是 volatile，不可用户写——写会被宿主拒绝
 // `Config field "toolName" is not volatile`，`dsh-settings/lib/index.js:507`），
 // 这正是「volatile 才可编辑」语义的正确表达。
 var FIELDS = [
@@ -837,8 +837,8 @@ var DICTIONARIES = {
     "help.uiLang": "配置键：uiLang（枚举：auto / zh / en）。\n\n与 agentLang 两个开关独立，修改其中一个不影响另一个；auto 档只读跟随宿主语言，不写宿主全局语言。",
     "help.agentLang": "配置键：agentLang（枚举：en / zh）。\n\n与 uiLang 两个开关独立，修改其中一个不影响另一个；控制模型可见文案（工具描述、参数说明、提示、错误与执行规则）；跟随宿主语言的开关是 uiLang。",
     "help.silentFailureGuard": "配置键：silentFailureGuard（布尔）。\n\n开启后三处防线生效：结果诊断（返回提示里的条件式提醒）、命令描述警示、执行纪律提示；关闭则三处全部消失。只给条件式提醒，不保证检出或自动修复（需求 6.3）。仅本包两预设生效，默认关。",
-    "help.askTakeover": "配置键：askTakeover（布尔）。\n\n接管范围：本包两预设的根 Agent 的普通提问（需求 4.1）——在待答面板作答；权限审批与计划评审不接管，走宿主原生流程。迟到作答按通知送达，不丢失。到期不替用户选答案。",
-    "help.askTimeoutMs": "配置键：askTimeoutMs（数值，毫秒）。\n\n从接收一批提问起计时，同批多题共享期限；到期合成超时事实、不代答，Agent 继续工作。可补答路径：面板在到期后仍接受作答，迟到作答按通知送达。",
+    "help.askTakeover": "配置键：askTakeover（布尔）。\n\n接管范围：本包两预设的根 Agent 的普通提问（需求 4.1）——在待答面板作答；权限审批与计划评审不接管，走宿主原生流程。迟到作答在记录保留期内经通知送达（自到期起保留 24 小时）；记录被清扫、主体无法接收或投递失败时不会送达。到期不替用户选答案。",
+    "help.askTimeoutMs": "配置键：askTimeoutMs（数值，毫秒）。\n\n从接收一批提问起计时，同批多题共享期限；到期合成超时事实、不代答，Agent 继续工作。可补答路径：面板在到期后仍接受作答，作答记录自到期起保留 24 小时，保留期内经通知送达；超龄被清扫或投递失败则不再送达。",
     "help.askExtendMs": "配置键：askExtendMs（数值，毫秒）。\n\n组级动作语义（需求 4.3）：组头“增加等待时间”每点击一次，给该会话当时未到期的批次各增加此时长，在原截止点上叠加；已到期批次不重新等待，新批次不继承延长。",
     "help.askUiSeat": "配置键：askUiSeat（枚举：sidebar / overlay）。\n\n两种方式的展开动作（需求 4.2）：侧边栏底栏徽标显示未处理数、点击展开；右下角浮窗直接显示问题。徽标计数全部处理后消隐。选项默认标记与需求 5.2 一致（默认 sidebar），标记不指示用户当前选择。",
     "opt.askUiSeat.sidebar": "侧边栏底栏徽标（默认）",
@@ -851,7 +851,12 @@ var DICTIONARIES = {
     "ask.jump": "打开会话",
     "ask.expired": "已超时，仍可作答",
     "ask.submitting": "提交中…",
+    // 面板顶报错按失败动作分键（需求 §4.4）：提交失败可重试；状态读取失败由
+    // 轮询自动重试；延长失败可再点；丢失答案无自动重试通道，允许手动消除。
     "ask.callFailed": "提交没有送达（宿主侧失败），请重试。",
+    "ask.stateFailed": "待答状态读取失败；面板会自动重试。",
+    "ask.extendFailed": "增加等待时间未生效，可重试。",
+    "ask.lostAnswer": "作答已提交但未能送达 Agent（投递失败，不会自动重试）。",
     "ask.dismissLost": "知道了",
     "ask.windowLeft": "剩 {s}",
     "ask.extend": "增加等待时间",
@@ -930,8 +935,8 @@ var DICTIONARIES = {
     "help.uiLang": "Config key: uiLang (enum: auto / zh / en).\n\nThe two switches are independent — changing this one does not affect agentLang; the auto mode only follows the host language and never writes the host's global language.",
     "help.agentLang": "Config key: agentLang (enum: en / zh).\n\nThe two switches are independent — changing this one does not affect uiLang; it controls model-visible copy (tool descriptions, parameter notes, notices, errors, and execution rules); the switch that follows the host language is uiLang.",
     "help.silentFailureGuard": "Config key: silentFailureGuard (boolean).\n\nWhen on, three defenses are active: result diagnostics (the conditional reminder in return notes), the command-description warning, and the execution-discipline note; when off, all three are absent. It only gives conditional reminders and does not guarantee detection or automatic repair (requirement 6.3). It applies only to this package's two presets and is off by default.",
-    "help.askTakeover": "Config key: askTakeover (boolean).\n\nTakeover scope: plain questions from the root agents of this package's two presets (requirement 4.1) — answered in the pending panel; permission approvals and plan reviews are not taken over and use the host's native flow. Late answers arrive as a notice and are not lost. On expiry it never picks answers for the user.",
-    "help.askTimeoutMs": "Config key: askTimeoutMs (number, ms).\n\nCounted from receiving a batch of questions; all questions in a batch share the deadline; on expiry a timeout fact is synthesized without answering for anyone, and the Agent continues. Still-answerable path: the panel keeps accepting answers after expiry, and late answers arrive as a notice.",
+    "help.askTakeover": "Config key: askTakeover (boolean).\n\nTakeover scope: plain questions from the root agents of this package's two presets (requirement 4.1) — answered in the pending panel; permission approvals and plan reviews are not taken over and use the host's native flow. Late answers arrive as a notice while their record is kept (up to 24 h after expiry); a swept record, an agent that can no longer receive it, or a failed delivery means it will not arrive. On expiry it never picks answers for the user.",
+    "help.askTimeoutMs": "Config key: askTimeoutMs (number, ms).\n\nCounted from receiving a batch of questions; all questions in a batch share the deadline; on expiry a timeout fact is synthesized without answering for anyone, and the Agent continues. Still-answerable path: the panel keeps accepting answers after expiry; records are kept up to 24 h after expiry and delivered as notices within that window — a swept or undeliverable record will not arrive.",
     "help.askExtendMs": "Config key: askExtendMs (number, ms).\n\nGroup-level action semantics (requirement 4.3): each \"Extend wait\" click in a group header adds this duration to that session's unexpired batches at that moment, stacked on the original deadline; expired batches do not wait again, and new batches do not inherit the extension.",
     "help.askUiSeat": "Config key: askUiSeat (enum: sidebar / overlay).\n\nExpansion actions of the two placements (requirement 4.2): the sidebar footer badge shows the open count and expands on click; the bottom-right overlay shows the questions directly. The badge hides once everything is handled. The option's default marker matches requirement 5.2 (default sidebar) and does not indicate the user's current choice.",
     "opt.askUiSeat.sidebar": "Sidebar footer badge (default)",
@@ -944,7 +949,13 @@ var DICTIONARIES = {
     "ask.jump": "Open session",
     "ask.expired": "Timed out; still answerable",
     "ask.submitting": "Submitting…",
+    // Panel-top errors are keyed by the failing action (requirement §4.4): a failed
+    // submission is retryable; state-fetch failures retry automatically via polling;
+    // a failed extend can be clicked again; lost answers have no automatic retry.
     "ask.callFailed": "The submission did not reach the host; please retry.",
+    "ask.stateFailed": "Failed to fetch the pending-questions state; the panel retries automatically.",
+    "ask.extendFailed": "The extend request did not take effect; you can retry.",
+    "ask.lostAnswer": "The answer was submitted but could not be delivered to the agent (delivery failed; it will not be retried automatically).",
     "ask.dismissLost": "Dismiss",
     "ask.windowLeft": "{s} left",
     "ask.extend": "Extend wait",
@@ -1038,8 +1049,9 @@ var ASK_REMOTE = {
  * answer/ignore 动作后立即补一次轮询；后台标签页由浏览器节流，轮询不以可见性为前提
  * （设计 §4.3：页面恢复可见及每次提交后立即刷新；后台页节流不当作服务端停止计时）。
  *
- * 失败不静默：RPC 回执 `{ok:false}` → `callFailed` 旗标（面板顶报错，
- * 可重试）；宿主回执 `outcome:'failed'`（迟到注入 followup/inject 抛错、条目已
+ * 失败不静默：RPC 回执 `{ok:false}` → `callFailed` 分型旗标（null | 'submit' |
+ * 'state' | 'extend'，面板顶按失败动作分键报错——只有可重试路径才建议重试）；
+ * 宿主回执 `outcome:'failed'`（迟到注入 followup/inject 抛错、条目已
  * 出列）→ 记入 `lostAnswers`（面板顶列名报错——那一条用户的答案没有送达，且
  * 无重试通道，需求 §4.4）。竞态补醒失败（设计 §4.3）经 `state().lost` 名单随轮询并入——
  * 两个时点共用同一复合键去重与「知道了」消除（消除后服务端名单不回弹）。
@@ -1048,7 +1060,7 @@ var ASK_REMOTE = {
  * @param {object} remote - ask 命名空间代理（`ctx.inject(['remote.async-tools-ask'])`
  *   拿到的——自 mount 的命名空间**不能**直接读 `ctx.remote[ns]`，运行时要求先 inject，
  *   否则 "cannot get property without inject" 每秒炸一次轮询）。
- * @returns {{store: object, actions: object, dispose: Function}} 快照店 + 动作 + 处置。
+ * @returns {{store: object, actions: object, dispose: Function}} 快照存储 + 动作 + 处置。
  */
 function createAskModel(ctx, remote) {
   var scope = ctx.configForms.get(ENTRY);
@@ -1057,7 +1069,7 @@ function createAskModel(ctx, remote) {
   var seq = 0;
   var state = {
     enabled: false, seat: "sidebar", uiLang: "auto",
-    serverNow: 0, fetchedAt: 0, items: [], callFailed: false, lostAnswers: []
+    serverNow: 0, fetchedAt: 0, items: [], callFailed: null, lostAnswers: []
   };
 
   function notify() {
@@ -1128,18 +1140,19 @@ function createAskModel(ctx, remote) {
     if (remote === undefined) return;
     remote.state().then(function (result) {
       if (!result || result.ok !== true) {
-        state.callFailed = true;
+        // 读取失败＝'state'（下一轮轮询自动重试，文案不冒充提交失败）。
+        state.callFailed = 'state';
         notify();
         return;
       }
-      state.callFailed = false;
+      state.callFailed = null;
       state.serverNow = result.value.serverNow;
       state.fetchedAt = Date.now();
       state.items = result.value.items;
       absorbServerLost(result.value.lost);
       notify();
     }, function () {
-      state.callFailed = true;
+      state.callFailed = 'state';
       notify();
     });
   }
@@ -1176,51 +1189,73 @@ function createAskModel(ctx, remote) {
       remote.answer({ batchId: item.batchId, questionId: item.questionId, selected: selected, custom: custom })
         .then(function (result) {
           // 成功只有两种回执；failed（迟到注入没送达）记名报错，gone 交给轮询收敛。
-          if (result === undefined || result === null || result.ok !== true) { onDone(false); return; }
+          if (result === undefined || result === null || result.ok !== true) {
+            // 提交通道失败＝'submit'（可重试——再点一次提交即可）。
+            state.callFailed = 'submit';
+            notify();
+            onDone(false);
+            return;
+          }
           var outcome = result.value !== undefined && result.value !== null ? result.value.outcome : undefined;
           if (outcome !== "delivered" && outcome !== "late") {
             if (outcome === "failed") recordLost(item);
             onDone(false);
             return;
           }
+          state.callFailed = null;
           onDone(true);
           poll();
-        }, function () { onDone(false); });
+        }, function () {
+          state.callFailed = 'submit';
+          notify();
+          onDone(false);
+        });
     },
     ignore: function (item, onDone) {
       if (remote === undefined) { onDone(false); return; }
       remote.ignore({ batchId: item.batchId, questionId: item.questionId })
         .then(function (result) {
-          if (result === undefined || result === null || result.ok !== true) { onDone(false); return; }
+          if (result === undefined || result === null || result.ok !== true) {
+            state.callFailed = 'submit';
+            notify();
+            onDone(false);
+            return;
+          }
           var outcome = result.value !== undefined && result.value !== null ? result.value.outcome : undefined;
           if (outcome !== "delivered" && outcome !== "late") {
             if (outcome === "failed") recordLost(item);
             onDone(false);
             return;
           }
+          state.callFailed = null;
           onDone(true);
           poll();
-        }, function () { onDone(false); });
+        }, function () {
+          state.callFailed = 'submit';
+          notify();
+          onDone(false);
+        });
     },
     jump: function (sessionId) {
       ctx.uiWorkspace.openSession(sessionId);
     },
     /** 需求 §4.3：组级延长——回执 {extended:n}；成功后立即补一次轮询（新期限经
-     * serverNow 校准显示，本地不猜）。失败走面板顶报错通道（callFailed），
-     * 不假报加时成功。 */
+     * serverNow 校准显示，本地不猜）。失败走面板顶报错通道（callFailed='extend'，
+     * 文案说明加时未生效、可重试——不冒充提交失败，也不假报加时成功）。 */
     extendSession: function (sessionId, onDone) {
       if (remote === undefined) { if (onDone) onDone(false); return; }
       remote.extend({ sessionId: sessionId }).then(function (result) {
         var ok = result !== undefined && result !== null && result.ok === true;
         if (ok) {
+          state.callFailed = null;
           poll();
         } else {
-          state.callFailed = true;
+          state.callFailed = 'extend';
           notify();
         }
         if (onDone) onDone(ok);
       }, function () {
-        state.callFailed = true;
+        state.callFailed = 'extend';
         notify();
         if (onDone) onDone(false);
       });
@@ -1445,13 +1480,17 @@ function AskList(props) {
   return React.createElement("div", { className: "ats-ask-panel" },
     React.createElement("p", { className: "ats-ask-title" },
       t("ask.title") + " · " + t("ask.count").replace("{n}", String(state.items.length))),
-    state.callFailed ? React.createElement("p", { className: "ats-ask-failed" }, t("ask.callFailed")) : null,
+    state.callFailed ? React.createElement("p", { className: "ats-ask-failed" },
+      t(state.callFailed === 'state'
+        ? "ask.stateFailed"
+        : state.callFailed === 'extend' ? "ask.extendFailed" : "ask.callFailed")) : null,
     state.lostAnswers.map(function (lost) {
-      // 逐条「知道了」消除——报错必须被人看到，看到后可手动收走。
+      // 逐条「知道了」消除——报错必须被人看到，看到后可手动收走。丢失答案
+      // 用专属键（已到宿主、投递失败——不冒称未到宿主，也不建议无出路的重试）。
       return React.createElement("p", {
         key: "lost-" + lost.batchId + "/" + lost.questionId, className: "ats-ask-failed"
       },
-        t("ask.callFailed") + " · " + lost.question + " ",
+        t("ask.lostAnswer") + " · " + lost.question + " ",
         React.createElement("button", {
           type: "button", className: "ats-ask-dismiss",
           onClick: function () { ask.actions.dismissLost(lost.batchId, lost.questionId); }

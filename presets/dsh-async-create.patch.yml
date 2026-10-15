@@ -11,7 +11,8 @@
 #   1. tool-bash 无条件 disabled: true——禁同步 shell（需求 §3.1），两平台工具清单
 #      一致（需求 §3.3）；
 #   2. 不挂 tool-pwsh 行——前台同步 shell 到期杀进程树，与异步语义冲突（需求 §3.1）；
-#   3. tool-bash 之后连续成组新增四行 dsh-async-tools（toolName 分派）；
+#   3. tool-bash 之后连续成组新增四行 dsh-async-tools（toolName 分派，各行携带
+#      owningPreset 归属声明——需求 §6.2 描述警示按行归属判定，非 volatile）；
 #   4. tool-subagent 系委托入口（单发 / fork / codex / claude-code）置
 #      disabled: true、config 逐字保留（需求 §3.1：派生入口唯一 = async_agent，
 #      结构性禁用强于提示词约束）；管理侧 tool-subagent-control / -list-agents 与
@@ -71,18 +72,22 @@
             name: dsh-async-tools
             config:
               toolName: async_run
+              owningPreset: dsh-async-create
           - id: async-wait-job
             name: dsh-async-tools
             config:
               toolName: async_wait_job
+              owningPreset: dsh-async-create
           - id: async-wait-agent
             name: dsh-async-tools
             config:
               toolName: async_wait_agent
+              owningPreset: dsh-async-create
           - id: async-agent
             name: dsh-async-tools
             config:
               toolName: async_agent
+              owningPreset: dsh-async-create
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
           - id: tool-fs-search
@@ -191,6 +196,7 @@
                 name: dsh-async-tools
                 config:
                   toolName: async_workflow
+                  owningPreset: dsh-async-create
               - id: tool-ralph
                 name: '@deepseek-ai/dsh-tool-ralph'
                 disabled: true

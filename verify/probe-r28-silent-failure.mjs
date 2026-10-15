@@ -12,8 +12,8 @@
  * - **a 管线**（结果侧 note）：真机只跑良性误发用例（空目录 `Get-ChildItem 2>&1`，内建
  *   cmdlet 进程内执行——不受外部 EXE 捕获形在进程创建层被杀的牵连，无 0xC0000142、
  *   无桌面弹窗），
- *   以及签名 2 的管道形（`git.exe` + `|`）。**执行档按用户裁定「走提权」**
- *   （2026-09-27）：验证实例是托管服务 LocalSystem，无 logon SID，受限沙箱结构性缺席
+ *   以及签名 2 的管道形（`git.exe` + `|`）。**执行档按用户裁定「走提权」**：
+ *   验证实例是托管服务 LocalSystem，无 logon SID，受限沙箱结构性缺席
  *   （作业死于 `CreateRestrictedToken prerequisite failed`）——
  *   真机 a 管线一律**双档**取证：受限档跑一次记环境读数（127 死法 + 无 note，
  *   顺带断言**无误发**），提权档（`sandbox_permissions`+`justification`，经批准）真跑
@@ -205,7 +205,7 @@ try {
       && s3e.approvals.length >= 1 && s3e.approvals.every((o) => o === 'allowed-once'),
     `版本输出=${String(/git version \d/.test(s3e.result))} 批准=${JSON.stringify(s3e.approvals)} 含note=${String(s3e.result.includes(NOTE_EN))} 结果前 200 字=${JSON.stringify(s3e.result.slice(0, 200))}`);
   log.s3coverage = {
-    note: '签名 1/签名 2 的 note 阳性渲染在验证实例受限环境下不可达（LocalSystem 无 logon SID，受限沙箱结构性缺席）；阳性渲染由 test-r28 单测覆盖（含四条件判定与锚对匹配），锚句真实性有实测档案背书（2026-09-27 复现）'
+    note: '签名 1/签名 2 的 note 阳性渲染在验证实例受限环境下不可达（LocalSystem 无 logon SID，受限沙箱结构性缺席）；阳性渲染由 test-r28 单测覆盖（含四条件判定与锚对匹配），锚句真实性有实测档案背书'
   };
 
   console.log('· 4/6 真机 4：关回（RPC 写 false，不重启）——三项同时消失');

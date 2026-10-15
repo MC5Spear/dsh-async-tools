@@ -19,7 +19,7 @@
 import { Context } from '@deepseek-ai/cordis';
 import { apply, Config, inject, name } from '../lib/index.js';
 
-/** cordis 的 `FiberState.ACTIVE`（`src/fiber.ts:147-154` 的 const enum，编译后为 2）。 */
+/** cordis 的 `FiberState.ACTIVE`（`@deepseek-ai/cordis` 4.0.4，`lib/types/fiber.d.ts:67-74` 的 const enum，ACTIVE = 2）。 */
 const ACTIVE = 2;
 
 /** 收集到的失败项。 */
@@ -46,7 +46,8 @@ async function verify(label, check) {
 
 /**
  * 等插件 fiber 进入 ACTIVE（cordis 的 `_reload()` 先 `await Promise.resolve()`
- * 才执行 apply，见 `@deepseek-ai/cordis` 的 `src/fiber.ts:646-658`）。
+ * 才执行 apply，见 `@deepseek-ai/cordis` 4.0.4 `lib/index.js:1349-1358` 的
+ * `_reload` 链）。
  * @param {object} fork - `ctx.plugin()` 的返回值。
  * @returns {Promise<number>} 最终状态。
  */
@@ -158,8 +159,8 @@ function stubExec() {
   };
 }
 
-await verify('inject 恰好是五个服务 + timer', () => {
-  const expected = ['tools', 'jobs', 'shell', 'shellEnv', 'subagents', 'timer'];
+await verify('inject 恰好是八个服务', () => {
+  const expected = ['tools', 'jobs', 'shell', 'shellEnv', 'subagents', 'timer', 'sessionProjections', 'agents'];
   const missing = expected.filter((service) => !inject.includes(service));
   if (missing.length > 0 || inject.length !== expected.length) {
     throw new Error(`实际 inject=${JSON.stringify(inject)}，缺 ${missing.join(', ') || '(无)'}`);

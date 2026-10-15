@@ -10,7 +10,7 @@
  * 变异模拟的是**缺陷原形**：`execute` 里那段"先问审批、拿到更宽模式、再启动进程"
  * 被删掉，退回"读策略、服从策略"。
  *
- * ⚠️ **本脚本会原地改写真实的 `lib/jobs.js`**，跑完在 `finally` 里写回并核对摘要。
+ * **本脚本会原地改写真实的 `lib/jobs.js`**，跑完在 `finally` 里写回并核对摘要。
  *
  * 用法：node verify/mutate-escalation-removed.mjs
  */
@@ -66,7 +66,7 @@ const MUTATED = '      const approvedMode = undefined;';
 
 const baseline = runTests();
 if (baseline.red) {
-  console.log(`BASELINE-RED  未变异时 ${TEST} 就是红的（${baseline.summary}）——先修基线；⚠️ 若括号里是空的、且本脚本以 2 退出，更可能是默认沙箱禁止捕获子进程输出（EPERM）：本脚本要跑测试文件，需带提权运行。规范见 verify/README.md 的「判据必须在默认权限下可跑」。`);
+  console.log(`BASELINE-RED  未变异时 ${TEST} 就是红的（${baseline.summary}）——先修基线；若括号里是空的、且本脚本以 2 退出，更可能是默认沙箱禁止捕获子进程输出（EPERM）：本脚本要跑测试文件，需带提权运行。规范见 verify/README.md 的「判据必须在默认权限下可跑」。`);
   process.exit(2);
 }
 console.log(`基线：未变异时 ${TEST} 全绿（${baseline.summary}）。`);

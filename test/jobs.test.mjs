@@ -9,7 +9,7 @@
  *
  * 后半部分是缺陷防御用例。
  *
- * ⚠️ **读用例名前先读这句**：靠测试替身构造真机上读不到状态（竞速微调、
+ * **读用例名前先读这句**：靠测试替身构造真机上读不到状态（竞速微调、
  * 查询抛错一类）的用例验的是**分支逻辑**；"真机上会不会发生"由旁边的
  * 否定命题用例回答。两类混在一起会让整个缺陷处置被误当成"已经解决"。
  */
@@ -373,7 +373,7 @@ test('async_run：请求必须带 shellEnv.collect(exec) 的 dshEnv', async () =
 });
 
 test('async_run（R32-d）：插话与结算同拍 → 完成优先，返回结算结果而非句柄', async () => {
-  // 让插话先赢竞速、结算紧随其后——撤销后的复查必须兜住，返回结算结果
+  // 让插话先赢竞速、结算紧随其后——撤销后的复查必须承接，返回结算结果
   // （防模型重复等待；与 wait 工具同口径）。次序：emit 同步 resolve 插话成员 →
   // 注册表与进程翻终态 → 竞速由插话定局 → 复查读到终态 → 走结算路径。
   const f = fakeCtx();
@@ -761,7 +761,7 @@ test('R29-e（判据 7·）：让出窗口内被信号杀死且 done 照常 reso
   f.installShellExecute(() => Promise.resolve(proc));
   const tool = createRunTool(f.ctx, config);
 
-  // ★ checkedTool：返回值先过宿主 output 校验器（三支 oneOf：completed/killed/running）。
+  // checkedTool：返回值先过宿主 output 校验器（三支 oneOf：completed/killed/running）。
   // 撤掉 schema 的 killed 支（或 killed 分支返回体超形）→ 本用例当场红（撤支必红）。
   const result = await tool.execute({ command: 'build', description: 'x', yield_ms: 5 }, exec);
 
@@ -973,6 +973,8 @@ test('async_run（R32-c·abort）：GUI 停止 → 句柄形状返回（宿主�
   assert.equal(isKilled(), false, 'abort 绝不终止命令（R32-c：与 exec.signal 无关的作业私有通道才管 kill）');
   assert.equal(f.jobsFake.views()[0].status, 'running', '作业必须存活（不 kill、不 remove）');
   assert.equal(f.jobsFake.waitersOf(result.job_id), 0, 'wait 已被 abort 摘除');
+  assert.match(result.note, /cancelled during the first wait/, 'F9：内部结果按取消口径给原因（不冒称超出预算）');
+  assert.doesNotMatch(result.note, /outlived the /, 'F9：取消不得并入预算到期说明');
   f.jobsFake.settleJob(result.job_id, { status: 'completed', detail: 'exit code: 0' });
   assert.equal(f.jobsFake.wasAwaited(result.job_id), false, '结算通知照发——abort 的恢复通道');
 });

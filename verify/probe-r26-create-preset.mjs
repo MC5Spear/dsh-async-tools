@@ -159,7 +159,7 @@ function callsOf(pageResult) {
 }
 
 /** 子代理中继消息（user/message，source.kind ∈ agent-message/subagent-settled——
- *  子代理最终回答以独立消息到达，只扫 assistant/message 会漏，2026-09-18 实测）。 */
+ *  子代理最终回答以独立消息到达，只扫 assistant/message 会漏）。 */
 function childMessagesOf(pageResult) {
   const out = [];
   for (const record of pageResult.records ?? []) {
@@ -345,7 +345,7 @@ async function phaseFace() {
     missing2.length === 0, missing2.length === 0 ? `${String(face2?.names.length ?? 0)} 个工具` : `缺：${missing2.join(', ')}`);
   const createOnly = face.names.filter((n) => !face2?.names.includes(n));
   const controlOnly = (face2?.names ?? []).filter((n) => !face.names.includes(n));
-  record('⑤b 差集恰为裁决 A 的形状（create 独有 = cordis inspect 双件；control 独有 = subagent 双入口）',
+  record('⑤b 差集恰为预设裁定的形状（create 独有 = cordis inspect 双件；control 独有 = subagent 双入口）',
     createOnly.join(',') === CREATE_ONLY_EXPECTED.join(',') && controlOnly.join(',') === CONTROL_ONLY_EXPECTED.join(','),
     `create 独有=[${createOnly.join(', ')}]；control 独有=[${controlOnly.join(', ')}]`);
 

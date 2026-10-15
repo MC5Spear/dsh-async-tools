@@ -11,7 +11,7 @@
  * 判据传 `defaultWaitMs: 7000` 并断言示例里出现 7000——一个"无论实现写死
  * 还是取值都绿"的断言等于没写。本变异把实现改回写死，看它是否真的红。
  *
- * ⚠️ **本脚本会原地改写真实的 `lib/output.js`**，跑完在 `finally` 里写回并核对摘要。
+ * **本脚本会原地改写真实的 `lib/output.js`**，跑完在 `finally` 里写回并核对摘要。
  *
  * 用法：node verify/mutate-yield-example.mjs
  */
@@ -65,7 +65,7 @@ const MUTATED = '    `  async_wait_job(job_id="${jobId}", wait_ms=30000)`,';
 
 const baseline = runTests();
 if (baseline.red) {
-  console.log(`BASELINE-RED  未变异时 ${TEST} 就是红的（${baseline.summary}）——先修基线；⚠️ 若括号里是空的、且本脚本以 2 退出，更可能是默认沙箱禁止捕获子进程输出（EPERM）：本脚本要跑测试文件，需带提权运行。规范见 verify/README.md 的「判据必须在默认权限下可跑」。`);
+  console.log(`BASELINE-RED  未变异时 ${TEST} 就是红的（${baseline.summary}）——先修基线；若括号里是空的、且本脚本以 2 退出，更可能是默认沙箱禁止捕获子进程输出（EPERM）：本脚本要跑测试文件，需带提权运行。规范见 verify/README.md 的「判据必须在默认权限下可跑」。`);
   process.exit(2);
 }
 console.log(`基线：未变异时 ${TEST} 全绿（${baseline.summary}）。`);

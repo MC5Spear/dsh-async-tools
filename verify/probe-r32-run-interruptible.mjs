@@ -19,28 +19,28 @@
  *       在第 11 条发出时仍被占住，短睡眠会提前释放；取证后 session/cancel
  *       清理沉睡作业。
  * - (e) 短命令：预算内 completed 形状与现行一致（输出原样）；终态卡在场
- *       （2026-09-30 裁定接受）；该路径零完成通知（(f) 前半）。
+ *       （裁定接受）；该路径零完成通知（(f) 前半）。
  * - (f) 通知计数：(a)/(b) 各恰 1 条；(e) 0 条。
  *
- * ⚠️ 时序锚：会话先整体升档（GUI 面＝composer `/permission danger-full-access`；
+ * 时序锚：会话先整体升档（GUI 侧＝composer `/permission danger-full-access`；
  * RPC 面＝`_r28-helpers.elevateSession`——同一 remote 提交事务），审批档随升档
  * 切 never。插话/停止/读面板的同步点＝转录出现 async_run 的 tool/call 后 2 s
  * （工具体注册+spawn 在调用后毫秒级完成）；动作过早会中止步骤信号，工具体
  * 还没注册任何作业，什么判据都取不到。
  *
- * ⚠️ (b)(c) 走 GUI-first（RPC 建的会话不在 GUI 当前视图，停止键与面板入口
+ * (b)(c) 走 GUI-first（RPC 建的会话不在 GUI 当前视图，停止键与面板入口
  * 都够不着）。0.2.0 起 GUI「新建会话」默认落**标准模式**（新任务页 seat
  * 默认），GUI 侧可行路径＝blank 会话（session/list `blank:true` 最新者）→
  * RPC `agentPresets/select` 定 dsh-async → composer 发词（`guiBlankSession`
- * 辅助，2026-10-09 diag 链实证）。
+ * 辅助）。
  *
  * 用法：node verify/probe-r32-run-interruptible.mjs [--only=a,b,c,d,e]
  * （(b)(c) 需要 Edge/Chrome——找不到时如实记 FAIL 'cdp-missing'，不冒充通过；
- * 含 (b)(c) 的整跑按 2026-10-09 惯例整跑提权 danger-full-access：受限档下
- * 无头浏览器 spawn 在进程创建层必死。）
+ * 含 (b)(c) 的整跑按惯例整跑提权 danger-full-access：受限档下无头浏览器
+ * spawn 在进程创建层必死。）
  * 证据落本机证据目录 logs/r32-run-interruptible.json。
  *
- * ⚠️ 共享实例纪律：不动别人的设置与语言档；本探针只读设置作对照，
+ * 共享实例纪律：不动别人的设置与语言档；本探针只读设置作对照，
  * 会话建在 dsh-async 预设下，锚句双档自适应（转录里的渲染文两种语言档都认）。
  *
  * @module verify/probe-r32-run-interruptible
@@ -131,7 +131,7 @@ async function waitRunCalled(sessionId) {
  * `form === 'notice'`（实测形状；按消息 id 去重，splice 镜像不重复计）。
  * 不匹配 assistant/tool 记录（模型复述不算通知，r34-O6），也不匹配 request/header
  * 与 system/message——工具描述自带 `async_wait_job(job_id="async-command-…")` 示例与
- * 「完成」字样，正文级匹配会把请求头当成通知（2026-09-30 (e) 首跑实读误报）。
+ * 「完成」字样，正文级匹配会把请求头当成通知（(e) 首跑实读的误报形态）。
  */
 function completionNotices(transcript) {
   const seen = new Set();
@@ -272,7 +272,7 @@ async function assertElevated(sessionId) {
 /**
  * 任务面板里目标作业卡的文本（卡=含 `async-command` 与命令原文的最深 div；断言只认
  * 卡内文本——正文级断言会被提示词回显污染：提示词本身含 description 与命令原文，
- * 「结算后 progress 消失」在正文层面恒假，2026-09-30 实测）。
+ * 「结算后 progress 消失」在正文层面恒假——实测）。
  */
 async function jobCardText(page, command) {
   const card = await evaluate(page, `(() => {
@@ -389,7 +389,7 @@ async function criterionC(page) {
   }
   record('c-3-progress-cleared',
     settledCard !== '' && !settledCard.includes('probe panel row') && settledCard.includes(command),
-    `结算后卡内 progress 行清除、命令行仍在（终态卡在场——2026-09-30 裁定接受；卡内实读：${settledCard.slice(0, 140)}）`);
+    `结算后卡内 progress 行清除、命令行仍在（终态卡在场——裁定接受；卡内实读：${settledCard.slice(0, 140)}）`);
   return { sessionId: sid };
 }
 

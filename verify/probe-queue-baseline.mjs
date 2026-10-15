@@ -1,8 +1,8 @@
 /**
- * 基线探针（2026-09-16，收窄打断信号**之前**跑）：记录"queue 模式消息"在今天的行为。
+ * 基线探针（在收窄打断信号**之前**跑）：记录"queue 模式消息"的现行行为。
  *
  * 要回答的两个问题（都不设断言，只记录——这是取证，不是回归判据）：
- *  1. queue 消息（落 `next-turn`）今天会不会打断 async_wait_job 的等待？
+ *  1. queue 消息（落 `next-turn`）会不会打断 async_wait_job 的等待？
  *     （旧实现只判 `source.kind === 'user'`，不区分落点——按源码推断"会"，此处取活体证据。）
  *  2. 本轮结束（turn/end）之后，宿主会不会把 `next-turn` 里排队的消息领取进新轮次
  *     （user/message 出现）？——这是"收窄后 queue 消息还能不能被投递"的宿主侧地基。
@@ -61,7 +61,7 @@ function userTextOf(event) {
 }
 
 /** 工具结果文本（0.2.0 转录形状：渲染文本块 type:'text'，句柄在 message.toolCallId
- *  ——旧 'tool-result' 块形状在转录 0 次出现，2026-10-09 实测，与 async-e2e 同款形状判据）。 */
+ *  ——旧 'tool-result' 块形状在现行转录中 0 次出现，与 async-e2e 同款形状判据）。 */
 function toolResultTexts(page) {
   const texts = [];
   for (const record of page.records) {
