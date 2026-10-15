@@ -2,10 +2,9 @@
  * 预设补丁校验器的变异测试（对象 `tools/validate-preset.mjs`，判据 = 预设补丁九项；
  * 变异验收参数化覆盖两份补丁）。
  *
- * 为什么必须做变异测试而不是只看输出：实测 `validate-preset.mjs` 曾对**五类常见改错
- * 全部放行**（报 OK、退出码 0），其中最危险的是"四行都被 `disabled: true`"——真机上
- * **一个工具都不注册**，而校验器说一切正常。一个校验器只报"通过"是不可信的，
- * 得让它先证明自己会失败。
+ * 为什么必须做变异测试而不是只看校验报告：绿读数证明不了校验器拦得住改错。
+ * 下面的用例逐类锁死：补丁被改坏时 `validate-preset.mjs` 必须红，报错必须点名
+ * 对应判据；基线用例同守"合法补丁必须通过"，防止变异断言恒真。
  *
  * 形态：对象是 `presets/dsh-async.patch.yml`（基线 = shipped standard）与
  * `presets/dsh-async-create.patch.yml`（基线 = shipped cordis）；校验器以

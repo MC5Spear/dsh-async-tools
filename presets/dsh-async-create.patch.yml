@@ -1,5 +1,5 @@
-# The `dsh-async-create` agent preset: the CREATION-side agent (cordis baseline)
-# with an ASYNCHRONOUS shell and a single bounded-wait derivation entry.
+# `dsh-async-create` 预设：创造侧 Agent（cordis 基线），改用异步 shell，
+# 派生入口唯一（有界等待取回）。
 #
 # 结构（设计 §3.6）：本文件是 `dsh.bundle.patch` 数组的一项——一条预设声明行
 # （`@deepseek-ai/dsh-agent-preset`），config.plugins 是完整子清单。预设生命周期由

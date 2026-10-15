@@ -1,4 +1,4 @@
-# The `dsh-async` agent preset: the full coding agent with an ASYNCHRONOUS shell.
+# `dsh-async` 预设：改用异步 shell 的完整编码 Agent。
 #
 # 结构（设计 §3.6）：本文件是 `dsh.bundle.patch` 数组的一项——一条预设声明行
 # （`@deepseek-ai/dsh-agent-preset`），config.plugins 是完整子清单。预设生命周期由
