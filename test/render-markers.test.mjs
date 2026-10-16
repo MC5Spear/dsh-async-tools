@@ -65,7 +65,7 @@ test('R11：退出码标记与沙箱标记**同时**出现时各占一行、都�
   proc.sandbox = { mode: 'workspace-write', denied: true };
   f.installShellExecute(() => Promise.resolve(proc));
   // `ctx.get` 与 `sandboxMode` 都必须**在建工具之前**装好：
-  // 构造期就要读 `ctx.shell.sandboxMode` 来决定广告不广告提权字段；
+  // 构造期就要读 `ctx.shell.sandboxMode` 来决定声明不声明提权字段；
   // 而 execute 里要 `ctx.get('sandboxPolicy')`。装晚了会得到
   // `TypeError: ctx.get is not a function`（度量口径陷阱）。
   f.ctx.shell.sandboxMode = 'workspace-write';

@@ -161,7 +161,7 @@ npm run check:agent-policy
 | `verify/mutate-steering.mjs` | `test/interrupt.test.mjs` | 消息落点与来源过滤 |
 | `verify/mutate-escalation-order.mjs` | `test/escalation.test.mjs` | 批准与启动顺序 |
 | `verify/mutate-card-theme.mjs` | `test/two-planes.test.mjs` | 主题样式 |
-| `verify/mutate-agent.mjs` | `test/agent.test.mjs` | 后台派生与persona |
+| `verify/mutate-agent.mjs` | `test/agent.test.mjs` | 后台派生与 persona |
 | `verify/mutate-yield-example.mjs` | `test/output.test.mjs` | 预算示例 |
 | `verify/mutate-config-slot.mjs` | `test/two-planes.test.mjs` | 配置表单挂点 |
 | `verify/mutate-r27-form.mjs` | `test/two-planes.test.mjs` | 表单草稿与保存 |

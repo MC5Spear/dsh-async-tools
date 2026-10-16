@@ -490,7 +490,7 @@ function FieldShell(props) {
   var messageId = props.id + "-message";
   var invalidId = props.id + "-invalid";
   var helpId = props.id + "-help";
-  // 消息区两行并存（V04 盲测 A 项修正）：非法原因行（红、aria-invalid、独立 id）
+  // 消息区两行并存：非法原因行（红、aria-invalid、独立 id）
   // 是**附加**，不顶掉常驻说明与「生效／输入」读数——§5.4「非法值另给字段原因」
   // 的「另给」＋§5.6「常驻短说明」同时成立，而不是二选一替换。常驻行沿用
   // `-message` id，正常态的 aria-describedby 契约不变；非法态两行都在、
@@ -880,7 +880,7 @@ var DICTIONARIES = {
     "ask.jump": "打开会话",
     "ask.expired": "已超时，仍可作答",
     "ask.submitting": "提交中…",
-    // 面板顶报错按失败动作分键（需求 §4.4 + A08 三分）：①明确拒绝（RPC 已达
+    // 面板顶报错按失败动作分键（需求 §4.4 的失败三分）：①明确拒绝（RPC 已达
     // 宿主、宿主回 ok:false——可断定未执行）②未收到确认（RPC 拒绝——执行与否
     // 未知，不得断定"未送达"）③状态读取失败（轮询自动重试）；丢失答案无自动
     // 重试通道，允许手动消除。
@@ -983,7 +983,7 @@ var DICTIONARIES = {
     "ask.jump": "Open session",
     "ask.expired": "Timed out; still answerable",
     "ask.submitting": "Submitting…",
-    // 面板顶报错按失败动作分键（需求 §4.4 + A08 三分）：①明确拒绝（RPC 已达
+    // 面板顶报错按失败动作分键（需求 §4.4 的失败三分）：①明确拒绝（RPC 已达
     // 宿主、宿主回 ok:false——可断定未执行）②未收到确认（RPC 拒绝——执行与否
     // 未知，不得断定"未送达"）③状态读取失败（轮询自动重试）；丢失答案无自动
     // 重试通道。（与 zh 词典区同款说明：文案本身是英文界面文本，注释是中文。）
@@ -1086,7 +1086,7 @@ var ASK_REMOTE = {
  * answer/ignore 动作后立即补一次轮询；后台标签页由浏览器节流，轮询不以可见性为前提
  * （设计 §4.3：页面恢复可见及每次提交后立即刷新；后台页节流不当作服务端停止计时）。
  *
- * 失败不静默（A08 三分）：`callFailed` 分型旗标（null | 'submit' |
+ * 失败不静默（失败三分）：`callFailed` 分型旗标（null | 'submit' |
  * 'state' | 'extend' | 'answerRejected' | 'extendRejected'，面板顶按失败动作分键
  * 报错。RPC 拒绝（'submit'/'extend'，**没有确认**——执行与否未知，不断定
  * "未送达"，可重试）与宿主回执 `{ok:false}`（'answerRejected'/'extendRejected'，
@@ -1235,7 +1235,7 @@ function createAskModel(ctx, remote) {
         .then(function (result) {
           // 成功只有两种回执；failed（迟到注入没送达）记名报错，gone 交给轮询收敛。
           if (result === undefined || result === null || result.ok !== true) {
-            // A08 三分——ok:false 是宿主**明确拒绝**（请求已送达、被拒）：可断定
+            // 失败三分——ok:false 是宿主**明确拒绝**（请求已送达、被拒）：可断定
             // 未执行；与 RPC 拒绝（'submit'，执行与否未知）分开报，不混说"未送达"。
             state.callFailed = 'answerRejected';
             notify();
@@ -1293,7 +1293,7 @@ function createAskModel(ctx, remote) {
       ctx.uiWorkspace.openSession(sessionId);
     },
     /** 需求 §4.3：组级延长——回执 {extended:n}；成功后立即补一次轮询（新期限经
-     * serverNow 校准显示，本地不猜）。失败按 A08 三分：明确拒绝（'extendRejected'）
+     * serverNow 校准显示，本地不猜）。失败按失败三分：明确拒绝（'extendRejected'）
      * ≠ 未收到确认（'extend'——可能已生效）。两条失败路径都立即 poll() 复查
      * 真实期限——用户据刷新后的剩余时间决定是否再点（每次点击继续累加，不伪幂等）。 */
     extendSession: function (sessionId, onDone) {

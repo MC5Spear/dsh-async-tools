@@ -5,7 +5,7 @@
  *
  * 单测用替身构造 `sandboxMode`，验的是"本包代码在替身下行为正确"。
  * 而单次提权（需求 §6.1）的第一道门槛是**组合层**：预设要真的挂一个**约束型**执行器
- * （`pwsh-sandbox`），`ctx.shell.sandboxMode` 才非 `undefined`，两个键才会被广告。
+ * （`pwsh-sandbox`），`ctx.shell.sandboxMode` 才非 `undefined`，两个键才会被声明。
  * 这件事**任何替身都证明不了**——它是组合事实。
  *
  * 判据读 `request/header` 里的 `tools[]`（模型实际收到的参数表）。
@@ -107,10 +107,10 @@ if (run !== undefined) {
   const props = run.parameters?.properties ?? {};
   console.log(`  async_run 的参数键：${Object.keys(props).join(', ')}`);
   check('async_run 出现在真机工具表里', true);
-  check('真机**广告了** sandbox_permissions（说明挂的是约束型执行器）',
+  check('真机**声明了** sandbox_permissions（说明挂的是约束型执行器）',
     'sandbox_permissions' in props,
     '拿不到就说明本部署的执行器不约束，或组合层没挂 pwsh-sandbox');
-  check('真机**广告了** justification', 'justification' in props);
+  check('真机**声明了** justification', 'justification' in props);
   if ('sandbox_permissions' in props) {
     check('枚举是闭集 ESCALATION_TARGETS',
       JSON.stringify(props.sandbox_permissions.enum) === JSON.stringify(['workspace-write', 'danger-full-access']),
@@ -123,7 +123,7 @@ if (run !== undefined) {
   const pwsh = tools.find((t) => t.name === 'pwsh');
   if (pwsh !== undefined) {
     const pwshProps = pwsh.parameters?.properties ?? {};
-    check('内置 pwsh 也广告同样两个键（两个工具口径一致）',
+    check('内置 pwsh 也声明同样两个键（两个工具口径一致）',
       ('sandbox_permissions' in pwshProps) === ('sandbox_permissions' in props),
       `pwsh: ${Object.keys(pwshProps).join(', ')}`);
   } else {

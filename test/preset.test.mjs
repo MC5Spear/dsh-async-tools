@@ -16,7 +16,7 @@
  * P5 plugin-manager 表达式、P6 persona 锚句、P7 pwsh 挂回、P8 tool-bash 表达式、
  * P9 未知 config.id、P10 护栏、P11 互斥判据复合、P12 嵌套行缺失、P13 toolName、
  * P14 期望集与 0.2.0-rc.2 证据树对账、P15 provider 形态、P16 公共异步纪律段同源。
- * 第五行工具与禁用手术专属用例：P17 tool-workflow 翻活、P18 dsh-async 的
+ * 第五行工具与禁用改动专属用例：P17 tool-workflow 翻活、P18 dsh-async 的
  * tool-subagent 翻活、P19 删 async-workflow 行、P20 async-workflow 挪出
  * delegation 组（设计 §3.6 行位）、P21 删 workflow-ptc（create 侧）、P22 门槛锚句。
  */
@@ -101,7 +101,7 @@ test('validate-preset：tool-bash 行被整个删掉必须拦住', async () => {
   const result = await validateMutation((text) => text.replace(
     / {10}- id: tool-bash\n(?: {12}.*\n)*/,
     ''));
-  assert.equal(result.ok, false, '没有 tool-bash 行（手术对象缺席）必须被拦');
+  assert.equal(result.ok, false, '没有 tool-bash 行（改动对象缺席）必须被拦');
 });
 
 test('validate-preset：toolName 写错（async_wait_agent 写成 async_run）必须拦住', async () => {
@@ -135,7 +135,7 @@ test('validate-preset：workflow-ptc 行被删必须拦住（定向修改 4 存�
     ''));
   assert.equal(result.ok, false, '删 workflow-ptc 行必须被拦');
   assert.ok(result.lines.some((l) => l.includes('缺 workflow-ptc')),
-    `报错必须点名手术 4 的存在性，实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
+    `报错必须点名改动项 4 的存在性，实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
 });
 
 test('validate-preset：tool-ralph 被翻回启用必须拦住（定向修改 5）', async () => {
@@ -153,7 +153,7 @@ test('validate-preset：tool-plugin-manager 行被删必须拦住（定向修改
     ''));
   assert.equal(result.ok, false, '删 tool-plugin-manager 行必须被拦');
   assert.ok(result.lines.some((l) => l.includes('tool-plugin-manager')),
-    '报错必须点名手术 6 的存在性');
+    '报错必须点名改动项 6 的存在性');
 });
 
 test('validate-preset：persona 锚句被删必须拦住（含反恒真句）', async () => {
@@ -230,7 +230,7 @@ test('validate-preset：tool-plugin-manager 写回表达式必须拦住（P5，�
     .replace("          - id: tool-plugin-manager\n            name: '@deepseek-ai/dsh-plugin-manager/tools'\n            disabled: true",
       "          - id: tool-plugin-manager\n            name: '@deepseek-ai/dsh-plugin-manager/tools'\n            disabled: !!js \"!ctx.get('profileContext')\""),
     PATCH_CREATE, baselineCreate);
-  assert.equal(result.ok, false, 'R26 明文要求布尔 true（与 dsh-async 补丁一致的手术）');
+  assert.equal(result.ok, false, 'R26 明文要求布尔 true（与 dsh-async 补丁一致的改动项）');
   assert.ok(result.lines.some((l) => l.includes('tool-plugin-manager.disabled') && l.includes('布尔 true')),
     '报错必须指向布尔差异并区分表达式');
 });
@@ -340,10 +340,10 @@ test('validate-preset：期望集必须与 shipped 基线的真实行集合逐�
     const expectedNested = [...nestedFromBaseline.slice(0, wfIdx + 1), 'async-workflow', ...nestedFromBaseline.slice(wfIdx + 1)];
     assert.deepEqual(exp.baselineNested, expectedNested,
       `${configId} 的 baselineNested 必须等于「真实基线嵌套行 + async-workflow（tool-workflow 行后）」；上游改动基线时这里先红，强迫重建期望集（更新入口）`);
-    // **config 正文**逐行对账——手术集之外的每个叶子行与组行必须与真实基线
-    // 深度一致（递归键序规范化后比对；disabled 单列在手术范围外剔除）。手术清单外改一个字
+    // **config 正文**逐行对账——改动集之外的每个叶子行与组行必须与真实基线
+    // 深度一致（递归键序规范化后比对；disabled 单列在改动范围外剔除）。改动清单外改一个字
     // 必须红：只有行 id 比对的判据拦不住 plan-mode 段的措辞漂移。
-    const surgery = new Set(exp.disabledBoolean); // 手术范围 = 结构性禁用行 + persona（前缀重写）；
+    const surgery = new Set(exp.disabledBoolean); // 改动范围 = 结构性禁用行 + persona（前缀重写）；
     surgery.add('persona');
     const patchDoc = load(readFileSync(join(import.meta.dirname, '..', exp.patchRel), 'utf8'));
     const collect = (insertRow) => {
@@ -367,13 +367,13 @@ test('validate-preset：期望集必须与 shipped 基线的真实行集合逐�
     const stripSurgery = (row, isGroup) => JSON.stringify(normalize(
       // 组行的 config 是子行数组（子行已单独比对）→ 剥掉只比 id/name/group/isolate；
       // 叶子行的 config 是正文（sampleOverCapGlobResults、plan-mode 的 section 等）
-      // → **必须保留**；叶子行的 disabled **不剥**（手术集外的行连 disabled
+      // → **必须保留**；叶子行的 disabled **不剥**（改动集外的行连 disabled
       // 面也必须与基线一致——基线 codex/claude-code 的 disabled: true 两侧本就逐字）。
       isGroup ? { ...row, config: undefined } : { ...row }
     ));
     const bodyDiffs = [];
     for (const [id, row] of fromBaseline.leaf) {
-      if (surgery.has(id) || id === 'tool-pwsh') continue; // pwsh 行按手术不挂；async 行只在补丁侧
+      if (surgery.has(id) || id === 'tool-pwsh') continue; // pwsh 行按改动不挂；async 行只在补丁侧
       const other = fromPatch.leaf.get(id);
       if (other === undefined) { bodyDiffs.push(`${id} 仅在基线`); continue; }
       if (stripSurgery(row, false) !== stripSurgery(other, false)) bodyDiffs.push(`${id} 的 config 正文与基线不一致`);
@@ -387,14 +387,14 @@ test('validate-preset：期望集必须与 shipped 基线的真实行集合逐�
       if (stripSurgery(row, true) !== stripSurgery(other, true)) bodyDiffs.push(`${id} 组行属性与基线不一致`);
     }
     assert.deepEqual(bodyDiffs, [],
-      `${configId} 手术清单之外的行必须与真实基线逐字一致；差异：${bodyDiffs.join(' | ')}`);
-    // 反向对照：手术外叶子行的 config 改一个字，同一比较器必须报出来（防恒真）。
+      `${configId} 改动清单之外的行必须与真实基线逐字一致；差异：${bodyDiffs.join(' | ')}`);
+    // 反向对照：改动外叶子行的 config 改一个字，同一比较器必须报出来（防恒真）。
     const driftBase = JSON.parse(stripSurgery(fromPatch.leaf.get('tool-fs-search'), false));
     driftBase.config.sampleOverCapGlobResults = true;
     assert.notEqual(JSON.stringify(driftBase), stripSurgery(fromBaseline.leaf.get('tool-fs-search'), false),
       'config 正文比较器必须能检出单字段漂移');
-    //  反向对照：手术外叶子行**误加 disabled** 也必须被同一比较器报出来
-    // ——disabled 项不许是盲区。（dsh-async 的 tool-subagent 本就按手术禁用，
+    //  反向对照：改动外叶子行**误加 disabled** 也必须被同一比较器报出来
+    // ——disabled 项不许是盲区。（dsh-async 的 tool-subagent 本就按改动禁用，
     // 该行走 ⑧⑩ 的结构性判据；本对照只证比较器对 disabled 差异敏感。）
     const wrongDisable = JSON.parse(stripSurgery(fromPatch.leaf.get('tool-subagent'), false));
     wrongDisable.disabled = true;
@@ -454,7 +454,7 @@ test('validate-preset：两份补丁的公共异步纪律段必须逐字同源�
   assert.notEqual(mutatedIntro, introAsync, '比较器必须能检出公共段漂移');
 });
 
-// ══════════════════ 第五行工具与禁用手术的判据（P17–P21）════════════════════════
+// ══════════════════ 第五行工具与禁用改动的判据（P17–P21）════════════════════════
 
 test('validate-preset：tool-workflow 翻回启用必须拦住（P17，⑧，R35-b；两份都守）', async () => {
   const block = (indent) => `${indent}- id: tool-workflow\n${' '.repeat(indent.length + 2)}name: '@deepseek-ai/dsh-tool-workflow'\n${' '.repeat(indent.length + 2)}disabled: true\n`;

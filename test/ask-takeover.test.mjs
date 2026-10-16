@@ -1208,7 +1208,7 @@ test('J18：客户端模型行为——准入控制/轮询/裸传/失败路径�
   }
 });
 
-test('J23（A08 三分）：明确拒绝 ≠ 未收到确认；延长失败先复查真期限；读取恢复清错', async () => {
+test('J23（失败三分）：明确拒绝 ≠ 未收到确认；延长失败先复查真期限；读取恢复清错', async () => {
   const react = makeMiniReact();
   const intervals = [];
   const product = await loadClientProduct(react, {
@@ -2206,7 +2206,7 @@ test('E7：客户端组头延长按钮——extend 裸传 {sessionId}、失败�
   assert.ok(stateCalls.length > stateCallsBefore, '成功 → 立即补一次轮询（新期限经 serverNow 校准显示）');
   assert.equal(model.store.getSnapshot().callFailed, null, '成功清回无失败态（null，不残留类别旗标）');
 
-  // ③ 失败路径（A08 三分）：回执 ok:false 是宿主**明确拒绝** →
+  // ③ 失败路径（失败三分）：回执 ok:false 是宿主**明确拒绝** →
   // callFailed='extendRejected'（面板顶按类别报错），不假报加时成功。
   extendResult = { ok: false };
   toggles[0].props.onClick();

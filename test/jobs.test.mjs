@@ -663,7 +663,7 @@ test('async_run（R8/#13a）：清单查询失败不得盖掉真正的原因', a
   assert.match(raised.message, /No other live jobs were found/, '查不到时应如实说查不到');
 });
 
-test('async_run（A04 分流）：非触顶的注册拒绝不得套触顶模板——不引导 kill、不列存活清单', async () => {
+test('async_run（注册拒绝分流）：非触顶的注册拒绝不得套触顶模板——不引导 kill、不列存活清单', async () => {
   const f = fakeCtx();
   const { proc, settle } = fakeProc({ text: '', status: 'running', autoResolve: false });
   f.installShellExecute(() => Promise.resolve(proc));

@@ -94,7 +94,7 @@ for (const mutation of MUTATIONS) {
   const ok = changed && result.hardErrors > 0 && hit;
   if (!ok) uncaught += 1;
   console.log(`${ok ? 'CAUGHT  ' : 'UNCAUGHT'} ${mutation.name}`);
-  console.log(`          变异生效=${String(changed)} 硬错误=${String(result.hardErrors)} 命中期望=${String(hit)}`);
+  console.log(`          变异生效=${String(changed)} 失败项=${String(result.hardErrors)} 命中期望=${String(hit)}`);
   const line = result.report.find((l) => mutation.expect.test(l));
   if (line !== undefined) console.log(`          读数：${line.trim().slice(0, 120)}`);
   if (!ok) {

@@ -88,7 +88,7 @@ export async function loadYaml() {
   return { load: (text) => YAML.load(text, { schema: YAML.DEFAULT_SCHEMA.extend([JsType]) }) };
 }
 
-/** 四行 async 工具行在基线行序列里的插入位：紧跟 `tool-bash`（手术位）。 */
+/** 四行 async 工具行在基线行序列里的插入位：紧跟 `tool-bash`（改动位）。 */
 const ASYNC_ROW_IDS = ['async-run', 'async-wait-job', 'async-wait-agent', 'async-agent'];
 /** toolName 五值（判据④：顶层四行 + delegation 组内第五行）。 */
 const EXPECTED_TOOL_NAMES = ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent', 'async_workflow'];
@@ -114,7 +114,7 @@ const SUBAGENT_CONFIG_VERBATIM = {
 };
 
 /**
- * 期望集：`baselineTop` 是**手术后**的顶层行 id 序列（基线 − tool-pwsh +
+ * 期望集：`baselineTop` 是**改动后**的顶层行 id 序列（基线 − tool-pwsh +
  * 四行 async，插在 tool-bash 之后）；`expectedTopFromBaseline()` 从真实基线
  * 补丁反推并对账，改这里必须同时过那条用例。
  */
@@ -173,10 +173,10 @@ export const EXPECTATIONS = {
 };
 
 /**
- * 从一份真实 shipped 基线补丁的解析结果反推手术后的顶层行序列（对账用）：
+ * 从一份真实 shipped 基线补丁的解析结果反推改动后的顶层行序列（对账用）：
  * 去掉 tool-pwsh，在 tool-bash 之后插入四行 async。
  * @param {object} doc - 基线补丁的解析结果（一条 insert 一行）。
- * @returns {string[]} 手术后的顶层行 id 序列。
+ * @returns {string[]} 改动后的顶层行 id 序列。
  */
 export function expectedTopFromBaseline(doc) {
   const baselineIds = doc[0].insert[0].config.plugins.map((child) => child?.id);
@@ -240,7 +240,7 @@ export async function validatePatch(patchPath, { quiet = false, expectation } = 
   // ── ② tool-bash 无条件禁用（布尔，不是表达式） ───────────────────────
   const toolBash = plugins.find((child) => child?.id === 'tool-bash');
   if (toolBash === undefined) {
-    fail('子清单没有 tool-bash 行（手术对象缺席）');
+    fail('子清单没有 tool-bash 行（改动对象缺席）');
   } else if (toolBash.disabled !== true) {
     // `!!js` 表达式在这里是字符串 ⇒ 平台表达式与布尔可区分。
     fail(`tool-bash.disabled 必须是布尔 true（无条件禁用），实为 ${JSON.stringify(toolBash.disabled)}`);

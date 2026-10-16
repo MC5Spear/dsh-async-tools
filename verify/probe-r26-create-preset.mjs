@@ -7,7 +7,7 @@
  *   face  —— 部署态全量判据（重启装载第三份 patch 后跑）：
  *            ① 新会话选 dsh-async-create 不回退；② 工具目录（启用行在场/禁用行缺席）；
  *            ③ async_agent→async_wait_agent 有界等待取回；④ 插话打断等待而子代理照跑；
- *            ⑤ 隔离对照（dsh-async 预设形态不变：subagent 双入口仍在）。
+ *            ⑤ 隔离对照（dsh-async 预设形态不变：async 五件在场、原生委托入口与同步 shell 同样禁用）。
  *   drill —— 回滚态判据（package.json 摘掉第三项并重启后跑）：
  *            dsh-async-create 必须开不出来（报错或回退）；dsh-async 必须仍可用。
  *   both  —— 复原态快查（两项都在花名册上、都能开新会话）。
@@ -184,30 +184,33 @@ function record(name, ok, detail) {
 //    不从开发实例的会话推断——两实例组合不同，tool-cordis 在验证实例只注册
 //    cordis_inspect_list/cordis_inspect_query 两件）────────────────────────────
 const CREATE_MUST_HAVE = [
-  'async_run', 'async_wait_job', 'async_wait_agent', 'async_agent', // 四行 async（需求 §3.1 五工具在场）
+  'async_run', 'async_wait_job', 'async_wait_agent', 'async_agent', 'async_workflow',
   'read', 'glob', 'grep', 'write', 'edit',                           // tool-fs（基线启用）
   'web_search', 'web_fetch',                                        // tool-web
   'ask_user_question', 'todo_write', 'skill',                       // 交互/规划行
   'cordis_inspect_list', 'cordis_inspect_query',                    // tool-cordis（创造侧独有于 dsh-async）
-  'workflow',                                                       // tool-workflow
   'job_list', 'job_output',                                         // tool-jobs
   'interrupt_agent', 'list_agents',                                 // tool-subagent-control（行在场，管理范围保留）
   'exit_plan_mode', 'create_goal', 'get_goal', 'update_goal',       // planning 组（goal 行）
   'present', 'send_message'                                         // tool-present / tool-subagent-control
 ];
 // 禁用/摘除行 → 模型侧不得出现的工具名（端到端判据②：禁用行的工具不在目录）。
+// tool-workflow 与 tool-subagent 系均按需求 §3.1 结构性禁用（编排只走 async_workflow、
+// 派生入口唯一；preset.test P17/P18 静态看守同款口径）。
 const CREATE_MUST_NOT_HAVE = [
   'pwsh', 'bash',                        // tool-pwsh 摘除 / tool-bash 布尔禁用（需求 §3.1 禁同步 shell）
   'run_code',                            // 呈现层 native（不在本预设行集）
+  'workflow',                            // tool-workflow 禁用（需求 §3.1：编排只走 async_workflow）
   'subagent', 'subagent_fork',           // 创建入口结构性唯一（需求 §3.1）
   'subagent_codex', 'subagent_claude_code', // 基线本就禁用
   'ralph'                                // 基线本就禁用
 ];
-// 隔离对照：dsh-async 的形态必须不变（双入口仍在、async 四件也在）。
-const ASYNC_MUST_HAVE = ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent', 'subagent', 'subagent_fork'];
-// 差集口径：create 独有 = tool-cordis 的两件；control 独有 = 双入口。
+// 隔离对照：dsh-async 的形态必须不变（async 五件在场；原生委托入口与同步 shell 同样禁用）。
+const ASYNC_MUST_HAVE = ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent', 'async_workflow'];
+// 差集口径：两预设相对各自基线做同款改动，工具面差集只剩基线差——create（cordis 基线）
+// 独有 = tool-cordis 的两件；dsh-async（standard 基线）没有独有工具。
 const CREATE_ONLY_EXPECTED = ['cordis_inspect_list', 'cordis_inspect_query'];
-const CONTROL_ONLY_EXPECTED = ['subagent', 'subagent_fork'];
+const CONTROL_ONLY_EXPECTED = [];
 
 // ── face 相位 ────────────────────────────────────────────────────────────────
 async function phaseFace() {
@@ -240,7 +243,7 @@ async function phaseFace() {
     '第 2 步：立刻用 async_wait_agent 等它，wait_ms=120000，把子代理的回答记下来。',
     '第 3 步：再用 async_agent 派生第二个子代理，prompt 让它「写一篇约 2000 字的中文短文，主题：异步，写完才算完成」。',
     '第 4 步：拿到第二个 agent_id 后立刻用 async_wait_agent 等它，wait_ms=600000。',
-    '第 5 步（关键）：若第 4 步返回「等待被打断」，就用**同一个 agent_id** 再次 async_wait_agent、wait_ms=600000，把短文取回。',
+    '第 5 步（关键）：若第 4 步的等待因用户消息到达而提前返回（返回文本说有消息进入你的输入），就用**同一个 agent_id** 再次 async_wait_agent、wait_ms=600000，把短文取回。',
     '全部做完后回答两行：第一行 Q1=<17×23 的答案>；第二行 DONE。'
   ].join('\n');
   await prompt(s1, TASK);
@@ -277,7 +280,7 @@ async function phaseFace() {
     })();
     const interruptSeen = (() => {
       const { resultsById: rById } = callsOf(page);
-      for (const t of rById.values()) { if (/等待被打断/.test(String(t))) return true; }
+      for (const t of rById.values()) { if (/等待被打断|Wait interrupted/.test(String(t))) return true; }
       return false;
     })();
     if (longWaitActive && longWaitSeenPoll < 0) longWaitSeenPoll = pollCount;
@@ -304,15 +307,16 @@ async function phaseFace() {
   record('③a async_agent 被真的调用并立返（agent_id 在结果里）',
     agentCalls.length >= 2 && typeof firstAgentText === 'string' && /agent_id/i.test(firstAgentText),
     firstAgentText === undefined ? '无结果文本' : JSON.stringify(firstAgentText.slice(0, 120)));
-  // ③b 口径（契约事实，验证实例实测）：等待返回只报结算（「状态转为 idle…不再被观察」），
-  // 子代理的**回答**以独立消息到达（agent-message/subagent-settled）。判据 = 两半：
-  // 有界等待真的返回了（结算文案）+ 391 出现在子代理中继消息里。
-  const firstWaitSettled = waitTexts.some((t) => /idle|不再被观察|完成/.test(t));
+  // ③b 口径（契约事实）：等待返回与子代理回答是两件事——等待可能因消息到达提前
+  // 返回（返回文本不一定含结算词），子代理的**回答**以独立消息到达（agent-message/
+  // subagent-settled）。判据 = 两半：有界等待真的返回了（有任何返回文本）+ 391 出现在
+  // 子代理中继消息里。文案匹配按双语档（实例 agentLang 可为 en 或 zh）。
+  const firstWaitReturned = waitTexts.length > 0;
   const answerMessage = childMessages.find((m) => /391/.test(m.text));
   record('③b async_wait_agent 有界等待返回 + 子代理回答独立到达（agent-message 含 391）',
-    firstWaitSettled && answerMessage !== undefined,
-    `等待结算=${String(firstWaitSettled)}；回答消息=${answerMessage === undefined ? '未见' : `${answerMessage.kind} len=${String(answerMessage.text.length)}`}`);
-  const interrupted = waitTexts.filter((t) => /等待被打断/.test(t));
+    firstWaitReturned && answerMessage !== undefined,
+    `等待返回=${String(firstWaitReturned)}；回答消息=${answerMessage === undefined ? '未见' : `${answerMessage.kind} len=${String(answerMessage.text.length)}`}`);
+  const interrupted = waitTexts.filter((t) => /等待被打断|Wait interrupted/.test(t));
   record('④a 插话打断等待（等待返回「等待被打断」）',
     interrupted.length >= 1,
     interrupted.length === 0 ? '未见打断文案' : JSON.stringify(interrupted[0].slice(0, 120)));
@@ -331,7 +335,7 @@ async function phaseFace() {
   record('③c 主线汇报 Q1=391（端到端答案一致）', /Q1\s*=\s*391/.test(finalTexts),
     JSON.stringify((finalTexts.match(/Q1[^\n]*/) ?? ['（无）'])[0].slice(0, 40)));
 
-  // ⑤ 隔离对照：dsh-async 形态不变 + 差集恰为「创建入口结构性唯一」的形状（需求 §3.1）
+  // ⑤ 隔离对照：dsh-async 形态不变 + 差集恰为基线差（create（cordis 基线）独有 inspect 双件；需求 §3.1）
   const s2 = await newSession('dsh-async');
   await prompt(s2, '（不需要做任何事，请直接回答：READY）');
   for (let i = 0; i < 60; i += 1) {
@@ -341,11 +345,11 @@ async function phaseFace() {
   }
   const face2 = faceOf(await transcriptOf(s2));
   const missing2 = ASYNC_MUST_HAVE.filter((n) => !face2?.names.includes(n));
-  record('⑤a 隔离对照：dsh-async 预设形态不变（async 四件 + subagent 双入口都在）',
+  record('⑤a 隔离对照：dsh-async 预设形态不变（async 五件在场；原生委托入口禁用缺席）',
     missing2.length === 0, missing2.length === 0 ? `${String(face2?.names.length ?? 0)} 个工具` : `缺：${missing2.join(', ')}`);
   const createOnly = face.names.filter((n) => !face2?.names.includes(n));
   const controlOnly = (face2?.names ?? []).filter((n) => !face.names.includes(n));
-  record('⑤b 差集恰为预设裁定的形状（create 独有 = cordis inspect 双件；control 独有 = subagent 双入口）',
+  record('⑤b 差集恰为预设裁定的形状（create 独有 = cordis inspect 双件；dsh-async 独有 = 无）',
     createOnly.join(',') === CREATE_ONLY_EXPECTED.join(',') && controlOnly.join(',') === CONTROL_ONLY_EXPECTED.join(','),
     `create 独有=[${createOnly.join(', ')}]；control 独有=[${controlOnly.join(', ')}]`);
 

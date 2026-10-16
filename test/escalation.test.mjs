@@ -10,7 +10,7 @@
  *
  * | 用例 | 挡的缺陷形态 |
  * |---|---|
- * | 参数表**只在有约束执行器时**才广告两个键 | 没沙箱还广告 ⇒ 给模型一个永远失败的杠杆 |
+ * | 参数表**只在有约束执行器时**才声明两个键 | 没沙箱还声明 ⇒ 给模型一个永远失败的杠杆 |
  * | 两键必须成对、justification 非空 | schema 表达不了的约束；半截请求会变成无理由的审批弹窗 |
  * | **先问审批、再启动进程**（顺序） | 先启动就等于"先斩后奏"，审批成了装饰 |
  * | 获批的模式**只应用到这一次调用** | 提权泄漏到后续调用 = 永久加宽，比不提权更糟 |
@@ -70,27 +70,27 @@ function confinedCtx(outcome = 'allowed-once', options = {}) {
   return { f, asks, seen, policyCalls, resolveCallsAtApproval };
 }
 
-test('R11：有约束执行器时，参数表广告 sandbox_permissions 与 justification', () => {
+test('R11：有约束执行器时，参数表声明 sandbox_permissions 与 justification', () => {
   const { f } = confinedCtx();
   const tool = createRunTool(f.ctx, config);
   // `defineTool` 会把参数描述表**转成 JSON Schema**，键在 `parameters.properties` 下，
   // 不在 `parameters` 顶层。若写成 `'sandbox_permissions' in tool.parameters`，
   // 断言的是 JSON Schema 的三个顶层键之一，永远为 false。
   const props = tool.parameters.properties;
-  assert.ok('sandbox_permissions' in props, '有沙箱时**必须**广告，否则模型无从发起提权');
+  assert.ok('sandbox_permissions' in props, '有沙箱时**必须**声明，否则模型无从发起提权');
   assert.ok('justification' in props, '两个键必须成对出现');
   assert.deepEqual(props.sandbox_permissions.enum, ['workspace-write', 'danger-full-access'],
     '枚举必须是 ESCALATION_TARGETS（闭集），不能自己另立一套');
 });
 
 test('R11：**没有**约束执行器时，两个键都不得出现在参数表里', () => {
-  // 缺陷形态：无条件广告 ⇒ 模型在无沙箱部署里看到一个永远失败的杠杆
+  // 缺陷形态：无条件声明 ⇒ 模型在无沙箱部署里看到一个永远失败的杠杆
   // （`approveEscalation` 在没有更宽模式可去时必抛）。
   const f = fakeCtx();
   f.installShellExecute(() => Promise.resolve(fakeProc({ text: 'ok' }).proc));
   const props = createRunTool(f.ctx, config).parameters.properties;
-  assert.equal('sandbox_permissions' in props, false, '无沙箱不得广告 sandbox_permissions');
-  assert.equal('justification' in props, false, '无沙箱不得广告 justification');
+  assert.equal('sandbox_permissions' in props, false, '无沙箱不得声明 sandbox_permissions');
+  assert.equal('justification' in props, false, '无沙箱不得声明 justification');
 });
 
 test('R11：sandbox_permissions 缺少 justification → 报错且**不启动进程**', async () => {
@@ -288,8 +288,8 @@ test('同级与更窄目标都在启动前可读拒绝、零注册零启动（�
   assert.equal(narrower.seen.length, 0, '更窄拒绝必须零启动');
 });
 
-test('R11：有约束但选不出更宽目标时，未广告的键仍被挡下', async () => {
-  // schema 校验只查**广告过的**键，所以未广告的 `sandbox_permissions` 仍能到达 execute。
+test('R11：有约束但选不出更宽目标时，未声明的键仍被挡下', async () => {
+  // schema 校验只查**声明过的**键，所以未声明的 `sandbox_permissions` 仍能到达 execute。
   // 这条验的正是那个"必须再挡一次"的守卫。
   const f = fakeCtx();
   const seen = [];

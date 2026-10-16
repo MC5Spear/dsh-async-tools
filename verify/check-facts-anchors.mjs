@@ -17,7 +17,7 @@
  *
  * - 登记簿目录整个不在（CI、外部 clone）→ 打一行 `SKIP` 放过；
  * - 某一档树没配置 → 该档的引用**逐条**记为 `TREE-ABSENT` 并在末尾汇总，
- *   不计入硬错误（缺配置不是"引用坏了"）。
+ *   不计入失败项（缺配置不是"引用错误"）。
  *
  * ## 为什么要导出 `analyzeFacts`
  *
@@ -45,7 +45,7 @@ const FIELDS = ['现行值', '依据', '核销日期', '更新入口'];
  * @param {string} text - 登记簿全文。
  * @param {{ tree020?: string, tree017?: string, tree015?: string, repoRoot?: string }} [options]
  *   三棵安装树与本仓根。**树可以是 `undefined`**：那一档的引用逐条记为 `TREE-ABSENT`
- *   并计入 `treeAbsent`，不算硬错误——缺配置与"引用坏了"是两件事，不能混。
+ *   并计入 `treeAbsent`，不算失败项——缺配置与"引用错误"是两件事，不能混。
  * @returns {{ citations: number, ok: number, viaRepoFallback: number, treeAbsent: number,
  *   hardErrors: number, fieldProblems: number, entryCount: number, report: string[] }}
  *   读数与逐行报告。
@@ -147,7 +147,7 @@ export function analyzeFacts(text, options = {}) {
       report.push(`  MISSING ${label}`);
       bad += 1;
     } else if (found.absent) {
-      // 这一档树没配置：**不是**引用坏了，是这台机器没登记树的位置。逐条列出、
+      // 这一档树没配置：**不是**引用错误，是这台机器没登记树的位置。逐条列出、
       // 末尾汇总，让"跳过了多少"可见——静默跳过正是本仓点名过的假绿形态。
       report.push(`  TREE-ABSENT ${label}（${citation.tree} 档安装树无来源）`);
       treeAbsent += 1;
@@ -235,7 +235,7 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.
   });
   for (const line of result.report) console.log(line);
   console.log(`\n引用 ${result.citations} 处：可解析 ${result.ok}（其中经本仓回退 ${result.viaRepoFallback}）、`
-    + `树缺席跳过 ${result.treeAbsent}、硬错误 ${result.hardErrors}。`);
+    + `树缺席跳过 ${result.treeAbsent}、失败项 ${result.hardErrors}。`);
   console.log(`条目 ${result.entryCount} 条：四字段齐全 ${result.entryCount - result.fieldProblems}、不齐 ${result.fieldProblems}。`);
   console.log('注意：本检查器不判语义——行号在范围内不等于那行就是被引构造。');
   process.exitCode = result.hardErrors === 0 ? 0 : 1;

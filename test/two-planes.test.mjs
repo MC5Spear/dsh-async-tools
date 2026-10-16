@@ -1228,7 +1228,7 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   assert.equal(poll().input, 'readout.input|4.32 s', '键入 04321：输入段显示解析值的换算（不是生效值）');
   inputById(tree, 'plugin-config-pollIntervalMs').props.onChange({ target: { value: 'not-a-number' } });
   tree = renderCard();
-  // V04 盲测 A 项契约：非法原因行（-invalid）是**附加**，常驻说明行（-message）
+  // 契约（需求 §5.4／§5.6）：非法原因行（-invalid）是**附加**，常驻说明行（-message）
   // 与双读数不被顶掉——非数字草稿的输入段给 — 占位并标红，生效段照常。
   const invalidLineOf = (aTree, key) => findNode(aTree,
     (node) => node.type === 'p' && node.props.id === `plugin-config-${key}-invalid`);
@@ -1280,7 +1280,7 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   assert.match(String(findNode(tree, (node) => node.type === 'p' && node.props.id === 'plugin-config-pollIntervalMs-invalid').props.children),
     /invalidNumber\|/, '非法原因行（-invalid）必须给出原因文案');
   assert.equal(poll().eff, 'readout.effective|0.5 s',
-    '非法态常驻说明行（-message）不得被原因行顶掉——生效段仍在（V04 盲测 A 项回归钉）');
+    '非法态常驻说明行（-message）不得被原因行顶掉——生效段仍在（需求 §5.4 回归钉）');
   assert.equal(poll().input, 'readout.input|—', '非法态常驻行的输入段照常给 — 占位');
   assert.equal(badInput.props['aria-describedby'],
     'plugin-config-pollIntervalMs-invalid plugin-config-pollIntervalMs-message',
@@ -1558,7 +1558,7 @@ test('T18h（R24/R27·设计 §5.5）：字段帮助——问号按钮、开合�
   const invalidReason = findNode(tree, (node) => node.type === 'p'
     && node.props.id === 'plugin-config-defaultYieldMs-invalid');
   assert.ok(textOf(invalidReason).join('').includes('不是该字段可接受'),
-    '原因行（-invalid）显示非法原因而不是消失（V04 盲测 A 项口径：两行并存）');
+    '原因行（-invalid）显示非法原因而不是消失（需求 §5.4 口径：两行并存）');
   const invalidButton = helpButtonOf(tree, 'defaultYieldMs');
   assert.notEqual(invalidButton.props.disabled, true, '非法草稿态帮助按钮可用');
   // 相位净位：上一阶段（只读）可能已把同一字段的开合态留在 true——先收再开，
@@ -2058,7 +2058,7 @@ test('T23（R29-d·判据 14）：卡片层单字段上界——boundedNumberSpe
   assert.equal(spec.maxWaitMs.format(600000), '600000', 'format 原样透传');
 });
 
-test('T23d（A09·正整数体系）：maxResultChars 非整数草稿 parse 拒绝＋invalidInteger 档＋服务端整数校验', async () => {
+test('T23d（正整数体系）：maxResultChars 非整数草稿 parse 拒绝＋invalidInteger 档＋服务端整数校验', async () => {
   const { makePrimitivesDouble } = await import('./_primitives-double.mjs');
   const reactStub = { createElement: () => undefined, useState: () => [undefined, () => {}], useEffect: () => {}, useRef: (v) => ({ current: v }) };
   const double = makePrimitivesDouble(reactStub);
@@ -2126,7 +2126,7 @@ test('T23b（R29-d·判据 14）：卡片层跨字段配对——pollIntervalMs 
   // `pairHit !== null` 必须显式归布尔：chainHitOf 命中时返回的是**字符串**（参照
   // 字段键），而 FieldShell 全部消费点（消息替换、aria-invalid、hasMessage）都是
   // 严格 `=== true` 门——旧形 `=== true || pairHit` 会把字符串原样传下去，违例
-  // 时红框与原因文案全灭、只剩保存按钮变灰（V04 盲测 P1 的实测形态）。
+  // 时红框与原因文案全灭、只剩保存按钮变灰（需求 §5.4 字段原因不可达的失效形态）。
   assert.match(code, /invalid: fieldState\.invalid === true \|\| pairHit !== null/,
     'pollIntervalMs 字节必须叠加 pairHit 显示，且归一为布尔（字符串 pairHit 过不了 FieldShell 的严格 === true 门）');
   assert.match(code, /t\("invalidRange"\)/, '越上界要有带 {max} 的原因文案');

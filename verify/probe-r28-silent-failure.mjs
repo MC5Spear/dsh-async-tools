@@ -21,8 +21,9 @@
  *   `test-r28` 单测覆盖；锚句真实性有实测档案背书。
  *   提权档良性空输出 → 无 note，同时是需求 §6.3 签名条件（受限且未提权才提示）的真机证据。
  *
- * 状态机：OFF 基线 → 页面 Switch 翻转保存（证明控件可用，不走 RPC）→ 三项在场（含
- * standard 预设全局性）→ 签名 2 → RPC 关回 → 三项消失 → agentLang=zh → 中文纪律段。
+ * 状态机：OFF 基线 → 页面 Switch 翻转保存（证明控件可用，不走 RPC）→ 三项在场（standard
+ * 预设按需求 §6.3 范围限定缺席——开关开启时其他预设组稿与关闭时逐字一致）→ 签名 2 →
+ * RPC 关回 → 三项消失 → agentLang=zh → 中文纪律段。
  * 收尾**故意留 silentFailureGuard=true**（真机 5 要验重启保持；由重启探针的 finally 复原
  * false），语言/界面档复原 auto/en。
  *
@@ -110,6 +111,13 @@ try {
   })()`);
 
   console.log('· 0/6 起始态核对（默认关）');
+  // 跨轮次状态复位：上一轮收尾故意留 guard=true（供重启探针验保持）；若重启探针
+  // 未跑而残留，先 RPC 关回再开始——否则「默认关」状态机 ⓪-2 阶段整链错位。
+  const pre = await readNs();
+  if (pre.value.silentFailureGuard !== false) {
+    await patchNs({ silentFailureGuard: false });
+    console.log(`  （起跑复位：读到残留 silentFailureGuard=${String(pre.value.silentFailureGuard)}，已写回 false）`);
+  }
   const start = await readNs();
   check('⓪ silentFailureGuard 出厂默认 false（回读）', start.value.silentFailureGuard === false,
     `读数=${JSON.stringify(start.value)}`);
@@ -117,8 +125,8 @@ try {
   console.log('· 1/6 真机 1：默认关——三项都不在场');
   await openPluginPage();
   const form0 = await readForm();
-  check('真机 1a 设置卡第 13 字段以官方 Switch 在场（aria-checked=false）',
-    form0.switches.length === 1 && form0.switches[0].checked === 'false',
+  check('真机 1a 设置卡含静默失败开关（官方 Switch，aria-checked=false）',
+    form0.switches.some((s) => s.label === '命令静默失败提示' && s.checked === 'false'),
     `switches=${JSON.stringify(form0.switches)} 值/枚举字段数=${String(form0.names.length)}`);
   await screenshot(page, `${SHOTS}\\r28-01-off.png`);
   const off1 = await askBattery(PRESET);
@@ -153,7 +161,7 @@ try {
   await clickBy(`[...document.querySelectorAll('[data-plugin-config] button')].find((b) => /^(保存|Save)$/.test(b.textContent.trim()))`, '保存');
   await sleep(3500);
   const onNs = await readNs();
-  check('真机 2a 第 13 字段控件可用（Switch 翻转 + 页面保存生效）',
+  check('真机 2a 静默失败开关控件可用（Switch 翻转 + 页面保存生效）',
     flipped === 'clicked' && onNs.value.silentFailureGuard === true,
     `动作=${String(flipped)} 保存后读数=${String(onNs.value.silentFailureGuard)}`);
   await screenshot(page, `${SHOTS}\\r28-02-on.png`);
@@ -172,8 +180,8 @@ try {
     attempts: onStd.attempts,
     note: onStd.description === null ? 'standard 会话无 async_run，b 段不适用' : '意外：async_run 描述在场'
   };
-  check('真机 2c c 段全局性（standard 预设会话同样在场——宿主行注入，不挑预设；矛盾读数重抽 ≤3）',
-    onStd.attempts.some((a) => a.consistent),
+  check('真机 2c c 段预设范围（standard 会话组稿不含纪律段——开关开启时其他预设与关闭时一致；需求 §6.3，读数重抽 ≤3）',
+    onStd.attempts.every((a) => a.AVKILL === 'none' && a.LANG === 'none'),
     `抽次=${String(onStd.attempts.length)} 逐次=${JSON.stringify(onStd.attempts)}`);
   check('真机 2c′ standard 会话确实无 async_run（b 段判别范围只属本包工具）',
     onStd.description === null,

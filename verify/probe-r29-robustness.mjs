@@ -202,7 +202,7 @@ try {
   const sid2 = await newSession(PRESET);
   const t0 = Date.now();
   await prompt(sid2, '依次做两步，一步一个工具调用。第 1 步：async_run 运行命令 "Start-Sleep -Seconds 20"，'
-    + 'yield_ms 传 1000，并带 sandbox_permissions（设为该工具广告的最宽档）与它要求的一句 justification'
+    + 'yield_ms 传 1000，并带 sandbox_permissions（设为该工具声明的最宽档）与它要求的一句 justification'
     + '（本次验收探针的提权已获用户预批准）。第 2 步：拿到 job_id 后**立即**调用 async_wait_job（wait_ms 传 1500，'
     + '不带任何提权参数）。然后把 async_wait_job 返回给你的那段文本原样粘贴出来，不要做别的。');
   const tr2 = await waitTurnEnd(sid2, 180000);

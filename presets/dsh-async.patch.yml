@@ -5,7 +5,7 @@
 # loader 拥有：本包从 bundles 移除即预设消失，无清理代码（设计 §7.1）。
 #
 # 基线 = 随宿主 0.2.0-rc.2 发布的 shipped standard 预设补丁（需求 §7.3；基线位置由
-# tools/validate-preset.mjs 按需求读取，不硬编码本机路径）。相对基线的手术
+# tools/validate-preset.mjs 按需求读取，不硬编码本机路径）。相对基线的改动
 # （设计 §3.6"两者相对基线的共同差异"，逐条给依据）：
 #   1. tool-bash 无条件 disabled: true——禁同步 shell（需求 §3.1），两平台工具清单
 #      一致（需求 §3.3）；
@@ -67,7 +67,7 @@
             name: '@deepseek-ai/dsh-agent-instructions'
             config:
               maxBytes: 65536
-          # ── shell（手术 1/2/3）──
+          # ── shell（改动项 1/2/3）──
           - id: tool-bash
             name: '@deepseek-ai/dsh-tool-bash'
             disabled: true
@@ -147,7 +147,7 @@
                   thresholdChars: 8192
                   headChars: 4096
                   tailChars: 1024
-          # ── delegation（手术 4/5 在此组）──
+          # ── delegation（改动项 4/5 在此组）──
           - id: delegation
             name: cordis:group
             group: true
@@ -214,7 +214,7 @@
                 config:
                   subagentProvider: spawn
                   maxRounds: 64
-          # ── remaining model-facing rows（手术 6）──
+          # ── remaining model-facing rows（改动项 6）──
           - id: tool-ask-user
             name: '@deepseek-ai/dsh-tool-ask-user'
           - id: tool-todo

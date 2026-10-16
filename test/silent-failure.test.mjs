@@ -169,7 +169,7 @@ test('R28 判据4：cmdlet 误报范围被接受，且文案必须是条件式�
   assert.match(notes[0], /may have been killed at process creation/, '推测语气，不是断言');
   assert.match(notes[0], /treat it as "did not run"/, '解读口径：按「没跑」处理');
   assert.match(notes[0], /Retry it once as a bare call/, '正向替代 1：裸调用重试');
-  assert.match(notes[0], /sandbox_permissions/, '正向替代 2：提权重试（本组合广告了提权字段）');
+  assert.match(notes[0], /sandbox_permissions/, '正向替代 2：提权重试（本组合声明了提权字段）');
   const zh = silentFailureNotes({
     proc: { sandbox: { mode: 'workspace-write' } }, collector: collector(''),
     command: 'Get-ChildItem 2>&1', escalationModes: ['workspace-write'], guard: true, lang: 'zh'
