@@ -689,7 +689,7 @@ function makeFieldNodes(state, model, t) {
       fieldKey: field.key, id: id, label: label,
       hint: hint, help: help, helpA11y: helpA11y,
       overridden: fieldState.overridden, overriddenLabel: t("overridden"),
-      resetLabel: t("reset"), invalid: fieldState.invalid === true || pairHit,
+      resetLabel: t("reset"), invalid: fieldState.invalid === true || pairHit !== null,
       invalidLabel: invalidLabel,
       flag: field.flag === true,
       numeric: isNumericField(field),

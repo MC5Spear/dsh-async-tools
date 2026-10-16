@@ -245,7 +245,15 @@ const resultsById = new Map();
 for (const record of page.records) {
   const event = record.event;
   if (event?.type === 'tool/call') {
-    calls.push({ name: event.data.name, callId: event.data.callId, args: event.data.arguments });
+    // 转录把 `arguments` 存成 JSON **字符串**（渲染层序列化）；不同记录形状里
+    // 也见过已是对象的情况。判据侧要按 `args.job_id` 取属性，两种形态都归一
+    // 成对象（解析失败保留 undefined——配对判据会把它计入 missing，而不是让
+    // 整个探针在读数阶段崩掉）。
+    let args = event.data.arguments;
+    if (typeof args === 'string') {
+      try { args = JSON.parse(args); } catch { args = undefined; }
+    }
+    calls.push({ name: event.data.name, callId: event.data.callId, args });
     console.log(`TOOL-CALL  ${String(event.data.name)} ${String(event.data.arguments)}`);
   } else if (event?.type === 'tool/result') {
     // 渲染文本形状（同循环内注释）：句柄在 message.toolCallId，正文是 type:'text' 块拼接。

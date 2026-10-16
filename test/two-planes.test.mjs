@@ -2109,7 +2109,12 @@ test('T23b（R29-d·判据 14）：卡片层跨字段配对——pollIntervalMs 
   assert.match(code, /state: \{ \.\.\.state\.shell, invalid: state\.shell\.invalid === true \|\| pairViolated\(state\) \}/,
     'makeBundleCard 必须把配对违例叠加进 SettingsForm 的 state.invalid');
   // 字段显示层：pollIntervalMs 的非法原因文案（invalidRange/invalidPair 分档）。
-  assert.match(code, /invalid: fieldState\.invalid === true \|\| pairHit/, 'pollIntervalMs 字节必须叠加 pairHit 显示');
+  // `pairHit !== null` 必须显式归布尔：chainHitOf 命中时返回的是**字符串**（参照
+  // 字段键），而 FieldShell 全部消费点（消息替换、aria-invalid、hasMessage）都是
+  // 严格 `=== true` 门——旧形 `=== true || pairHit` 会把字符串原样传下去，违例
+  // 时红框与原因文案全灭、只剩保存按钮变灰（V04 盲测 P1 的实测形态）。
+  assert.match(code, /invalid: fieldState\.invalid === true \|\| pairHit !== null/,
+    'pollIntervalMs 字节必须叠加 pairHit 显示，且归一为布尔（字符串 pairHit 过不了 FieldShell 的严格 === true 门）');
   assert.match(code, /t\("invalidRange"\)/, '越上界要有带 {max} 的原因文案');
   // 配对违例文案按字段键动态拼（五对链式共用一条分档路径），{ref} 显示层经词典
   // 换参照字段的中文名称（设计 §5.6 统一术语——键名不进界面）。
