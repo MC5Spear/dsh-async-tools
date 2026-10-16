@@ -290,7 +290,16 @@ export async function waitFor(page, expression, predicate, timeoutMs = 8000) {
  */
 export async function screenshot(page, path, options = {}) {
   const width = options.width ?? 1600;
-  const height = options.height ?? 1000;
+  let height = options.height ?? 1000;
+  // fullPage（默认开）：先把视口高度抬到内容全高再截——`captureBeyondViewport`
+  // 单独用不可靠（Edge 在 override 高度处截断，实测与普通视口同帧），必须配合
+  // `setDeviceMetricsOverride` 的足够高度（本函数头注一直这么写）。
+  if (options.fullPage !== false) {
+    const metrics = await evaluate(page, 'Math.max('
+      + 'document.documentElement.scrollHeight, document.body.scrollHeight,'
+      + 'document.documentElement.offsetHeight, document.body.offsetHeight)');
+    if (typeof metrics === 'number' && metrics > height) height = Math.ceil(metrics);
+  }
   await page.send('Emulation.setDeviceMetricsOverride', {
     width,
     height,

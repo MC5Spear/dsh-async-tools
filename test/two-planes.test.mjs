@@ -1228,20 +1228,28 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   assert.equal(poll().input, 'readout.input|4.32 s', '键入 04321：输入段显示解析值的换算（不是生效值）');
   inputById(tree, 'plugin-config-pollIntervalMs').props.onChange({ target: { value: 'not-a-number' } });
   tree = renderCard();
-  assert.equal(poll().line, 'invalidNumber|',
-    '非数字 → 字段非法态接管说明行（官方字段把 hint 换成原因文案——整行没有秒数，不给误导性读数）');
-  assert.equal(poll().eff, undefined, '非法态说明行不得残留任何读数段');
+  // V04 盲测 A 项契约：非法原因行（-invalid）是**附加**，常驻说明行（-message）
+  // 与双读数不被顶掉——非数字草稿的输入段给 — 占位并标红，生效段照常。
+  const invalidLineOf = (aTree, key) => findNode(aTree,
+    (node) => node.type === 'p' && node.props.id === `plugin-config-${key}-invalid`);
+  assert.equal(String(invalidLineOf(tree, 'pollIntervalMs')?.props.children), 'invalidNumber|',
+    '非数字 → 原因行（-invalid）= invalidNumber 档');
+  assert.equal(poll().eff, 'readout.effective|0.5 s', '非法态常驻行的生效段照常显示（不被原因行顶掉）');
+  assert.equal(poll().input, 'readout.input|—', '非法草稿的输入段给 — 占位（不给误导性秒数）');
+  assert.ok(poll().inClass.includes('ats-sec-invalid'), '非法草稿的输入段标红');
   inputById(tree, 'plugin-config-pollIntervalMs').props.onChange({ target: { value: '0' } });
   tree = renderCard();
   // FIELD_MIN 进 parse（§5.4 下界补齐）后：'0' 可解析但低于下界 1 → 官方非法通道
-  // 的 belowRange 档接管说明行（保存经 state.invalid 禁用），与 NaN 同形。
-  assert.equal(poll().line, 'invalidBelow|',
-    '0（可解析、低于下界 1）：belowRange 档接管说明行（min 在 parse 里拦）');
-  assert.equal(poll().eff, undefined, '下界非法态说明行不得残留任何读数段');
+  // 的 belowRange 档走原因行（保存经 state.invalid 禁用），常驻读数同形保留。
+  assert.equal(String(invalidLineOf(tree, 'pollIntervalMs')?.props.children), 'invalidBelow|',
+    '0（可解析、低于下界 1）：belowRange 档走原因行（min 在 parse 里拦）');
+  assert.equal(poll().eff, 'readout.effective|0.5 s', '下界非法态常驻行的生效段照常显示');
+  assert.equal(poll().input, 'readout.input|—', '下界非法草稿的输入段同样给 — 占位');
   inputById(tree, 'plugin-config-pollIntervalMs').props.onChange({ target: { value: '' } });
   tree = renderCard();
   assert.equal(poll().input, 'readout.input|—', '清空 → 输入段 — 占位');
   assert.ok(!poll().inClass.includes('ats-sec-invalid'), '清空不是非法（清除覆盖的意图），不得标红');
+  assert.ok(invalidLineOf(tree, 'pollIntervalMs') === undefined, '回到合法态：原因行退场');
   // 收尾：改回生效值（stage 清掉非法态与草稿），后续用例从干净状态出发。
   inputById(tree, 'plugin-config-pollIntervalMs').props.onChange({ target: { value: '500' } });
   tree = renderCard();
@@ -1269,10 +1277,14 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   const badInput = inputById(tree, 'plugin-config-pollIntervalMs');
   assert.equal(buttonByLabel(tree, 'save|').props.disabled, true, '非法草稿必须挡下保存（!invalid）');
   assert.equal(badInput.props['aria-invalid'], true, '非法草稿的控件必须带 aria-invalid');
-  assert.match(String(findNode(tree, (node) => node.type === 'p' && node.props.id === 'plugin-config-pollIntervalMs-message').props.children),
-    /invalidNumber\|/, '说明行必须切换为非法原因文案');
-  assert.equal(badInput.props['aria-describedby'], 'plugin-config-pollIntervalMs-message',
-    '非法态的 aria-describedby 仍指向同一说明行');
+  assert.match(String(findNode(tree, (node) => node.type === 'p' && node.props.id === 'plugin-config-pollIntervalMs-invalid').props.children),
+    /invalidNumber\|/, '非法原因行（-invalid）必须给出原因文案');
+  assert.equal(poll().eff, 'readout.effective|0.5 s',
+    '非法态常驻说明行（-message）不得被原因行顶掉——生效段仍在（V04 盲测 A 项回归钉）');
+  assert.equal(poll().input, 'readout.input|—', '非法态常驻行的输入段照常给 — 占位');
+  assert.equal(badInput.props['aria-describedby'],
+    'plugin-config-pollIntervalMs-invalid plugin-config-pollIntervalMs-message',
+    '非法态 aria-describedby 先指原因行、仍并指常驻说明行');
   // 丢弃非法草稿（改回合法值）恢复可用。
   inputById(tree, 'plugin-config-pollIntervalMs').props.onChange({ target: { value: '4321' } });
   tree = renderCard();
@@ -1542,9 +1554,11 @@ test('T18h（R24/R27·设计 §5.5）：字段帮助——问号按钮、开合�
   tree = renderCard();
   const invalidMessage = findNode(tree, (node) => node.type === 'p'
     && node.props.id === 'plugin-config-defaultYieldMs-message');
-  assert.ok(invalidMessage !== undefined, '非法草稿时说明行仍在（换成错误文案）');
-  assert.ok(textOf(invalidMessage).join('').includes('不是该字段可接受'),
-    '说明行显示非法原因而不是消失');
+  assert.ok(invalidMessage !== undefined, '非法草稿时常驻说明行仍在（不被原因行顶掉）');
+  const invalidReason = findNode(tree, (node) => node.type === 'p'
+    && node.props.id === 'plugin-config-defaultYieldMs-invalid');
+  assert.ok(textOf(invalidReason).join('').includes('不是该字段可接受'),
+    '原因行（-invalid）显示非法原因而不是消失（V04 盲测 A 项口径：两行并存）');
   const invalidButton = helpButtonOf(tree, 'defaultYieldMs');
   assert.notEqual(invalidButton.props.disabled, true, '非法草稿态帮助按钮可用');
   // 相位净位：上一阶段（只读）可能已把同一字段的开合态留在 true——先收再开，

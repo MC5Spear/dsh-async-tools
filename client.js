@@ -488,8 +488,13 @@ function FieldShell(props) {
   var helpOpen = helpOpenState[0];
   var setHelpOpen = helpOpenState[1];
   var messageId = props.id + "-message";
+  var invalidId = props.id + "-invalid";
   var helpId = props.id + "-help";
-  var hasMessage = props.invalid === true || props.hint !== undefined;
+  // 消息区两行并存（V04 盲测 A 项修正）：非法原因行（红、aria-invalid、独立 id）
+  // 是**附加**，不顶掉常驻说明与「生效／输入」读数——§5.4「非法值另给字段原因」
+  // 的「另给」＋§5.6「常驻短说明」同时成立，而不是二选一替换。常驻行沿用
+  // `-message` id，正常态的 aria-describedby 契约不变；非法态两行都在、
+  // described 先指错误行。
   var helpButton = props.help === undefined ? null : React.createElement("button", {
     type: "button",
     className: "ats-help-button",
@@ -498,8 +503,11 @@ function FieldShell(props) {
     "aria-controls": helpId,
     onClick: function () { setHelpOpen(!helpOpen); }
   }, React.createElement(P.IconQuestionOutlineRegular, { size: 14 }));
-  var described = [hasMessage ? messageId : null, helpOpen ? helpId : null]
-    .filter(function (part) { return part !== null; }).join(" ");
+  var described = [
+    props.invalid === true ? invalidId : null,
+    props.hint !== undefined ? messageId : null,
+    helpOpen ? helpId : null
+  ].filter(function (part) { return part !== null; }).join(" ");
   var control;
   if (props.flag === true) {
     control = React.createElement(P.Switch, {
@@ -550,11 +558,15 @@ function FieldShell(props) {
           onClick: props.onReset
         }, props.resetLabel)) : null),
     control,
-    hasMessage ? React.createElement("p", {
-      id: messageId,
+    props.invalid === true ? React.createElement("p", {
+      id: invalidId,
       className: "ats-enum-message",
-      "aria-invalid": props.invalid === true ? true : undefined
-    }, props.invalid === true ? props.invalidLabel : props.hint) : null,
+      "aria-invalid": true
+    }, props.invalidLabel) : null,
+    props.hint !== undefined ? React.createElement("p", {
+      id: messageId,
+      className: "ats-enum-message"
+    }, props.hint) : null,
     helpOpen && props.help !== undefined ? React.createElement("div", {
       id: helpId,
       role: "region",

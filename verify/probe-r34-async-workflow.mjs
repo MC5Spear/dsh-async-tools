@@ -296,6 +296,21 @@ async function guiSendText(page, text) {
 }
 
 /**
+ * GUI blank 会话的物化与升档（0.2.0 校准，diag7b 实测）：blank 行上选好的预设
+ * 只随**普通首发消息**的物化生效——`/permission` 作为首发消息触发物化时，
+ * 该回合请求落回 standard 工具集（r34b 真机会话 27 工具无 async_*、模型自答
+ * "no such tool" 实证）。故先用无害小消息物化（预设随请求生效），再走 RPC
+ * 升档（与 a/e 相同通道），最后才发正式提示词。
+ * @param {object} page - CDP 会话。
+ * @param {string} sessionId - blank 行会话 id（物化保 id）。
+ */
+async function guiMaterializeAndElevate(page, sessionId) {
+  await guiSendText(page, 'Setup: reply with just the word "ack" and end your turn. Do not call any tool.');
+  await waitTurnEnd(sessionId);
+  await elevateSession(sessionId);
+}
+
+/**
  * RPC 侧定位 GUI 新建的会话：按提示词标记扫**按 updatedAt 排序的最新一批**
  * （session/list 的行序不是时间序——384 行里新会话排在任意处；跳过读不了的
  * 子代理档——a 相跑完后列表里满是 workflow 子代理会话）。
@@ -372,8 +387,7 @@ async function phaseB(page) {
   // 0.2.0：GUI 新建默认标准模式——blank 会话经 RPC 定 dsh-async（见
   // guiBlankSession 头注），升档与提示词仍走 composer，断言与标准路径全同。
   const sid = await guiBlankSession(page, PRESET);
-  await guiSendText(page, '/permission danger-full-access');
-  await sleep(3000);
+  await guiMaterializeAndElevate(page, sid);
   await guiSendText(page, workflowPrompt(name, 'R34 probe phase B', SLOW_SCRIPT, YIELD_MS));
   await waitWorkflowCalled(sid);
   await sleep(POST_CALL_MS);
@@ -401,8 +415,7 @@ async function phaseC(page) {
   const name = `wf-r34c-${TAG}`;
   const desc = `R34 probe panel phase ${TAG}`;
   const sid = await guiBlankSession(page, PRESET);
-  await guiSendText(page, '/permission danger-full-access');
-  await sleep(3000);
+  await guiMaterializeAndElevate(page, sid);
   await guiSendText(page, workflowPrompt(name, desc, SLOW_SCRIPT, 1000));
   await waitWorkflowCalled(sid);
   await sleep(POST_CALL_MS);
@@ -495,8 +508,7 @@ async function phaseF() {
 async function phaseG(guiPage) {
   const name = `wf-r34g-${TAG}`;
   const sessionId = await guiBlankSession(guiPage, PRESET);
-  await guiSendText(guiPage, '/permission danger-full-access');
-  await sleep(3000);
+  await guiMaterializeAndElevate(guiPage, sessionId);
   await guiSendText(guiPage, workflowPrompt(name, 'R34 probe phase G', FAST_SCRIPT, YIELD_MS));
   await assertElevated(sessionId);
   await pollUntil(sessionId,
