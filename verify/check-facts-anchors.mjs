@@ -10,14 +10,14 @@
  *
  * 三类前缀：`[0.2.0]` → `'020'` 树、`[0.1.7]` → `'017'` 树、`PKGS/` 与未标前缀 → `'015'` 树。
  *
- * ## 语料与树根都不在代码里
+ * ## 登记簿与树根都不在代码里
  *
  * 登记簿不由本公开仓跟踪，检查时读取本机材料目录（`<LOCAL_DIR>/docs/`），三棵安装树经
  * `tools/_local-config.mjs` 从 `.local/config.mjs`（或环境变量）读。两样都可以缺：
  *
- * - 语料目录整个不在（CI、外部 clone）→ 打一行 `SKIP` 放过；
+ * - 登记簿目录整个不在（CI、外部 clone）→ 打一行 `SKIP` 放过；
  * - 某一档树没配置 → 该档的引用**逐条**记为 `TREE-ABSENT` 并在末尾汇总，
- *   不计入实证错误（缺配置不是"引用坏了"）。
+ *   不计入硬错误（缺配置不是"引用坏了"）。
  *
  * ## 为什么要导出 `analyzeFacts`
  *
@@ -45,7 +45,7 @@ const FIELDS = ['现行值', '依据', '核销日期', '更新入口'];
  * @param {string} text - 登记簿全文。
  * @param {{ tree020?: string, tree017?: string, tree015?: string, repoRoot?: string }} [options]
  *   三棵安装树与本仓根。**树可以是 `undefined`**：那一档的引用逐条记为 `TREE-ABSENT`
- *   并计入 `treeAbsent`，不算实证错误——缺配置与"引用坏了"是两件事，不能混。
+ *   并计入 `treeAbsent`，不算硬错误——缺配置与"引用坏了"是两件事，不能混。
  * @returns {{ citations: number, ok: number, viaRepoFallback: number, treeAbsent: number,
  *   hardErrors: number, fieldProblems: number, entryCount: number, report: string[] }}
  *   读数与逐行报告。
@@ -107,7 +107,8 @@ export function analyzeFacts(text, options = {}) {
   let treeAbsent = 0;
   const treeCache = new Map();
   /**
-   * 解析一条引用：按"安装树 → 本仓（带包名前缀）→ 本仓（裸相对路径）"的顺序取第一个存在的文件。
+   * 解析一条引用：按"安装树 → 树根父目录（带包名）→ 本仓（带包名前缀）→ 本仓
+   * （裸相对路径）"的顺序取第一个存在的文件。
    *
    * 为什么要有本仓回退：事实条目里既有安装树的引用，也有本包自己的文件引用
    * （形如 `lib/jobs.js:458-468`），两者写法一样、只能靠"文件在不在"分辨。
@@ -207,7 +208,7 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.
   }
 
   const config = await loadLocalPlaneOrSkip('verify/check-facts-anchors.mjs（事实依据可解析性）');
-  // 显式给了 `--facts` 就必须在（那是调用者的错）；没给就从本机侧的语料目录取，
+  // 显式给了 `--facts` 就必须在（那是调用者的错）；没给就从本机侧的登记簿目录取，
   // 取不到按文档化跳过——CI 与外部 clone 上本来就没有登记簿。
   const factsArg = argOf('--facts', undefined);
   const FACTS = factsArg ?? join(config.root, LOCAL_DIR, 'docs', 'facts.md');
@@ -217,7 +218,7 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.
       process.exit(2);
     }
     console.log(`SKIP verify/check-facts-anchors.mjs：本机侧的登记簿不在（${LOCAL_DIR}/docs/facts.md）`);
-    console.log('     事实依据判据只对开发机上的语料有意义；CI 与外部 clone 上没有它，按跳过处理（不是失败）。');
+    console.log('     事实依据判据只对开发机上的登记簿有意义；CI 与外部 clone 上没有它，按跳过处理（不是失败）。');
     process.exit(0);
   }
 

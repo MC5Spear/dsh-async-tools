@@ -1,15 +1,15 @@
 /**
- * agent 相位**路由判据**的纯函数（判据本体与取数分离——
+ * agent 阶段**路由判据**的纯函数（判据本体与取数分离——
  * `verify/r24-judgements.mjs` 的同一成例：真机探针只取数，判据在这里，可被单测
  * 与变异证明能红）。
  *
  * ## 背景：判据假绿的形态
  *
  * 裸路由串匹配（`/zai/.test(t) && /glm-5\.3/.test(t)`）会让**继承 note 同样命中**：
- * 宿主 tool-subagent 行禁用的会话结构性无模型选择策略，带 provider/model 的调用
- * 被 `lib/agent.js` 按设计保守拒绝（`error.noPolicy`）；此时真绿只能来自模型
- * **免路由重试**的继承句柄 note（含同一路由串 + inherited 标记）——判据读数
- * 取决于模型是否恰好重试，不可复现。
+ * 宿主 tool-subagent 行禁用时，这类会话按结构就没有模型选择策略；带 provider/model
+ * 的调用被 `lib/agent.js` 按设计保守拒绝（`error.noPolicy`）。此时真绿只能来自
+ * 模型不经路由重试而继承父路由时产生的 note（含同一路由串 + inherited 标记）——
+ * 判据读数取决于模型是否恰好重试，不可复现。
  *
  * ## 锚点来源（en/zh 两档同收；lib 措辞漂移由单测夹具先行变红）
  *
@@ -76,7 +76,7 @@ export function noPolicyRejection(text) {
 }
 
 /**
- * agent 相位路由判据的汇总读数（acceptance-017 `phaseAgent` 消费）。
+ * agent 阶段路由判据的汇总读数（acceptance-017 `phaseAgent` 消费）。
  *
  * @param {string[]} results - 会话转录里的工具结果文本序列。
  * @param {string} provider - 期望的 provider id。

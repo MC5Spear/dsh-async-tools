@@ -1,7 +1,7 @@
 /**
  * 探针：`defineTool` 对 `parameters` 的**取值器**做了什么？
  *
- * 背景：三处工具工厂把 `parameters.<name>` 与 `description` 改成了取值器，以便
+ * 背景：三处工具工厂把 `parameters.<name>` 与 `description` 改成了取值器（getter），以便
  * "改设置后模型看到的描述立刻更新"（`dsh-tools` 按引用存 definition、投影时现读字段）。
  * 主描述已验证生效；但 `tool.parameters.yield_ms` 读到 `undefined`——
  * 需要先弄清 `defineTool` 是否原样保留参数对象，再决定怎么改。
@@ -10,7 +10,7 @@
  */
 import { defineTool } from '@deepseek-ai/dsh-tools';
 
-/** `defineTool` 要求 `output` 带 `schema` 与 `render`，否则在 :840 抛。 */
+/** `defineTool` 要求 `output` 带 `schema` 与 `render`，缺了即抛（`dsh-tools` 的 defineTool 入口校验）。 */
 const output = {
   schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean', required: true } } },
   render: () => []

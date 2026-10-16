@@ -19,13 +19,14 @@
 #      引擎服务 workflow-ptc 保持在场；
 #   4b. tool-workflow 置 disabled: true（需求 §3.1：编排只走 async_workflow）；第五行
 #      async_workflow 插 delegation 组内 tool-workflow 行后——编排引擎是组内隔离服务，
-#      组外行取不到（需求 §3.2 末条、设计 §3.5）；workflow-ptc（引擎服务，供电）保留。
+#      组外行取不到（需求 §3.2 末条、设计 §3.5）；workflow-ptc（引擎服务，提供编排引擎）保留。
 #      失去宿主 workflow 工具的脚本编排参数集合——出路 = async_workflow（同引擎、
 #      异步语义），或按宿主规则换预设开新会话（需求 §3.1 末条）；
 #   5. tool-plugin-manager 的 disabled 从基线的 !!js 表达式换成布尔 true
 #      （与 dsh-async 补丁一致的手术）；
 #   6. persona prefix 在基线身份句之上加异步纪律（与 dsh-async 预设逐字同源）+
-#      后台委托强制规则（锚句被 tools/validate-preset.mjs 锁死，同 dsh-async 补丁）；
+#      后台委托强制规则；锚句同样被 tools/validate-preset.mjs 锁死（锚句集与
+#      dsh-async 略异：第三句为 wait with `async_wait_agent`）；
 #   7. 预设行不带 disabled 护栏（与 dsh-async 补丁同款，理由见该文件头注）；
 #   8. 其余行与基线逐字一致（含组内整段 config、skill-filesystem 的 customSkillDirs
 #      表达式与行序——cordis 的 skill 系行在尾部，不在 tool-jobs 之后）。
@@ -186,7 +187,7 @@
                 name: '@deepseek-ai/dsh-workflow-ptc'
                 config:
                   provider: spawn
-              # 宿主编排工具禁用（需求 §3.1：编排只走 async_workflow；引擎服务行保留供电）。
+              # 宿主编排工具禁用（需求 §3.1：编排只走 async_workflow；引擎服务行保留、提供编排引擎）。
               - id: tool-workflow
                 name: '@deepseek-ai/dsh-tool-workflow'
                 disabled: true

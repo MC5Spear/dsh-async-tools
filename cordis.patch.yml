@@ -22,7 +22,7 @@
 # 运行时 inject**（`lib/host.js` 的 `applyHostHalf`：纪律段
 # systemPrompt/sessions/sessionProjections 与提问接管 sessions/
 # sessionProjections/agents——服务缺席时子 scope 不激活、插件照常装载，失效
-# 安全方向＝关）。静态 inject 的八个服务（tools / jobs / shell 执行器 /
+# 安全方向 = 关）。静态 inject 的八个服务（tools / jobs / shell 执行器 /
 # shellEnv / subagents / timer / sessionProjections / agents——设计 §1.3；
 # `agents` 供可续派生与注册表状态读取，`sessionProjections` 供模型选择路由
 # 校验）是**工具角色**的依赖，宿主行只是与工具行共用同一个 `lib/index.js` 入口。

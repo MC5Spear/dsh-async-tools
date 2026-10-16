@@ -1,17 +1,16 @@
 /**
  * 缺陷定位探针：把四个工具的**实际返回值**喂给宿主自己的输出校验器。
  *
- * 为什么需要它：包内单测可能全绿，而验证实例上 `async_run` 报
+ * 为什么需要它：单测断言返回值的**字段**，宿主校验器验的是 `output.schema`
+ * 本体，而 schema 校验只在运行时发生（`@deepseek-ai/dsh-tools/lib/index.js:3543`）
+ * ——包内单测可能全绿，验证实例上仍报
  * `tool "async_run" returned invalid output: "value" must match exactly one oneOf branch (matched 0)`。
- * 原因是单测只断言返回值的**字段**，没有用宿主校验器验过**输出 schema 本体**，
- * 而 `output.schema` 的校验只在运行时发生（`@deepseek-ai/dsh-tools/lib/index.js:3543`）。
- * 这个坑已经用 `test/_helpers.mjs` 的 `assertOutputShape` / `checkedTool` 固化成单测，
- * 本探针保留作为"改 schema 之后先手工看一眼"的入口。
+ * 常规防线在 `test/_helpers.mjs` 的 `assertOutputShape` / `checkedTool`（单测内建）；
+ * 本探针是改 schema 之后的手工复核入口（单测绿≠宿主校验器绿）。
  *
- * 假件直接复用 `test/_helpers.mjs`（契约级替身：行为完整的假作业注册表 + `shell.execute`
- * 安装口 + `fakeProc`）。此前本文件自带的最小假 ctx 在"执行即注册"重构后漂移
- * （`jobs.start` 不执行 `run` 回调、缺 `shell.execute`），导致探针挂起——
- * 复用测试替身后契约漂移会让单测先红，探针不再独自陈旧。
+ * 假件复用 `test/_helpers.mjs`（契约级替身：行为完整的假作业注册表 + `shell.execute`
+ * 安装口 + `fakeProc`）——探针与单测共用同一套替身，契约再漂移会让单测先红，
+ * 探针不会独自陈旧。
  *
  * 用法：`node --import ./tools/_host-hooks.mjs tools/probe-output-schema.mjs`；
  * 任一分支校验失败即非零退出。

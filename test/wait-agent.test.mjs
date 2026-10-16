@@ -461,7 +461,7 @@ test('async_wait_agent（T2）：用户插话 → interrupted，子代理一次�
   const result = await pending;
   assert.equal(result.status, 'interrupted');
   assert.match(result.note, /Wait interrupted: a user message has arrived/);
-  assert.match(result.note, /is still running in the background and is completely unaffected/);
+  assert.match(result.note, /Ending the wait did not stop subagent child-42/);
   assert.match(result.note, /async_wait_agent/);
 
   // 核心不变量：打断**等待**不得打断**子代理**。
@@ -522,7 +522,7 @@ test('async_wait_agent（R30 通道轮 起始检查）：作答先到、等待�
   agent.inbox.nextStep.length = 0; // 还原共享 fixture
 });
 
-test('async_wait_agent（T2 反向对照）：工具自身被取消 → 结束等待，但子代理仍未被碰', async () => {
+test('async_wait_agent（T2 反向对照）：工具自身被取消 → 取消口径交回，但子代理仍未被碰', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   const { state } = installChildren(f, { children: [runningChild()] });
@@ -532,7 +532,12 @@ test('async_wait_agent（T2 反向对照）：工具自身被取消 → 结束�
   await new Promise((resolve) => setTimeout(resolve, 5));
   controller.abort(new Error('用户点了停止'));
 
-  await assert.rejects(() => pending, /用户点了停止/);
+  // 设计 §2.5 取消口径：取消收敛返回取消文案（合法形状——宿主对已中止调用
+  // 会整体改写模型可见结果，这里钉的是执行结果侧），不再以竞速 reject 上抛。
+  const result = await pending;
+  assert.equal(result.status, 'interrupted');
+  assert.match(result.note, /The wait was cancelled/);
+  assert.match(result.note, /the cancellation did not stop subagent child-42/);
   assert.deepEqual(state.interrupted, [], '取消工具调用也不等于取消子代理');
   assert.equal((await f.ctx.subagents.listChildren(agent.id)).length, 1);
 });
@@ -607,7 +612,7 @@ test('async_wait_agent：子代理列表不可用 → 报错而不是假装结�
   );
 });
 
-test('async_wait_agent：工具自身被取消 → 立即结束等待', async () => {
+test('async_wait_agent：工具自身被取消 → 立即结束等待（取消口径交回）', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   installChildren(f, { children: [runningChild()] });
@@ -616,9 +621,13 @@ test('async_wait_agent：工具自身被取消 → 立即结束等待', async ()
 
   const pending = tool.execute({ agent_id: CHILD, wait_ms: 600000 }, { agent, signal: controller.signal });
   await new Promise((resolve) => setTimeout(resolve, 5));
+  const tCancel = Date.now();
   controller.abort(new Error('用户点了停止'));
 
-  await assert.rejects(() => pending, /用户点了停止/);
+  const result = await pending;
+  assert.equal(result.status, 'interrupted');
+  assert.match(result.note, /The wait was cancelled/);
+  assert.ok(Date.now() - tCancel < 500, '取消必须立即交回，不等剩余预算或复查');
 });
 
 test('async_wait_agent：结束时清理所有监听器（R4 可逆性）', async () => {
@@ -980,7 +989,7 @@ test('F2：接线段中途抛错 → 已建立的订阅全部撤销后原样上�
   assert.equal(blocked, false, '探针还原后 ctx.on 可用（包装只在被测调用期间生效）');
 });
 
-test('R29-a（判据 1·竞速期）：取消后竞速以 aborted 拒绝退出，同样不得 unhandledRejection', async () => {  const f = fakeCtx();
+test('R29-a（判据 1·竞速期）：取消收敛交回取消口径，且不得 unhandledRejection', async () => {  const f = fakeCtx();
   installChildren(f, { children: [runningChild()] });
   const controller = new AbortController();
   const tool = createWaitAgentTool(f.ctx, config);
@@ -988,11 +997,14 @@ test('R29-a（判据 1·竞速期）：取消后竞速以 aborted 拒绝退出�
 
   const pending = tool.execute({ agent_id: CHILD, wait_ms: 60000 }, { agent, signal: controller.signal });
   await new Promise((resolve) => setTimeout(resolve, 3)); // 屏障已过，竞速已组装
-  controller.abort(new Error('tool cancelled')); // aborted reject → Promise.race 跟着 reject
-  await assert.rejects(() => pending, /tool cancelled/);
+  controller.abort(new Error('tool cancelled')); // aborted 拒绝归一为标签收敛（设计 §2.5）
+  const result = await pending;
+  assert.equal(result.status, 'interrupted');
+  assert.match(result.note, /The wait was cancelled/);
+  assert.match(result.note, /cancellation did not stop subagent child-42/);
   await new Promise((resolve) => setTimeout(resolve, 30));
 
-  assert.equal(probe.take().length, 0, '竞速期 reject 由 Promise.race 接住，不得外泄');
+  assert.equal(probe.take().length, 0, '取消拒绝在创建点即被归一链消费，不得外泄');
   probe.off();
 });
 
@@ -1009,6 +1021,7 @@ test('R29-b（判据 2·入口中止）：调用进来时 signal 已 aborted →
 
   assert.equal(result.status, 'interrupted');
   assert.equal(result.waited_ms, 0, '一次都没等');
+  assert.match(result.note, /The call was cancelled before the wait began/, '取消口径（设计 §2.5）：不与消息到达口径混用');
   assert.match(result.note, /async_wait_agent\(agent_id="child-42", wait_ms=\.\.\.\)/, '可复制的恢复调用');
   assert.equal(calls.length, 0, 'listChildren 一次都不能被调用（不订阅、不查询、不武装）');
 });
@@ -1123,7 +1136,7 @@ test('R55（判据 1）：等待开始时 next-step 已有 user 插话 → 立�
   // 预算消耗——不变量是"立即返回"（毫秒级）。
   assert.ok(result.waited_ms < 25, `起始命中必须立即返回（实得 ${String(result.waited_ms)} ms）`);
   assert.match(result.note, /Wait not started: a user message had already arrived/, 'note 按起始命中措辞（到达时点在等待开始前）');
-  assert.match(result.note, /still running in the background and is completely unaffected/);
+  assert.match(result.note, /Ending the wait did not stop subagent child-42/);
   assert.match(result.note, /async_wait_agent/);
 
   // 停点断言：不订阅、不进存在屏障。
@@ -1221,4 +1234,49 @@ test('R55（判据 5）：先到插话与未领取结算通知并存 → settled
   assert.match(result.note, /separate message/, 'settledNote 既有文案保留（最终回答不在本返回值）');
   assert.equal(calls.length, 0, '并存决定也走入口早退——不进存在屏障');
   agent.inbox.nextStep.length = 0; // 还原共享 fixture
+});
+
+test('R55（判据 5b·注册表侧并存）：先到 user 插话 + 注册表现读 idle → settled 并存插话说明（完成优先于打断）', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  const { calls } = installChildren(f, { children: [runningChild()] });
+  // 先到 user 插话 + 注册表读 idle：没有结算通知，但注册表现读是当次权威观察
+  // （事件通道在等待开始前已发生过、不会再来）——idle 按停止态交回，插话以
+  // 并存说明表达，不吞也不翻案成 interrupted。
+  f.ctx.agents = { get: (id) => (id === CHILD ? { status: 'idle' } : undefined) };
+  agent.inbox.nextStep.push({ id: 'steer-1', source: { kind: 'user' } });
+  const tool = createWaitAgentTool(f.ctx, config);
+
+  const result = await withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec));
+  assert.notEqual(result.status, '__test-hang__', '入口三分复查必须立即返回');
+  assert.equal(result.status, 'settled', '注册表 idle 是停止证据 → settled（不按插话走 interrupted）');
+  assert.ok(result.waited_ms < 25, `入口早退（实得 ${String(result.waited_ms)} ms）`);
+  // note 三段：插话到达说明（wait.wokeByMessage，含"本次等待没有终止目标的工作"）
+  // + via.idle + settledNote。
+  assert.match(result.note, /A processable message arrived/, '先到的插话以并存说明在场（wokeByMessage）');
+  assert.match(result.note, /This wait did not stop the target/, '并存说明是行为陈述（不断言插话终止了什么）');
+  assert.match(result.note, /status turned idle/, 'via=idle（注册表现读的停止证据）');
+  assert.equal(calls.length, 0, '并存决定走入口早退——不进存在屏障');
+  agent.inbox.nextStep.length = 0; // 还原共享 fixture
+});
+
+test('R55（判据 5b·屏障期 idle 信号）：存在性未证时 agent/status 转 idle → settled（信号对象不被切断标签压没）', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  // 目录恒空：屏障查不到行（存在性未定），重试睡眠中 emit idle——旧的
+  // 字符串标签形态会把来源压成 'cut-settled' 再落重分类（not_found 谎报），
+  // 对象保存形态必须立即按停止态交回。
+  const { calls } = installChildren(f, { children: [] });
+  const tool = createWaitAgentTool(f.ctx, config);
+
+  const pending = tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec);
+  await new Promise((resolve) => setTimeout(resolve, 3)); // 进入屏障重试睡眠
+  f.emit('agent/status', { agent: { id: CHILD }, status: 'idle' });
+
+  const result = await withHangGuard(pending);
+  assert.notEqual(result.status, '__test-hang__', '屏障期 idle 信号必须及时结束等待');
+  assert.notEqual(result.status, 'not_found', '权威 idle 已到场就不得报 not_found（存在性未证不是否定证据）');
+  assert.equal(result.status, 'settled', 'via=agent-status-idle 是当次权威观察 → settled');
+  assert.match(result.note, /status turned idle/, 'via.idle 文案（与事件/轮询通道同款）');
+  assert.ok(calls.length >= 1, `确实进过屏障（实查 ${String(calls.length)} 次 listChildren）`);
 });

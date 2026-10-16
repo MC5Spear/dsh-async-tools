@@ -3,7 +3,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { escapeLogValue, interruptedNote, settledNote, truncate, waitAgainNote, waitDigest, yieldDigest, yieldNote } from '../lib/output.js';
+import { cancelledNote, cancelledPreexistingNote, escapeLogValue, interruptedNote, settledNote, truncate, waitAgainNote, waitDigest, yieldDigest, yieldNote } from '../lib/output.js';
 import { resolveConfig } from '../lib/config.js';
 
 test('escapeLogValue（R29-f）：CR/LF/TAB 转成字面转义序列——操作者日志的单行防线', () => {
@@ -101,12 +101,59 @@ test('waitAgainNote：说明作业未受影响且可再次等待', () => {
   assert.match(note, /600000 ms/);
 });
 
-test('interruptedNote（R4 硬性需求）：必须说明后台工作没有受影响', () => {
+test('interruptedNote（R4 硬性需求）：必须说明结束等待没有终止后台工作（行为陈述，不作运行断言）', () => {
   const note = interruptedNote({ subject: 'job j-1', waitedMs: 812, resume: 'async_wait_job(job_id="j-1", wait_ms=...)' });
   assert.match(note, /Wait interrupted: a user message has arrived/);
   assert.match(note, /812 ms/);
-  assert.match(note, /is still running in the background and is completely unaffected/);
+  assert.match(note, /Ending the wait did not stop job j-1/);
   assert.match(note, /async_wait_job/);
+});
+
+test('cancelledNote/cancelledPreexistingNote（设计 §2.5 取消口径）：取消与消息到达分开，行为陈述不作运行断言', () => {
+  const note = cancelledNote({ subject: 'job j-1', waitedMs: 300, resume: 'async_wait_job(job_id="j-1", wait_ms=...)' });
+  assert.match(note, /The wait was cancelled after 300 ms/);
+  assert.match(note, /cancellation did not stop job j-1/);
+  assert.match(note, /never stops the background work/);
+  assert.doesNotMatch(note, /still running/, '取消出口不做状态复查，不得写运行断言');
+  assert.doesNotMatch(note, /user message/, '取消不是消息到达，不用 interrupted 口径');
+
+  const pre = cancelledPreexistingNote({ subject: 'subagent child-9', resume: 'async_wait_agent(agent_id="child-9", wait_ms=...)' });
+  assert.match(pre, /cancelled before the wait began/);
+  assert.match(pre, /did not stop subagent child-9/);
+  assert.match(pre, /async_wait_agent/);
+});
+
+test('yieldNote（设计 §2.5 证据分级）：复查快照缺席 → 未证实档，不作"仍在运行"断言', () => {
+  const budget = yieldNote({
+    jobId: 'j-1', yieldMs: 20000, maxWaitMs: 600000, defaultWaitMs: 30000,
+    elapsedMs: 20100, mode: 'budget', unverified: true
+  });
+  assert.match(budget, /outlived the 20000 ms first wait/);
+  assert.match(budget, /could not confirm its current state/);
+  assert.doesNotMatch(budget, /command is still running/, '无当次快照支撑不写运行断言（"instead of assuming it is still running" 的否定指引不算断言）');
+  assert.match(budget, /async_wait_job/, '句柄与复查出路保留');
+
+  const user = yieldNote({
+    jobId: 'j-1', yieldMs: 20000, maxWaitMs: 600000, defaultWaitMs: 30000,
+    elapsedMs: 500, mode: 'user', unverified: true
+  });
+  assert.match(user, /a user message arrived/);
+  assert.match(user, /ending the wait did not stop the command/, '行为陈述保留（句中小写形态）');
+  assert.doesNotMatch(user, /background task keeps running/);
+
+  const late = yieldNote({
+    jobId: 'j-1', yieldMs: 20000, maxWaitMs: 600000, defaultWaitMs: 30000,
+    elapsedMs: 500, mode: 'late', summary: 'Late answer for color: red', unverified: true
+  });
+  assert.match(late, /A late answer has arrived/);
+  assert.match(late, /could not confirm the command's current state/, '消息说明后补未证实行');
+
+  // 有快照（unverified 缺省）时保留现行句柄口径（运行断言有非终态快照支撑）。
+  const verified = yieldNote({
+    jobId: 'j-1', yieldMs: 20000, maxWaitMs: 600000, defaultWaitMs: 30000,
+    elapsedMs: 20100, mode: 'budget'
+  });
+  assert.match(verified, /The command is still running/);
 });
 
 test('settledNote：必须说明最终回答不在返回值里（设计 §6.3）', () => {

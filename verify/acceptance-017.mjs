@@ -319,10 +319,10 @@ async function phaseFace() {
   record('冒烟：四个 async_* 都出现在模型实际收到的工具清单里',
     FOUR.every((n) => face.names.includes(n)),
     FOUR.map((n) => `${n}=${face.names.includes(n) ? 'Y' : 'N'}`).join(' '));
-  record('需求 §3.1（Windows 面）无 bash', !face.names.includes('bash'), `bash=${face.names.includes('bash') ? 'Y' : 'N'}`);
-  record('需求 §3.1（Windows 面）无 pwsh', !face.names.includes('pwsh'), `pwsh=${face.names.includes('pwsh') ? 'Y' : 'N'}`);
+  record('需求 §3.1（Windows 预设的工具清单）无 bash', !face.names.includes('bash'), `bash=${face.names.includes('bash') ? 'Y' : 'N'}`);
+  record('需求 §3.1（Windows 预设的工具清单）无 pwsh', !face.names.includes('pwsh'), `pwsh=${face.names.includes('pwsh') ? 'Y' : 'N'}`);
   // 同步 shell 的无条件禁用要看**两个口子都关**：工具不在清单里（上两条）且没有同步执行入口
-  record('需求 §3.1 面里没有同步 shell 替代物（run_code 也不在）',
+  record('需求 §3.1 清单里没有同步 shell 替代物（run_code 也不在）',
     !face.names.includes('run_code'), `run_code=${face.names.includes('run_code') ? 'Y' : 'N'}`);
 
   const fourSchemas = face.tools.filter((t) => FOUR.includes(String(t.name)));
@@ -344,10 +344,10 @@ async function phaseControl() {
   if (ctlFace === null) throw new Error('standard 会话里没有 request/header');
   faces.control = ctlFace.names;
   say(`standard 工具清单（${String(ctlFace.names.length)} 个）：${ctlFace.names.join(', ')}`);
-  record('对照：standard 面不含任何 async_*（未泄漏到全局工具层）',
+  record('对照：standard 预设清单不含任何 async_*（未泄漏到全局工具层）',
     !FOUR.some((n) => ctlFace.names.includes(n)),
     `async_* 命中=${String(FOUR.filter((n) => ctlFace.names.includes(n)).length)}`);
-  record('对照：standard 面仍是标准形态（含 pwsh）',
+  record('对照：standard 预设清单仍是标准形态（含 pwsh）',
     ctlFace.names.includes('pwsh'), `pwsh=${ctlFace.names.includes('pwsh') ? 'Y' : 'N'}`);
 }
 

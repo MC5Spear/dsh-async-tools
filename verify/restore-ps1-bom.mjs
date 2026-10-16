@@ -79,7 +79,7 @@ if (CHECK_ONLY) {
   console.log(`${String(missing.length)} 个文件**丢了 BOM**（HEAD 里有）：`);
   for (const rel of missing) console.log(`  FAIL  ${rel}`);
   console.log('');
-  console.log('跑 `node verify/restore-ps1-bom.mjs` 补回，或 `npm run check` 里的 check:ps1-bom。');
+  console.log('跑 `node verify/restore-ps1-bom.mjs` 补回，或 `node verify/check-ps1-bom.mjs`。');
   process.exit(1);
 }
 

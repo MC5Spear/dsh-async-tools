@@ -26,7 +26,7 @@
  *   释放会话（顺证原生链未被接管路径损伤）。
  * - ④ `askUiSeat='sidebar'` 后再问 → 徽标（`.ats-ask-badge`）在场、浮框缺席；
  *   点徽标浮框出现（纯呈现层切换，实例环境同 ③）。
- * - ⑤ 重启验证实例 → 设置与行为不变（开关仍开、提问仍被接管）；复原默认。
+ * - ⑤ 重启验证实例 → 设置与行为不变（开关仍开、提问仍被接管）；复原到探针固定档。
  * - ⑥ 等待期间作答：Agent 发长跑作业 → 提问（超时放行）→ 进入 `async_wait_job`
  *   长等待；此时对超时批作答 → 迟到作答事件（需求 §4.4：插件事件 + 起始检查）
  *   唤醒等待 → 工具**提前返回运行句柄**（tool/result 渲染文含 note 锚句「迟到作答已到/A late answer
@@ -601,7 +601,7 @@ async function mainPhase() {
     instance.close();
   }
 
-  console.log('· 收尾：留着 askTakeover=true（判据⑤要穿过重启）——重启相会复原默认');
+  console.log('· 收尾：留着 askTakeover=true（判据⑤要穿过重启）——重启相会复原到探针固定档');
 }
 
 // ══ 重启相（⑤）═══════════════════════════════════════════════════════════
@@ -628,15 +628,16 @@ async function afterRestartPhase() {
     text5.includes(A.timeout) && lastAssistantText(t5).length > 0,
     `锚句=${String(text5.includes(A.timeout))} 末条=${JSON.stringify(lastAssistantText(t5).slice(0, 80))}`);
 
-  // 复原：探针自控的四字段回**默认值**（不回写起始快照——上跑遗留的 true 会被
-  // 级联当起点，真机读数）；别人的字段（agentLang 等）探针从未改过，不碰。
+  // 复原到探针固定档（overlay；不动共享实例的座位选择）：探针自控的四字段回
+  // 固定值（不回写起始快照——上跑遗留的 true 会被级联当起点，真机读数）；
+  // 别人的字段（agentLang 等）探针从未改过，不碰。
   const restorePatch = { askTakeover: false, askTimeoutMs: 60000, askUiSeat: 'overlay', uiLang: 'auto' };
-  console.log(`· 复原默认：${JSON.stringify(restorePatch)}`);
+  console.log(`· 复原到探针固定档：${JSON.stringify(restorePatch)}`);
   await rpc('settings/update', { ns: NS, patch: restorePatch });
   const restored = await rpc('settings/describe', {});
   const nsRestored = restored.namespaces.find((n) => (n.ns ?? n.namespace ?? n.id) === NS);
   log.nsRestored = nsRestored?.value;
-  check('⑤-c 复原默认（回读比对）',
+  check('⑤-c 复原到探针固定档（回读比对）',
     nsRestored?.value?.askTakeover === false && nsRestored?.value?.askTimeoutMs === 60000
     && nsRestored?.value?.askUiSeat === 'overlay' && nsRestored?.value?.uiLang === 'auto',
     `读数=${JSON.stringify(nsRestored?.value)}`);
@@ -651,10 +652,10 @@ try {
 } catch (error) {
   check('探针自身无异常', false, error instanceof Error ? `${error.message}\n${String(error.stack ?? '')}` : String(error));
   try {
-    // 异常路径复原默认（与 ⑤-c 同一套四字段——探针自控范围，别人的字段不碰）。
+    // 异常路径复原到探针固定档（与 ⑤-c 同一套四字段——探针自控范围，别人的字段不碰）。
     const restorePatch = { askTakeover: false, askTimeoutMs: 60000, askUiSeat: 'overlay', uiLang: 'auto' };
     await rpc('settings/update', { ns: NS, patch: restorePatch });
-    console.log(`  （异常路径复原默认：${JSON.stringify(restorePatch)}）`);
+    console.log(`  （异常路径复原到探针固定档：${JSON.stringify(restorePatch)}）`);
   } catch (restoreError) {
     console.log(`  （异常路径复原失败：${String(restoreError)}）`);
   }

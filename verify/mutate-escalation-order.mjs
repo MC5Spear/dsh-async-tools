@@ -102,7 +102,7 @@ const MUTATIONS = [
 
 const baseline = runTests();
 if (baseline.red) {
-  console.log(`BASELINE-RED  未变异时 ${TEST} 就是红的（${baseline.summary}）——先修基线；若括号里是空的、且本脚本以 2 退出，更可能是默认沙箱禁止捕获子进程输出（EPERM）：本脚本要跑测试文件，需带提权运行。规范见 verify/README.md 的「判据必须在默认权限下可跑」。`);
+  console.log(`BASELINE-RED  未变异时 ${TEST} 就是红的（${baseline.summary}）——先修基线；若括号里是空的、且本脚本以 2 退出，更可能是默认沙箱禁止捕获子进程输出（EPERM）：本脚本要跑测试文件，需带提权运行。规范见 verify/README.md 的「优先默认权限执行；纯函数判断尽量进程内复用」要点。`);
   process.exit(2);
 }
 console.log(`基线：未变异时 ${TEST} 全绿（${baseline.summary}）。`);

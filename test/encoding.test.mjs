@@ -42,9 +42,32 @@ test('编码判据（#7 断言 B2）：合法低占比内容可以用 ENCODING-O
   // 纯生僻字与双重编码在"没有高频字"上**不可区分**（判据能看的就是字符分布），
   // 所以它默认会被报。这是刻意的：猜的代价是漏报真实损坏。
   assert.equal(inspectText(rare).doubleEncoded, true, '生僻字内容默认会被报（不可区分）');
-  // 正确处置是显式豁免，且豁免必须**写在文件里**（逐行标记，不是文件白名单）。
+  // 正确处置是显式豁免。豁免是**文件级**的（占比判据是全文统计量，行级豁免
+  // 无判定力），与 U+FFFD 的行级示例豁免不同粒度——见 _encoding-core.mjs 头注。
   const exempted = `<!-- ENCODING-OK: 合法生僻字样本 -->\n${rare}`;
   assert.equal(inspectText(exempted).doubleEncoded, false, 'ENCODING-OK 标记必须能豁免');
+});
+
+test('编码判据（D02 豁免边界）：标记豁免占比判定，不豁免 U+FFFD/CRLF——四形态分列', () => {
+  // ① 同行替换字符：U+FFFD 带示例标记（同粒度=行）→ 该行豁免。
+  assert.equal(inspectText('示例 ENCODING-EXAMPLE：\uFFFD 损坏长什么样').hardBroken, 0, '行级示例豁免只免当行');
+  // ② ENCODING-OK 在别的行、U+FFFD 在另一行：文件级豁免**管不到** U+FFFD 检查。
+  assert.equal(
+    inspectText('<!-- ENCODING-OK: 合法生僻字样本 -->\n别处混入的\uFFFD').hardBroken, 1,
+    'ENCODING-OK 不豁免非法字节检查（两类判据照常全量生效）'
+  );
+  // ③ 合法文本：无标记、占比正常 → 全绿（不因标记机制误伤）。
+  const legit = inspectText('这是一段正常中文正文，包含常用字与 async_wait_job 等标识。');
+  assert.equal(legit.doubleEncoded, false);
+  assert.equal(legit.hardBroken, 0);
+  // ④ 损坏文本：真双重编码 + 恰好带 ENCODING-OK 行 → 占比通道被豁免（这是
+  //    头注已声明的风险），但 U+FFFD 若在场仍会拦——占比通道的漏过不等于全绿。
+  const doubleEncWithMarker = `<!-- ENCODING-OK -->\n${'澶嶆牳娓呭崟'.repeat(20)}`;
+  assert.equal(inspectText(doubleEncWithMarker).doubleEncoded, false, '占比通道按文件级约定豁免（人工确认语义）');
+  assert.equal(
+    inspectText(`<!-- ENCODING-OK -->\n${'澶嶆牳娓呭崟'.repeat(20)}\n\uFFFD`).hardBroken, 1,
+    '同文件混入非法字节仍被拦——豁免范围没有扩大到其他判据'
+  );
 });
 
 test('编码判据（#7 断言 C）：CRLF 必须被报出来（而不只是打印）', () => {

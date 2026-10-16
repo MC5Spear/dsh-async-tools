@@ -165,12 +165,13 @@ test('async_agent：startContinuable 恰一次，request 逐字段对齐宿主�
   assert.equal(env.continuables.length, 1, '恰调用一次');
   const call = env.continuables[0];
   assert.equal(call.provider, 'spawn');
-  assert.equal(call.label, '标签甲');
-  assert.equal(call.request.label, '标签甲');
+  assert.equal(call.label, '标签甲', '展示名走 startContinuable 顶层 label');
   assert.deepEqual(call.request.prompt, [{ type: 'text', text: '任务书。' }]);
   assert.equal(call.request.parent, EXEC_AGENT, 'parent 必须是 exec.agent（:491）');
-  // 参数集合=结构保证：request 的键集恰好是 label/prompt/parent——透传键一概不得出现。
-  assert.deepEqual(Object.keys(call.request).sort(), ['label', 'parent', 'prompt']);
+  // 参数集合=结构保证：request 的键集恰好是 prompt/parent（类型契约
+  // ContinuableStartSpec.request = Omit<SubagentStartRequest,'label'|'signal'|
+  // 'outputSchema'>，展示名不进 request）——透传键一概不得出现。
+  assert.deepEqual(Object.keys(call.request).sort(), ['parent', 'prompt']);
 });
 
 test('async_agent：传入白名单命中的 provider+model → request.agentOptions 恰两键，note 报告 requested 路由（R13）', async () => {

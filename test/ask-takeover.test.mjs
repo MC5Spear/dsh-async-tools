@@ -1,5 +1,5 @@
 /**
- * 提问接管单测（需求 §4 提问接管与待答交互，判据 J1–J20 + 变异）。
+ * 提问接管单测（需求 §4 提问接管与待答交互，判据 J1–J24 + E1–E8 + 变异）。
  *
  * ## 这条需求修的是什么
  *
@@ -574,6 +574,58 @@ hostTest('J11-a：运行中投递 → inject 恰一次、通知形（自声明 k
   await pending2;
   registry2.submitLate({ batchId: items2[0].batchId, questionId: 'q9', kind: 'answer', selected: ['a', 'b'] });
   assert.match(agent2.injectCalls[0].content[0].text, /a, b/, 'en 标签以逗号空格相接');
+});
+
+hostTest('J24（A10）：选项说明进通知正文——同标签异说明不丢差异；无说明选项不拼空', async () => {
+  // 互异标签配不同操作/风险说明：只拼 label 会让「重建/重启」这类近似标签的
+  // 真实区别消失（通知自含完整题目，不依赖旧工具调用记忆——用户裁定）。
+  const agent = fakeAgent();
+  const { registry, timer } = makeRegistry({ agentLang: 'zh' });
+  const q = Q('qd', {
+    multiSelect: true,
+    options: [
+      { label: '执行', description: '立即运行，不可撤销' },
+      { label: '执行', description: '先出计划，等待批准' },
+      { label: '跳过' }
+    ]
+  });
+  const pending = registry.take(makeRequest(agent, [q]), agent);
+  const { items } = registry.stateItems();
+  timer.fire(0);
+  await pending;
+  const outcome = registry.submitLate({
+    batchId: items[0].batchId, questionId: 'qd', kind: 'answer',
+    selected: ['执行', '跳过'], custom: '选第二个执行'
+  });
+  assert.equal(outcome, 'late');
+  const text = agent.injectCalls[0].content[0].text;
+  // 两条同标签的说明都在场（丢了任一条就无法区分用户选的是哪种「执行」）。
+  assert.ok(text.includes('执行：立即运行，不可撤销'), '说明一在场（zh 冒号连接）');
+  assert.ok(text.includes('执行：先出计划，等待批准'), '说明二在场——同标签异说明不合并');
+  assert.ok(text.includes('跳过、') || text.includes('跳过\n'), '无说明选项照常拼入（不残留空说明连接符）');
+  assert.doesNotMatch(text, /跳过：/, '无 description 的选项不拼「：」');
+  assert.ok(text.includes('multiSelect=true'), '多选属性在场');
+  assert.ok(text.includes('选第二个执行'), '自定义补充在场');
+  assert.match(text, /时延/, '时间信息在场');
+
+  // en 档：说明用 ": " 连接，选项间仍是 ", "。
+  const agentEn = fakeAgent('s-en24');
+  const { registry: regEn, timer: timEn } = makeRegistry({ agentLang: 'en' });
+  const qEn = Q('qe', {
+    options: [
+      { label: 'Run', description: 'executes immediately' },
+      { label: 'Skip' }
+    ]
+  });
+  const pendingEn = regEn.take(makeRequest(agentEn, [qEn]), agentEn);
+  const itemsEn = regEn.stateItems().items;
+  timEn.fire(0);
+  await pendingEn;
+  regEn.submitLate({ batchId: itemsEn[0].batchId, questionId: 'qe', kind: 'answer', selected: ['Run'] });
+  const textEn = agentEn.injectCalls[0].content[0].text;
+  assert.ok(textEn.includes('Run: executes immediately'), 'en 说明用冒号空格连接');
+  assert.ok(textEn.includes('Skip,') || textEn.includes('Skip\n'), '无说明选项照常拼入');
+  assert.doesNotMatch(textEn, /Skip:/, '无 description 不拼冒号');
 });
 
 hostTest('J11-b：空闲且无未领取的本包投递 → followup 恰一次（唤醒开回合，单条也立即）', async () => {
@@ -1154,6 +1206,135 @@ test('J18：客户端模型行为——准入控制/轮询/裸传/失败路径�
   } finally {
     // 假窗并进 eval 引导对象，无需还原 globalThis。
   }
+});
+
+test('J23（A08 三分）：明确拒绝 ≠ 未收到确认；延长失败先复查真期限；读取恢复清错', async () => {
+  const react = makeMiniReact();
+  const intervals = [];
+  const product = await loadClientProduct(react, {
+    setInterval: (fn, ms) => { intervals.push({ fn, ms }); return intervals.length; },
+    clearInterval: () => {}
+  });
+  const snap = { status: 'ready', value: { askTakeover: true, askUiSeat: 'overlay' }, user: {} };
+  const scope = { getSnapshot: () => snap, subscribe: () => () => {}, mutate: async () => true };
+  let stateResult = { ok: true, value: { serverNow: 10_000, items: [] } };
+  let stateCalls = 0;
+  let answerMode = 'ok';
+  let extendMode = 'ok';
+  const remoteNs = {
+    state: () => { stateCalls += 1; return Promise.resolve(stateResult); },
+    answer: () => answerMode === 'reject'
+      ? Promise.reject(new Error('response lost'))
+      : Promise.resolve(answerMode === 'refuse' ? { ok: false } : { ok: true, value: { outcome: 'delivered' } }),
+    ignore: () => Promise.resolve({ ok: true, value: { outcome: 'delivered' } }),
+    extend: () => extendMode === 'reject'
+      ? Promise.reject(new Error('response lost'))
+      : Promise.resolve(extendMode === 'refuse' ? { ok: false } : { ok: true, value: { extended: 1 } })
+  };
+  const ctx = { configForms: { get: () => scope }, uiWorkspace: { openSession() {} } };
+  const model = product.createAskModel(ctx, remoteNs);
+  stateResult = { ok: true, value: { serverNow: 10_000, items: [{
+    batchId: 'ask-3-a', sessionId: 's1', questionId: 'q3', question: '题目',
+    options: [{ label: 'a' }], multiSelect: false, receivedAt: 0, expiresAt: 20_000, phase: 'open'
+  }] } };
+  await intervals[0].fn();
+  await Promise.resolve();
+  await Promise.resolve();
+  const item = model.store.getSnapshot().items[0];
+
+  // ① RPC 拒绝（服务端可能已执行、只是响应丢失）→ 'submit'：不断定"未送达"。
+  answerMode = 'reject';
+  let done = null;
+  model.actions.answer(item, ['a'], undefined, (ok) => { done = ok; });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(done, false);
+  assert.equal(model.store.getSnapshot().callFailed, 'submit', 'RPC 拒绝＝没有确认');
+
+  // ② 宿主明确拒绝（ok:false，请求已送达）→ 'answerRejected'，与 ① 分开。
+  answerMode = 'refuse';
+  model.actions.answer(item, ['a'], undefined, (ok) => { done = ok; });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(done, false);
+  assert.equal(model.store.getSnapshot().callFailed, 'answerRejected', '明确拒绝有专属旗标');
+
+  // ③ 读取恢复：成功轮询刷新面板（真实状态收敛不确定态），动作旗标不闪没；
+  //    下一次同动作成功才清除。
+  answerMode = 'ok';
+  await intervals[0].fn();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(model.store.getSnapshot().callFailed, 'answerRejected', '复查轮询不把动作旗标闪没（报错要能被看到）');
+  model.actions.answer(item, ['a'], undefined, (ok) => { done = ok; });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(done, true);
+  assert.equal(model.store.getSnapshot().callFailed, null, '同动作成功后清除失败旗标');
+
+  // ③b 跨动作不牵连：提交被明确拒绝（answerRejected 挂起）→ 无关的延长成功
+  //     不得抹掉提交族报错；随后同动作成功才清除（B1 审查发现的分歧回归锚）。
+  answerMode = 'refuse';
+  model.actions.answer(item, ['a'], undefined, (ok) => { done = ok; });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(model.store.getSnapshot().callFailed, 'answerRejected', '前置：提交族报错在场');
+  extendMode = 'ok';
+  model.actions.extendSession('s1', () => {});
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(model.store.getSnapshot().callFailed, 'answerRejected',
+    '延长成功只清延长族——提交失败的重试提示不得被无关动作的成功抹掉');
+  answerMode = 'ok';
+  model.actions.answer(item, ['a'], undefined, (ok) => { done = ok; });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(done, true);
+  assert.equal(model.store.getSnapshot().callFailed, null, '同动作（提交族）成功后清除');
+
+  // ④ 延长三分：RPC 拒绝 → 'extend' 且立即 poll() 复查真期限（state 再被调）。
+  const stateCallsBefore = stateCalls;
+  extendMode = 'reject';
+  model.actions.extendSession('s1', () => {});
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(model.store.getSnapshot().callFailed, 'extend');
+  assert.ok(stateCalls > stateCallsBefore, '延长失败路径必须补一次轮询（重试前核对真实期限）');
+
+  // ⑤ 宿主明确拒绝延长（ok:false）→ 'extendRejected'，同样补轮询。
+  await intervals[0].fn();
+  await Promise.resolve();
+  await Promise.resolve();
+  const stateCallsBefore2 = stateCalls;
+  extendMode = 'refuse';
+  model.actions.extendSession('s1', () => {});
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(model.store.getSnapshot().callFailed, 'extendRejected', '延长明确拒绝专属旗标');
+  assert.ok(stateCalls > stateCallsBefore2, '明确拒绝后同样复查真期限');
+
+  // ⑥ 重复操作语义保持：再次成功延长照常累加（不伪幂等）——回执 {extended:n} 透传。
+  extendMode = 'ok';
+  let extended = null;
+  model.actions.extendSession('s1', (ok) => { extended = ok; });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(extended, true, '重复点击仍真实请求（累计行为在服务端，客户端不拦截）');
+
+  // ⑦ 中英文提示三分措辞：未确认档不得断定"未送达"；明确拒绝档说"没有生效"；
+  //    延长未确认档提示"每次点击都会累加"（重试指引诚实）。
+  const zh = product.DICTIONARIES.zh, en = product.DICTIONARIES.en;
+  assert.match(zh['ask.callFailed'], /可能已送达，也可能没有/, 'zh 未确认档：不确定执行与否');
+  assert.match(en['ask.callFailed'], /may or may not have arrived/, 'en 未确认档同');
+  assert.doesNotMatch(zh['ask.callFailed'], /没有送达/, 'zh 未确认档不得断定未送达');
+  assert.match(zh['ask.answerRejected'], /明确拒绝[\s\S]*没有生效/, 'zh 明确拒绝档：可断定未执行');
+  assert.match(en['ask.answerRejected'], /explicitly refused[\s\S]*did not take effect/, 'en 明确拒绝档同');
+  assert.match(zh['ask.extendFailed'], /可能已生效，也可能没有/, 'zh 延长未确认：不确定执行与否');
+  assert.match(zh['ask.extendFailed'], /每次点击都会累加/, 'zh 延长未确认：累加语义诚实（不伪幂等）');
+  assert.match(en['ask.extendFailed'], /each click adds up/, 'en 同');
+  assert.match(zh['ask.extendRejected'], /明确拒绝[\s\S]*没有生效/, 'zh 延长明确拒绝档');
+  assert.match(en['ask.extendRejected'], /explicitly refused[\s\S]*did not take effect/, 'en 延长明确拒绝档');
+  model.dispose();
 });
 
 test('J19：座位渲染门——关/计数 0/座位不匹配三态渲染 null，匹配态出本体', async () => {
@@ -1990,7 +2171,9 @@ test('E7：客户端组头延长按钮——extend 裸传 {sessionId}、失败�
   let extendResult = { ok: true, value: { extended: 1 } };
   const remoteNs = {
     state: (...args) => { stateCalls.push(args); return Promise.resolve({ ok: true, value: { serverNow: 10_000, items: [] } }); },
-    extend: (...args) => { extendCalls.push(args); return Promise.resolve(extendResult); }
+    // 'reject' 哨兵模拟 RPC 拒绝（响应丢失——服务端可能已执行）。
+    extend: (...args) => { extendCalls.push(args); return extendResult === 'reject'
+      ? Promise.reject(new Error('response lost')) : Promise.resolve(extendResult); }
   };
   const ctx = { configForms: { get: () => scope }, remote: {}, uiWorkspace: { openSession() {} } };
   const model = product.createAskModel(ctx, remoteNs);
@@ -2023,16 +2206,24 @@ test('E7：客户端组头延长按钮——extend 裸传 {sessionId}、失败�
   assert.ok(stateCalls.length > stateCallsBefore, '成功 → 立即补一次轮询（新期限经 serverNow 校准显示）');
   assert.equal(model.store.getSnapshot().callFailed, null, '成功清回无失败态（null，不残留类别旗标）');
 
-  // ③ 失败路径：回执 ok:false → callFailed='extend'（面板顶按类别报错），不假报加时成功。
+  // ③ 失败路径（A08 三分）：回执 ok:false 是宿主**明确拒绝** →
+  // callFailed='extendRejected'（面板顶按类别报错），不假报加时成功。
   extendResult = { ok: false };
   toggles[0].props.onClick();
   await Promise.resolve();
   await Promise.resolve();
-  assert.equal(model.store.getSnapshot().callFailed, 'extend', "失败 → callFailed='extend'（面板顶报错按类别）");
+  assert.equal(model.store.getSnapshot().callFailed, 'extendRejected', "明确拒绝 → callFailed='extendRejected'（与未确认档分开）");
   const panel2 = renderComp(() => product.AskList({ ask: model }));
   const failedLine = panel2.children.find((child) => child?.props?.className === 'ats-ask-failed');
   assert.ok(failedLine !== undefined, '失败文案渲染在面板顶');
-  assert.equal(failedLine.children[0], product.DICTIONARIES.en['ask.extendFailed'], '延长失败用专门文案（不与轮询失败混用）');
+  assert.equal(failedLine.children[0], product.DICTIONARIES.en['ask.extendRejected'], '明确拒绝用专属文案（不与其他失败混用）');
+
+  // ④ 未确认路径：RPC 拒绝（响应丢失，执行与否未知）→ 'extend' 档。
+  extendResult = 'reject';
+  toggles[0].props.onClick();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(model.store.getSnapshot().callFailed, 'extend', "RPC 拒绝 → callFailed='extend'（未收到确认档）");
 
   model.dispose();
 });

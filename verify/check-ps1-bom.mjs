@@ -82,6 +82,17 @@ for (const file of walk(VERIFY)) {
 
 console.log(`扫了 ${String(scanned)} 个 PowerShell 脚本：带 BOM ${String(withBom)} 个、无 BOM ${String(withoutBom)} 个。`);
 console.log(`其中 ${String(checked)} 个在 git HEAD 里有对应版本，逐个核对了 BOM 是否保住。`);
+// headHasBom 全部返回 null 时打一行警示：区分「真都是新文件」与「git 输出读不到」。
+if (scanned > 0 && checked === 0) {
+  let gitWorks = false;
+  try {
+    execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO, stdio: ['ignore', 'ignore', 'ignore'] });
+    gitWorks = true;
+  } catch { /* git 不可用或当前目录不在仓库里 */ }
+  console.log(gitWorks
+    ? '警示：所有脚本都不在 git HEAD 里（新文件），只报告状态、不判定。'
+    : '警示：git 输出读不到（git 不可用或不在仓库里），无法与 HEAD 比对，本检查退化为只报告状态。');
+}
 console.log('');
 
 if (problems.length === 0) {

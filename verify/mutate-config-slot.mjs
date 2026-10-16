@@ -19,7 +19,7 @@
  * - **M7 不订阅控制器**：快照换新后卡片再也不重渲染，保存后页面停在旧值。
  *
  * 本脚本**只在内存里**改写源码文本、喂给纯函数判据：不落盘、不需要还原、不 spawn 子进程，
- * 因此默认权限沙箱下可跑（见 `verify/README.md` 的「判据必须在默认权限下可跑」）。
+ * 因此默认权限沙箱下可跑（`verify/README.md` 现行要点：「优先默认权限执行；纯函数判断尽量进程内复用」）。
  * 同一批性质在 `test/two-planes.test.mjs` 的 T5/T16/T18 里各有一条断言（`npm run test:inproc` 跑）。
  *
  * 用法：node verify/mutate-config-slot.mjs

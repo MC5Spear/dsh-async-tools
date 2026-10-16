@@ -29,11 +29,11 @@ function same(a, b) {
  */
 export function judgeLangIndependence(reading) {
   const parts = {
-    // 方向 A：只改 agentLang —— 描述换到中文档，且表单文案逐字不变。
+    // 方向 A：只改 agentLang —— 描述换成中文，且表单文案逐字不变。
     agentSwitch: reading.desc1 !== reading.desc0
       && cjkCount(reading.desc1) > 0 && cjkCount(reading.desc0) === 0,
     uiInvariant: same(reading.labels1, reading.labels0),
-    // 方向 B：只改 uiLang —— 表单文案整体换到英文档，且工具描述逐字不变。
+    // 方向 B：只改 uiLang —— 表单文案整体换成英文，且工具描述逐字不变。
     uiSwitch: !same(reading.labels2, reading.labels1)
       && cjkCount(reading.labels2) === 0 && cjkCount(reading.labels1) > 0,
     agentInvariant: reading.desc2 === reading.desc1,

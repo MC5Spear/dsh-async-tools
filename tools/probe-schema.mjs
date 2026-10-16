@@ -35,7 +35,7 @@ tryDefine('每个键自带 required:true 的 parameters', {
   }
 });
 
-tryDefine('数字枚举 enum（无 required）', {
+tryDefine('字符串枚举 enum（带 required）', {
   ...base,
   parameters: { action: { type: 'string', required: true, enum: ['a', 'b'] } }
 });

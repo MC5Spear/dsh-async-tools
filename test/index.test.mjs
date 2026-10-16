@@ -544,7 +544,7 @@ test('T14：lib/ 的裸包 import 清单 ⊆ package.json 的 deps∪peers——
     ...Object.keys(pkg.peerDependencies ?? {})
   ]);
   assert.ok(declared.has('@deepseek-ai/dsh-shell-env'),
-    ' 的回归锚：dsh-shell-env（ctx.shellEnv.collect 的提供包）必须在 peerDependencies');
+    'T14 的回归锚：dsh-shell-env（ctx.shellEnv.collect 的提供包）必须在 peerDependencies');
 
   const imported = new Set();
   for (const name of readdirSync(LIB_DIR)) {
@@ -591,8 +591,8 @@ test('T15（R38；R44 换钉）：peer 版本锁定整体换代——九个 dsh*
     `peerDependencies 必须与需求 §7.3 兼容基准逐键逐值一致（实际：${JSON.stringify(pkg.peerDependencies)}）`);
   assert.equal(pkg.dependencies?.['@deepseek-ai/schemastery'], '~3.18.4',
     'schemastery 叶子依赖形态不变（~3.18.4）');
-  assert.equal(pkg.version, '0.2.2',
-    '本包 version 必须与 R44 换钉窗一致（0.2.2）——漏改会在 tag 之后才被穿指读抓住');
+  assert.equal(pkg.version, '0.2.3+dsh.0.2.0-rc.2',
+    '本包 version 必须按需求 §7.3.1 带构建元数据全标识（核心 0.2.3 + 目标宿主 dsh.0.2.0-rc.2）——漏元数据会让用户失去兼容信息');
 });
 
 

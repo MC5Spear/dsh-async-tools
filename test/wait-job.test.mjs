@@ -270,7 +270,7 @@ test('async_wait_job（T2）：用户插话 → interrupted，作业一次都没
   const result = await pending;
   assert.equal(result.status, 'interrupted');
   assert.match(result.note, /Wait interrupted: a user message has arrived/);
-  assert.match(result.note, /job j-1 is still running in the background and is completely unaffected/);
+  assert.match(result.note, /Ending the wait did not stop job j-1/);
   assert.match(result.note, /async_wait_job\(job_id="j-1", wait_ms=\.\.\.\) again/, '可复制的恢复调用');
 
   // 核心不变量：打断**等待**不得打断**工作**。
@@ -488,9 +488,34 @@ test('R29-b（判据 2·入口中止）：调用进来时 signal 已 aborted →
 
   assert.equal(result.status, 'interrupted');
   assert.equal(result.waited_ms, 0, '一次都没等');
+  assert.match(result.note, /The call was cancelled before the wait began/, '取消口径（设计 §2.5）：入口取消不用消息到达文案');
   assert.match(result.note, /async_wait_job\(job_id="j-1", wait_ms=\.\.\.\)/, '可复制的恢复调用');
   assert.equal(listCalls.length, 0, '屏障 list 一次都不能发');
   assert.equal(waitCalls.length, 0, 'jobs.wait 一次都不能发');
+});
+
+test('R29-a（判据 1·竞速期）：等待中工具被取消 → 取消口径交回，作业未被碰、waiter 已撤销', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  const { waitCalls, probes } = installJobs(f, { waitDelayMs: 60000 });
+  const controller = new AbortController();
+  const tool = createWaitJobTool(f.ctx, config);
+
+  const pending = tool.execute({ job_id: 'j-1', wait_ms: 600000 }, { agent, signal: controller.signal });
+  await new Promise((resolve) => { setTimeout(resolve, 5); });
+  const tCancel = Date.now();
+  controller.abort(new Error('tool cancelled'));
+
+  // 设计 §2.5 取消口径：取消收敛返回取消文案（合法形状——宿主对已中止调用整体
+  // 改写模型可见结果），不再以竞速 reject 上抛；作业不受取消影响。
+  const result = await pending;
+  assert.equal(result.status, 'interrupted');
+  assert.match(result.note, /The wait was cancelled/);
+  assert.match(result.note, /cancellation did not stop job j-1/);
+  assert.ok(Date.now() - tCancel < 500, '取消必须立即交回，不等剩余预算或复查');
+  assert.equal(probes.killCalls, 0, '取消等待不等于取消作业');
+  assert.equal(waitCalls.length, 1);
+  assert.equal(waitCalls[0].signal.aborted, true, '收敛后撤销在途 waiter（awaited 语义）');
 });
 
 test('R29-c（判据 3·屏障查询失败）：jobs.list 抛错 → 可重试的 queryFailed，不得误报 unknown job', async () => {
@@ -578,7 +603,7 @@ test('R55（判据 1）：等待开始时 next-step 已有 user 插话 → 立�
   // 满载机器上同步段也可能花 1ms——不变量是"立即返回"（毫秒级），不是严格 0。
   assert.ok(result.waited_ms < 25, `起始命中必须立即返回（实得 ${String(result.waited_ms)} ms）`);
   assert.match(result.note, /Wait not started: a user message had already arrived/, 'note 按起始命中措辞（到达时点在等待开始前）');
-  assert.match(result.note, /still running in the background and is completely unaffected/);
+  assert.match(result.note, /Ending the wait did not stop job j-1/);
   assert.match(result.note, /async_wait_job/);
 
   // 停点断言：排在接线之前——不创建 jobs.wait waiter（不吞完成通知）。

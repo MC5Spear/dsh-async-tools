@@ -5,7 +5,7 @@
  *
  * 对每个包：两树全文件递归对比（跳过包内 node_modules/.git），报告：
  * - 文件数 A/B、changed/added/removed 总数；
- * - 代码文件（js/mjs/cjs/ts/json/yml，非 .d.ts）的逐文件 `~`（变化，带字节长度）/
+ * - 代码文件（js/mjs/cjs/ts/json/yml/yaml，非 .d.ts）的逐文件 `~`（变化，带字节长度）/
  *   `+`（新增）/ `-`（删除）清单（各截断至 60/40/20 条）。
  *
  * 树根经 `tools/_local-config.mjs` 从本机侧读（或环境变量 `DSAT_HOST_MODULES`）——
@@ -22,7 +22,7 @@ const B = config.evidenceTree['020'];
 if (A === undefined || B === undefined) {
   console.error(`两档树都要有来源才能对照（017=${String(A)} 020=${String(B)}）。`);
   console.error(`在 ${LOCAL_DIR}/config.mjs 的 evidenceTree 里补齐，`
-    + '或设环境变量 DSAT_HOST_MODULES / DSAT_EVIDENCE_TREE。');
+    + '或设环境变量 DSAT_HOST_MODULES。');
   process.exit(2);
 }
 
@@ -53,7 +53,9 @@ if (pkgs.length === 0) {
 for (const pkg of pkgs) {
   const aDir = resolveRoot(join(A, pkg)), bDir = resolveRoot(join(B, pkg));
   if (!existsSync(aDir) || !existsSync(bDir)) {
-    console.log(`## ${pkg}: MISSING in ${!existsSync(aDir) ? '0.1.7' : '0.2.0'}（A=${aDir}）`);
+    // 按缺失侧打印对应目录路径（A 缺失优先报 A；两侧都缺时先报 A）。
+    const missSide = !existsSync(aDir) ? `0.1.7（${aDir}）` : `0.2.0（${bDir}）`;
+    console.log(`## ${pkg}: MISSING in ${missSide}`);
     continue;
   }
   const aFiles = walk(aDir), bFiles = walk(bDir);

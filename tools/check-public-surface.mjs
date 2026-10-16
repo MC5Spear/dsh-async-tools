@@ -18,7 +18,8 @@
  *
  * - **结构**：`.gitignore` 必须有 `.local/` 条目；非注释条目**只能**是本表登记的这几条
  *   （规则 1「单一例外目录」：新文件诞生即定归属，不再新增零散 ignore 条目）；`.local/` 这个
- *   字面只许出现在配置加载器、它的形状示例、以及本检查器自己的变异脚本里。
+ *   字面在代码里的豁免位置以 `PUBLIC_SURFACE_ALLOWLIST` 为准（配置加载器、形状示例、
+ *   变异脚本、本检查器自身与两个单测）。
  * - **本机指纹零命中**：全部进入公开范围的文件逐个扫指纹表（每条带理由）。
  * - **内部引用零命中**：公开文档（`.md`）扫内部引用表——下沉的语料文件名、事实编号、
  *   过程稿名、历史运行产物路径。
@@ -28,7 +29,7 @@
  * 两条理由，都不是洁癖：
  *
  * 1. **沙箱**：默认沙箱下子进程管道捕获一律 EPERM
- *    （`verify/README.md`「判据必须在默认权限下可跑」一节）。`git ls-files` 要么起子进程
+ *    （`verify/README.md`「优先默认权限执行；纯函数判断尽量进程内复用」要点）。`git ls-files` 要么起子进程
  *    捕获输出（判据的红绿只反映权限），要么把输出写进临时文件（多一个可失败环节）。
  * 2. **遍历跳过表可以从 `.gitignore` 自己推导**——前提是 `.gitignore` 真的只有那几条。
  *    于是"遍历范围"与"忽略规则"不可能各说各话，而这条前提本身就是结构判据的一部分。
@@ -230,7 +231,7 @@ export function checkPublicSurface(root = MODULE_ROOT, { quiet = false, scope } 
     for (const entry of entries) {
       if (!GITIGNORE_ALLOWED.has(entry)) {
         note('.gitignore', '结构', 0, entry,
-          '零散 ignore 条目：本机内容一律归 `.local/`，不再为单个目录开口子（规则 1「一扇门」）');
+          '零散 ignore 条目：本机内容一律归 `.local/`，不再为单个目录开口子（规则 1「单一例外目录」）');
       }
     }
   }
@@ -273,7 +274,7 @@ export function checkPublicSurface(root = MODULE_ROOT, { quiet = false, scope } 
       }
     }
 
-    // `.local/` 字面量：只有配置加载器与它的示例/证明可以写。
+    // `.local/` 字面量：哪些文件可以写，以 `PUBLIC_SURFACE_ALLOWLIST` 为准。
     //
     // 只查**代码本体**（剥掉注释）：注释里解释"配置落在哪个目录"是在讲机制，
     // 不是在读本机事实。不剥的话，每个想告诉读者配置在哪的模块都得进豁免名单——
@@ -282,7 +283,8 @@ export function checkPublicSurface(root = MODULE_ROOT, { quiet = false, scope } 
       const stripped = stripComments(text).split('\n');
       const lineNo = stripped.findIndex((l) => l.includes(`${LOCAL_DIR}/`)) + 1;
       note(file, '结构', lineNo, stripped[lineNo - 1] ?? '',
-        '`.local/` 字面量在**代码里**只许出现在配置加载器、其形状示例与本检查器的变异证明里——'
+        '`.local/` 字面量在**代码里**只许出现在配置加载器、形状示例、变异脚本、本检查器自身与两个单测'
+        + '——豁免全集以 `PUBLIC_SURFACE_ALLOWLIST` 为准，'
         + `其余脚本一律经 \`tools/_local-config.mjs\` 取本机事实（要写路径就用它导出的 \`LOCAL_DIR\` 拼）`);
     }
   }
@@ -300,7 +302,7 @@ export function checkPublicSurface(root = MODULE_ROOT, { quiet = false, scope } 
 
   for (const family of ['结构', '指纹', '引用']) {
     const list = byFamily[family];
-    say(`${list.length === 0 ? 'OK  ' : 'WARN'} ${family.padEnd(4)} ${String(list.length).padStart(4)} 处`);
+    say(`${list.length === 0 ? 'OK  ' : 'FAIL'} ${family.padEnd(4)} ${String(list.length).padStart(4)} 处`);
     for (const finding of list.slice(0, 60)) {
       say(`       ${finding.file}:${String(finding.line)}  ${finding.why}`);
       if (finding.text.length > 0) say(`         | ${finding.text}`);

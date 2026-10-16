@@ -81,6 +81,6 @@ const clean = hardBroken === 0 && doubleEncoded === 0 && crlf === 0;
 console.log(
   clean
     ? '编码体检通过：无非法字节、无双重编码、无 CRLF。'
-    : `编码体检失败：非法字节 ${String(hardBroken)}、双重编码 ${String(doubleEncoded)}、CRLF ${String(crlf)} 个文件。`
+    : `编码体检失败：非法字节文件 ${String(hardBroken)}、双重编码文件 ${String(doubleEncoded)}、CRLF 文件 ${String(crlf)}。`
 );
 process.exit(clean ? 0 : 1);

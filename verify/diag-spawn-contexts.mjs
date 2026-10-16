@@ -1,9 +1,11 @@
 /**
- * 对照实验：同一个"起子进程 + 捕获输出"的动作，在三种宿主里结果是否不同？
+ * 对照实验：同一个"起子进程 + 捕获输出"的动作，在两种宿主形态（直接跑 + node --test
+ * 模拟 npm test）里结果是否不同？
  *
  * 已知：默认沙箱下独立诊断脚本里 spawnSync/execFileSync 带 pipe 捕获会被 EPERM。
  * 但 `npm test`（node --test）里 `test/doc-paths.test.mjs` 也用 execFileSync + pipe，却全过。
- * 两者必有一个解释，不能靠猜——本脚本把三种宿主并排跑一遍。
+ * 两者必有一个解释，不能靠猜——本脚本把两种宿主形态（直接跑 + node --test 模拟 npm
+ * test）并排跑一遍。
  *
  * 用法：node verify/diag-spawn-contexts.mjs
  */

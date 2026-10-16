@@ -12,9 +12,9 @@
  *
  * ## 口径
  *
- * 对每个光名字，**全仓递归**找同名文件（跳过 `node_modules`、`.git`、
- * 以及 `verify/_scratch/`、`_tmp`、`logs`、`shots` 这些**过程产物**——它们不算交付树，
- * 指到那儿等于指不到）。
+ * 对每个光名字，**全仓递归**找同名文件（跳过**过程产物与本机侧目录**——全集见
+ * `SKIP_DIRS`：`node_modules`、`.git`、`_scratch`、`_tmp`、`logs`、`shots`、
+ * `backup`、`_lab`、`LOCAL_DIR`；它们不算交付树，指到那儿等于指不到）。
  *
  * **只按文件名比**，不要求唯一：文档写 `` `package.json` `` 时说的是"这一类清单文件"，
  * 不特指某一个。要求唯一会制造大量假阳性。
@@ -97,7 +97,7 @@ function collect(dir, out) {
   }
 }
 
-/** 行内代码里的光文件名：前面不是路径分隔符或词字符。 */
+/** 行内代码里的光文件名：前面不是路径分隔符、点、连字符或词字符。 */
 const BARE_RE = /(?<![\w/.\\-])`([a-z][\w.-]*\.(?:mjs|js|md|json|ps1|yml|png))`/g;
 
 /**
@@ -131,7 +131,8 @@ export function checkBareFilenames(root = MODULE_ROOT, { quiet = false, extraRoo
     });
   }
 
-  say(`盘上（含兄弟包、排除过程产物）文件名 ${String(onDisk.size)} 个；现行文档里的光文件名引用 ${String(total)} 处。`);
+  const scopeNote = extraRoots.length > 0 ? '含兄弟包、排除过程产物' : '排除过程产物';
+  say(`盘上（${scopeNote}）文件名 ${String(onDisk.size)} 个；现行文档里的光文件名引用 ${String(total)} 处。`);
   say('');
 
   let ok;

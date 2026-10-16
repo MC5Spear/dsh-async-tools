@@ -61,6 +61,10 @@ attempt('子目录只读', (dir) => {
 console.log('=== 制造"回滚也失败"的尝试 ===');
 for (const [name, outcome] of results) console.log(`  ${outcome.includes('成功') || outcome.includes('准备') ? '无效  ' : '有效  '}${name} → ${outcome}`);
 console.log('');
-console.log(results.some(([, outcome]) => outcome.includes('抛错'))
+const notEstablished = results.filter(([, outcome]) => outcome.startsWith('准备阶段就失败')).length;
+const rmSyncOk = results.filter(([, outcome]) => outcome.startsWith('rmSync 成功')).length;
+const threw = results.filter(([, outcome]) => outcome.startsWith('rmSync 抛错')).length;
+console.log(`计数：尝试未成立 ${String(notEstablished)}（准备失败）/ rmSync 成功 ${String(rmSyncOk)} / 抛错 ${String(threw)}。`);
+console.log(threw > 0
   ? '结论：本机有可行手段，可以真覆盖那条分支。'
   : '结论：本机 rmSync 对这些情形都成功——那条分支只能靠**注入失败**（例如把 rmSync 换掉）来覆盖。');

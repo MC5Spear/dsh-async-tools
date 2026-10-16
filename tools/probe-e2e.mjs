@@ -12,7 +12,7 @@
  *
  * 真正的端到端（短命令 / 长命令让出 / 插话打断等待 / 子代理等待 / 预设隔离 /
  * native 呈现）必须在**验证实例**上由真实会话执行并留证——脚本自检替代不了它：
- * 假件替身要什么有什么，`inject` 漏 `timer` 也照样全绿。
+ * 替身检查器的真实盲区在服务**行为**差异：例如替身 timer 的 setTimeout 语义与宿主不同，静态判据全绿也测不出来。
  *
  * 用法：以本文件为参数、`--import ./tools/_host-hooks.mjs` 起 node 直接执行；全通过退出码 0。
  */
@@ -269,7 +269,7 @@ await verify('async_wait_job：作业已终态 → completed + output', async ()
   return true;
 });
 
-await verify('async_wait_agent：列表读出非运行态 → settled（屏障即终态）', async () => {
+await verify('async_wait_agent：列表读出非运行态 → settled（屏障即终态——列表读取这道屏障读出非运行态，即按终态处理）', async () => {
   const env = makeContext();
   const { fork } = await mount(env, 'async_wait_agent');
   const result = await env.registered[0].execute({ agent_id: 'child-probe', wait_ms: 1000 }, stubExec());

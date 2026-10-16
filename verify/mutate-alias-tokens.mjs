@@ -11,7 +11,7 @@
  * 并核对摘要。任何 SKIP 按失败处理。
  *
  * 用法：node verify/mutate-alias-tokens.mjs（需可捕获子进程输出——默认沙箱下 EPERM，
- * 见 verify/README.md 的「判据必须在默认权限下可跑」与既有 mutate-card-theme 的先例）
+ * 见 verify/README.md 的「优先默认权限执行；纯函数判断尽量进程内复用」要点与既有 mutate-card-theme 的先例）
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';

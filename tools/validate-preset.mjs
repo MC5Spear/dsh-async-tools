@@ -8,7 +8,7 @@
  * 宿主包树按真实路径 import 宿主自带的 js-yaml 并注册同一形状的自定义 `js` 类型
  * （`!!js` 表达式解析为**字符串**，这正好让"disabled 必须是布尔"这类判据可区分）。
  *
- * 十一项判据（骨架两套共用、期望随套切换）：
+ * 十二条判据（③b 独立计一条；骨架两套共用、期望随套切换）：
  * 1. 补丁恰一条 `insert`，行 `name` 是 `@deepseek-ai/dsh-agent-preset`，行 `id` 与
  *    `config.id` 等于期望集的 `rowId` / `configId`；未知 `config.id` 即红（不许
  *    "套不上就放行"）；
@@ -28,8 +28,8 @@
  *    cordis-plugin-loader/lib/index.js:359-363）；
  * 7. 互斥判据（期望集 `bothAliveRule` 开时；两套都开）：活 `tool-subagent`
  *    行与 `async_agent` 行同时在场 ⇒ persona 必须写明唯一派生入口与取回通道，否则红；
- * 8. 期望集 `disabledBoolean` 列的每行必须在场且布尔 `disabled: true`（两套都含
- *    `tool-workflow`；dsh-async 另含 `tool-subagent` / `tool-subagent-fork`）；
+ * 8. 期望集 `disabledBoolean` 列的每行必须在场且布尔 `disabled: true`（两套期望集
+ *    同含六行，含 `tool-subagent` / `tool-subagent-fork`，无差异）；
  * 9. `workflow-ptc` 行在场且 `config.provider === 'spawn'`（形态守卫 + 供电）；
  * 10. 禁用行 `tool-subagent` / `tool-subagent-fork` 的 config 键值逐字锁死
  *     （删键/改值/加键必红）；
@@ -294,7 +294,7 @@ export async function validatePatch(patchPath, { quiet = false, expectation } = 
     if (!actualToolNames.includes(expected)) fail(`toolName 五值缺 "${expected}"（实得 ${actualToolNames.join(', ') || '(无)'}）`);
   }
   if (dupToolNames.length > 0) fail(`toolName 有重复：${dupToolNames.join(',')}`);
-  // 归属声明（需求 §6.2）：五行必须各自携带 owningPreset 且等于本补丁的 config.id
+  // 归属声明（设计 §6.2）：五行必须各自携带 owningPreset 且等于本补丁的 config.id
   // ——描述警示按行归属判定，漏声明＝警示对预设行静默消失，此处锁死。
   if (!asyncRows.every((child) => child?.config?.owningPreset === configId)) {
     fail(`五行 dsh-async-tools 的 owningPreset 必须全部等于 "${String(configId)}"（描述警示按行归属判定）`);
@@ -338,7 +338,7 @@ export async function validatePatch(patchPath, { quiet = false, expectation } = 
 
   // ── ⑦ 互斥判据（bothAliveRule 开时）：活 subagent × async_agent ──
   // ⇒ persona 必须写明唯一派生入口与取回通道。对交付态的 create
-  // 补丁，⑧ 已把 subagent 结构性禁用，本判据空真；它守的是"翻活 subagent 却不改
+  // 补丁，⑧ 已把 subagent 结构性禁用，本判据不会触发；它守的是"翻活（重新启用）subagent 却不改
   // persona"的回归。
   if (exp.bothAliveRule) {
     const liveSubagent = allRows.find((child) => child?.id === 'tool-subagent' && child?.disabled !== true);
@@ -353,7 +353,7 @@ export async function validatePatch(patchPath, { quiet = false, expectation } = 
       emit('OK    ⑦ 互斥判据未触发（tool-subagent 行禁用中——结构性唯一入口在位，条件式守卫待翻活时接管）');
     }
   } else {
-    emit('OK    ⑦ 互斥判据对本期望集关闭（双入口是 dsh-async 的既定决定，④只约束第二份补丁）');
+    emit('OK    ⑦ 互斥判据对本期望集关闭（两套期望集都对双入口声明 bothAlive；此分支按防御性处理，正常不应到达）');
   }
 
   // ── ⑧ disabledBoolean：每行在场且布尔禁用（结构性禁用判据） ────────────────

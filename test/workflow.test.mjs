@@ -151,6 +151,10 @@ test('async_workflow（R34-b）：引擎同步抛 → 原样重抛（不冒充�
   const agent = fakeAgent();
   agent.session.append = () => {};
   const tool = createWorkflowTool(f.ctx, resolveConfig({ toolName: 'async_workflow' }));
+  // 并发安全声明：未声明＝exclusive 独占（批次调度语义见 facts 登记簿）——
+  // 一次编排的后台生命周期会把同批其他调用全部串行挡住。五工具同口径 true。
+  // 宿主包装器对参数不合法的调用返回 false（dsh-tools :882-885），须带合法参数。
+  assert.equal(tool.isConcurrencySafe(BASE_ARGS), true, 'async_workflow 必须声明并发安全');
   await assert.rejects(
     () => tool.execute(BASE_ARGS, { agent, signal: new AbortController().signal }),
     // 恰为原文（逐字相等）：包装成 startRefused 文案的变异在此必红——包装文案
@@ -490,5 +494,5 @@ test('async_workflow（F9）：取消与预算到期分别说明——abort 的 
   assert.equal(result.status, 'running');
   assert.match(result.note, /cancelled during the first wait/, '内部结果按取消口径给原因（需求 §2.1.2）');
   assert.doesNotMatch(result.note, /outlived the /, '不得把取消冒称超出预算');
-  assert.match(result.note, /was NOT terminated/, '命令/run 不被终止的口径保留');
+  assert.match(result.note, /was not terminated by the cancellation/, '取消没有终止命令的口径保留（行为陈述，不作运行断言）');
 });

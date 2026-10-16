@@ -55,7 +55,8 @@ var module = { exports: {} }; var exports = module.exports;
 var React = require("react");
 var P = require("@deepseek-ai/dsh-client-ui-primitives");
 
-/** 本插件的宿主行 id = 设置命名空间 = 槽键的行 id 段（三者必须同串）。 */
+/** 本插件的宿主行 id = 设置命名空间 = async-tools-host。若将来注册
+ *  plugins.row.config，其键形 <包名>#<行 id> 的行 id 段须与此同串。 */
 var ENTRY = "async-tools-host";
 /** 包名（**平名**——客户端模块图只投递平名包）；槽键 = 包名。 */
 var PACKAGE_NAME = "dsh-async-tools";
@@ -63,8 +64,9 @@ var PACKAGE_NAME = "dsh-async-tools";
 var NS = "settings.async-tools";
 
 // 字段表：key 与宿主 Config 的 volatile 字段一一对应；ms 字段的说明行带秒数读数。
-// 顺序 = `lib/config.js` 的 `BUDGET_FIELD_KEYS` 之后接 `LANG_FIELD_KEYS`，末尾接
-// `FLAG_FIELD_KEYS`（与 test/two-planes.test.mjs T19 的键集对账，静默失败开关字段在列）。
+// 顺序 = `lib/config.js` 四组键的拼接：BUDGET_FIELD_KEYS → LANG_FIELD_KEYS →
+// FLAG_FIELD_KEYS → ASK_FIELD_KEYS（提问接管组殿后；与 test/two-planes.test.mjs
+// T19 的键集对账，静默失败开关字段在列）。
 // `toolName` 不在表里（它不是 volatile，不可用户写——写会被宿主拒绝
 // `Config field "toolName" is not volatile`，`dsh-settings/lib/index.js:507`），
 // 这正是「volatile 才可编辑」语义的正确表达。
@@ -148,10 +150,12 @@ var FIELD_MIN = {
  * （plan 聚合 → `state.invalid` → 保存按钮禁用），这是宿主 SettingsForm 唯一认的
  * 因果链（字段 props 的 `invalid` 只进显示层，不回流 shell）。
  */
+var INTEGER_FIELDS = { maxResultChars: true };
 function boundedNumberSpec(key) {
   var base = P.settingsNumberField(key);
   var max = FIELD_MAX[key];
   var min = FIELD_MIN[key];
+  var intOnly = INTEGER_FIELDS[key] === true;
   return {
     field: key,
     format: base.format,
@@ -159,6 +163,10 @@ function boundedNumberSpec(key) {
       var parsed = base.parse(text);
       if (parsed !== undefined && parsed.kind === "set"
         && typeof parsed.value === "number") {
+        // 整数字段（maxResultChars——字符数按 String.length 计量，必须是正整数，
+        // 需求 §5.2）：小数草稿同样按非法处理，走官方非法通道（保存禁用）；
+        // 服务端 schema 的 `.step(1)` 是同一约束的第二层。
+        if (intOnly && !Number.isInteger(parsed.value)) return undefined;
         if (parsed.value > max) return undefined;
         if (min !== undefined && parsed.value < min) return undefined;
       }
@@ -649,20 +657,28 @@ function makeFieldNodes(state, model, t) {
     var help = resolveCopy(t, "help." + field.key);
     var helpA11y = help === undefined ? undefined
       : t("help.a11yName").replace("{field}", label);
-    // 设计 §5.4：数值字段的非法原因分四档——越上界（spec parse 判非法后的可读版）、
+    // 设计 §5.4：数值字段的非法原因分五档——非整数（仅整数字段，如
+    // `maxResultChars` 的小数草稿）、越上界（spec parse 判非法后的可读版）、
     // 低于下界、链式违例（壳层判，不等式左值字段显示、文案指明参照字段）、
     // 官方"不是数字"。`invalidPair` 的 `{ref}` 显示层经词典换参照字段的中文名称。
+    var notInteger = false;
     var outOfRange = false;
     var belowRange = false;
     var pairHit = null;
     if (isNumericField(field)) {
       var draftNum = draftNumber(state, field.key);
-      outOfRange = fieldState.invalid === true && draftNum !== null && draftNum > FIELD_MAX[field.key];
-      belowRange = fieldState.invalid === true && draftNum !== null
+      notInteger = fieldState.invalid === true && draftNum !== null
+        && INTEGER_FIELDS[field.key] === true && !Number.isInteger(draftNum);
+      // 非整数优先报整数性；越界/低于下界只在整数草稿上判定（避免同屏双报）。
+      outOfRange = !notInteger && fieldState.invalid === true && draftNum !== null
+        && draftNum > FIELD_MAX[field.key];
+      belowRange = !notInteger && fieldState.invalid === true && draftNum !== null
         && FIELD_MIN[field.key] !== undefined && draftNum < FIELD_MIN[field.key];
       pairHit = chainHitOf(state, field.key);
     }
-    var invalidLabel = outOfRange
+    var invalidLabel = notInteger
+      ? t("invalidInteger")
+      : outOfRange
       ? t("invalidRange").replace("{max}", String(FIELD_MAX[field.key]))
       : belowRange ? t("invalidBelow").replace("{min}", String(FIELD_MIN[field.key]))
       : pairHit !== null
@@ -731,8 +747,8 @@ function makeUninstallRiskNode(t) {
  * 插件页卡片工厂：模型每挂载建一次、卸载时 `dispose`；重渲染走
  * `useSyncExternalStore(card.store.subscribe, card.store.getSnapshot)`。
  * `SettingsForm` 的 `onDiscard` 接模型的 `discard`——卸载丢弃草稿由它承担。
- * @param ctx - 客户端上下文（`configForms` 由 inject 声明）。
- * @returns 槽位组件。
+ * @param {object} ctx - 客户端上下文（`configForms` 由 inject 声明）。
+ * @returns {Function} 槽位组件。
  */
 function makeBundleCard(ctx) {
   return function AsyncToolsBundleCard(props) {
@@ -781,13 +797,14 @@ var DICTIONARIES = {
     overridden: "已覆盖",
     reset: "恢复默认",
     invalidNumber: "这个值不是该字段可接受的输入",
+    invalidInteger: "这个值必须是整数（正整数）",
     invalidRange: "超出该字段的上界（≤ {max}）",
     invalidBelow: "低于该字段的下界（≥ {min}）",
-    "invalidPair.minYieldMs": "首次等待时长下限不能大于默认首次等待时长（{ref}）——请调小本值或调大 {ref}",
-    "invalidPair.defaultYieldMs": "默认首次等待时长不能大于首次等待时长上限（{ref}）——请调小本值或调大 {ref}",
-    "invalidPair.minWaitMs": "单次等待时长下限不能大于等待示例时长（{ref}）——请调小本值或调大 {ref}",
-    "invalidPair.defaultWaitMs": "等待示例时长不能大于单次等待时长上限（{ref}）——请调小本值或调大 {ref}",
-    "invalidPair.pollIntervalMs": "子代理状态检查间隔不能大于单次等待时长上限（{ref}）——请调小本值或调大 {ref}",
+    "invalidPair.minYieldMs": "本值不能大于 {ref}——请调小本值或调大 {ref}",
+    "invalidPair.defaultYieldMs": "本值不能大于 {ref}——请调小本值或调大 {ref}",
+    "invalidPair.minWaitMs": "本值不能大于 {ref}——请调小本值或调大 {ref}",
+    "invalidPair.defaultWaitMs": "本值不能大于 {ref}——请调小本值或调大 {ref}",
+    "invalidPair.pollIntervalMs": "本值不能大于 {ref}——请调小本值或调大 {ref}",
     uninstallRisk: "卸载风险：默认预设指向本包预设（dsh-async / dsh-async-create）时，停用或移除本包会让新建会话报 agent-preset/not-found，宿主不会自动清除该选择。卸载前先在宿主设置把默认预设切换到可用预设；已移除后按宿主设置入口清选或重选。",
     defaultYieldMs: "默认首次等待时长（毫秒）",
     minYieldMs: "首次等待时长下限（毫秒）",
@@ -813,7 +830,7 @@ var DICTIONARIES = {
     "hint.minWaitMs": "适用于两个等待工具的 wait_ms；请求低于此值时按下限取值。到时结束本次等待，不停止后台任务。",
     "hint.maxWaitMs": "适用于两个等待工具的 wait_ms；请求高于此值时按上限取值。到时结束本次等待，不停止后台任务。",
     "hint.pollIntervalMs": "async_wait_agent 备用检查子代理是否仍在运行的间隔。不是待答面板刷新间隔，也不是子代理运行时限。",
-    "hint.maxResultChars": "单次返回保留的结果内容字符上限，超出时保留首尾并说明截断；状态与提示另计。",
+    "hint.maxResultChars": "单次返回保留的结果内容字符上限（正整数），超出时保留首尾并说明截断；状态与提示另计。",
     "hint.jobKind": "注册命令作业用的类型名称，便于在作业列表与日志中识别；不决定命令执行方式。",
     "hint.subagentProvider": "async_agent 创建子代理使用的后端服务；不是选择大语言模型或模型服务商。",
     "hint.uiLang": "控制本包设置表单、字段帮助与待答界面文案；跟随宿主语言或显式中英文，不改宿主全局语言。",
@@ -831,7 +848,7 @@ var DICTIONARIES = {
     "help.minWaitMs": "配置键：minWaitMs（数值，毫秒）。\n\n一份预算覆盖入口检查、查询、重试与等待，不为每个阶段重新计时；到时交回控制权、作业句柄仍有效，再次调用即可继续读。消息到达可提前结束本次等待（需求 2.1）。",
     "help.maxWaitMs": "配置键：maxWaitMs（数值，毫秒）。\n\n一份预算覆盖入口检查、查询、重试与等待，不为每个阶段重新计时；到时交回控制权、作业句柄仍有效，再次调用即可继续读。消息到达可提前结束本次等待（需求 2.1）。",
     "help.pollIntervalMs": "配置键：pollIntervalMs（数值，毫秒）。\n\nasync_wait_agent 以结束事件为主、轮询为备用的双通道检查子代理是否仍在运行；本间隔是备用轮询的节奏，受 pollIntervalMs ≤ maxWaitMs 配对约束（需求 5.2）。",
-    "help.maxResultChars": "配置键：maxResultChars（数值，字符）。\n\n按 String.length 计量：超出时保留首尾并说明省略量与截断；状态与提示另计，不占本预算（需求 2.2.3）。与宿主输出缓冲的三倍换算配合决定溢出时的文件交付路径。",
+    "help.maxResultChars": "配置键：maxResultChars（数值，字符）。\n\n按 String.length 计量，必须是正整数（需求 5.2）——注册时按三倍换算宿主输出缓冲上限，小数草稿在保存时被拒；超出时保留首尾并说明省略量与截断；状态与提示另计，不占本预算（需求 2.2.3）。与宿主输出缓冲的三倍换算配合决定溢出时的文件交付路径。",
     "help.jobKind": "配置键：jobKind（文本）。\n\n注册命令作业时使用的类型名称，用于作业列表与日志的辨识；不决定命令执行方式。空值非法（需求 5.2）。",
     "help.subagentProvider": "配置键：subagentProvider（文本）。\n\nasync_agent 创建子代理使用的后端服务，默认 spawn；修剪后空值回默认，未知后端在调用时可读拒绝。不是选择大语言模型或模型服务商——模型路由按 provider／model 参数另行指定（需求 2.3.1）。",
     "help.uiLang": "配置键：uiLang（枚举：auto / zh / en）。\n\n与 agentLang 两个开关独立，修改其中一个不影响另一个；auto 档只读跟随宿主语言，不写宿主全局语言。",
@@ -851,11 +868,15 @@ var DICTIONARIES = {
     "ask.jump": "打开会话",
     "ask.expired": "已超时，仍可作答",
     "ask.submitting": "提交中…",
-    // 面板顶报错按失败动作分键（需求 §4.4）：提交失败可重试；状态读取失败由
-    // 轮询自动重试；延长失败可再点；丢失答案无自动重试通道，允许手动消除。
-    "ask.callFailed": "提交没有送达（宿主侧失败），请重试。",
+    // 面板顶报错按失败动作分键（需求 §4.4 + A08 三分）：①明确拒绝（RPC 已达
+    // 宿主、宿主回 ok:false——可断定未执行）②未收到确认（RPC 拒绝——执行与否
+    // 未知，不得断定"未送达"）③状态读取失败（轮询自动重试）；丢失答案无自动
+    // 重试通道，允许手动消除。
+    "ask.callFailed": "提交后没有收到宿主确认——可能已送达，也可能没有；稍候面板自动刷新，若仍显示未作答可再提交一次。",
+    "ask.answerRejected": "宿主已收到请求但明确拒绝（可能题目已不在作答窗口）——本次提交没有生效；稍候面板自动刷新。",
     "ask.stateFailed": "待答状态读取失败；面板会自动重试。",
-    "ask.extendFailed": "增加等待时间未生效，可重试。",
+    "ask.extendFailed": "延长请求没有收到宿主确认——可能已生效，也可能没有；按面板刷新后的剩余时间决定是否再点（每次点击都会累加）。",
+    "ask.extendRejected": "宿主已收到延长请求但明确拒绝（可能已无在窗批次）——本次加时没有生效；稍候面板自动刷新。",
     "ask.lostAnswer": "作答已提交但未能送达 Agent（投递失败，不会自动重试）。",
     "ask.dismissLost": "知道了",
     "ask.windowLeft": "剩 {s}",
@@ -879,13 +900,14 @@ var DICTIONARIES = {
     overridden: "Overridden",
     reset: "Reset",
     invalidNumber: "This text is not a value the field accepts",
+    invalidInteger: "This value must be a whole number (a positive integer)",
     invalidRange: "This value exceeds the field's upper bound (≤ {max})",
     invalidBelow: "This value is below the field's lower bound (≥ {min})",
-    "invalidPair.minYieldMs": "The first-wait lower bound must not exceed the default first-wait duration ({ref}) — lower this value or raise {ref}",
-    "invalidPair.defaultYieldMs": "The default first-wait duration must not exceed the first-wait upper bound ({ref}) — lower this value or raise {ref}",
-    "invalidPair.minWaitMs": "The per-call wait lower bound must not exceed the example wait duration ({ref}) — lower this value or raise {ref}",
-    "invalidPair.defaultWaitMs": "The example wait duration must not exceed the per-call wait upper bound ({ref}) — lower this value or raise {ref}",
-    "invalidPair.pollIntervalMs": "The subagent status check interval must not exceed the per-call wait upper bound ({ref}) — lower this value or raise {ref}",
+    "invalidPair.minYieldMs": "This value must not exceed {ref} — lower this value or raise {ref}",
+    "invalidPair.defaultYieldMs": "This value must not exceed {ref} — lower this value or raise {ref}",
+    "invalidPair.minWaitMs": "This value must not exceed {ref} — lower this value or raise {ref}",
+    "invalidPair.defaultWaitMs": "This value must not exceed {ref} — lower this value or raise {ref}",
+    "invalidPair.pollIntervalMs": "This value must not exceed {ref} — lower this value or raise {ref}",
     uninstallRisk: "Uninstall risk: while the default preset points to this package's presets (dsh-async / dsh-async-create), disabling or removing this package makes new sessions fail with agent-preset/not-found; the host does not clear that choice automatically. Switch the default preset to an available one in host settings before uninstalling; after removal, clear or reselect it from the host settings entry.",
     defaultYieldMs: "Default first-wait duration (ms)",
     minYieldMs: "First-wait lower bound (ms)",
@@ -911,7 +933,7 @@ var DICTIONARIES = {
     "hint.minWaitMs": "Applies to wait_ms on both wait tools; requests below it use the lower bound. When it ends, the wait ends without stopping the background task.",
     "hint.maxWaitMs": "Applies to wait_ms on both wait tools; requests above it use the upper bound. When it ends, the wait ends without stopping the background task.",
     "hint.pollIntervalMs": "Interval async_wait_agent uses as a backup check that the subagent is still running. Not the pending-panel refresh interval, and not a subagent run limit.",
-    "hint.maxResultChars": "Character cap for the result content kept per return; beyond it the head and tail are kept with a truncation note; status and notices are counted separately.",
+    "hint.maxResultChars": "Character cap (a positive integer) for the result content kept per return; beyond it the head and tail are kept with a truncation note; status and notices are counted separately.",
     "hint.jobKind": "Type name used to register command jobs, for identification in job lists and logs; it does not decide how commands run.",
     "hint.subagentProvider": "Backend service async_agent uses to create subagents; this is not choosing a large language model or a model vendor.",
     "hint.uiLang": "Controls this package's settings form, field help, and pending-panel copy; follows the host language or an explicit Chinese/English choice, and does not change the host's global language.",
@@ -929,7 +951,7 @@ var DICTIONARIES = {
     "help.minWaitMs": "Config key: minWaitMs (number, ms).\n\nOne budget covers entry checks, lookups, retries, and the wait — no per-stage re-arming; when it ends, control returns with the job handle still valid, and calling again continues reading. An arriving message can end the wait early (requirement 2.1).",
     "help.maxWaitMs": "Config key: maxWaitMs (number, ms).\n\nOne budget covers entry checks, lookups, retries, and the wait — no per-stage re-arming; when it ends, control returns with the job handle still valid, and calling again continues reading. An arriving message can end the wait early (requirement 2.1).",
     "help.pollIntervalMs": "Config key: pollIntervalMs (number, ms).\n\nasync_wait_agent checks whether the subagent is still running on two channels — completion events first, polling as the backup; this interval sets the backup polling cadence and is bound by the pollIntervalMs ≤ maxWaitMs pairing (requirement 5.2).",
-    "help.maxResultChars": "Config key: maxResultChars (number, characters).\n\nMeasured by String.length: beyond the cap the head and tail are kept and the omission and truncation are stated; status and notices are counted separately and do not consume this budget (requirement 2.2.3). Works with the host output buffer's threefold conversion to decide the overflow file-delivery path.",
+    "help.maxResultChars": "Config key: maxResultChars (number, characters).\n\nMeasured by String.length and must be a positive integer (requirement 5.2) — the host output-buffer cap is derived from it threefold at registration, so non-integer drafts are rejected at save; beyond the cap the head and tail are kept and the omission and truncation are stated; status and notices are counted separately and do not consume this budget (requirement 2.2.3). Works with the host output buffer's threefold conversion to decide the overflow file-delivery path.",
     "help.jobKind": "Config key: jobKind (text).\n\nType name used when registering command jobs, for identification in job lists and logs; it does not decide how commands run. An empty value is invalid (requirement 5.2).",
     "help.subagentProvider": "Config key: subagentProvider (text).\n\nBackend service async_agent uses to create subagents, spawn by default; an empty value after trimming falls back to the default, and an unknown backend is rejected readably at call time. This is not choosing a large language model or a model vendor — model routing is specified via the provider/model parameters (requirement 2.3.1).",
     "help.uiLang": "Config key: uiLang (enum: auto / zh / en).\n\nThe two switches are independent — changing this one does not affect agentLang; the auto mode only follows the host language and never writes the host's global language.",
@@ -949,12 +971,15 @@ var DICTIONARIES = {
     "ask.jump": "Open session",
     "ask.expired": "Timed out; still answerable",
     "ask.submitting": "Submitting…",
-    // Panel-top errors are keyed by the failing action (requirement §4.4): a failed
-    // submission is retryable; state-fetch failures retry automatically via polling;
-    // a failed extend can be clicked again; lost answers have no automatic retry.
-    "ask.callFailed": "The submission did not reach the host; please retry.",
+    // 面板顶报错按失败动作分键（需求 §4.4 + A08 三分）：①明确拒绝（RPC 已达
+    // 宿主、宿主回 ok:false——可断定未执行）②未收到确认（RPC 拒绝——执行与否
+    // 未知，不得断定"未送达"）③状态读取失败（轮询自动重试）；丢失答案无自动
+    // 重试通道。（与 zh 词典区同款说明：文案本身是英文界面文本，注释是中文。）
+    "ask.callFailed": "No confirmation was received from the host after submitting — it may or may not have arrived; the panel refreshes automatically, and if it still shows unanswered, you can submit again.",
+    "ask.answerRejected": "The host received the request but explicitly refused it (the question may no longer be in its answering window) — this submission did not take effect; the panel refreshes automatically shortly.",
     "ask.stateFailed": "Failed to fetch the pending-questions state; the panel retries automatically.",
-    "ask.extendFailed": "The extend request did not take effect; you can retry.",
+    "ask.extendFailed": "No confirmation was received for the extend request — it may or may not have taken effect; decide whether to click again based on the remaining time shown after the panel refreshes (each click adds up).",
+    "ask.extendRejected": "The host received the extend request but explicitly refused it (no batch may still be open) — this extension did not take effect; the panel refreshes automatically shortly.",
     "ask.lostAnswer": "The answer was submitted but could not be delivered to the agent (delivery failed; it will not be retried automatically).",
     "ask.dismissLost": "Dismiss",
     "ask.windowLeft": "{s} left",
@@ -1049,10 +1074,15 @@ var ASK_REMOTE = {
  * answer/ignore 动作后立即补一次轮询；后台标签页由浏览器节流，轮询不以可见性为前提
  * （设计 §4.3：页面恢复可见及每次提交后立即刷新；后台页节流不当作服务端停止计时）。
  *
- * 失败不静默：RPC 回执 `{ok:false}` → `callFailed` 分型旗标（null | 'submit' |
- * 'state' | 'extend'，面板顶按失败动作分键报错——只有可重试路径才建议重试）；
+ * 失败不静默（A08 三分）：`callFailed` 分型旗标（null | 'submit' |
+ * 'state' | 'extend' | 'answerRejected' | 'extendRejected'，面板顶按失败动作分键
+ * 报错。RPC 拒绝（'submit'/'extend'，**没有确认**——执行与否未知，不断定
+ * "未送达"，可重试）与宿主回执 `{ok:false}`（'answerRejected'/'extendRejected'，
+ * **明确拒绝**——请求已送达、被拒，未执行可断定）分开报错；'extend' 两条路径
+ * 都立即 poll() 复查真实期限（重试前先看刷新后的剩余时间——每次点击继续
+ * 累加，不伪幂等）；
  * 宿主回执 `outcome:'failed'`（迟到注入 followup/inject 抛错、条目已
- * 出列）→ 记入 `lostAnswers`（面板顶列名报错——那一条用户的答案没有送达，且
+ * 出列）→ 记入 `lostAnswers`（面板顶逐条列出报错——那一条用户的答案没有送达，且
  * 无重试通道，需求 §4.4）。竞态补醒失败（设计 §4.3）经 `state().lost` 名单随轮询并入——
  * 两个时点共用同一复合键去重与「知道了」消除（消除后服务端名单不回弹）。
  *
@@ -1145,7 +1175,10 @@ function createAskModel(ctx, remote) {
         notify();
         return;
       }
-      state.callFailed = null;
+      // 读取成功只清**自己**的失败档（'state'）——动作类旗标（'submit'/
+      // 'answerRejected'/'extend'/'extendRejected'）保留到下一次同动作成功：
+      // 失败处理器里的复查轮询会立即回来，无条件清会把刚立起的报错闪没。
+      if (state.callFailed === 'state') state.callFailed = null;
       state.serverNow = result.value.serverNow;
       state.fetchedAt = Date.now();
       state.items = result.value.items;
@@ -1190,8 +1223,9 @@ function createAskModel(ctx, remote) {
         .then(function (result) {
           // 成功只有两种回执；failed（迟到注入没送达）记名报错，gone 交给轮询收敛。
           if (result === undefined || result === null || result.ok !== true) {
-            // 提交通道失败＝'submit'（可重试——再点一次提交即可）。
-            state.callFailed = 'submit';
+            // A08 三分——ok:false 是宿主**明确拒绝**（请求已送达、被拒）：可断定
+            // 未执行；与 RPC 拒绝（'submit'，执行与否未知）分开报，不混说"未送达"。
+            state.callFailed = 'answerRejected';
             notify();
             onDone(false);
             return;
@@ -1202,10 +1236,15 @@ function createAskModel(ctx, remote) {
             onDone(false);
             return;
           }
-          state.callFailed = null;
+          // 成功只清**本动作族**的旗标（'submit'/'answerRejected'）——延长族
+          // （'extend'/'extendRejected'）与读取档（'state'）不受牵连：提交失败
+          // 的报错不能被一次无关的延长成功抹掉。
+          if (state.callFailed === 'submit' || state.callFailed === 'answerRejected') state.callFailed = null;
           onDone(true);
           poll();
         }, function () {
+          // RPC 拒绝＝没有确认（'submit'，可重试）——不确定结果不能断定"未送达"
+          // （服务端可能已执行，只是响应丢失）。
           state.callFailed = 'submit';
           notify();
           onDone(false);
@@ -1216,7 +1255,8 @@ function createAskModel(ctx, remote) {
       remote.ignore({ batchId: item.batchId, questionId: item.questionId })
         .then(function (result) {
           if (result === undefined || result === null || result.ok !== true) {
-            state.callFailed = 'submit';
+            // 与 answer 同一分法：明确拒绝（已送达、被拒）≠ 未收到确认。
+            state.callFailed = 'answerRejected';
             notify();
             onDone(false);
             return;
@@ -1227,7 +1267,8 @@ function createAskModel(ctx, remote) {
             onDone(false);
             return;
           }
-          state.callFailed = null;
+          // 与 answer 同族：ignore 成功只清提交族旗标。
+          if (state.callFailed === 'submit' || state.callFailed === 'answerRejected') state.callFailed = null;
           onDone(true);
           poll();
         }, function () {
@@ -1240,23 +1281,30 @@ function createAskModel(ctx, remote) {
       ctx.uiWorkspace.openSession(sessionId);
     },
     /** 需求 §4.3：组级延长——回执 {extended:n}；成功后立即补一次轮询（新期限经
-     * serverNow 校准显示，本地不猜）。失败走面板顶报错通道（callFailed='extend'，
-     * 文案说明加时未生效、可重试——不冒充提交失败，也不假报加时成功）。 */
+     * serverNow 校准显示，本地不猜）。失败按 A08 三分：明确拒绝（'extendRejected'）
+     * ≠ 未收到确认（'extend'——可能已生效）。两条失败路径都立即 poll() 复查
+     * 真实期限——用户据刷新后的剩余时间决定是否再点（每次点击继续累加，不伪幂等）。 */
     extendSession: function (sessionId, onDone) {
       if (remote === undefined) { if (onDone) onDone(false); return; }
       remote.extend({ sessionId: sessionId }).then(function (result) {
         var ok = result !== undefined && result !== null && result.ok === true;
         if (ok) {
-          state.callFailed = null;
+          // 成功只清**本动作族**（'extend'/'extendRejected'）——提交族旗标
+          // （'submit'/'answerRejected'）与读取档（'state'）不受牵连。
+          if (state.callFailed === 'extend' || state.callFailed === 'extendRejected') state.callFailed = null;
           poll();
         } else {
-          state.callFailed = 'extend';
+          state.callFailed = 'extendRejected';
           notify();
+          // 拒绝后也复查真期限：面板剩余时间可能与宿主不一致（批已出窗等）。
+          poll();
         }
         if (onDone) onDone(ok);
       }, function () {
         state.callFailed = 'extend';
         notify();
+        // 无确认也可能已生效——先 poll 复查真期限，再由用户决定是否重试。
+        poll();
         if (onDone) onDone(false);
       });
     },
@@ -1483,7 +1531,10 @@ function AskList(props) {
     state.callFailed ? React.createElement("p", { className: "ats-ask-failed" },
       t(state.callFailed === 'state'
         ? "ask.stateFailed"
-        : state.callFailed === 'extend' ? "ask.extendFailed" : "ask.callFailed")) : null,
+        : state.callFailed === 'extend' ? "ask.extendFailed"
+        : state.callFailed === 'extendRejected' ? "ask.extendRejected"
+        : state.callFailed === 'answerRejected' ? "ask.answerRejected"
+        : "ask.callFailed")) : null,
     state.lostAnswers.map(function (lost) {
       // 逐条「知道了」消除——报错必须被人看到，看到后可手动收走。丢失答案
       // 用专属键（已到宿主、投递失败——不冒称未到宿主，也不建议无出路的重试）。
@@ -1530,7 +1581,7 @@ function askTranslator(uiLang, locale) {
 }
 
 /**
- * 座位渲染条件的公共口径：计数 > 0 **或** 存在未消除的 lostAnswers 才有脸。
+ * 座位渲染条件的公共口径：计数 > 0 **或** 存在未消除的 lostAnswers 才显示。
  * failed 只发生在 expired 批迟到提交，该题随即出列——条件若只看计数，单题批次（最常见
  * 形态）的报错名单永不显示。未读失败不算「处理完」，消除后才回到消隐口径。
  */
@@ -1538,14 +1589,14 @@ function askHasFace(state) {
   return state.items.length > 0 || state.lostAnswers.length > 0;
 }
 
-/** overlay 座位：开关开 + 座位 overlay + 有脸（见 askHasFace）才渲染浮框。 */
+/** overlay 座位：开关开 + 座位 overlay + 有内容显示（见 askHasFace）才渲染浮框。 */
 function AskOverlaySeat(props) {
   var state = React.useSyncExternalStore(props.ask.store.subscribe, props.ask.store.getSnapshot);
   if (!state.enabled || state.seat !== "overlay" || !askHasFace(state)) return null;
   return React.createElement(AskList, { ask: props.ask });
 }
 
-/** sidebar 座位：开关开 + 座位 sidebar + 有脸（见 askHasFace）渲染自绘徽标按钮。 */
+/** sidebar 座位：开关开 + 座位 sidebar + 有内容显示（见 askHasFace）渲染自绘徽标按钮。 */
 function AskSidebarSeat(props) {
   var state = React.useSyncExternalStore(props.ask.store.subscribe, props.ask.store.getSnapshot);
   var openRef = React.useRef(false);

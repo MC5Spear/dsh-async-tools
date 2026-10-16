@@ -61,10 +61,7 @@ const failures = [];
 
 for (const file of files) {
   if (CJS_FILES.has(file)) {
-    // CommonJS 半边不能交给 `node --check`：那个开关按扩展名与最近的 package.json
-    // 判定模块类型，本包是 `"type": "module"`，于是 CJS 包裹会被误报成语法错误。
-    // `--check` 又不接受 `--input-type`（两者同时用直接报错），所以这里用
-    // `new Function()`——它按**函数体/CJS** 解析、只解析不执行，正是"语法解析"这件事。
+    // client.js 为何不能走 `node --check`（按 ESM 误判、且不接受 `--input-type`）：见 CJS_FILES 的 JSDoc。
     try {
       // eslint-disable-next-line no-new-func -- 只解析，不调用。
       new Function(readFileSync(join(ROOT, file), 'utf8'));

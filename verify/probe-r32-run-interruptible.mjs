@@ -22,13 +22,13 @@
  *       （裁定接受）；该路径零完成通知（(f) 前半）。
  * - (f) 通知计数：(a)/(b) 各恰 1 条；(e) 0 条。
  *
- * 时序锚：会话先整体升档（GUI 侧＝composer `/permission danger-full-access`；
- * RPC 面＝`_r28-helpers.elevateSession`——同一 remote 提交事务），审批档随升档
+ * 时序锚：会话先整体升档（GUI 入口＝composer `/permission danger-full-access`；
+ * RPC 入口＝`_r28-helpers.elevateSession`——同一 remote 提交事务），审批档随升档
  * 切 never。插话/停止/读面板的同步点＝转录出现 async_run 的 tool/call 后 2 s
  * （工具体注册+spawn 在调用后毫秒级完成）；动作过早会中止步骤信号，工具体
  * 还没注册任何作业，什么判据都取不到。
  *
- * (b)(c) 走 GUI-first（RPC 建的会话不在 GUI 当前视图，停止键与面板入口
+ * (b)(c) 走 GUI 优先（RPC 建的会话不在 GUI 当前视图，停止键与面板入口
  * 都够不着）。0.2.0 起 GUI「新建会话」默认落**标准模式**（新任务页 seat
  * 默认），GUI 侧可行路径＝blank 会话（session/list `blank:true` 最新者）→
  * RPC `agentPresets/select` 定 dsh-async → composer 发词（`guiBlankSession`

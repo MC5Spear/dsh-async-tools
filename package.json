@@ -1,6 +1,6 @@
 {
   "name": "dsh-async-tools",
-  "version": "0.2.2",
+  "version": "0.2.3+dsh.0.2.0-rc.2",
   "description": "Bounded-yield async execution tools for DSH: `async_run` yields to a background job instead of killing long commands, `async_wait_job` / `async_wait_agent` wait within a required bounded budget and return early when the user speaks, without disturbing the background work.",
   "license": "MIT",
   "author": "MC5Spear (https://github.com/MC5Spear)",

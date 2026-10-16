@@ -569,6 +569,12 @@ test('async_run：描述里写出生效的预算数字（锚②③④都接上�
   assert.match(tool.description, /The first wait defaults to 15000 ms \(pass yield_ms, range \d+–\d+ ms\)/);
   assert.match(tool.description, /Per-call wait budgets must be passed explicitly, range \d+–120000 ms;/);
   assert.equal(typeof tool.parameters.properties.yield_ms, 'object', 'async_run 的 parameters 里必须有 yield_ms');
+  // 并发安全声明：未声明＝exclusive 独占——让出窗口会把同批其他调用全部
+  // 串行挡住，恰好废掉「让 Agent 继续其他工作」的本意（批次调度语义见
+  // facts 登记簿）。五个工具必须同口径 true。宿主包装器对**参数不合法**的
+  // 调用返回 false（dsh-tools :882-885），断言必须带合法参数调用。
+  assert.equal(tool.isConcurrencySafe({ command: 'Get-Date', description: 'probe' }), true,
+    'async_run 必须声明并发安全（否则同批调用被让出窗口串行）');
 });
 
 test('async_run（R8·R32-a）：准入拒绝必须可读可行动——进程未启动、明说"没有进程在运行"', async () => {
@@ -655,6 +661,40 @@ test('async_run（R8/#13a）：清单查询失败不得盖掉真正的原因', a
   assert.match(raised.message, /refused before the process launched/, '真正的原因必须还在');
   assert.doesNotMatch(raised.message, /jobs service exploded/, '清单查询的异常不该出现在给模型的文案里');
   assert.match(raised.message, /No other live jobs were found/, '查不到时应如实说查不到');
+});
+
+test('async_run（A04 分流）：非触顶的注册拒绝不得套触顶模板——不引导 kill、不列存活清单', async () => {
+  const f = fakeCtx();
+  const { proc, settle } = fakeProc({ text: '', status: 'running', autoResolve: false });
+  f.installShellExecute(() => Promise.resolve(proc));
+  // 宿主注册拒绝的**非容量**形态：预算换算/校验拒绝等，报错原文没有 `limit: N` 注记。
+  f.ctx.jobs.start = () => {
+    throw new Error('job registration failed: label exceeds the maximum length allowed by the host registry');
+  };
+  // 若实现误走触顶路径，listAliveJobs 会调 jobs.list——这里探针式记账，断言它没被碰。
+  let listed = 0;
+  f.ctx.jobs.list = () => { listed += 1; return []; };
+
+  let raised;
+  try {
+    await createRunTool(f.ctx, resolveConfig({ toolName: 'async_run', defaultYieldMs: 1, minYieldMs: 1 }))
+      .execute({ command: 'Start-Sleep 600', description: 'long build' }, exec);
+  } catch (error) {
+    raised = error;
+  }
+  settle();
+
+  assert.ok(raised !== undefined, '注册失败必须让本次调用失败');
+  // 分流判据：宿主原文可读在场（单行化后）＋ 明说不是并发上限 ＋ 原因原样。
+  assert.match(raised.message, /refused before the process launched/, '仍要说清失败发生在进程启动前');
+  assert.match(raised.message, /This is not a capacity limit; stopping other jobs will not help\./,
+    '非触顶拒绝必须明说腾位无用——不让模型去找无关作业的麻烦');
+  assert.match(raised.message, /label exceeds the maximum length/, '宿主的真实原因必须原样可读');
+  // 不得出现触顶模板的三件套：kill 指引、生效上限复述、存活清单。
+  assert.doesNotMatch(raised.message, /job_kill/, '非触顶拒绝不给 kill 指引（没有那种出路）');
+  assert.doesNotMatch(raised.message, /current limit/i, '没有 limit: N 注记就不得复述上限');
+  assert.doesNotMatch(raised.message, /async-command-\d/, '不该列存活作业清单');
+  assert.equal(listed, 0, '非触顶路径根本不该去查存活清单（listAliveJobs 是触顶分支专属）');
 });
 
 // ---------------------------------------------------------------------------

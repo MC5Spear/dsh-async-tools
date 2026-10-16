@@ -8,7 +8,7 @@
  * 2. **只改 `agentLang` → `zh`**（走 RPC 写入宿主行设置，与真实保存同一条链）：新会话的描述必须
  *    换成中文档；**表单文案必须逐字不变**（agentLang 不得影响展示侧）。
  * 3. **只改 `uiLang` → `en`**（走**页面本身**：改下拉 + 点保存，证明这个控件真的可用）：表单文案必须
- *    整体换成英文档、字段身份不变；**工具描述必须逐字不变**（uiLang 不得影响 Agent 面）。
+ *    整体换成英文档、字段身份不变；**工具描述必须逐字不变**（uiLang 不得影响 Agent 侧）。
  * 4. **复原**：两个开关回 `auto` / `en` 并回读比对（验证实例是共享资源，不留脏状态）。
  *
  * 前置：验证实例在跑（loopback 打开）、包名在 profile 的 dependencies 与 bundles 里。
@@ -21,11 +21,11 @@ import { launch, openPage, evaluate, findBrowser, waitFor, screenshot } from './
 import { rpc, transcriptOf, localConfig } from './_rpc.mjs';
 import { instanceCredentials } from '../tools/_local-config.mjs';
 import { judgeLangIndependence, judgeLangRestored } from './lang-judgements.mjs';
+import { NS } from './_r28-helpers.mjs';
 import { BUDGET_FIELD_KEYS, LANG_FIELD_KEYS, FLAG_FIELD_KEYS, ASK_FIELD_KEYS } from '../lib/config.js';
 
 const { base: BASE, token } = instanceCredentials(localConfig);
 const SHOTS = join(localConfig.evidenceDir, 'shots');
-const NS = 'async-tools-host';
 const PRESET = 'dsh-async';
 const ACK = 'Reply with exactly: ACK. Do not call any tool.';
 

@@ -118,7 +118,8 @@ export function checkDocs(root = process.cwd(), { quiet = false } = {}) {
     onDisk = [];
   }
 
-  // `docs/` 之外的现行文档（目前只有 `verify/README.md`）不参与"未分类/幽灵"对账：
+  // `docs/` 之外的现行文档（根下 README/CHANGELOG/CONTRIBUTING 与 `verify/README.md`，
+  // 见 CURRENT_DOCUMENTS 表）不参与"未分类/幽灵"对账：
   // 那两条判据的对象是"`docs/` 下每份 .md 都要有归属"。
   const OUTSIDE_DOCS = new Set(CURRENT_DOCUMENTS.filter((file) => !file.startsWith('docs/')));
   const unclassified = onDisk.filter((file) => !CURRENT_DOCUMENTS.includes(file));
@@ -129,7 +130,7 @@ export function checkDocs(root = process.cwd(), { quiet = false } = {}) {
       + '过程稿、事实登记簿、交付索引一律下沉本机侧的语料目录，不进公开范围');
   }
   for (const file of phantom) {
-    problem(file, '名单里的这份现行文档在盘上不存在——名单与现实漂了，检查会静默失去作用');
+    problem(file, '名单里的这份现行文档在盘上不存在——名单与现实漂移了，检查会静默失去作用');
   }
 
   // ── 现行文档：围栏配对 + 历史叙述词 ────────────────────────────────────────
@@ -148,7 +149,7 @@ export function checkDocs(root = process.cwd(), { quiet = false } = {}) {
     const retired = [...text.matchAll(RETIRED_MECHANISM_WORDS)].map((m) => m[0]);
     if (retired.length > 0) {
       problem(file, `已退役机制名 ${String(retired.length)} 处（${[...new Set(retired)].join('、')}）——`
-        + '现行文档只描述现行承载；退役名连禁令一起删净');
+        + '现行文档只描述现行机制；退役名连禁令一起删净');
     }
   }
 

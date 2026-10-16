@@ -10,8 +10,8 @@
  * 官方 `.failed` 引用未定义的 `label-error` 落继承色是官方现行行为，本包不复制它的颜色
  * 引用）。
  *
- * 锚点目录与 `tools/_host-resolve.mjs` 同一套：`DSAT_HOST_MODULES` 覆盖 → 0.2.0 线
- * 运行树（`dsh-0.2.0-rc.2`；旧线树枚举不出完整的别名表）。
+ * 锚点目录解析与 `tools/_host-resolve.mjs` 同一套三候选链（`DSAT_HOST_MODULES`
+ * 覆盖 → `DSH_HOME/profiles` → `%APPDATA%/npm`；表在别处展开，此处不重复抄）。
  * 找不到 theme 源时退出 2（宁可失败，不放假绿）。
  *
  * 用法：node tools/check-alias-tokens.mjs

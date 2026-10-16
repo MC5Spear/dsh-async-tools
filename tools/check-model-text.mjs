@@ -63,14 +63,14 @@ let failures = 0;
     failures++;
   }
   if (failures === 0) {
-    console.log(`表层通过（en/zh 各 ${String(enKeys.length)} 键，键集相等，en 零 CJK，zh 键键含中文）。`);
+    console.log(`表层通过（en/zh 各 ${String(enKeys.length)} 键，键集相等，en 零 CJK，zh 每键含中文）。`);
   }
 }
 
 // ── 源码层：lib/*.js 剥注释后零 CJK（白名单放行操作者一侧） ────────────────
 //
 // `lib/text.js` 是双语表本体（zh 档的 CJK 是它的职责），由上面三层判据审计，
-// 不参加源码扫描；这一层兜的是"新加了一句没进表的模型侧中文"。
+// 不参加源码扫描；这一层拦的是"新加了一句没进表的模型侧中文"。
 
 /**
  * 白名单：文件名 → [{ needle, why }]。needle 是包含 CJK 的**完整字符串片段**
@@ -89,12 +89,12 @@ const ALLOWLIST = {
     { needle: '广播设置变更', why: 'diag（logger.debug），操作者一侧' },
     { needle: '刷新工具描述失败', why: 'stderr 通告（emitLifecycleNotice），操作者一侧' }
   ],
-  // volatile 提交失败姿态与首播降级姿态：warn + stderr 通告，操作者一侧。
+  // volatile 提交失败的报错与首次装载的降级通告：warn + stderr 通告，操作者一侧。
   'settings.js': [
     { needle: 'volatile 提交后配置自检失败', why: 'logger.warn，操作者一侧' },
     { needle: 'volatile 提交未生效', why: 'stderr 通告（emitLifecycleNotice），操作者一侧' },
-    { needle: '宿主行配置自检失败', why: '首播降级的 logger.warn，操作者一侧' },
-    { needle: '宿主行忽略持久化的非法设置', why: '首播降级的 stderr 通告，操作者一侧' },
+    { needle: '宿主行配置自检失败', why: '首次装载降级的 logger.warn，操作者一侧' },
+    { needle: '宿主行忽略持久化的非法设置', why: '首次装载降级的 stderr 通告，操作者一侧' },
     { needle: '设置变更广播失败', why: '悬空动态 import 的 .catch warn，操作者一侧（快照已落，只影响描述刷新转达）' }
   ],
   // 装载期的两条降级通告（emitLifecycleNotice → stderr）：与 index.js 的
@@ -202,7 +202,7 @@ export function scanProseLiterals(source, allowNeedles = [], operatorMarkers = [
     //
     // 已知边界（不假装覆盖）：**半句 + 插值**的碎片（`' (diagnostic: ' + reason`）不算命中——
     // 把规则放宽到"一个 ≥3 字母的词 + 空白"会把插值调用模板（`job ${id}`）与日志片段一起卷进来，
-    // 允许清单会膨胀到没人再看。这类碎片靠运行时层（两档取数）与实现审查兜。
+    // 允许清单会膨胀到没人再看。这类碎片由运行时层（两档取数）与实现审查承接。
     if (!/[A-Za-z]{2,}\s+[A-Za-z]{2,}/.test(text)) continue;
     // 纯转义/空白（换行拼接）不算文案。
     if (text.replace(/\\[nrt]/g, '').trim() === '') continue;
@@ -223,7 +223,7 @@ const OPERATOR_MARKERS = ['LOG_PREFIX', 'logger.', 'logger?.', 'diag(', 'process
  * （操作者一侧：降级 stderr 与开发期断言，schemastery 同层也是英文）与
  * **宿主逐字同形副本**：宿主源码里逐字存在的
  * 串，钉版看守整段互锚要求本包副本与宿主逐字同形——双语化即破坏锚、即与宿主
- * 行为漂移。判定特征统一为"宿主侧同串同现 + 看守锚住宿主源"。
+ * 行为漂移。判定特征统一为"宿主侧同串同现 + 看守锚定于宿主源"。
  */
 const PROSE_ALLOWLIST = {
   'jobs.js': [
@@ -235,6 +235,7 @@ const PROSE_ALLOWLIST = {
     { needle: 'registry settled completed before the process handle arrived', why: '不变量破坏时的 fail-loud 断言（正常路径不可达，不进模型上下文；同 config-view 只读防御一类）' }
   ],
   'workflow.js': [
+    { needle: 'tool call aborted', why: '宿主契约串（入口中止守卫：宿主把中止的工具调用整体改写为 "Error: tool call aborted"，本包抛同款短语走同一改写通道——与 jobs.js 的同名条目同一理由。旧实现摊平豁免时它蹭 jobs.js 的条目放行，按文件收紧后补正式登记）' },
     { needle: 'unknown error', why: '宿主同形回退（jobOutcomeOf error 支的 detail 缺省值——宿主原文，非本包文案）' },
     { needle: 'workflow run ended abnormally', why: '宿主同形防御分支（stopReason 封闭联合的未来变体；正常路径不可达，宿主同款英文）' },
     { needle: 'async workflow job killed', why: '内部取消缺省理由（喂给 run.cancel，经注册表 kill-reason 合并；对应宿主后台的 background workflow job killed 同类缺省）' },
@@ -262,7 +263,7 @@ const PROSE_ALLOWLIST = {
     { needle: 'ask takeover wiring', why: '同上（提问接管接线的 effect 标签）' }
   ],
   'ask-takeover.js': [
-    { needle: 'was aborted before the user answered', why: '契约串：与原生 ask() 的 ASK_ABORTED 形状逐字对齐，改一字即失配（不是文案）' },
+    { needle: 'was aborted before the user answered', why: '契约串：与原生 ask() 的 ASK_ABORTED 形状逐字一致，改一字即失配（不是文案）' },
     { needle: 'preset check failed', why: '操作者一侧 stderr 审计（audit 助手内部走 process.stderr）' },
     { needle: 'root re-check failed', why: '同上（判定④三态之一的审计行）' },
     { needle: 'failed for batch', why: '同上（迟到注入投递失败/可逆卸载交还失败的审计行——通道名 followup/inject 在模板里插值，故用稳定片段）' },
@@ -293,6 +294,7 @@ const PROSE_ALLOWLIST = {
     { needle: 'Access is denied', why: '同上（EN 锚对之二）' }
   ]
 };
+/** 允许标记总数（跨文件合计；每条 needle 的生效范围见下方调用处——只对自己登记的文件生效）。 */
 const PROSE_ALLOW_NEEDLES = Object.values(PROSE_ALLOWLIST).flat().map((entry) => entry.needle);
 
 {
@@ -301,11 +303,12 @@ const PROSE_ALLOW_NEEDLES = Object.values(PROSE_ALLOWLIST).flat().map((entry) =>
     .sort();
   let proseFailures = 0;
   for (const file of files) {
-    const hits = scanProseLiterals(readFileSync(join(LIB, file), 'utf8'), PROSE_ALLOW_NEEDLES, OPERATOR_MARKERS)
+    // 每条允许只对它自己的文件生效：`config.js` 的豁免不给别的文件开口子——
+    // 传给 scanProseLiterals 的是本文件登记的清单，不是全表摊平。
+    const fileNeedles = (PROSE_ALLOWLIST[file] ?? []).map((entry) => entry.needle);
+    const hits = scanProseLiterals(readFileSync(join(LIB, file), 'utf8'), fileNeedles, OPERATOR_MARKERS)
       // 纯标识符（工具名、事件名、模式名）不是句子。
-      .filter((hit) => !/^[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)*$/.test(hit.text))
-      // 每条允许只对它自己的文件生效：`config.js` 的豁免不该给别的文件开口子。
-      .filter((hit) => !(PROSE_ALLOWLIST[file] ?? []).some((entry) => hit.text.includes(entry.needle)));
+      .filter((hit) => !/^[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)*$/.test(hit.text));
     for (const hit of hits) {
       console.error(`FAIL  lib/${file}:${String(hit.line)} 面向模型的文案未进 lib/text.js：${JSON.stringify(hit.text.slice(0, 100))}`);
       proseFailures++;

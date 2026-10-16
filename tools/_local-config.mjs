@@ -23,7 +23,7 @@
  *   配置坏了**，按**红**处理。
  *
  * 若不分开，开发机上误删一次 `config.mjs` 就会让所有本机判据静默变绿——那正是
- * 本仓反复登记过的"假绿"形态（见 `verify/README.md` 的「判据必须在默认权限下可跑」一节）。
+ * 本仓反复登记过的"假绿"形态（`verify/README.md` 现行要点：「优先默认权限执行；纯函数判断尽量进程内复用」）。
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -81,18 +81,20 @@ export function localPlanePresent(root = MODULE_ROOT) {
  * @param {{ root?: string, env?: Record<string, string | undefined> }} [options]
  *   `root` 仓根（默认本模块上一级）；`env` 环境（默认 `process.env`，测试可喂合成值）。
  * @returns {Promise<{
- *   root: string, source: 'env' | 'file' | 'both', configFile: string | undefined,
+ *   root: string, source: 'file' | 'both', configFile: string | undefined,
  *   hostModules: string | undefined,
  *   evidenceTree: { '020': string | undefined, '017': string | undefined, '015': string | undefined },
  *   instanceUrl: string | undefined, tokenFile: string | undefined,
  *   instanceHome: string | undefined, serviceLog: string | undefined,
  *   junctions: Array<{ name: string, link: string, target: string, version: string }> | undefined,
  *   siblingBundles: string[],
- *   evidenceDir: string, workspaceDir: string,
+ *   evidenceDir: string, workspaceDir: string, tmpDir: string,
  *   notes: string[]
  * }>} 归一化配置；缺席/不可用的字段为 `undefined`，`notes` 逐条说明来源与跳过理由。
- *   `evidenceDir` / `workspaceDir` 是**派生**字段（不是配置项）：前者固定指向本机侧的
- *   证据目录（探针的落盘位置），后者是探针驱动远端会话时该用的工作目录。
+ *   `evidenceDir` / `workspaceDir` / `tmpDir` 是**派生**字段（不是配置项）：`evidenceDir`
+ *   固定指向本机侧的证据目录（探针的落盘位置）；`workspaceDir` 是探针驱动远端会话时
+ *   该用的工作目录；`tmpDir` 是探针运行期要建/删的目录的落点（缺省 `.local/tmp`，
+ *   可被同名字段覆盖）——运行产物不落公开范围。
  *   `siblingBundles` 是"这台部署的 profile 里除本包之外还应当挂着的包名"，
  *   缺省空数组——空数组的含义是"只断言本包自己"，这正是外部读者的形态。
  * @throws {LocalPlaneAbsent} `.local/` 不存在。
@@ -163,11 +165,6 @@ export async function loadLocalConfig({ root = MODULE_ROOT, env = process.env } 
   }
   const evidenceDir = pick('evidenceDir') ?? join(root, LOCAL_DIR, 'evidence');
   const workspaceDir = pick('workspaceDir') ?? root;
-  /**
-   * 运行期临时目录（派生）。探针在工作时要建/删的目录**落这里**，不要落回公开范围：
-   * 那些目录是运行产物，而且被远端会话读写——放 `verify/` 下会让"包内"多出一堆
-   * 只有跑过探针才存在的东西。
-   */
   const tmpDir = pick('tmpDir') ?? join(root, LOCAL_DIR, 'tmp');
   const source = envValues.hostModules === undefined && envValues.instanceUrl === undefined
     && envValues.tokenFile === undefined ? 'file' : 'both';

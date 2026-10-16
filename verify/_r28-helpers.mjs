@@ -3,8 +3,7 @@
  * 会话驱动与结果抠取。
  *
  * 两个探针共用（`probe-r28-silent-failure.mjs` 跑真机 1–4、6；`probe-r28-restart-persistence.mjs`
- * 跑真机 5 的重启后半），锚句只登记在这一处——改 `lib/text.js` 文案必须同步这里
- * （verify/README.md 的锚句表有登记项）。
+ * 跑真机 5 的重启后半），锚句只登记在这一处——改 `lib/text.js` 文案必须同步这里。
  *
  * c 段（纪律段）没有转录通道（`request/header` 只含 config/adapterDefaults/tools），
  * 取证走**行为判据**：固定格式问答 + 定向断言（逐字引用
@@ -61,7 +60,8 @@ export async function patchNs(patch) {
  *
  * 为什么需要：验证实例是 NSSM 托管服务（LocalSystem，会话 0，无 logon SID），
  * 受限档下一切受约束 spawn 死于 `ACL_FAIL`（`CreateRestrictedToken prerequisite
- * failed`）——`async_run` 的 pwsh 与 workflow 引擎的 PTC worker
+ * failed`）——`async_run` 的 pwsh 与 workflow 引擎的 PTC worker（宿主
+ * `@deepseek-ai/dsh-workflow-ptc` 的执行 worker，编排脚本在它里面跑）
  * 同死（前者 exit 127、stderr 带 `windows-acl-run:` 前缀）。GUI composer 的
  * `/permission` 与 `commands/execute` RPC 是同一 remote 提交事务（纯准入语义、
  * command/run+command/done 持久留痕）；不用浏览器的探针经 RPC 对**自己建的

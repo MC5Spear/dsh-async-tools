@@ -16,9 +16,9 @@
 #      owningPreset 归属声明（需求 §6.2——描述警示按行归属判定，非 volatile）；
 #   4. tool-workflow 与 tool-subagent 系委托入口（单发 / fork / codex / claude-code）
 #      置 disabled: true（需求 §3.1：禁可前台占住批次的原生委托／编排入口；config
-#      逐字保留以便翻活）。被禁入口的功能出路 = async_agent / async_workflow，或按
+#      逐字保留以便翻转）。被禁入口的功能出路 = async_agent / async_workflow，或按
 #      宿主规则换预设开新会话（需求 §3.1 末条）；workflow-ptc（引擎服务，为
-#      async_workflow 供电）与 tool-subagent-control / -list-agents（非阻塞检查／管理
+#      async_workflow 提供编排引擎）与 tool-subagent-control / -list-agents（非阻塞检查／管理
 #      侧，需求 §3.1"保留宿主非阻塞的检查、消息和停止管理工具"）保留在场；
 #   5. tool-ralph 按基线置 disabled: true（config 保留以便翻转）；
 #   6. persona prefix 在基线之上加异步工作纪律与后台委托强制规则（需求 §3.1；
@@ -159,7 +159,7 @@
               - id: tool-subagent-list-agents
                 name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
               # 宿主单发／派生委托入口禁用（需求 §3.1：禁可前台占住批次的原生委托
-              # 入口；config 逐字保留以便翻活）。前台模式与 reasoning_effort /
+              # 入口；config 逐字保留以便翻转）。前台模式与 reasoning_effort /
               # persona / toolFilter / maxDepth 等原生参数不在本包创建工具中——
               # 需要时按宿主规则换预设开新会话（需求 §3.1 末条）。
               - id: tool-subagent

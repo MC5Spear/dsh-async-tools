@@ -95,7 +95,7 @@ async function prompt(sessionId, text) {
  *
  * @param {string} sessionId - 会话 id。
  * @param {number} timeoutMs - 轮询上限。
- * @returns {Promise<object[]> - 事件记录数组。
+ * @returns {Promise<object[]>} - 事件记录数组。
  */
 async function settleAndRead(sessionId, timeoutMs) {
   const deadline = Date.now() + timeoutMs;

@@ -48,7 +48,7 @@ const lineNumber = Number(match[2]);
 const lines = readFileSync(target, 'utf8').split('\n');
 const reason = /SyntaxError: (.+)/.exec(output)?.[1] ?? '（未给出原因）';
 
-console.log(`${target}：语法错误在**第 ${String(lineNumber)} 行**——${reason}`);
+console.log(`${target}：语法错误在第 ${String(lineNumber)} 行——${reason}`);
 const from = Math.max(0, lineNumber - 5);
 for (let index = from; index < Math.min(lines.length, lineNumber + 2); index += 1) {
   const mark = index === lineNumber - 1 ? '>>' : '  ';

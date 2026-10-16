@@ -17,7 +17,7 @@
  *   `attachSnapshotSource(ctx)` 首播快照 + 监听 `loader/volatile-update`；
  *   工具行 `readSnapshot() ?? initial`。卡片挂在 `plugins.bundle.config` keyed 槽
  *   （`client.js`，静态判据见 T5/T16；设计 §5.3）。
- * - 预设补丁的六项判据在 `test/preset.test.mjs`。
+ * - 预设补丁判据见 `test/preset.test.mjs` 与 `tools/validate-preset.mjs`（以文件头声明为准）。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -1635,7 +1635,8 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     assert.equal(DICT.zh[key], expected, `zh 字段名必须逐字对齐需求 §5.5 表：${key}`);
   }
 
-  // ② hint 锚第一层 = 设计 §5.6 常驻表两档全文一致（夹具入库，改写即红）。
+  // ② hint 锚第一层 = 词典全文对账（夹具入库，改写即红；权威文本＝client.js
+  //    词典与本夹具的对账，设计 §5.6 只登记要点与子串，不另维护全文）。
   const HINTS_ZH = {
     defaultYieldMs: 'async_run 与 async_workflow 未指定 yield_ms 时使用的首次等待时长；指定时按本次请求与上下限取值。到时仍未完成就结束本次等待、返回作业编号（job_id），后台任务继续运行。',
     minYieldMs: '限制本次 yield_ms 的有效值；请求低于此值时按下限取值。不是后台任务的最长运行时间。',
@@ -1644,7 +1645,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minWaitMs: '适用于两个等待工具的 wait_ms；请求低于此值时按下限取值。到时结束本次等待，不停止后台任务。',
     maxWaitMs: '适用于两个等待工具的 wait_ms；请求高于此值时按上限取值。到时结束本次等待，不停止后台任务。',
     pollIntervalMs: 'async_wait_agent 备用检查子代理是否仍在运行的间隔。不是待答面板刷新间隔，也不是子代理运行时限。',
-    maxResultChars: '单次返回保留的结果内容字符上限，超出时保留首尾并说明截断；状态与提示另计。',
+    maxResultChars: '单次返回保留的结果内容字符上限（正整数），超出时保留首尾并说明截断；状态与提示另计。',
     jobKind: '注册命令作业用的类型名称，便于在作业列表与日志中识别；不决定命令执行方式。',
     subagentProvider: 'async_agent 创建子代理使用的后端服务；不是选择大语言模型或模型服务商。',
     uiLang: '控制本包设置表单、字段帮助与待答界面文案；跟随宿主语言或显式中英文，不改宿主全局语言。',
@@ -1656,7 +1657,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     askUiSeat: '侧边栏底栏徽标显示未处理数、点击展开；右下角浮窗直接显示问题。切换显示方式不改变接管开关。'
   };
   for (const [key, text] of Object.entries(HINTS_ZH)) {
-    assert.equal(DICT.zh[`hint.${key}`], text, `zh 常驻短说明必须与设计 §5.6 常驻表全文一致：${key}`);
+    assert.equal(DICT.zh[`hint.${key}`], text, `zh 常驻短说明必须与夹具全文一致（权威＝词典＋夹具对账）：${key}`);
     assert.notEqual(DICT.en[`hint.${key}`], undefined, `en 常驻短说明必须在场：${key}`);
   }
 
@@ -1667,7 +1668,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minYieldMs: ['下限', '最长运行时间'], maxYieldMs: ['上限', '最长运行时间'],
     defaultWaitMs: ['示例', '报错', '备用值'],
     minWaitMs: ['下限', '不停止'], maxWaitMs: ['上限', '不停止'],
-    pollIntervalMs: ['备用', '刷新间隔'], maxResultChars: ['截断', '另计'],
+    pollIntervalMs: ['备用', '刷新间隔'], maxResultChars: ['正整数', '截断', '另计'],
     jobKind: ['注册', '不决定'], subagentProvider: ['后端', '大语言模型'],
     uiLang: ['设置表单', '宿主全局语言'], agentLang: ['工具描述', '不翻译'],
     silentFailureGuard: ['静默失败', '条件式', '两预设'],
@@ -1679,7 +1680,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minYieldMs: ['lower bound', 'maximum run time'], maxYieldMs: ['upper bound', 'maximum run time'],
     defaultWaitMs: ['example', 'errors', 'fallback'],
     minWaitMs: ['lower bound', 'without stopping'], maxWaitMs: ['upper bound', 'without stopping'],
-    pollIntervalMs: ['backup', 'refresh interval'], maxResultChars: ['truncation note', 'counted separately'],
+    pollIntervalMs: ['backup', 'refresh interval'], maxResultChars: ['positive integer', 'truncation note', 'counted separately'],
     jobKind: ['register', 'does not decide'], subagentProvider: ['Backend', 'large language model'],
     uiLang: ['settings form', 'global language'], agentLang: ['tool descriptions', 'does not translate'],
     silentFailureGuard: ['Silent failure', 'conditional', 'two presets'],
@@ -1701,7 +1702,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minYieldMs: ['提前结束', '上下限'], maxYieldMs: ['提前结束', '上下限'],
     defaultWaitMs: ['仅为示例', '必填'],
     minWaitMs: ['一份预算'], maxWaitMs: ['一份预算'],
-    pollIntervalMs: ['轮询', '配对'], maxResultChars: ['截断', '另计'],
+    pollIntervalMs: ['轮询', '配对'], maxResultChars: ['正整数', '截断', '另计'],
     jobKind: ['空值非法'], subagentProvider: ['不是选择大语言模型', '可读拒绝'],
     uiLang: ['跟随宿主语言', '独立'], agentLang: ['跟随宿主语言', '独立'],
     silentFailureGuard: ['三处', '条件式'], askTakeover: ['普通提问', '迟到'],
@@ -1712,7 +1713,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minYieldMs: ['end the first wait early', 'clamping'], maxYieldMs: ['end the first wait early', 'clamping'],
     defaultWaitMs: ['only an example', 'required'],
     minWaitMs: ['One budget covers'], maxWaitMs: ['One budget covers'],
-    pollIntervalMs: ['polling', 'pairing'], maxResultChars: ['truncation', 'counted separately'],
+    pollIntervalMs: ['polling', 'pairing'], maxResultChars: ['positive integer', 'truncation', 'counted separately'],
     jobKind: ['empty value is invalid'], subagentProvider: ['not choosing a large language model', 'rejected readably'],
     uiLang: ['follows the host language', 'independent'], agentLang: ['follows the host language', 'independent'],
     silentFailureGuard: ['three defenses', 'conditional'], askTakeover: ['plain questions', 'Late answers'],
@@ -2041,6 +2042,48 @@ test('T23（R29-d·判据 14）：卡片层单字段上界——boundedNumberSpe
   assert.deepEqual(spec.maxWaitMs.parse(''), { kind: 'clear' }, '空草稿照常 clear');
   assert.equal(spec.maxWaitMs.parse('abc'), undefined, '非数字仍非法（官方语义）');
   assert.equal(spec.maxWaitMs.format(600000), '600000', 'format 原样透传');
+});
+
+test('T23d（A09·正整数体系）：maxResultChars 非整数草稿 parse 拒绝＋invalidInteger 档＋服务端整数校验', async () => {
+  const { makePrimitivesDouble } = await import('./_primitives-double.mjs');
+  const reactStub = { createElement: () => undefined, useState: () => [undefined, () => {}], useEffect: () => {}, useRef: (v) => ({ current: v }) };
+  const double = makePrimitivesDouble(reactStub);
+  let loaded;
+  new Function('window', readFileSync(resolve(ROOT, 'client.js'), 'utf8'))({ __ModuleLoader__: { load: (spec) => { loaded = spec; } } });
+  const product = loaded.factory((name) => (name === 'react' ? reactStub : double));
+
+  const spec = Object.fromEntries(product.makeSpecs().map((entry) => [entry.field, entry]));
+
+  // ① parse 层：非整数草稿 → undefined（官方非法通道 → 保存禁用）。
+  assert.equal(spec.maxResultChars.parse('30000.7'), undefined, 'maxResultChars 小数草稿必须被拒（正整数，需求 §5.2）');
+  assert.equal(spec.maxResultChars.parse('0.5'), undefined, '小于 1 的小数同样被拒');
+  assert.deepEqual(spec.maxResultChars.parse('30000'), { kind: 'set', value: 30000 }, '整数字面值照常 set');
+  assert.deepEqual(spec.maxResultChars.parse('30000.0'), { kind: 'set', value: 30000 }, '整数值的小数写法（.0）数值上是整数，照常 set');
+  // ② 整数档只作用于 maxResultChars：毫秒预算字段的小数草稿不受整数档影响
+  //    （各自仍走上下界校验；300.5 在 250..600000 内侧 → set）。
+  assert.deepEqual(spec.maxWaitMs.parse('300.5'), { kind: 'set', value: 300.5 }, '毫秒字段无整数约束（需求只对 maxResultChars 要求正整数）');
+
+  // ③ 显示层分档：非整数档优先于越界档，文案键 invalidInteger。
+  const code = clientCode();
+  assert.match(code, /notInteger\s*\? t\("invalidInteger"\)/, '非整数草稿必须给出 invalidInteger 档的原因文案');
+  assert.match(code, /INTEGER_FIELDS = \{ maxResultChars: true \}/, '整数字段表只登记 maxResultChars');
+
+  // ④ 词典两档都带 invalidInteger 键（zh/en 键集一致由 T21 守，这里守内容）。
+  assert.ok(product.DICTIONARIES.zh.invalidInteger.length > 0, 'zh invalidInteger 在场');
+  assert.ok(product.DICTIONARIES.en.invalidInteger.length > 0, 'en invalidInteger 在场');
+  assert.match(product.DICTIONARIES.zh.invalidInteger, /整数/, 'zh 文案必须说"整数"');
+
+  // ⑤ 服务端第二层：lib/config.js 的 maxResultChars 带 .step(1)（schemastery 的
+  //    整数校验——设置页与 resolveConfig 同走这条），运行时 resolveConfig 对
+  //    小数 fail-fast。
+  const configCode = readFileSync(resolve(ROOT, 'lib/config.js'), 'utf8');
+  assert.match(configCode, /maxResultChars: z\.number\(\)\.step\(1\)/, '服务端 schema 必须带 .step(1) 整数校验');
+  const { resolveConfig } = await import('../lib/config.js');
+  assert.throws(
+    () => resolveConfig({ toolName: 'async_run', maxResultChars: 30000.7 }),
+    'resolveConfig 必须拒绝小数 maxResultChars（fail-fast，不夹紧）'
+  );
+  assert.equal(resolveConfig({ toolName: 'async_run', maxResultChars: 12345 }).maxResultChars, 12345, '整数照常通过');
 });
 
 test('T23b（R29-d·判据 14）：卡片层跨字段配对——pollIntervalMs 草稿 > maxWaitMs 草稿', async () => {

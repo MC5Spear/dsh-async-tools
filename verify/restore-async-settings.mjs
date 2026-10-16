@@ -11,6 +11,9 @@
  * ⇒ 还原功能必须能**独立于探针进程**存在。本脚本就是那个出口：
  * 探针被切断后，跑它一次即可回到默认值。
  *
+ * 本清单为 `lib/config.js` 出厂默认的手抄副本，改 schema 默认值时须同步四处：
+ * 本文件、`probe-queue-delivery.mjs`、`final-acceptance.mjs`、`acceptance-017.mjs`。
+ *
  * 用法：node verify/restore-async-settings.mjs
  */
 import { rpc } from './_rpc.mjs';

@@ -11,9 +11,8 @@
  *    invalidPair 文案（壳层叠加）。
  * 3. **提交层拒绝**（第二道防线）：绕过卡片直写（RPC mutate）越界 maxWaitMs →
  *    **网关按本包 schema 拒绝**（`settings/rejected` + schemastery 可读消息，含上界）
- *    + 回读值未变（未落盘）+ 工具描述不受影响。（实测：RPC
- *    settings/update 对字段级越界当场拒绝，比设计稿的"落盘 + errlog warn 承接"
- *    更强；跨字段违例 schema 表达不了，仍走落盘 + loader warn。）
+ *    + 回读值未变（未落盘）+ 工具描述不受影响。字段级越界由网关 schema 当场拒绝；
+ *    跨字段违例（如 min > max）schema 表达不了，走落盘 + loader warn 承接。
  * 4. **等待总耗时上界**：20 秒命令（提权档真跑）+ yield 后 async_wait_job
  *    (wait_ms=1500) → running 结局，渲染句 "Waited N ms; the job is still
  *    running" 在场且 N ∈ [0.9×wait_ms, wait_ms + 3×pollIntervalMs + 容差]

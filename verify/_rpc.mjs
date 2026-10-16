@@ -29,12 +29,18 @@ if (cookie.length === 0) throw new Error('token exchange returned no cookie');
 /**
  * 调一个网关方法。
  *
- * 连接级失败（TypeError: fetch failed）**重试一次**：探针一跑 20+ 分钟，浏览器
- * 阶段的长时间隙后，服务端关闭的空闲 keep-alive 连接会被 undici 复用——旧连接
- * 上刚要发请求就撞上已关连接，表现为一次随机 fetch failed（长探针两跑两中，
- * 失败点各不相同；async-e2e 等短探针零命中）。重试发起新连接即成。安全边界：
- * settings/* 幂等（同值再写一次无害）；session/new 侧效应是可能多出一个孤儿
- * 会话——探针本来就留会话，可接受；业务判据不受影响（重试的是同一请求）。
+ * 重试范围是**任意 fetch 拒绝、任意方法各重试一次**（不只连接级失败）：长时间
+ * 运行的探针会经历浏览器阶段的长时间隙，服务端在此期间关闭空闲 keep-alive
+ * 连接，undici 复用旧连接就会撞上一次随机 fetch failed。重试发起新连接即成。
+ *
+ * 重试的副作用要如实说：**fetch 拒绝≠请求未到达**——服务端可能已执行、只是
+ * 响应没回来，重试就是**同一请求再发一次**。各方法的重复后果：
+ * - 读取类（session/list 等）：无副作用；
+ * - `settings/*` 幂等（同值再写一次无害）；
+ * - `session/new`：可能多出一个孤儿会话——探针本来就留会话，可接受；
+ * - 其余写入类（会话内发词、取消等）：重试可能造成**第二次执行**，本文件的使用
+ *   方（探针）要么容忍重复（判据按最终转录收敛），要么在调用点自行去重——需要
+ *   严格一次性的请求不该走这里的盲目重试。
  * @param {string} endpoint - 方法名（如 `session/list`）。
  * @param {object} args - 参数。
  * @returns {Promise<object>} `result.value`。

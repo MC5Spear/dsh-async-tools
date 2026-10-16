@@ -1,7 +1,7 @@
 /**
  * `tools/check-model-text.mjs` 第 3 层（硬编码文案层）的变异证明。
  *
- * 那一层挡的是"中文档下硬编码英文句子"这一类退化：
+ * 那一层挡的是"agentLang=zh 档下硬编码英文句子"这一类退化：
  * 既不触发 CJK 判据，也不在 `t()` 的键集里。这里用合成源码证明判据本身能红。
  *
  * 用法：node verify/mutate-model-text.mjs

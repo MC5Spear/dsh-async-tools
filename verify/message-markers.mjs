@@ -23,22 +23,22 @@
  */
 
 /**
- * 插话文案：等待被打断，且**工作对象不受影响**。
+ * 插话文案：等待被打断，且**结束等待没有终止工作对象**。
  *
- * 出处 `lib/text.js` 的 `note.interrupted`（两语逐字；行号不锚——键名即锚，插行不漂）：
- * `等待被打断：一条用户消息已到达，将出现在你的下一条输入里（已等待 {waitedMs} ms）。{subject} 仍在后台运行，完全不受影响。…`
- * `Wait interrupted: a user message has arrived and will appear in your next input (waited {waitedMs} ms). {subject} is still running in the background and is completely unaffected. …`
+ * 出处 `lib/text.js` 的 `note.interrupted`（两语逐字；键名即锚，插行不漂）：
+ * `等待被打断：一条用户消息已到达，将出现在你的下一条输入里（已等待 {waitedMs} ms）。结束等待没有终止 {subject} 的工作。…`
+ * `Wait interrupted: a user message has arrived and will appear in your next input (waited {waitedMs} ms). Ending the wait did not stop {subject}. …`
  *
  * 标记必须两语都认：agentLang 是设置项（需求 §5.3 两个独立语言开关），判据不能只在一种
  * 语言下成立。单语标记红的是语言，不是被测对象。
  */
 export const WAIT_INTERRUPTED = /等待被打断|Wait interrupted/;
 /**
- * 插话文案里"对象未受影响"的那半句（同上出处，两语逐字）。
- * `${subject}` 在"仍在后台运行"**之前**；该半句自身两语都连续，模式里的小间隙
- * 只是容错（英文「 and is 」、中文「，」）。
+ * 插话文案里"结束等待没有终止工作对象"的那半句（同上出处，两语逐字）。
+ * 行为陈述口径（A03/A04 修正后）：不再断言"仍在后台运行"——等待被打断这一
+ * 事件本身证明不了运行状态，能证的只有"结束等待"这个动作没有终止它。
  */
-export const SUBJECT_UNTOUCHED = /仍在后台运行[，\s]{0,3}完全不受影响|is still running in the background[\s\S]{0,12}completely unaffected/;
+export const SUBJECT_UNTOUCHED = /结束等待没有终止[\s\S]{0,60}的工作|Ending the wait did not stop/;
 
 /**
  * `async_wait_agent` 的**结局**标记——三选一即可，两语都要认（agentLang 是设置项，

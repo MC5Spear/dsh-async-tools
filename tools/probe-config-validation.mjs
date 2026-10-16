@@ -57,7 +57,7 @@ for (const [label, patch] of legal) {
 }
 
 console.log('');
-console.log('=== 跨字段约束（schema 表达不了，由 resolveConfig 的判据兜）===');
+console.log('=== 跨字段约束（schema 表达不了，由 resolveConfig 的判据承接）===');
 // 判据已收敛进 lib/config.js（assertCrossFieldOrder，单一事实源），
 // 探针直测活路径的导出接口。
 const { assertCrossFieldOrder } = await import('../lib/config.js');

@@ -271,8 +271,8 @@ console.log('=== 3) 隔离：standard 预设不含四个 async 工具 ===');
 // ── 汇总 ─────────────────────────────────────────────────────────────────────
 console.log('');
 const failed = checks.filter((c) => !c.passed).length;
-writeFileSync(`${LOG_DIR}agent-e2e.json`, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
-writeFileSync(`${LOG_DIR}agent-e2e-summary.json`,
+writeFileSync(join(LOG_DIR, 'agent-e2e.json'), `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
+writeFileSync(join(LOG_DIR, 'agent-e2e-summary.json'),
   `${JSON.stringify({ at: evidence.at, sessionIds: { async: sid, standard: evidence.standardSessionId }, checks }, null, 2)}\n`,
   'utf8');
 console.log(`总判定：${String(checks.length - failed)}/${String(checks.length)} 通过`);

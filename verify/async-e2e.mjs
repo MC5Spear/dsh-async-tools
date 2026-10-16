@@ -292,9 +292,11 @@ judge('会话里真的调用了 async_run 与 async_wait_job（否则后面的�
   runCalls.length >= 1 && waitCalls.length >= 1,
   `async_run × ${String(runCalls.length)}、async_wait_job × ${String(waitCalls.length)}`);
 
-// ① 短命令（ROUND 之前那条 SHORT_OK）：必须**直接返回输出**，不注册作业。
+// ① 短命令（ROUND 之前那条 SHORT_OK）：必须**直接返回输出**（预算内完成，不回
+//    句柄）。执行即注册——短命令同样注册了作业，只是完成先于首次等待到期，
+//    按完成分支直接交付输出（「不注册作业」是旧说法，与实现不符）。
 const shortResult = resultOf(0);
-judge('短命令直接返回完整输出（不返回句柄）',
+judge('短命令直接返回完整输出（预算内完成，不返回句柄）',
   typeof shortResult === 'string' && shortResult.includes('SHORT_OK'),
   shortResult === undefined ? '没有第一条 async_run 的结果' : `结果=${JSON.stringify(shortResult.slice(0, 90))}`);
 
@@ -308,17 +310,22 @@ judge('超出首次等待的那次返回了"仍在运行"的作业编号（不�
 
 // ③ **核心**：让出去的作业必须能被 `async_wait_job` 取回**最终输出**。
 //    这是"不得杀死进程"的唯一实证——只断言返回里有 job_id 是不够的。
+//    关联按**调用参数**逐作业配对：每个让出的 job_id 找参数指向它的
+//    async_wait_job 调用，取其结果文本验证终态输出。判据要求**每一个**
+//    job_id 都有取回证据——多个作业缺任何一个都判失败（存在性 some 会放走
+//    丢失的那个）。
 const jobIds = [...new Set((yielded.map((x) => /(async-command-\d+)/.exec(x.text)?.[1])).filter(Boolean))];
-const recovered = jobIds.map((id) => ({
-  id,
-  text: waitCalls.map((c) => resultsById.get(c.callId)).find((t) => typeof t === 'string' && t.includes(id) === false && t.length > 0)
-}));
+const finalTextOf = (id) => waitCalls
+  .filter((c) => c.args?.job_id === id)
+  .map((c) => resultsById.get(c.callId))
+  .filter((t) => typeof t === 'string')
+  .find((t) => /LONG_DONE|PATIENCE/.test(t));
+const missing = jobIds.filter((id) => finalTextOf(id) === undefined);
 const waitTexts = waitCalls.map((c) => resultsById.get(c.callId)).filter((t) => typeof t === 'string');
-judge('每一次让出的作业都被 async_wait_job 取回了最终输出',
-  jobIds.length >= 1 && waitTexts.some((t) => /LONG_DONE|PATIENCE/.test(t)),
-  `job_id=[${jobIds.join(', ')}]；`
-  + `取回的文本=${JSON.stringify((waitTexts.find((t) => /LONG_DONE|PATIENCE/.test(t)) ?? '').slice(0, 90))}`);
-void recovered;
+judge('每一次让出的作业都被 async_wait_job 按参数关联取回了最终输出（缺一即失败）',
+  jobIds.length >= 1 && missing.length === 0,
+  `job_id=[${jobIds.join(', ')}]；未取回=[${missing.join(', ')}]；`
+  + `首份取回文本=${JSON.stringify((finalTextOf(jobIds[0]) ?? '').slice(0, 90))}`);
 
 // ④ 取回的结果必须能证明"进程真的跑完了"。正常退出不带退出码标记（需求
 // 2.2.3 两路径一致：与前台同口径，成功由"无失败标记"表达），证据取：
@@ -334,13 +341,14 @@ judge('取回的输出证明进程正常结束：末尾输出完整、无截断�
 //
 // **断言文案必须来自真实返回**。真实返回的现行措辞形如
 //   「等待被打断：一条用户消息已到达，将出现在你的下一条输入里（已等待 N ms）。
-//     {subject} 仍在后台运行，完全不受影响。…」（`lib/text.js` 的 note.interrupted）
+//     结束等待没有终止 {subject} 的工作。…」（`lib/text.js` 的 note.interrupted
+//     ——A03/A04 修正后的行为陈述口径，不再断言"仍在后台运行"）
 // 断言模式必须照着真实返回写——自造英文关键词会匹配不到中文文案。
 //
 // 这条判据同时要求两半，缺一不可：
 //   (a) 等待**确实**被用户消息打断（证明打断路径真的会触发，不是恒不触发）；
-//   (b) 打断的返回里明说**作业不受影响**（证明"打断等待 ≠ 打断工作"这句话
-//       被写在模型看得见的地方，而不是只在文档里）。
+//   (b) 打断的返回里明说**结束等待没有终止作业**（证明"打断等待 ≠ 打断工作"
+//       这句话被写在模型看得见的地方，而不是只在文档里）。
 const interruptNotes = waitTexts.filter((t) => MESSAGE_MARKERS.WAIT_INTERRUPTED.test(t));
 judge('用户插话让 async_wait_job 立即返回"等待被打断"（打断等待）',
   interruptNotes.length >= 1,
