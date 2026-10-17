@@ -31,7 +31,7 @@ npm run check:alias-tokens
 npm run check:agent-policy
 ```
 
-这些入口不替代当前功能的真实验收。宿主锚可使用 `DSAT_HOST_MODULES`；无锚导致用例跳过时，单列未验证。是否能捕获子进程或启动浏览器由部署决定，不把权限噪声当被测对象失败。
+这些入口不替代当前功能的真实验收。宿主锚可使用 `DSAT_HOST_MODULES`；`test:offline`（离线安装形态，无宿主锚）下需要宿主锚的用例自跳过并打印统一理由（守卫唯一来源 [`test/_host-gate.mjs`](<../test/_host-gate.mjs>)）——合格读数为 fail 为 0、pass 与 skip 之和等于 `test:inproc` 的用例总数、每条跳过都带理由；静态看守 [`test/offline-import-guard.test.mjs`](<../test/offline-import-guard.test.mjs>) 两种形态都在场，拦截测试文件顶层静态依赖宿主链模块的漏网。无锚导致用例跳过时，单列未验证。是否能捕获子进程或启动浏览器由部署决定，不把权限噪声当被测对象失败。
 
 | 脚本 | 当前用途与边界 |
 | --- | --- |
