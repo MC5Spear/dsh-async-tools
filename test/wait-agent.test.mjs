@@ -776,7 +776,7 @@ test('async_wait_agent：描述必须写清功能边界并带上生效的预算�
 test('async_wait_agent（R8 第一条）：只走公共查询与公共事件，碰内部状态就红', async () => {
   // ## 这条判据要挡什么
   //
-  // 需求 §6.2：`async_wait_agent` **不得读会话日志、内部状态或越界数据**，只能走
+  // 需求 §2.3.3：`async_wait_agent` **不得读会话日志、内部状态或越界数据**，只能走
   // 宿主的公共查询（`ctx.subagents.listChildren`）与宿主的公共事件（`ctx.on`）。
   //
   // 静态侧由 `test/index.test.mjs` 的一条**静态**断言承担（扫 `ctx.<x>` 是否在
