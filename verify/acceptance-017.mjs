@@ -27,6 +27,7 @@
  */
 import { readFileSync, writeFileSync, mkdirSync, openSync, readSync, readdirSync, statSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { instanceCredentials, loadLocalPlaneOrSkip } from '../tools/_local-config.mjs';
 import { judgeDeliveredBytes } from './r24-judgements.mjs';
 import { judgeAgentRouting } from './agent-judgements.mjs';
@@ -798,11 +799,32 @@ async function phaseSiblingCoexist() {
   record('node_modules 里本包与兄弟包的 junction 都在（最小链接集）',
     nodeModules.includes('dsh-async-tools') && nodeModules.includes(sibling),
     `目录项=${nodeModules.join(', ')}`);
-  // ② 不兼容行为零：负向断言，全文件 grep 是保守方向（旧崩溃只会增加命中数）。
+  // ② 当前部署兼容：错误日志按追加写保留全历史，旧实体被 loader 拒绝过的行会
+  // 永远留在文件里——全文件 grep 把历史当现状，健康部署也过不去。判「当前」，
+  // 锚点取**最近一次成功装载**：兄弟包每次进程启动装载成功后打一条无 ts 的
+  // 配置行（`[<别名>] … enabled=… fallback=…`；被 loader 拒掉的进程打不出它，
+  // 也不会有它的后续运行期行），最后一条这样的行之后就是「最近一次成功装载
+  // 至今」的段，只 grep 这一段。本包自身若在当前启动被拒，宿主行不会激活，
+  // ③的命名空间判据会红——两处各守一个方向。找不到成功装载锚（日志里从无
+  // 兄弟包激活行）时按全文检查：宁可红，不把「定位不到」读成通过。
   const log = readFileSync(LOG_PATH, 'utf8');
-  const incompatible = (log.match(/is incompatible with dsh/g) ?? []).length;
-  record('错误日志里 "is incompatible with dsh" 为零',
-    incompatible === 0, `命中=${String(incompatible)} 次（全文 ${String(log.length)}B）`);
+  const logLines = log.split('\n');
+  let loadAnchorIndex = -1;
+  let loadAnchorCount = 0;
+  for (let i = 0; i < logLines.length; i++) {
+    const line = logLines[i];
+    if (!aliases.some((alias) => line.startsWith(`[${alias}]`))) continue;
+    if (/\bts=/.test(line) || !/\benabled=/.test(line)) continue;
+    loadAnchorCount += 1;
+    loadAnchorIndex = i;
+  }
+  const currentSegment = loadAnchorIndex === -1 ? log : logLines.slice(loadAnchorIndex).join('\n');
+  const incompatibleSinceLoad = (currentSegment.match(/is incompatible with dsh/g) ?? []).length;
+  const incompatibleTotal = (log.match(/is incompatible with dsh/g) ?? []).length;
+  record('最近一次成功装载之后的日志段里 "is incompatible with dsh" 为零（当前部署兼容，历史拒绝不追）',
+    incompatibleSinceLoad === 0,
+    `段内命中=${String(incompatibleSinceLoad)}（全文历史命中=${String(incompatibleTotal)}；`
+      + `装载锚=${loadAnchorIndex === -1 ? '未找到，按全文检查' : `第 ${String(loadAnchorIndex + 1)} 行起，共 ${String(loadAnchorCount)} 条`}；全文 ${String(log.length)} 字符）`);
   // ③ 两个第三方插件的活证据：本包宿主行命名空间在线，兄弟包有运行期决策日志行。
   const described = await rpc('settings/describe', {});
   const nsNames = described.namespaces.map((n) => n.ns ?? n.namespace ?? n.id);
@@ -813,7 +835,11 @@ async function phaseSiblingCoexist() {
     .reduce((a, b) => Math.max(a, b), 0);
   record(`兄弟包（${sibling}）有运行期决策日志（插件在工作，不是只挂载）`,
     afmLines > 0, `兄弟包日志行数=${String(afmLines)}`);
-  extra.siblingCoexist = { bundles, nodeModules, incompatible, nsCount: nsNames.length, afmLines, sibling };
+  extra.siblingCoexist = {
+    bundles, nodeModules, incompatibleSinceLoad, incompatibleTotal,
+    loadAnchorLine: loadAnchorIndex === -1 ? null : loadAnchorIndex + 1, loadAnchorCount,
+    nsCount: nsNames.length, afmLines, sibling
+  };
 }
 
 // ── 相位：r24-ui（客户端半边真的到达浏览器的判据） ───────────────────────────

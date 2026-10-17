@@ -36,7 +36,7 @@ test('resolveConfig：askUiSeat 默认 sidebar（需求 §5.2），显式两档�
     /askUiSeat|invalid/i, '枚举外取值在 schema 层被拒（不静默回默认）');
 });
 
-test('resolveConfig：owningPreset 透传——无默认、非 volatile 的行身份字段（需求 §6.2）', () => {
+test('resolveConfig：owningPreset 透传——无默认、非 volatile 的行身份字段（设计 §6.2）', () => {
   // 行身份只在两份预设补丁的工具行上声明；resolve 不赋默认值（缺省 = 自定义行、
   // 无归属），有则原样透传（不校验枚举：归属判定交给 TAKEOVER_PRESETS 的 has）。
   assert.equal('owningPreset' in resolveConfig({ toolName: 'async_run' }), false,

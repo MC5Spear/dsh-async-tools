@@ -74,7 +74,7 @@ test('T1：设置快照链——宿主行播报、工具行读快照、任何地
   const entryCode = stripComments(read('lib/index.js'));
   assert.match(entryCode,
     /makeConfigView\(\(\) => \{\s*const snapshot = readSnapshot\(\);\s*return snapshot === undefined\s*\?\s*initial\s*: \{ \.\.\.snapshot, owningPreset: initial\.owningPreset \};\s*\}\)/,
-    '工具行取值必须是"快照优先、缺快照回退本行默认值"的活视图，且快照合并保留本行装载期的 owningPreset（行身份非 volatile，需求 §6.2）');
+    '工具行取值必须是"快照优先、缺快照回退本行默认值"的活视图，且快照合并保留本行装载期的 owningPreset（行身份非 volatile，设计 §6.2）');
 });
 
 test('T2（R6）：宿主入口不注册任何工具', () => {

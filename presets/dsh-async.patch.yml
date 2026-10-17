@@ -13,7 +13,7 @@
 #   3. tool-bash 之后连续成组新增四行 dsh-async-tools（toolName 分派）；第五行
 #      async_workflow 在 delegation 组内 tool-workflow 行后——编排引擎是组内隔离服务，
 #      组外行取不到（需求 §3.2 末条、设计 §3.5）。五行 config 均携带
-#      owningPreset 归属声明（需求 §6.2——描述警示按行归属判定，非 volatile）；
+#      owningPreset 归属声明（设计 §6.2——描述警示按行归属判定，非 volatile）；
 #   4. tool-workflow 与 tool-subagent 系委托入口（单发 / fork / codex / claude-code）
 #      置 disabled: true（需求 §3.1：禁可前台占住批次的原生委托／编排入口；config
 #      逐字保留以便翻转）。被禁入口的功能出路 = async_agent / async_workflow，或按

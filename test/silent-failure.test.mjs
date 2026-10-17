@@ -75,7 +75,7 @@ function confinedCtx(presetOf = 'dsh-async') {
   f.ctx.shell.sandboxMode = 'workspace-write';
   // lib/jobs.js 的 execute 走 ctx.get('sandboxPolicy') 取放行策略（escalation.test.mjs:52
   // 同款桩）：缺了会得到 `TypeError: ctx.get is not a function`，断言本体根本执行不到。
-  // F3 范围判定（需求 §6.2/§6.3）：结果诊断只对归属本包预设的调用主体生效——
+  // F3 范围判定（设计 §6.2（机制）／需求 §6.3（范围））：结果诊断只对归属本包预设的调用主体生效——
   // 桩按 inOwnPreset 的读取路径（sessions.get → sessionProjections.stateOf('agentPreset')）
   // 把调用主体映射到指定预设（默认 dsh-async；范围负面对照传别的）。
   f.ctx.get = (key) => {
@@ -403,7 +403,7 @@ test('R28 判据11：b 段五门组合矩阵 + 描述就地增删（不复制 c 
   if (hostIndex === undefined) { t.skip('宿主包不可解析（离线环境），本用例跳过'); return; }
   const warnAnchor = /can die silently at process creation/;
   // 归属前提：F3 之后警示段是**三门**——执行器在场 × 开关开 × 行有归属声明
-  // （owningPreset；需求 §6.2：自定义行不适用本包纪律段）。
+  // （owningPreset；设计 §6.2：自定义行不适用本包纪律段）。
   const owned = { toolName: 'async_run', silentFailureGuard: true, owningPreset: 'dsh-async' };
   const on = confinedCtx();
   assert.match(
@@ -428,7 +428,7 @@ test('R28 判据11：b 段五门组合矩阵 + 描述就地增删（不复制 c 
   const custom = confinedCtx();
   assert.doesNotMatch(
     createRunTool(custom.ctx, resolveConfig({ toolName: 'async_run', silentFailureGuard: true })).description,
-    warnAnchor, '无归属声明（自定义行）⇒ 不拼（需求 §6.2）');
+    warnAnchor, '无归属声明（自定义行）⇒ 不拼（设计 §6.2）');
   // b 段不得复制 c 的纪律文本（需求"不复制 c"条款）。
   assert.doesNotMatch(
     createRunTool(on.ctx, resolveConfig({ ...owned })).description,
