@@ -23,27 +23,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { HOST_SKIP_REASON, loadOfflineSafe } from './_host-gate.mjs';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const read = (relative) => readFileSync(resolve(ROOT, relative), 'utf8');
-
-/**
- * 离线安全加载：只吞 `@deepseek-ai/` 包解析失败（本地 node_modules 没有
- * `dsh-llm`/`cosmokit` 等传递依赖时），其余错误原样抛——语法错误、模块内部
- * 抛错不得被伪装成"离线环境"的跳过。
- * @template T
- * @param {string} specifier 动态 import 说明符。
- * @returns {Promise<T | undefined>} 模块；宿主包不可解析时为 `undefined`。
- */
-async function loadOfflineSafe(specifier) {
-  try {
-    return await import(specifier);
-  } catch (error) {
-    const message = String(error?.message ?? error);
-    if (error?.code === 'ERR_MODULE_NOT_FOUND' && message.includes('@deepseek-ai/')) return undefined;
-    throw error;
-  }
-}
 
 /** 去掉行注释与块注释，保留其余文本（含字符串字面量）。 */
 function stripComments(text) {
@@ -115,7 +98,7 @@ test('T3：改设置后模型看到的数字真的跟着变（行为差异，不
   // 不可解析时跳过——jobs/wait-job/wait-agent 本身离线可跑，但本用例的核心判据
   // （refreshToolDescriptions 的行为）依赖宿主入口，跳过即丢判据，交给 test:inproc。
   const hostIndex = await loadOfflineSafe('../lib/index.js');
-  if (hostIndex === undefined) { t.skip('宿主包不可解析（离线环境），本用例跳过'); return; }
+  if (hostIndex === undefined) { t.skip(HOST_SKIP_REASON); return; }
   // "源码里出现 makeConfigView"式文本匹配在把实现退化成构造时快照后
   // **仍然全绿**——它对行为一无所知，本判据必须断言行为。
   const { createRunTool } = await import('../lib/jobs.js');
@@ -196,7 +179,7 @@ test('T3：改设置后模型看到的数字真的跟着变（行为差异，不
 
 test('T3b（R10）：刷新描述不得抛，也不得悄悄注销工具', async (t) => {
   const hostIndex = await loadOfflineSafe('../lib/index.js');
-  if (hostIndex === undefined) { t.skip('宿主包不可解析（离线环境），本用例跳过'); return; }
+  if (hostIndex === undefined) { t.skip(HOST_SKIP_REASON); return; }
   const { refreshToolDescriptions } = hostIndex;
   const view = new Proxy({}, { get: () => undefined });
   // 形状异常的工具对象不该让刷新路径炸掉（`parameters` 可能是空对象）。
@@ -534,7 +517,7 @@ test('T10：宿主侧的 volatile 提交必须真的到达预设工具的描述'
   const cosmokitModule = await loadOfflineSafe('@deepseek-ai/cosmokit');
   const preset = await loadOfflineSafe('../lib/index.js');
   if (cordisModule === undefined || cosmokitModule === undefined || preset === undefined) {
-    t.skip('宿主包不可解析（离线环境），本用例跳过');
+    t.skip(HOST_SKIP_REASON);
     return;
   }
   const bus = await import('../lib/refresh-bus.js');
@@ -1808,7 +1791,7 @@ test('T22（R25）：改语言后刷新必须整段换文案——正文、尾�
   // 这条钉两件事：①换语言真的换的是**整段**（只换数字不算）；②换语言不会把"数字跟着设置走"
   // 弄丢——zh 档下的区间同样必须更新。宿主侧判据见 `verify/probe-lang-independence.mjs`。
   const hostIndex = await loadOfflineSafe('../lib/index.js');
-  if (hostIndex === undefined) { t.skip('宿主包不可解析（离线环境），本用例跳过'); return; }
+  if (hostIndex === undefined) { t.skip(HOST_SKIP_REASON); return; }
   const { createRunTool } = await import('../lib/jobs.js');
   const { refreshToolDescriptions } = hostIndex;
   let current = {
@@ -1948,16 +1931,29 @@ test('T17（R10·复审 Z4）：预算默认值本身也要钉住——改错一
     '期望值表必须覆盖**每一个**预算字段——漏掉一个就等于那个字段的默认值没人守');
 });
 
-test('T20（R25）：agentLang 双档——en 零 CJK、zh 换语言、参数集合不变、缺译抛错', async () => {
+test('T20（R25）：agentLang 双档——en 零 CJK、zh 换语言、参数集合不变、缺译抛错', async (tc) => {
   // 四个工具在两档下各构建一次；判据是**行为差异**（构建产物逐项对比），
-  // 不是"源码里出现了某个词"。
+  // 不是"源码里出现了某个词"。四个工厂里 jobs、wait-job、wait-agent、agent
+  // 与 descriptions 都是宿主链模块（→ dsh-tools），离线形态缺席即跳过（交给 test:inproc）。
+  const jobsModule = await loadOfflineSafe('../lib/jobs.js');
+  const waitJobModule = await loadOfflineSafe('../lib/wait-job.js');
+  const waitAgentModule = await loadOfflineSafe('../lib/wait-agent.js');
+  const agentModule = await loadOfflineSafe('../lib/agent.js');
+  const descriptionsModule = await loadOfflineSafe('../lib/descriptions.js');
+  if (
+    jobsModule === undefined || waitJobModule === undefined || waitAgentModule === undefined
+    || agentModule === undefined || descriptionsModule === undefined
+  ) {
+    tc.skip(HOST_SKIP_REASON);
+    return;
+  }
   const { resolveConfig } = await import('../lib/config.js');
-  const { createRunTool } = await import('../lib/jobs.js');
-  const { createWaitJobTool } = await import('../lib/wait-job.js');
-  const { createWaitAgentTool } = await import('../lib/wait-agent.js');
-  const { createAgentTool } = await import('../lib/agent.js');
+  const { createRunTool } = jobsModule;
+  const { createWaitJobTool } = waitJobModule;
+  const { createWaitAgentTool } = waitAgentModule;
+  const { createAgentTool } = agentModule;
   const { t } = await import('../lib/text.js');
-  const { buildToolText } = await import('../lib/descriptions.js');
+  const { buildToolText } = descriptionsModule;
 
   const CJK = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
   const ctx = { shell: { sandboxMode: 'workspace-write' } };

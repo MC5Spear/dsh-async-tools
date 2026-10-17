@@ -47,33 +47,17 @@ import { resolveConfig } from '../lib/config.js';
 import { seedSnapshot, clearSnapshot } from '../lib/settings.js';
 import { t } from '../lib/text.js';
 import { fakeCtx } from './_helpers.mjs';
+import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
 
-/**
- * 离线安全加载：`lib/ask-takeover.js`（→ `@deepseek-ai/dsh-llm` /
- * `@deepseek-ai/dsh-typert-protocol`）与 `lib/host.js`（→ ask-takeover.js）
- * 在没有宿主包解析路径的环境下不可加载。只吞 `@deepseek-ai/` 解析失败，
- * 其余错误原样抛——语法错误、模块内部抛错不得被伪装成"离线环境"的跳过。
- * @returns {Promise<object | undefined>} 模块；宿主包不可解析时为 `undefined`。
- */
-async function loadOfflineSafe(specifier) {
-  try {
-    return await import(specifier);
-  } catch (error) {
-    const message = String(error?.message ?? error);
-    if (error?.code === 'ERR_MODULE_NOT_FOUND' && message.includes('@deepseek-ai/')) return undefined;
-    throw error;
-  }
-}
-
+// 宿主链动态守卫：`lib/ask-takeover.js`（→ `@deepseek-ai/dsh-llm` /
+// `@deepseek-ai/dsh-typert-protocol`）与 `lib/host.js`（→ ask-takeover.js）在
+// 离线形态缺席——依赖它们的用例自跳过并打印理由（ci.yml offline 作业的契约）；
+// 其余用例（纯文本判据、客户端模型装载）离线照常跑。
 const askModule = await loadOfflineSafe('../lib/ask-takeover.js');
 const hostModule = await loadOfflineSafe('../lib/host.js');
 const { AskBatchRegistry, AskTakeoverService, shouldTakeover, inOwnPreset } = askModule ?? {};
 const { applyHostHalf } = hostModule ?? {};
-
-/** 宿主链不可解析（离线环境）时整组跳过；可用时与 `test` 完全同形（断言不放宽）。 */
-const hostTest = (askModule === undefined || hostModule === undefined)
-  ? (name, _fn) => test(name, (t) => { t.skip('宿主包不可解析（离线环境），本用例跳过'); })
-  : (name, fn) => test(name, fn);
+const hostTest = await hostTestFor('../lib/ask-takeover.js', '../lib/host.js');
 
 const ROOT = resolve(import.meta.dirname, '..');
 

@@ -13,14 +13,18 @@
  * 查询抛错一类）的用例验的是**分支逻辑**；"真机上会不会发生"由旁边的
  * 否定命题用例回答。两类混在一起会让整个缺陷处置被误当成"已经解决"。
  */
-import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
-import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools';
-import { createRunTool as buildRunTool } from '../lib/jobs.js';
+import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
+import { validateJsonSchemaValue, checkedTool, fakeAgent, fakeCtx, fakeProc, freezeTimers, inboxPayload } from './_helpers.mjs';
 import { LATE_ANSWER_EVENT } from '../lib/interrupts.js';
 import { resolveConfig } from '../lib/config.js';
-import { checkedTool, fakeAgent, fakeCtx, fakeProc, freezeTimers, inboxPayload } from './_helpers.mjs';
+
+// 宿主链动态守卫（lib/jobs.js → dsh-tools/ask-takeover）：离线形态锚缺席时
+// 本文件仍可加载，全部用例自跳过并打印理由（ci.yml offline 作业的契约）。
+const jobsModule = await loadOfflineSafe('../lib/jobs.js');
+const { createRunTool: buildRunTool } = jobsModule ?? {};
+const hostTest = await hostTestFor('../lib/jobs.js');
 
 /**
  * 被测工具一律经 `checkedTool` 包一层：**每条**用例的返回值都会被喂给宿主输出校验器
@@ -39,7 +43,7 @@ function immediateTimers(ctx) {
 const config = resolveConfig({ toolName: 'async_run' });
 const exec = { agent: fakeAgent(), signal: new AbortController().signal };
 
-test('async_run（R32-a/e）：预算内结束 → 完成分支照旧；作业注册过、活等待被结算释放（不补发通知）', async () => {
+hostTest('async_run（R32-a/e）：预算内结束 → 完成分支照旧；作业注册过、活等待被结算释放（不补发通知）', async () => {
   const f = fakeCtx();
   const { proc } = fakeProc({ text: 'hello world', exitCode: 0, autoResolve: true });
   f.installShellExecute(() => Promise.resolve(proc));
@@ -60,7 +64,7 @@ test('async_run（R32-a/e）：预算内结束 → 完成分支照旧；作业�
     '结算必须释放活 waiter 并置 awaited——这是"预算内完成零通知"的判据所在');
 });
 
-test('async_run：超出首次等待 → 返回作业编号，命令不被杀死', async () => {
+hostTest('async_run：超出首次等待 → 返回作业编号，命令不被杀死', async () => {
   const f = fakeCtx();
   immediateTimers(f.ctx);
   const { proc, isKilled } = fakeProc({ text: 'partial output', exitCode: null, status: 'running', autoResolve: false });
@@ -79,7 +83,7 @@ test('async_run：超出首次等待 → 返回作业编号，命令不被杀死
   assert.equal(f.startedSpecs.length, 1, '不得重复执行进程');
 });
 
-test('async_run（R32/R33）：注册字段——label=命令原文、progress=描述、owner=SessionId、准入先于进程、execute 带作业私有 signal', async () => {
+hostTest('async_run（R32/R33）：注册字段——label=命令原文、progress=描述、owner=SessionId、准入先于进程、execute 带作业私有 signal', async () => {
   const f = fakeCtx();
   immediateTimers(f.ctx);
   const order = [];
@@ -136,7 +140,7 @@ test('async_run（R32/R33）：注册字段——label=命令原文、progress=�
     'observed.stdout 的内容必须进环形缓冲（async_wait_job 从这里取输出）');
 });
 
-test('async_run（R32·prep 窗口）：拉式源在 proc 到位前被泵 → 空增量、游标不动、不误判丢失', async () => {
+hostTest('async_run（R32·prep 窗口）：拉式源在 proc 到位前被泵 → 空增量、游标不动、不误判丢失', async () => {
   const f = fakeCtx();
   immediateTimers(f.ctx);
   // execute 永不 resolve：整个让出窗口里 proc 都未到位。
@@ -154,7 +158,7 @@ test('async_run（R32·prep 窗口）：拉式源在 proc 到位前被泵 → �
   assert.deepEqual(f.jobsFake.chunksOf(jobId), [], '空读不得产生分块');
 });
 
-test('async_run（0.2.0-rc.2）：请求显式 onExpiry:"none"——内置到期杀进程与本插件语义正面冲突', async () => {
+hostTest('async_run（0.2.0-rc.2）：请求显式 onExpiry:"none"——内置到期杀进程与本插件语义正面冲突', async () => {
   const f = fakeCtx();
   const { proc } = fakeProc({ text: 'ok' });
   const seen = [];
@@ -166,7 +170,7 @@ test('async_run（0.2.0-rc.2）：请求显式 onExpiry:"none"——内置到期
   assert.equal('timeoutMs' in seen[0], false, '"none" 下 timeoutMs 不装 timer，不传');
 });
 
-test('async_run：killed 状态的进程映射为 killed 结局并带 signal', async () => {
+hostTest('async_run：killed 状态的进程映射为 killed 结局并带 signal', async () => {
   const f = fakeCtx();
   immediateTimers(f.ctx);
   const { proc, settle } = fakeProc({ text: '', status: 'killed', signal: 'SIGTERM', autoResolve: false });
@@ -180,7 +184,7 @@ test('async_run：killed 状态的进程映射为 killed 结局并带 signal', a
   assert.match(view.detail, /SIGTERM/);
 });
 
-test('async_run：workdir 缺省取会话工作目录（workdir 字段）', async () => {
+hostTest('async_run：workdir 缺省取会话工作目录（workdir 字段）', async () => {
   const f = fakeCtx();
   const { proc } = fakeProc({ text: 'ok' });
   const seen = [];
@@ -192,7 +196,7 @@ test('async_run：workdir 缺省取会话工作目录（workdir 字段）', asyn
   assert.equal(seen[0].command, 'echo');
 });
 
-test('async_run：执行器声明约束时必须随请求带上 sandboxPolicy（勘误）', async () => {
+hostTest('async_run：执行器声明约束时必须随请求带上 sandboxPolicy（勘误）', async () => {
   const f = fakeCtx();
   const { proc } = fakeProc({ text: 'ok' });
   const seen = [];
@@ -218,7 +222,7 @@ test('async_run：执行器声明约束时必须随请求带上 sandboxPolicy（
   assert.deepEqual(seen[0].sandboxPolicy, { mode: 'workspace-write' }, '求值结果必须放进 shell 请求');
 });
 
-test('async_run：执行器声明约束但策略服务缺失 → fail-fast，不得静默无约束执行', async () => {
+hostTest('async_run：执行器声明约束但策略服务缺失 → fail-fast，不得静默无约束执行', async () => {
   const f = fakeCtx();
   const { proc } = fakeProc({ text: 'ok' });
   f.installShellExecute(() => Promise.resolve(proc));
@@ -232,7 +236,7 @@ test('async_run：执行器声明约束但策略服务缺失 → fail-fast，不
   assert.equal(f.startedSpecs.length, 0, '策略缺失时不得执行进程');
 });
 
-test('async_run：readOutput 的增量被累加，不是只取第一次（勘误）', async () => {
+hostTest('async_run：readOutput 的增量被累加，不是只取第一次（勘误）', async () => {
   const f = fakeCtx();
   const { proc } = fakeProc({ text: 'ABCDEFGHI', chunked: true });
   f.installShellExecute(() => Promise.resolve(proc));
@@ -242,7 +246,7 @@ test('async_run：readOutput 的增量被累加，不是只取第一次（勘误
   assert.equal(result.output, 'ABCDEFGHI', '分块输出必须被完整累加');
 });
 
-test('async_run：lossy 输出必须显式呈现，不得静默丢弃', async () => {
+hostTest('async_run：lossy 输出必须显式呈现，不得静默丢弃', async () => {
   const f = fakeCtx();
   immediateTimers(f.ctx);
   const { proc, settle } = fakeProc({ text: 'partial', lossy: true, status: 'running', autoResolve: false });
@@ -256,7 +260,7 @@ test('async_run：lossy 输出必须显式呈现，不得静默丢弃', async ()
   assert.match(view.detail, /output partially dropped from memory/, 'lossy 必须出现在作业结局里');
 });
 
-test('J-limit（R11）：outputLimitBytes 必须是**字节**预算，不能把字符数直接传进去', async () => {
+hostTest('J-limit（R11）：outputLimitBytes 必须是**字节**预算，不能把字符数直接传进去', async () => {
   // 缺陷形态：`JobSpec.outputLimitBytes` 的量纲是字节，而配置项叫
   // `maxResultChars`（**字符**）。直接把字符数传进去，中文通知会被提前约 1/3 截断。
   //
@@ -284,7 +288,7 @@ test('J-limit（R11）：outputLimitBytes 必须是**字节**预算，不能把�
   );
 });
 
-test('async_run：显式 workdir 优先于会话工作目录', async () => {
+hostTest('async_run：显式 workdir 优先于会话工作目录', async () => {
   const f = fakeCtx();
   const { proc } = fakeProc({ text: 'ok' });
   const seen = [];
@@ -295,7 +299,7 @@ test('async_run：显式 workdir 优先于会话工作目录', async () => {
   assert.equal(seen[0].workdir, 'D:\\other');
 });
 
-test('async_run：输出超限时标记 truncated', async () => {
+hostTest('async_run：输出超限时标记 truncated', async () => {
   const f = fakeCtx();
   const longText = 'x'.repeat(50000);
   const { proc } = fakeProc({ text: longText });
@@ -354,7 +358,7 @@ function lossyProc({ spillPath, autoResolve = true } = {}) {
   return { proc, settle };
 }
 
-test('async_run：请求必须带 shellEnv.collect(exec) 的 dshEnv', async () => {
+hostTest('async_run：请求必须带 shellEnv.collect(exec) 的 dshEnv', async () => {
   const f = fakeCtx();
   const { proc } = fakeProc({ text: 'ok' });
   const seen = [];
@@ -372,7 +376,7 @@ test('async_run：请求必须带 shellEnv.collect(exec) 的 dshEnv', async () =
   );
 });
 
-test('async_run（R32-d）：插话与结算同拍 → 完成优先，返回结算结果而非句柄', async () => {
+hostTest('async_run（R32-d）：插话与结算同拍 → 完成优先，返回结算结果而非句柄', async () => {
   // 让插话先赢竞速、结算紧随其后——撤销后的复查必须承接，返回结算结果
   // （防模型重复等待；与 wait 工具同口径）。次序：emit 同步 resolve 插话成员 →
   // 注册表与进程翻终态 → 竞速由插话定局 → 复查读到终态 → 走结算路径。
@@ -398,7 +402,7 @@ test('async_run（R32-d）：插话与结算同拍 → 完成优先，返回结�
   exec.agent.inbox.nextStep.splice(0);
 });
 
-test('async_run：结算挂在 done.then 上 → start() 返回后同步读必然是 running（注册即终态读不到）', async () => {
+hostTest('async_run：结算挂在 done.then 上 → start() 返回后同步读必然是 running（注册即终态读不到）', async () => {
   // 这条用例证明的是**否定命题**：注册复查窗口在同构实现上不存在。
   // `JobHooks.done: Promise<JobOutcome>`（[0.2.0-rc.2] dsh-jobs/lib/types/types.d.ts:96-110）
   // 决定了结算至少晚一个 microtask——即便生产者的 done 在 start 内就已 resolve。
@@ -431,7 +435,7 @@ test('async_run：结算挂在 done.then 上 → start() 返回后同步读必�
   assert.deepEqual(settled, [id]);
 });
 
-test('async_run（R32-c-e）：预算到期 → 句柄 + 预算口径 note；不提前、不误报插话/迟到', async () => {
+hostTest('async_run（R32-c-e）：预算到期 → 句柄 + 预算口径 note；不提前、不误报插话/迟到', async () => {
   const f = fakeCtx();
   immediateTimers(f.ctx);
   const { proc } = fakeProc({ text: '', status: 'running', autoResolve: false });
@@ -446,7 +450,7 @@ test('async_run（R32-c-e）：预算到期 → 句柄 + 预算口径 note；不
   assert.doesNotMatch(result.note, /A late answer has arrived/, '不是迟到作答路径，不得出现 lateArrived 句');
 });
 
-test('async_run：elapsed_ms 覆盖整个让出窗口，不能恒为 0', async () => {
+hostTest('async_run：elapsed_ms 覆盖整个让出窗口，不能恒为 0', async () => {
   const f = fakeCtx();
   const fastConfig = resolveConfig({ toolName: 'async_run', minYieldMs: 20, defaultYieldMs: 40 });
   const { proc } = fakeProc({ text: '', status: 'running', autoResolve: false });
@@ -463,7 +467,7 @@ test('async_run：elapsed_ms 覆盖整个让出窗口，不能恒为 0', async (
   assert.match(result.note, new RegExp(`about ${String(result.elapsed_ms)} ms elapsed`), 'note 里的数字必须与 elapsed_ms 一致');
 });
 
-test('async_run：lossy 且有落点 → note 与作业结局都给出 spill 路径', async () => {
+hostTest('async_run：lossy 且有落点 → note 与作业结局都给出 spill 路径', async () => {
   const f = fakeCtx();
   const first = lossyProc({ spillPath: 'C:\\spill\\stdout.txt' });
   f.installShellExecute(() => Promise.resolve(first.proc));
@@ -489,7 +493,7 @@ test('async_run：lossy 且有落点 → note 与作业结局都给出 spill 路
   assert.match(view.detail, /full output at stdout: C:\\spill\\stdout\.txt/);
 });
 
-test('async_run：lossy 但没有落点 → 必须明说没有落点，不得让模型以为磁盘上还有一份', async () => {
+hostTest('async_run：lossy 但没有落点 → 必须明说没有落点，不得让模型以为磁盘上还有一份', async () => {
   // 完成分支
   const f = fakeCtx();
   f.installShellExecute(() => Promise.resolve(lossyProc().proc));
@@ -518,7 +522,7 @@ test('async_run：lossy 但没有落点 → 必须明说没有落点，不得让
   assert.doesNotMatch(view.detail, /full output at/);
 });
 
-test('async_run：相对 workdir 按会话工作目录解析；无 cwd 时原样透传', async () => {
+hostTest('async_run：相对 workdir 按会话工作目录解析；无 cwd 时原样透传', async () => {
   const f = fakeCtx();
   const { proc } = fakeProc({ text: 'ok' });
   const seen = [];
@@ -539,7 +543,7 @@ test('async_run：相对 workdir 按会话工作目录解析；无 cwd 时原样
   assert.equal(seen[2].workdir, 'src');
 });
 
-test('async_run（R32-a/设计 §3.1）：无 agent 语境 → 拒绝且零注册零进程', async () => {
+hostTest('async_run（R32-a/设计 §3.1）：无 agent 语境 → 拒绝且零注册零进程', async () => {
   const f = fakeCtx();
   const { proc } = fakeProc({ text: 'never' });
   f.installShellExecute(() => Promise.resolve(proc));
@@ -557,7 +561,7 @@ test('async_run（R32-a/设计 §3.1）：无 agent 语境 → 拒绝且零注�
   assert.equal(f.startedSpecs.length, 0, '进程不得启动');
 });
 
-test('async_run：描述里写出生效的预算数字（锚②③④都接上了）', async () => {
+hostTest('async_run：描述里写出生效的预算数字（锚②③④都接上了）', async () => {
   const tool = createRunTool(fakeCtx().ctx, resolveConfig({ toolName: 'async_run', defaultYieldMs: 15000, maxWaitMs: 120000 }));
   assert.match(tool.description, /15000 ms/, '首次等待必须来自生效配置');
   assert.match(tool.description, /120000 ms/, '等待上限必须来自生效配置（补缺口）');
@@ -577,7 +581,7 @@ test('async_run：描述里写出生效的预算数字（锚②③④都接上�
     'async_run 必须声明并发安全（否则同批调用被让出窗口串行）');
 });
 
-test('async_run（R8·R32-a）：准入拒绝必须可读可行动——进程未启动、明说"没有进程在运行"', async () => {
+hostTest('async_run（R8·R32-a）：准入拒绝必须可读可行动——进程未启动、明说"没有进程在运行"', async () => {
   const f = fakeCtx();
   const { proc, settle } = fakeProc({ text: '', status: 'running', autoResolve: false });
   f.installShellExecute(() => Promise.resolve(proc));
@@ -610,7 +614,7 @@ test('async_run（R8·R32-a）：准入拒绝必须可读可行动——进程�
   assert.equal(killed, false, '没有进程，也就没有 kill 可言');
 });
 
-test('async_run（R8/#13a）：上限报错必须列出**存活的**作业 id 与状态', async () => {
+hostTest('async_run（R8/#13a）：上限报错必须列出**存活的**作业 id 与状态', async () => {
   const f = fakeCtx();
   const { proc, settle } = fakeProc({ text: '', status: 'running', autoResolve: false });
   f.installShellExecute(() => Promise.resolve(proc));
@@ -640,7 +644,7 @@ test('async_run（R8/#13a）：上限报错必须列出**存活的**作业 id �
   assert.doesNotMatch(raised.message, /async-command-5/, '已失败的不该混进"存活"清单');
 });
 
-test('async_run（R8/#13a）：清单查询失败不得盖掉真正的原因', async () => {
+hostTest('async_run（R8/#13a）：清单查询失败不得盖掉真正的原因', async () => {
   const f = fakeCtx();
   const { proc, settle } = fakeProc({ text: '', status: 'running', autoResolve: false });
   f.installShellExecute(() => Promise.resolve(proc));
@@ -663,7 +667,7 @@ test('async_run（R8/#13a）：清单查询失败不得盖掉真正的原因', a
   assert.match(raised.message, /No other live jobs were found/, '查不到时应如实说查不到');
 });
 
-test('async_run（注册拒绝分流）：非触顶的注册拒绝不得套触顶模板——不引导 kill、不列存活清单', async () => {
+hostTest('async_run（注册拒绝分流）：非触顶的注册拒绝不得套触顶模板——不引导 kill、不列存活清单', async () => {
   const f = fakeCtx();
   const { proc, settle } = fakeProc({ text: '', status: 'running', autoResolve: false });
   f.installShellExecute(() => Promise.resolve(proc));
@@ -701,7 +705,7 @@ test('async_run（注册拒绝分流）：非触顶的注册拒绝不得套触�
 // T7：把返回值喂给宿主自己的输出校验器。
 // ---------------------------------------------------------------------------
 
-test('async_run（T7）：exitCode / signal 为 null 时完成分支仍必须通过 output.schema', async () => {
+hostTest('async_run（T7）：exitCode / signal 为 null 时完成分支仍必须通过 output.schema', async () => {
   const f = fakeCtx();
   // 进程结束时没有退出码（status 由 settle() 翻成 completed，exitCode 保持 null）。
   const { proc, settle } = fakeProc({ text: 'SHORT_OK', exitCode: null, status: 'running', autoResolve: false });
@@ -721,7 +725,7 @@ test('async_run（T7）：exitCode / signal 为 null 时完成分支仍必须通
   assert.equal(Object.hasOwn(result, 'note'), false);
 });
 
-test('async_run（T7）：lossy + 无退出码同时出现时，完成分支仍然合法（note 与可选字段共存）', async () => {
+hostTest('async_run（T7）：lossy + 无退出码同时出现时，完成分支仍然合法（note 与可选字段共存）', async () => {
   const f = fakeCtx();
   const lossy = lossyProc({ spillPath: 'C:\\spill\\stdout.txt' });
   lossy.proc.exitCode = null;
@@ -735,7 +739,7 @@ test('async_run（T7）：lossy + 无退出码同时出现时，完成分支仍�
   assert.match(completed.note, /full output is on disk/, 'note 必须与"没有退出码"共存于同一个分支');
 });
 
-test('async_run（T7）：校验器活性证明——`exit_code: null` 确实会被判违规', () => {
+hostTest('async_run（T7）：校验器活性证明——`exit_code: null` 确实会被判违规', () => {
   const tool = buildRunTool(fakeCtx().ctx, config);
   const violations = validateJsonSchemaValue(
     tool.output.schema,
@@ -750,7 +754,7 @@ test('async_run（T7）：校验器活性证明——`exit_code: null` 确实会
   );
 });
 
-test('J-render（R11 P1）：async_run 的完成分支必须把 note 渲染进模型可见文本', () => {
+hostTest('J-render（R11 P1）：async_run 的完成分支必须把 note 渲染进模型可见文本', () => {
   // 缺陷形态：完成分支的 `render` 若只输出
   // `value.output`，"输出被内存丢弃、完整输出在 <路径>"这句 `note` **永远到不了模型眼前**。
   //
@@ -792,7 +796,7 @@ test('J-render（R11 P1）：async_run 的完成分支必须把 note 渲染进�
 // 安全/健壮性/异常处理的缺陷防御判据。
 // ---------------------------------------------------------------------------
 
-test('R29-e（判据 7·）：让出窗口内被信号杀死且 done 照常 resolve → killed 结局带部分输出，且过 output schema', async () => {
+hostTest('R29-e（判据 7·）：让出窗口内被信号杀死且 done 照常 resolve → killed 结局带部分输出，且过 output schema', async () => {
   const f = fakeCtx();
   // done 在预算内 resolve（微任务先行，赢过 5ms 的让出定时器），但 status 是
   // 'killed'——被杀进程的 done 也是 resolve。无条件走 completed
@@ -817,7 +821,7 @@ test('R29-e（判据 7·）：让出窗口内被信号杀死且 done 照常 reso
   assert.match(killedText, /^partial output$/m, '部分输出本体也要在模型可见文本里');
 });
 
-test('R29-e（判据 7b·无文形态）：killed 且无任何输出 → 不带 output 键，渲染只剩 detail', async () => {
+hostTest('R29-e（判据 7b·无文形态）：killed 且无任何输出 → 不带 output 键，渲染只剩 detail', async () => {
   // "没值就不写这个键"是 jobOutcome 对可空字段的口径：无文的 killed
   // 不得凭空多出 output:''（空串会让模型以为"确认读过、确实没有"，而事实是"没收到"）。
   const f = fakeCtx();
@@ -835,7 +839,7 @@ test('R29-e（判据 7b·无文形态）：killed 且无任何输出 → 不带 
   assert.match(killedText, /^signal: SIGKILL/, '渲染只剩 detail 行');
 });
 
-test('R29-c（判据 5·drain 读失败）：readOutput 抛错 → 结局必须带丢失标记，不得静默吞掉', async () => {
+hostTest('R29-c（判据 5·drain 读失败）：readOutput 抛错 → 结局必须带丢失标记，不得静默吞掉', async () => {
   const f = fakeCtx();
   // 自造句柄：readOutput 永远抛（模拟宿主输出通道在结算瞬间坏掉）。
   const throwReadProc = () => {
@@ -862,7 +866,7 @@ test('R29-c（判据 5·drain 读失败）：readOutput 抛错 → 结局必须�
     'drainLossy 必须走 isLossy() 出口进模型可见的丢失标记（spillNone 文案）');
 });
 
-test('R29-c（判据 5·守卫触顶）：readOutput 永不排空 → 10000 次后守卫让位，结局必须带丢失标记', async () => {
+hostTest('R29-c（判据 5·守卫触顶）：readOutput 永不排空 → 10000 次后守卫让位，结局必须带丢失标记', async () => {
   const f = fakeCtx();
   // 极端输出量：drain 的 guard 上界（10000 次循环）触顶让位。触顶 = "还有字节
   // 没进结果"，与宿主环形丢弃同性质——不给标记就是静默截断。
@@ -892,7 +896,7 @@ test('R29-c（判据 5·守卫触顶）：readOutput 永不排空 → 10000 次�
   assert.match(JSON.stringify(result), /was dropped/, '守卫触顶必须置 drainLossy 并给模型可见标记');
 });
 
-test('R29-f（判据 11·让出日志单行化）：label=命令原文（R33-a）带 CRLF/TAB → 必须转义，日志一行', async () => {
+hostTest('R29-f（判据 11·让出日志单行化）：label=命令原文（R33-a）带 CRLF/TAB → 必须转义，日志一行', async () => {
   const f = fakeCtx();
   immediateTimers(f.ctx);
   const { proc } = fakeProc({ text: 'bg', status: 'running', autoResolve: false });
@@ -910,7 +914,7 @@ test('R29-f（判据 11·让出日志单行化）：label=命令原文（R33-a�
   assert.match(line, /label=line1\\r\\nline2\\tend/, 'label= 现在是命令原文（R33-a），转义后的字面序列要在');
 });
 
-test('R29-f（判据 11·注册失败单行化）：宿主原文多行超长 → 模型侧单行 + 500 截断 + 操作者日志留全文', async () => {
+hostTest('R29-f（判据 11·注册失败单行化）：宿主原文多行超长 → 模型侧单行 + 500 截断 + 操作者日志留全文', async () => {
   const f = fakeCtx();
   immediateTimers(f.ctx);
   const { proc } = fakeProc({ text: 'bg', status: 'running', autoResolve: false });
@@ -945,7 +949,7 @@ test('R29-f（判据 11·注册失败单行化）：宿主原文多行超长 →
 // 注入的信号本身（单元层"微任务级联"判据）。
 // ---------------------------------------------------------------------------
 
-test('async_run（R32-b·插话）：让出窗口内用户消息到达 → 秒回句柄 + 提前让出注记，命令零影响', async () => {
+hostTest('async_run（R32-b·插话）：让出窗口内用户消息到达 → 秒回句柄 + 提前让出注记，命令零影响', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   const { proc, isKilled } = fakeProc({ text: 'partial', status: 'running', autoResolve: false });
@@ -971,7 +975,7 @@ test('async_run（R32-b·插话）：让出窗口内用户消息到达 → 秒�
   exec.agent.inbox.nextStep.splice(0);
 });
 
-test('async_run（R32-b·迟到作答）：让出窗口内迟到作答到达 → 句柄 + lateArrived（与 wait 工具同键）', async () => {
+hostTest('async_run（R32-b·迟到作答）：让出窗口内迟到作答到达 → 句柄 + lateArrived（与 wait 工具同键）', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   const { proc } = fakeProc({ text: 'partial', status: 'running', autoResolve: false });
@@ -992,7 +996,7 @@ test('async_run（R32-b·迟到作答）：让出窗口内迟到作答到达 →
   assert.equal(f.jobsFake.waitersOf(result.job_id), 0, '同样撤销在先：不残留 waiter');
 });
 
-test('async_run（R32-c·abort）：GUI 停止 → 句柄形状返回（宿主改写、模型不可见）、作业存活、结算通知可恢复', async () => {
+hostTest('async_run（R32-c·abort）：GUI 停止 → 句柄形状返回（宿主改写、模型不可见）、作业存活、结算通知可恢复', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   const { proc, isKilled } = fakeProc({ text: 'partial', status: 'running', autoResolve: false });
@@ -1019,7 +1023,7 @@ test('async_run（R32-c·abort）：GUI 停止 → 句柄形状返回（宿主�
   assert.equal(f.jobsFake.wasAwaited(result.job_id), false, '结算通知照发——abort 的恢复通道');
 });
 
-test('async_run（R32·prep 窗口 kill，S2）：execute 未 resolve 时 job_kill → 作业私有 signal 生效，归 killed', async () => {
+hostTest('async_run（R32·prep 窗口 kill，S2）：execute 未 resolve 时 job_kill → 作业私有 signal 生效，归 killed', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   // execute 悬置（prep 窗口），只在作业私有 signal abort 时拒绝——pwsh processJob 的
@@ -1040,7 +1044,7 @@ test('async_run（R32·prep 窗口 kill，S2）：execute 未 resolve 时 job_ki
   assert.match(result.detail, /spawn aborted before start/);
 });
 
-test('async_run（prep 窗口）：prep 失败——execute 异步拒绝（非 kill）→ 作业按 failed 结算，原始错误原样重抛', async () => {
+hostTest('async_run（prep 窗口）：prep 失败——execute 异步拒绝（非 kill）→ 作业按 failed 结算，原始错误原样重抛', async () => {
   // done 链把 execute 拒绝分类为 {status:'failed'} → 注册表按 failed 结算 →
   // 首次等待带回 failed view → settleNow 重抛闭包里的原始错误（与
   // 「准备失败直接抛」等价；作业侧终态卡在册，job_list 可见）。

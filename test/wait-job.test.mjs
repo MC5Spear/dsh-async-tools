@@ -8,12 +8,19 @@
  * - 输出要经 `jobs.read` 的 **chunks** 拼接取得（JobRead 形状，`jobs.wait` 只给快照）；
  *   首次终态读取附带的**一次性 `result`** 必须并入同一次返回（需求 §2.2.3、设计 §2.4）。
  */
-import { test, afterEach } from 'node:test';
+import { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createWaitJobTool as buildWaitJobTool } from '../lib/wait-job.js';
+import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
 import { resolveConfig } from '../lib/config.js';
 import { checkedTool, fakeAgent, fakeCtx, freezeTimers, inboxPayload } from './_helpers.mjs';
 import { LATE_ANSWER_EVENT } from '../lib/interrupts.js';
+
+// 宿主链动态守卫（lib/wait-job.js → dsh-tools/descriptions）：离线形态锚缺席时
+// 本文件仍可加载，全部用例自跳过并打印理由（ci.yml offline 作业的契约）。
+// afterEach 保留：它引用模块级 fixture（加载即在场），跳过的用例不推数据，清空幂等。
+const waitJobModule = await loadOfflineSafe('../lib/wait-job.js');
+const { createWaitJobTool: buildWaitJobTool } = waitJobModule ?? {};
+const hostTest = await hostTestFor('../lib/wait-job.js');
 
 /**
  * 被测工具一律经 `checkedTool` 包一层：**每条**用例的返回值都会被喂给宿主输出校验器
@@ -118,7 +125,7 @@ function installJobs(f, {
   return { waitCalls, getCalls, readCalls, listCalls, job, probes };
 }
 
-test('async_wait_job：wait_ms 必填（等待必须有界）', async () => {
+hostTest('async_wait_job：wait_ms 必填（等待必须有界）', async () => {
   const f = fakeCtx();
   installJobs(f);
   const tool = createWaitJobTool(f.ctx, config);
@@ -127,7 +134,7 @@ test('async_wait_job：wait_ms 必填（等待必须有界）', async () => {
   await assert.rejects(() => tool.execute({ job_id: 'j-1', wait_ms: null }, exec), /"wait_ms" must be a number/);
 });
 
-test('async_wait_job：未知作业 id 必须报错并指向 job_list', async () => {
+hostTest('async_wait_job：未知作业 id 必须报错并指向 job_list', async () => {
   const f = fakeCtx();
   // 查无 = list 里缺席（get 对未知 id 也是 throw，但那与查询失败无法区分）。
   f.ctx.jobs.list = () => [];
@@ -138,7 +145,7 @@ test('async_wait_job：未知作业 id 必须报错并指向 job_list', async ()
   );
 });
 
-test('async_wait_job（0.2.0-rc.2）：jobs 调用全部带 caller=SessionId（归属栅栏）', async () => {
+hostTest('async_wait_job（0.2.0-rc.2）：jobs 调用全部带 caller=SessionId（归属栅栏）', async () => {
   const f = fakeCtx();
   const { waitCalls, listCalls, readCalls } = installJobs(f, { status: 'completed' });
   const tool = createWaitJobTool(f.ctx, config);
@@ -150,7 +157,7 @@ test('async_wait_job（0.2.0-rc.2）：jobs 调用全部带 caller=SessionId（�
   assert.equal(waitCalls.length, 0, '已终态时不得再等待');
 });
 
-test('async_wait_job：作业已终态 → 屏障直接返回输出，不发起等待', async () => {
+hostTest('async_wait_job：作业已终态 → 屏障直接返回输出，不发起等待', async () => {
   const f = fakeCtx();
   const { waitCalls } = installJobs(f, { status: 'completed', readChunks: [{ text: 'done!', channel: 'stdout' }] });
   const tool = createWaitJobTool(f.ctx, config);
@@ -162,7 +169,7 @@ test('async_wait_job：作业已终态 → 屏障直接返回输出，不发起�
   assert.equal(waitCalls.length, 0, '已终态时不得再等待');
 });
 
-test('async_wait_job（0.2.0-rc.2）：多 chunk 拼接 + lossy 前缀标记', async () => {
+hostTest('async_wait_job（0.2.0-rc.2）：多 chunk 拼接 + lossy 前缀标记', async () => {
   const f = fakeCtx();
   installJobs(f, {
     status: 'completed',
@@ -176,7 +183,7 @@ test('async_wait_job（0.2.0-rc.2）：多 chunk 拼接 + lossy 前缀标记', a
   assert.match(result.output, /AAABBBE$/, 'chunks 按顺序拼接（含全部 channel）');
 });
 
-test('async_wait_job（0.2.0-rc.2）：stopping 是中间态 → 仍按 running 返回', async () => {
+hostTest('async_wait_job（0.2.0-rc.2）：stopping 是中间态 → 仍按 running 返回', async () => {
   // kill 已请求、进程未收尾：此时返回 running 句柄是对的，模型再等一次即可。
   const f = fakeCtx();
   freezeTimers(f.ctx);
@@ -188,7 +195,7 @@ test('async_wait_job（0.2.0-rc.2）：stopping 是中间态 → 仍按 running 
   assert.equal(waitCalls.length, 1);
 });
 
-test('async_wait_job（0.2.0-rc.2）：jobs.wait 超时是 resolve 回 running 视图 → 不报错，走 running 分支', async () => {
+hostTest('async_wait_job（0.2.0-rc.2）：jobs.wait 超时是 resolve 回 running 视图 → 不报错，走 running 分支', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   // 让 jobs.wait 自行到期（确定性驱动），不依赖被替换的定时器。
@@ -212,7 +219,7 @@ test('async_wait_job（0.2.0-rc.2）：jobs.wait 超时是 resolve 回 running �
   assert.equal(probes.killCalls, 0);
 });
 
-test('async_wait_job（0.2.0-rc.2）：到期双源合并——本地 deadline 与 jobs.wait 的到时信号谁先到，返回体都逐字段相等', async () => {
+hostTest('async_wait_job（0.2.0-rc.2）：到期双源合并——本地 deadline 与 jobs.wait 的到时信号谁先到，返回体都逐字段相等', async () => {
   // 合并规则的"两路同时触发"形态：真实调度里本地 timer 与
   // jobs.wait 的到时信号几乎同拍，**谁先到都不允许改变返回体**（终态只认复查快照
   // （list 基）、waited_ms 只用本地时钟）。两腿对照，作业全程 running：
@@ -244,7 +251,7 @@ test('async_wait_job（0.2.0-rc.2）：到期双源合并——本地 deadline �
     '两条到时信号谁先到，返回体都必须逐字段相等（到期双源合并规则）');
 });
 
-test('async_wait_job（0.2.0-rc.2）：jobs.wait 被 abort → 竞速收敛不报错（raceAbort 的撤销路径）', async () => {
+hostTest('async_wait_job（0.2.0-rc.2）：jobs.wait 被 abort → 竞速收敛不报错（raceAbort 的撤销路径）', async () => {
   const f = fakeCtx();
   // 注意**不冻定时器**：本用例要的就是本地 deadline 真实到期（冻住会四路全挂死）。
   // jobs.wait 装成永不自行 resolve（waitDelayMs=0）——竞速只能由本地 deadline 收敛，
@@ -256,7 +263,7 @@ test('async_wait_job（0.2.0-rc.2）：jobs.wait 被 abort → 竞速收敛不�
   assert.equal(result.status, 'running', 'deadline 收敛 + jobs.wait 被 abort → running 分支，不得抛错');
 });
 
-test('async_wait_job（T2）：用户插话 → interrupted，作业一次都没被碰过', async () => {
+hostTest('async_wait_job（T2）：用户插话 → interrupted，作业一次都没被碰过', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   const { waitCalls, job, probes } = installJobs(f, { waitDelayMs: 60000 });
@@ -290,7 +297,7 @@ test('async_wait_job（T2）：用户插话 → interrupted，作业一次都没
   agent.inbox.nextStep.length = 0; // 还原共享 fixture（等待入口会读它——设计 §2.2 入口扫描）
 });
 
-test('async_wait_job（R30-d 唤醒分支）：等待中迟到作答通知 → 运行句柄 + note，非 interrupted 非 settled', async () => {
+hostTest('async_wait_job（R30-d 唤醒分支）：等待中迟到作答通知 → 运行句柄 + note，非 interrupted 非 settled', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   const { waitCalls, job, probes } = installJobs(f, { waitDelayMs: 60000 });
@@ -317,7 +324,7 @@ test('async_wait_job（R30-d 唤醒分支）：等待中迟到作答通知 → �
   assert.equal(waitCalls[0].signal.aborted, true, '竞速结束后仍撤销在途等待');
 });
 
-test('async_wait_job（R30 通道轮 起始检查）：作答先到、等待后开 → 立即运行句柄 + note（不空转预算）', async () => {
+hostTest('async_wait_job（R30 通道轮 起始检查）：作答先到、等待后开 → 立即运行句柄 + note（不空转预算）', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   const { probes } = installJobs(f, { waitDelayMs: 60000 });
@@ -335,7 +342,7 @@ test('async_wait_job（R30 通道轮 起始检查）：作答先到、等待后�
   agent.inbox.nextTurn.length = 0; // 还原共享 fixture
 });
 
-test('async_wait_job：插件通知不得被当作插话（role 陷阱）', async () => {
+hostTest('async_wait_job：插件通知不得被当作插话（role 陷阱）', async () => {
   const f = fakeCtx();
   installJobs(f, { waitDelayMs: 10 });
   const tool = createWaitJobTool(f.ctx, config);
@@ -349,7 +356,7 @@ test('async_wait_job：插件通知不得被当作插话（role 陷阱）', asyn
   assert.notEqual(result.status, 'interrupted', '插件通知不得打断等待');
 });
 
-test('async_wait_job：完成优先于打断——插话瞬间作业恰好终态，返回完成结果并注明', async () => {
+hostTest('async_wait_job：完成优先于打断——插话瞬间作业恰好终态，返回完成结果并注明', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   // 先把 jobs.wait 挂成"永不自行 resolve"，让插话先赢竞速；
@@ -370,7 +377,7 @@ test('async_wait_job：完成优先于打断——插话瞬间作业恰好终态
   agent.inbox.nextStep.length = 0; // 还原共享 fixture（等待入口会读它——设计 §2.2 入口扫描）
 });
 
-test('async_wait_job：等待路径上 wait 被结算释放 → 终态结果', async () => {
+hostTest('async_wait_job：等待路径上 wait 被结算释放 → 终态结果', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   // jobs.wait 在 10ms 后 resolve 一个 completed 视图（结算释放路径）。
@@ -385,7 +392,7 @@ test('async_wait_job：等待路径上 wait 被结算释放 → 终态结果', a
   assert.match(result.detail, /exit code: 0/);
 });
 
-test('async_wait_job：等待中途的快照查询抛错不得泄漏为工具报错', async () => {
+hostTest('async_wait_job：等待中途的快照查询抛错不得泄漏为工具报错', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   // 快照层是 list 基。屏障 list 正常返回 running；等待到期后的复查 list
@@ -412,7 +419,7 @@ test('async_wait_job：等待中途的快照查询抛错不得泄漏为工具报
   assert.equal(result.status, 'running');
 });
 
-test('async_wait_job：描述必须带锚①与 waitDigest，且不许再出现"唯一途径"', async () => {
+hostTest('async_wait_job：描述必须带锚①与 waitDigest，且不许再出现"唯一途径"', async () => {
   const tool = buildWaitJobTool(fakeCtx().ctx, config);
   // 规则①的锚（wait 两兄弟独有；refreshToolDescriptions 靠它就地改数字）。
   assert.match(tool.description, /wait_ms is required, range 250–600000 ms\./);
@@ -428,7 +435,7 @@ test('async_wait_job：描述必须带锚①与 waitDigest，且不许再出现"
   assert.doesNotMatch(tool.description, /yield_ms/);
 });
 
-test('W-render（R11 P1）：模型可见文本必须带上 detail —— 那是找回被丢弃输出的唯一线索', () => {
+hostTest('W-render（R11 P1）：模型可见文本必须带上 detail —— 那是找回被丢弃输出的唯一线索', () => {
   // 缺陷形态：`render` 在终态分支
   // 若只输出 `value.output`，"output partially dropped from memory; full output at <路径>"
   // 这句 `detail` **永远到不了模型眼前**。
@@ -475,7 +482,7 @@ test('W-render（R11 P1）：模型可见文本必须带上 detail —— 那是
 // 安全/健壮性/异常处理的缺陷防御判据。
 // ---------------------------------------------------------------------------
 
-test('R29-b（判据 2·入口中止）：调用进来时 signal 已 aborted → 直接 interrupted，零查询零等待', async () => {
+hostTest('R29-b（判据 2·入口中止）：调用进来时 signal 已 aborted → 直接 interrupted，零查询零等待', async () => {
   const f = fakeCtx();
   const { waitCalls, listCalls } = installJobs(f);
   const controller = new AbortController();
@@ -494,7 +501,7 @@ test('R29-b（判据 2·入口中止）：调用进来时 signal 已 aborted →
   assert.equal(waitCalls.length, 0, 'jobs.wait 一次都不能发');
 });
 
-test('R29-a（判据 1·竞速期）：等待中工具被取消 → 取消口径交回，作业未被碰、waiter 已撤销', async () => {
+hostTest('R29-a（判据 1·竞速期）：等待中工具被取消 → 取消口径交回，作业未被碰、waiter 已撤销', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   const { waitCalls, probes } = installJobs(f, { waitDelayMs: 60000 });
@@ -518,7 +525,7 @@ test('R29-a（判据 1·竞速期）：等待中工具被取消 → 取消口径
   assert.equal(waitCalls[0].signal.aborted, true, '收敛后撤销在途 waiter（awaited 语义）');
 });
 
-test('R29-c（判据 3·屏障查询失败）：jobs.list 抛错 → 可重试的 queryFailed，不得误报 unknown job', async () => {
+hostTest('R29-c（判据 3·屏障查询失败）：jobs.list 抛错 → 可重试的 queryFailed，不得误报 unknown job', async () => {
   const f = fakeCtx();
   // 三分的关键区分：`undefined`（查询失败）≠ `null`（查无）。并入 unknownJob 会在
   // 宿主抖动时把"稍后重试就能好"的错误升级成"作业不存在"，诱发副作用重跑。
@@ -534,7 +541,7 @@ test('R29-c（判据 3·屏障查询失败）：jobs.list 抛错 → 可重试�
   );
 });
 
-test('R29-c（判据 4·读失败）：终态确认但 jobs.read 抛错 → 首行 readFailed 标记，工具不报错', async () => {
+hostTest('R29-c（判据 4·读失败）：终态确认但 jobs.read 抛错 → 首行 readFailed 标记，工具不报错', async () => {
   const f = fakeCtx();
   installJobs(f, { status: 'completed' });
   f.ctx.jobs.read = () => { throw new Error('read unavailable'); };
@@ -548,7 +555,7 @@ test('R29-c（判据 4·读失败）：终态确认但 jobs.read 抛错 → 首�
   assert.equal(result.truncated, false);
 });
 
-test('R29-a（判据 13·接线段防御）：jobs.wait 同步抛错 → 监听器与定时器必须全部被处置', async () => {
+hostTest('R29-a（判据 13·接线段防御）：jobs.wait 同步抛错 → 监听器与定时器必须全部被处置', async () => {
   const f = fakeCtx();
   installJobs(f, { status: 'running', waitDelayMs: 0 });
   const baseline = f.count('agent/inbox/inserted');
@@ -589,7 +596,7 @@ function withHangGuard(pending) {
   ]);
 }
 
-test('R55（判据 1）：等待开始时 next-step 已有 user 插话 → 立即 interrupted，不接线不创建 waiter', async () => {
+hostTest('R55（判据 1）：等待开始时 next-step 已有 user 插话 → 立即 interrupted，不接线不创建 waiter', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   const probes = installJobs(f, { status: 'running', waitDelayMs: 0 });
@@ -611,7 +618,7 @@ test('R55（判据 1）：等待开始时 next-step 已有 user 插话 → 立�
   agent.inbox.nextStep.length = 0; // 还原共享 fixture
 });
 
-test('R55（判据 2·负面对照一）：next-step 滞留的是转达/结算/迟到作答 → 不打断，迟到作答照旧唤醒', async () => {
+hostTest('R55（判据 2·负面对照一）：next-step 滞留的是转达/结算/迟到作答 → 不打断，迟到作答照旧唤醒', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   installJobs(f, { status: 'running', waitDelayMs: 0 });
@@ -628,7 +635,7 @@ test('R55（判据 2·负面对照一）：next-step 滞留的是转达/结算/�
   agent.inbox.nextStep.length = 0; // 还原共享 fixture
 });
 
-test('R55（判据 3·负面对照二）：next-turn 排队 user 消息、next-step 干净 → 不打断（R12 不回归）', async () => {
+hostTest('R55（判据 3·负面对照二）：next-turn 排队 user 消息、next-step 干净 → 不打断（R12 不回归）', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   const probes = installJobs(f, { status: 'running', waitDelayMs: 10 });
@@ -646,7 +653,7 @@ test('R55（判据 3·负面对照二）：next-turn 排队 user 消息、next-s
   agent.inbox.nextTurn.length = 0; // 还原共享 fixture
 });
 
-test('R55（判据 5）：作业已终态 + 先到插话并存 → 完成结果（结束优先于打断，入口侧）', async () => {
+hostTest('R55（判据 5）：作业已终态 + 先到插话并存 → 完成结果（结束优先于打断，入口侧）', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   const probes = installJobs(f, { status: 'completed', waitDelayMs: 0 });
@@ -667,7 +674,7 @@ test('R55（判据 5）：作业已终态 + 先到插话并存 → 完成结果�
 // 盖不住分隔错误）。真实注册表层的判据在 test/wait-job-result.test.mjs。
 // ---------------------------------------------------------------------------
 
-test('R57（屏障已终态·分隔三分）：result 并入同一次返回——增量与 result 之间的分隔精确断言', async () => {
+hostTest('R57（屏障已终态·分隔三分）：result 并入同一次返回——增量与 result 之间的分隔精确断言', async () => {
   // 分支 a：增量非空且不以换行结尾 → 中间恰一个换行。
   const fA = fakeCtx();
   installJobs(fA, { status: 'completed', readChunks: [{ text: 'partial line', channel: 'stdout' }], readResult: 'FINAL' });
@@ -692,7 +699,7 @@ test('R57（屏障已终态·分隔三分）：result 并入同一次返回—�
   assert.equal(c.output, '[job completed]\nFINAL', '仅 result 在场——无分隔直接输出');
 });
 
-test('R57（等待覆盖结算）：竞速由结算释放 → result 并入同一次返回（第二分支）', async () => {
+hostTest('R57（等待覆盖结算）：竞速由结算释放 → result 并入同一次返回（第二分支）', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   const probes = installJobs(f, {
@@ -711,7 +718,7 @@ test('R57（等待覆盖结算）：竞速由结算释放 → result 并入同�
   assert.equal(result.output, '[job completed]\nlog line\nFINAL', '等待路径的终态读取同样并入一次性 result');
 });
 
-test('R29-c（判据 3·复查失败）：到期后的复查查询抛错 → 状态未证实文案，不宣称"仍在运行"', async () => {
+hostTest('R29-c（判据 3·复查失败）：到期后的复查查询抛错 → 状态未证实文案，不宣称"仍在运行"', async () => {
   const f = fakeCtx();
   // 入口快照证实 running；等待期间无事件；到期瞬间的复查（jobs.list 第二次
   // 调用）抛错——状态未证实，note 不得再写 "is still running"（需求 §2.2.2：
@@ -735,7 +742,7 @@ test('R29-c（判据 3·复查失败）：到期后的复查查询抛错 → 状
   assert.match(result.note, /async_wait_job\(job_id="j-1"/, '重试出路必须指向本工具');
 });
 
-test('R29-c（判据 3·复查空表）：到期复查作业已不在清单 → 未证实文案，不宣称"仍在运行"', async () => {
+hostTest('R29-c（判据 3·复查空表）：到期复查作业已不在清单 → 未证实文案，不宣称"仍在运行"', async () => {
   const f = fakeCtx();
   // 入口快照证实 running；到期复查（jobs.list 第二次调用）返回空表——作业已
   // 从可见清单消失（如属主处置中途移除）：与查询失败同档，note 不得写
@@ -759,7 +766,7 @@ test('R29-c（判据 3·复查空表）：到期复查作业已不在清单 → 
   assert.match(result.note, /no longer listed/, 'note 点出作业已不在可见清单');
 });
 
-test('R57（一次性·不重复）：交付后的再次读取不得重复 result；无 result 的读取输出不变', async () => {
+hostTest('R57（一次性·不重复）：交付后的再次读取不得重复 result；无 result 的读取输出不变', async () => {
   const f = fakeCtx();
   installJobs(f, { status: 'completed', readChunks: [{ text: 'out', channel: 'stdout' }], readResult: 'FINAL' });
   const tool = createWaitJobTool(f.ctx, config);
@@ -770,7 +777,7 @@ test('R57（一次性·不重复）：交付后的再次读取不得重复 resul
   assert.equal(second.output, '[job completed]\nout', 'result 只随首次终态读取交付——第二次不再拼接（状态行每次读取都在，属诊断非内容）');
 });
 
-test('R57（空 result）：result 为空串且无增量 → 输出恰为空串', async () => {
+hostTest('R57（空 result）：result 为空串且无增量 → 输出恰为空串', async () => {
   const f = fakeCtx();
   installJobs(f, { status: 'completed', readChunks: [], readResult: '' });
   const tool = createWaitJobTool(f.ctx, config);
@@ -780,7 +787,7 @@ test('R57（空 result）：result 为空串且无增量 → 输出恰为空串'
   assert.equal(result.truncated, false);
 });
 
-test('R57（空 result × 非空增量）：空串 result 视为在场——分隔照补，判定口径是 undefined 同一性', async () => {
+hostTest('R57（空 result × 非空增量）：空串 result 视为在场——分隔照补，判定口径是 undefined 同一性', async () => {
   const f = fakeCtx();
   installJobs(f, { status: 'completed', readChunks: [{ text: 'out', channel: 'stdout' }], readResult: '' });
   const tool = createWaitJobTool(f.ctx, config);
@@ -788,7 +795,7 @@ test('R57（空 result × 非空增量）：空串 result 视为在场——分�
   assert.equal(result.output, '[job completed]\nout\n', '空串 result 在场：增量非换行结尾仍补恰一个换行（falsy 判定会漏掉这个分隔）');
 });
 
-test('R57（超长）：合并后的完整文本走 maxResultChars 裁剪——保头尾、标省略量、truncated 置真', async () => {
+hostTest('R57（超长）：合并后的完整文本走 maxResultChars 裁剪——保头尾、标省略量、truncated 置真', async () => {
   const f = fakeCtx();
   installJobs(f, {
     status: 'completed',
@@ -807,7 +814,7 @@ test('R57（超长）：合并后的完整文本走 maxResultChars 裁剪——�
   );
 });
 
-test('R57（lossy）：lossy 前缀仍排最前，其后是增量与 result 的合并', async () => {
+hostTest('R57（lossy）：lossy 前缀仍排最前，其后是增量与 result 的合并', async () => {
   const f = fakeCtx();
   installJobs(f, {
     status: 'completed',
@@ -824,7 +831,7 @@ test('R57（lossy）：lossy 前缀仍排最前，其后是增量与 result 的�
   );
 });
 
-test('R57（读失败）：read 抛错 → 首行标记、一次性通道未被消费，下一次成功读取仍可交付', async () => {
+hostTest('R57（读失败）：read 抛错 → 首行标记、一次性通道未被消费，下一次成功读取仍可交付', async () => {
   const f = fakeCtx();
   let failFirst = true;
   const chunks = [{ text: 'out', channel: 'stdout' }];
@@ -859,7 +866,7 @@ test('R57（读失败）：read 抛错 → 首行标记、一次性通道未被�
 // 预算之外，双语完整）。
 // ---------------------------------------------------------------------------
 
-test('F1：用户插话唤醒与终态并存——终态详情保留，唤醒说明以附加行表达', async () => {
+hostTest('F1：用户插话唤醒与终态并存——终态详情保留，唤醒说明以附加行表达', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   const probes = installJobs(f, { waitDelayMs: 60000 });
@@ -883,7 +890,7 @@ test('F1：用户插话唤醒与终态并存——终态详情保留，唤醒说
   agent.inbox.nextStep.length = 0; // 还原共享 fixture
 });
 
-test('F7：无输出无详情时三种终态的可见文本互不相同（需求 §2.2.2）', async () => {
+hostTest('F7：无输出无详情时三种终态的可见文本互不相同（需求 §2.2.2）', async () => {
   const markers = { completed: '[job completed]', failed: '[job failed]', killed: '[job killed]' };
   for (const [status, marker] of Object.entries(markers)) {
     const f = fakeCtx();
@@ -895,7 +902,7 @@ test('F7：无输出无详情时三种终态的可见文本互不相同（需求
   }
 });
 
-test('F7：终态状态行双语完整（zh 档）', async () => {
+hostTest('F7：终态状态行双语完整（zh 档）', async () => {
   const f = fakeCtx();
   installJobs(f, { status: 'killed', readChunks: [] });
   const tool = createWaitJobTool(f.ctx, resolveConfig({ toolName: 'async_run', agentLang: 'zh' }));

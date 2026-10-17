@@ -18,11 +18,16 @@
  * | 沙箱拒绝时产出**标记 + 同轮提示** | 这正是原故障"模型没有任何线索"的直接修补 |
  * | 让出后的作业结局**同样带标记** | 只在完成分支给标记，"让出后才发现被拒"仍然没线索 |
  */
-import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRunTool as buildRunTool } from '../lib/jobs.js';
+import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
 import { resolveConfig } from '../lib/config.js';
 import { checkedTool, fakeAgent, fakeCtx, fakeProc } from './_helpers.mjs';
+
+// 宿主链动态守卫（lib/jobs.js → dsh-tools/ask-takeover）：离线形态锚缺席时
+// 本文件仍可加载，全部用例自跳过并打印理由（ci.yml offline 作业的契约）。
+const jobsModule = await loadOfflineSafe('../lib/jobs.js');
+const { createRunTool: buildRunTool } = jobsModule ?? {};
+const hostTest = await hostTestFor('../lib/jobs.js');
 
 const createRunTool = (ctx, config) => checkedTool(buildRunTool(ctx, config));
 const config = resolveConfig({ toolName: 'async_run' });
@@ -70,7 +75,7 @@ function confinedCtx(outcome = 'allowed-once', options = {}) {
   return { f, asks, seen, policyCalls, resolveCallsAtApproval };
 }
 
-test('R11：有约束执行器时，参数表声明 sandbox_permissions 与 justification', () => {
+hostTest('R11：有约束执行器时，参数表声明 sandbox_permissions 与 justification', () => {
   const { f } = confinedCtx();
   const tool = createRunTool(f.ctx, config);
   // `defineTool` 会把参数描述表**转成 JSON Schema**，键在 `parameters.properties` 下，
@@ -83,7 +88,7 @@ test('R11：有约束执行器时，参数表声明 sandbox_permissions 与 just
     '枚举必须是 ESCALATION_TARGETS（闭集），不能自己另立一套');
 });
 
-test('R11：**没有**约束执行器时，两个键都不得出现在参数表里', () => {
+hostTest('R11：**没有**约束执行器时，两个键都不得出现在参数表里', () => {
   // 缺陷形态：无条件声明 ⇒ 模型在无沙箱部署里看到一个永远失败的杠杆
   // （`approveEscalation` 在没有更宽模式可去时必抛）。
   const f = fakeCtx();
@@ -93,7 +98,7 @@ test('R11：**没有**约束执行器时，两个键都不得出现在参数表�
   assert.equal('justification' in props, false, '无沙箱不得声明 justification');
 });
 
-test('R11：sandbox_permissions 缺少 justification → 报错且**不启动进程**', async () => {
+hostTest('R11：sandbox_permissions 缺少 justification → 报错且**不启动进程**', async () => {
   const { f, seen } = confinedCtx();
   const tool = createRunTool(f.ctx, config);
   await assert.rejects(
@@ -104,7 +109,7 @@ test('R11：sandbox_permissions 缺少 justification → 报错且**不启动进
   assert.equal(seen.length, 0, '参数非法时**一个进程都不许启动**');
 });
 
-test('R11：justification 缺 sandbox_permissions → 同样报错（反向配对）', async () => {
+hostTest('R11：justification 缺 sandbox_permissions → 同样报错（反向配对）', async () => {
   const { f, seen } = confinedCtx();
   const tool = createRunTool(f.ctx, config);
   await assert.rejects(
@@ -115,7 +120,7 @@ test('R11：justification 缺 sandbox_permissions → 同样报错（反向配�
   assert.equal(seen.length, 0);
 });
 
-test('R11：justification 是空白串 → 报错（非空句子是硬要求）', async () => {
+hostTest('R11：justification 是空白串 → 报错（非空句子是硬要求）', async () => {
   const { f, seen } = confinedCtx();
   const tool = createRunTool(f.ctx, config);
   await assert.rejects(
@@ -127,7 +132,7 @@ test('R11：justification 是空白串 → 报错（非空句子是硬要求）'
   assert.equal(seen.length, 0);
 });
 
-test('R11：**先问审批、再启动进程**——审批发生在进程创建之前', async () => {
+hostTest('R11：**先问审批、再启动进程**——审批发生在进程创建之前', async () => {
   const { f, asks, seen, resolveCallsAtApproval } = confinedCtx('allowed-once');
   const tool = createRunTool(f.ctx, config);
   await tool.execute({
@@ -153,7 +158,7 @@ test('R11：**先问审批、再启动进程**——审批发生在进程创建�
   assert.match(asks[0].reason, /这条命令要启动外部程序/, '用户给的那句话必须在审批理由里');
 });
 
-test('R11/R32-a：调用**没有 agent** 时在入口被拒，零审批零进程', async () => {
+hostTest('R11/R32-a：调用**没有 agent** 时在入口被拒，零审批零进程', async () => {
   // 五种失败情形：非严格加宽 / 缺审批服务 / **无 agent** / 拒绝 / 取消。
   // "无 agent"必须有专门用例——否则 `approveEscalation` 的 agent 分支被改坏也全绿。
   //
@@ -176,7 +181,7 @@ test('R11/R32-a：调用**没有 agent** 时在入口被拒，零审批零进程
   assert.equal(seen.length, 0, '更不能启动进程');
 });
 
-test('R11：获批的模式只作用于**这一次调用**，不写回既有策略', async () => {
+hostTest('R11：获批的模式只作用于**这一次调用**，不写回既有策略', async () => {
   const { f, seen } = confinedCtx('allowed-once');
   const tool = createRunTool(f.ctx, config);
   await tool.execute({
@@ -191,14 +196,14 @@ test('R11：获批的模式只作用于**这一次调用**，不写回既有策�
     '提权泄漏到后续调用 = 永久加宽，比不提权更糟');
 });
 
-test('R11：未提权时带上会话当前策略（不是无约束执行）', async () => {
+hostTest('R11：未提权时带上会话当前策略（不是无约束执行）', async () => {
   const { f, seen } = confinedCtx();
   const tool = createRunTool(f.ctx, config);
   await tool.execute({ command: 'x', description: 'x' }, exec);
   assert.equal(seen[0].sandboxPolicy.mode, 'workspace-write', '不提权 ≠ 放开约束');
 });
 
-test('R11：用户拒绝 → 抛出且**不启动进程**', async () => {
+hostTest('R11：用户拒绝 → 抛出且**不启动进程**', async () => {
   const { f, seen } = confinedCtx('rejected');
   const tool = createRunTool(f.ctx, config);
   await assert.rejects(
@@ -211,7 +216,7 @@ test('R11：用户拒绝 → 抛出且**不启动进程**', async () => {
   assert.equal(seen.length, 0, '被拒绝后启动进程 = 审批形同虚设');
 });
 
-test('R11：审批被取消 → 抛出且不启动进程', async () => {
+hostTest('R11：审批被取消 → 抛出且不启动进程', async () => {
   const { f, seen } = confinedCtx('cancelled');
   const tool = createRunTool(f.ctx, config);
   await assert.rejects(
@@ -224,7 +229,7 @@ test('R11：审批被取消 → 抛出且不启动进程', async () => {
   assert.equal(seen.length, 0);
 });
 
-test('R11：没有审批服务 → 抛出可读错误且不启动进程', async () => {
+hostTest('R11：没有审批服务 → 抛出可读错误且不启动进程', async () => {
   // 这是把 `approval` 保持为**可选**服务的代价与收益：插件仍可用，只有提权这一条路被拒。
   const { f, seen } = confinedCtx('allowed-once', { omitApproval: true });
   const tool = createRunTool(f.ctx, config);
@@ -241,7 +246,7 @@ test('R11：没有审批服务 → 抛出可读错误且不启动进程', async 
   assert.equal(seen.length, 1, '没有审批服务不该影响普通调用');
 });
 
-test('同级与更窄目标都在启动前可读拒绝、零注册零启动（需求 §6.1）', async () => {
+hostTest('同级与更窄目标都在启动前可读拒绝、零注册零启动（需求 §6.1）', async () => {
   // 本包口径严于宿主助手：宿主 `approveEscalation` 对**同级**免审批直接放行
   // （[0.2.0-rc.2] `dsh-sandbox/lib/index.js:101` 早退）；需求 §6.1 要求非严格
   // 加宽一律**启动前**可读拒绝——同级不是加宽请求，更窄/不在梯上同样拒绝，
@@ -288,7 +293,7 @@ test('同级与更窄目标都在启动前可读拒绝、零注册零启动（�
   assert.equal(narrower.seen.length, 0, '更窄拒绝必须零启动');
 });
 
-test('R11：有约束但选不出更宽目标时，未声明的键仍被挡下', async () => {
+hostTest('R11：有约束但选不出更宽目标时，未声明的键仍被挡下', async () => {
   // schema 校验只查**声明过的**键，所以未声明的 `sandbox_permissions` 仍能到达 execute。
   // 这条验的正是那个"必须再挡一次"的守卫。
   const f = fakeCtx();
@@ -307,7 +312,7 @@ test('R11：有约束但选不出更宽目标时，未声明的键仍被挡下',
   assert.equal(seen.length, 0);
 });
 
-test('R11：沙箱拒绝时，完成分支必须产出**拒绝标记 + 同轮提权提示**', async () => {
+hostTest('R11：沙箱拒绝时，完成分支必须产出**拒绝标记 + 同轮提权提示**', async () => {
   const { f } = confinedCtx();
   const { proc, settle } = fakeProc({ text: 'denied', exitCode: 1, status: 'running', autoResolve: false });
   // 沙箱事实是"受约束进程结算后盖章"的。
@@ -325,7 +330,7 @@ test('R11：沙箱拒绝时，完成分支必须产出**拒绝标记 + 同轮提
     '同轮提示必须在**决定点**给出，不能指望模型记得工具描述里那段话');
 });
 
-test('R11：没有沙箱执行器时**不给**提权提示（不给走不通的指引）', async () => {
+hostTest('R11：没有沙箱执行器时**不给**提权提示（不给走不通的指引）', async () => {
   const f = fakeCtx();
   const { proc, settle } = fakeProc({ text: 'x', exitCode: 1, status: 'running', autoResolve: false });
   // 即使有人强制塞了沙箱事实，没有可提权目标时也不该提示"去提权"。
@@ -339,7 +344,7 @@ test('R11：没有沙箱执行器时**不给**提权提示（不给走不通的�
     '没有更宽模式可去时提示提权 = 把人引向一条走不通的路');
 });
 
-test('R11：沙箱未拒绝时**不产出**任何沙箱标记（不许噪声）', async () => {
+hostTest('R11：沙箱未拒绝时**不产出**任何沙箱标记（不许噪声）', async () => {
   const { f } = confinedCtx();
   const { proc, settle } = fakeProc({ text: 'fine', exitCode: 0, status: 'running', autoResolve: false });
   proc.sandbox = { mode: 'workspace-write', denied: false };
@@ -350,7 +355,7 @@ test('R11：沙箱未拒绝时**不产出**任何沙箱标记（不许噪声）'
   assert.doesNotMatch(result.note ?? '', /sandbox:/, '没被拒就不该出现沙箱标记');
 });
 
-test('R11：让出后的作业结局**同样**带沙箱标记（"让出后才发现被拒"也是现场）', async () => {
+hostTest('R11：让出后的作业结局**同样**带沙箱标记（"让出后才发现被拒"也是现场）', async () => {
   const { f } = confinedCtx();
   f.ctx.timer.timeout = (callback) => { const h = setTimeout(callback, 0); return () => clearTimeout(h); };
   const { proc, settle } = fakeProc({ text: 'partial', exitCode: 1, status: 'running', autoResolve: false });
@@ -372,7 +377,7 @@ test('R11：让出后的作业结局**同样**带沙箱标记（"让出后才发
   assert.match(view.detail, /escalation available/);
 });
 
-test('R11：审批未决期间 GUI 停止 → 迟到获准仍零注册零启动（需求 §6.1 取消复查）', async () => {
+hostTest('R11：审批未决期间 GUI 停止 → 迟到获准仍零注册零启动（需求 §6.1 取消复查）', async () => {
   // 宿主审批契约只承诺 signal 骑在请求上（escalation.d.ts:106-107），各审批
   // 服务是否因 abort 取消请求不在本包可控范围——审批返回后必须**复查取消**：
   // 不尊重 signal 的服务在停止之后才返回 allowed-once 时，注册与启动仍为零，

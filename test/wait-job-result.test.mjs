@@ -9,24 +9,27 @@
  *
  * 宿主包不可解析（离线环境/CI）时整文件跳过——跳过不是通过。
  */
-import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createWorkflowTool } from '../lib/workflow.js';
-import { createWaitJobTool } from '../lib/wait-job.js';
+import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
 import { resolveConfig } from '../lib/config.js';
 import { checkedTool } from './_helpers.mjs';
 
-let Context;
-let LocalJobRegistry;
-try {
-  ({ Context } = await import('@deepseek-ai/cordis'));
-  ({ LocalJobRegistry } = await import('@deepseek-ai/dsh-jobs-local'));
-} catch {
-  Context = undefined;
-}
-const defineTest = Context === undefined
-  ? (name, _fn) => test(name, (t) => { t.skip('宿主包不可解析（离线环境），本用例跳过'); })
-  : (name, fn) => test(name, fn);
+// 宿主链动态守卫：lib/workflow.js、lib/wait-job.js（→ dsh-tools）与真注册表依赖
+// （@deepseek-ai/cordis、@deepseek-ai/dsh-jobs-local——后者是宿主树内层包，不在本包
+// peer 声明里）在离线形态都缺席，全部用例自跳过并打印理由（ci.yml offline 作业的
+// 契约）。探测统一走 loadOfflineSafe：只认「@deepseek-ai/ 不可解析」这一种解析
+// 事实，语法错或模块内部抛错原样红，不得被吞成跳过（防假跳过）。
+const workflowModule = await loadOfflineSafe('../lib/workflow.js');
+const waitJobModule = await loadOfflineSafe('../lib/wait-job.js');
+const { createWorkflowTool } = workflowModule ?? {};
+const { createWaitJobTool } = waitJobModule ?? {};
+const cordisModule = await loadOfflineSafe('@deepseek-ai/cordis');
+const jobsLocalModule = await loadOfflineSafe('@deepseek-ai/dsh-jobs-local');
+const { Context } = cordisModule ?? {};
+const { LocalJobRegistry } = jobsLocalModule ?? {};
+const hostTest = await hostTestFor(
+  '../lib/workflow.js', '../lib/wait-job.js', '@deepseek-ai/cordis', '@deepseek-ai/dsh-jobs-local'
+);
 
 /**
  * 组装被测环境：真 Context + 真 LocalJobRegistry + 受控引擎替身。
@@ -93,7 +96,7 @@ const WF_ARGS = {
   yield_ms: 20
 };
 
-defineTest('R57 真实注册表①：workflow 先让出，wait 覆盖结算 → 最终 JSON 在返回中出现恰一次', async () => {
+hostTest('R57 真实注册表①：workflow 先让出，wait 覆盖结算 → 最终 JSON 在返回中出现恰一次', async () => {
   const rig = await buildRig('yield');
   try {
     const first = await rig.workflow.execute(WF_ARGS, rig.exec());
@@ -125,7 +128,7 @@ defineTest('R57 真实注册表①：workflow 先让出，wait 覆盖结算 → 
   }
 });
 
-defineTest('R57 真实注册表②：workflow 已结算后再 wait → 最终 JSON 仍可见（入口已终态分支）', async () => {
+hostTest('R57 真实注册表②：workflow 已结算后再 wait → 最终 JSON 仍可见（入口已终态分支）', async () => {
   const rig = await buildRig('entry');
   try {
     const first = await rig.workflow.execute(WF_ARGS, rig.exec());
@@ -151,7 +154,7 @@ defineTest('R57 真实注册表②：workflow 已结算后再 wait → 最终 JS
   }
 });
 
-defineTest('R57 真实注册表③：无 result 的普通命令作业——增量文本行为不变', async () => {
+hostTest('R57 真实注册表③：无 result 的普通命令作业——增量文本行为不变', async () => {
   const rig = await buildRig('plain');
   try {
     const jobId = rig.ctx.jobs.start({

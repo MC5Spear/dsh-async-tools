@@ -20,7 +20,6 @@
  * tool-subagent 翻活、P19 删 async-workflow 行、P20 async-workflow 挪出
  * delegation 组（设计 §3.6 行位）、P21 删 workflow-ptc（create 侧）、P22 门槛锚句。
  */
-import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -28,13 +27,30 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { validatePatch, EXPECTATIONS, expectedTopFromBaseline, loadYaml } from '../tools/validate-preset.mjs';
 import { candidateModules } from '../tools/_host-resolve.mjs';
+import { hostTestByProbe } from './_host-gate.mjs';
+
+// 宿主锚探测（文件级）：validate-preset 的 YAML 解析依赖宿主树自带的 js-yaml
+// （候选路径复用 _host-resolve 的候选表），本文件全部用例都经 validatePatch →
+// loadYaml。候选全缺（离线形态）时 loadYaml 抛「找不到宿主的 js-yaml」——整组
+// 自跳过并打印理由（ci.yml offline 作业的契约）；锚在场时全部照常跑。探测只认
+// 候选全缺这一种错误：锚在场而 js-yaml 本身加载失败属于真故障，原样红。
+let yamlAbsent = false;
+try {
+  await loadYaml();
+} catch (error) {
+  if (!String(error?.message ?? error).includes('找不到宿主的 js-yaml')) throw error;
+  yamlAbsent = true;
+}
+const hostTest = await hostTestByProbe(yamlAbsent);
 
 const PATCH = join(import.meta.dirname, '..', 'presets', 'dsh-async.patch.yml');
 const PATCH_CREATE = join(import.meta.dirname, '..', 'presets', 'dsh-async-create.patch.yml');
 const baseline = readFileSync(PATCH, 'utf8');
 const baselineCreate = readFileSync(PATCH_CREATE, 'utf8');
 
-/** 两份 shipped 基线补丁（P14 对账的唯一出处；**读不到即红**，不许静默跳过）。
+/** 两份 shipped 基线补丁（P14 对账的唯一出处；宿主锚**在场时**读不到即红——
+ *  那是防 with-host 形态假绿的口径，不是离线契约；宿主锚缺席（离线形态）时
+ *  本文件整组自跳过，见文件头探测）。
  *
  *  出处 = 宿主安装树里的 `@deepseek-ai/dsh-web-app/presets/`，目录按
  *  `DSAT_HOST_MODULES` → `DSH_HOME/profiles` → `%APPDATA%/npm` 次序推导
@@ -76,18 +92,18 @@ function commonIntro(prefix) {
   return prefix.slice(start, end + endMarker.length);
 }
 
-test('validate-preset：合法补丁必须通过（基线，防止断言恒真）', async () => {
+hostTest('validate-preset：合法补丁必须通过（基线，防止断言恒真）', async () => {
   const result = await validatePatch(PATCH, { quiet: true });
   assert.equal(result.ok, true, `基线应当通过，失败行：\n${result.lines.filter((l) => l.includes('FAIL')).join('\n')}`);
 });
 
-test('validate-preset：dsh-async-create 基线必须通过（P1，R26）', async () => {
+hostTest('validate-preset：dsh-async-create 基线必须通过（P1，R26）', async () => {
   const result = await validatePatch(PATCH_CREATE, { quiet: true });
   assert.equal(result.ok, true, `创造补丁基线应当通过，失败行：\n${result.lines.filter((l) => l.includes('FAIL')).join('\n')}`);
   assert.ok(result.lines.some((l) => l.includes('顶层 23 行 + 嵌套 14 行')), '③ 的对账读数必须是 23+14（R35-a 起嵌套多一行 async-workflow）');
 });
 
-test('validate-preset：tool-bash 被改成平台表达式必须拦住（需求 §3.3：Linux 也要无条件禁用）', async () => {
+hostTest('validate-preset：tool-bash 被改成平台表达式必须拦住（需求 §3.3：Linux 也要无条件禁用）', async () => {
   const result = await validateMutation((text) => text
     .replace("id: tool-bash\n            name: '@deepseek-ai/dsh-tool-bash'\n            disabled: true",
       "id: tool-bash\n            name: '@deepseek-ai/dsh-tool-bash'\n            disabled: !!js process.platform === 'win32'"));
@@ -96,7 +112,7 @@ test('validate-preset：tool-bash 被改成平台表达式必须拦住（需求 
     `报错必须指向判据②，实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
 });
 
-test('validate-preset：tool-bash 行被整个删掉必须拦住', async () => {
+hostTest('validate-preset：tool-bash 行被整个删掉必须拦住', async () => {
   // 行形态：10 空格 `- id: tool-bash` + 后随 12 空格属性行（见补丁 :58-60）。
   const result = await validateMutation((text) => text.replace(
     / {10}- id: tool-bash\n(?: {12}.*\n)*/,
@@ -104,7 +120,7 @@ test('validate-preset：tool-bash 行被整个删掉必须拦住', async () => {
   assert.equal(result.ok, false, '没有 tool-bash 行（改动对象缺席）必须被拦');
 });
 
-test('validate-preset：toolName 写错（async_wait_agent 写成 async_run）必须拦住', async () => {
+hostTest('validate-preset：toolName 写错（async_wait_agent 写成 async_run）必须拦住', async () => {
   const result = await validateMutation((text) => text
     .replace('toolName: async_wait_agent', 'toolName: async_run'));
   assert.equal(result.ok, false);
@@ -112,14 +128,14 @@ test('validate-preset：toolName 写错（async_wait_agent 写成 async_run）�
     `报错必须指向判据④的缺值/重复，实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
 });
 
-test('validate-preset：toolName 写成不存在的值必须拦住', async () => {
+hostTest('validate-preset：toolName 写成不存在的值必须拦住', async () => {
   const result = await validateMutation((text) => text
     .replace('toolName: async_agent', 'toolName: async_frobnicate'));
   assert.equal(result.ok, false);
   assert.ok(result.lines.some((l) => l.includes('toolName 五值缺')));
 });
 
-test('validate-preset：tool-pwsh 挂回来必须拦住（R6）', async () => {
+hostTest('validate-preset：tool-pwsh 挂回来必须拦住（R6）', async () => {
   const result = await validateMutation((text) => text
     .replace("name: '@deepseek-ai/dsh-tool-bash'",
       "name: '@deepseek-ai/dsh-tool-bash'\n          - id: tool-pwsh-sneak\n            name: '@deepseek-ai/dsh-tool-pwsh'"));
@@ -127,7 +143,7 @@ test('validate-preset：tool-pwsh 挂回来必须拦住（R6）', async () => {
   assert.ok(result.lines.some((l) => l.includes('tool-pwsh')));
 });
 
-test('validate-preset：workflow-ptc 行被删必须拦住（定向修改 4 存在性）', async () => {
+hostTest('validate-preset：workflow-ptc 行被删必须拦住（定向修改 4 存在性）', async () => {
   // 删行 = workflow 引擎供电行（workflow-ptc）静默消失，预设丢编排引擎行为——
   // 否定式判据（"不含 worker-thread"）对此不红（两边都不含），必须靠存在性判据。
   const result = await validateMutation((text) => text.replace(
@@ -138,7 +154,7 @@ test('validate-preset：workflow-ptc 行被删必须拦住（定向修改 4 存�
     `报错必须点名改动项 4 的存在性，实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
 });
 
-test('validate-preset：tool-ralph 被翻回启用必须拦住（定向修改 5）', async () => {
+hostTest('validate-preset：tool-ralph 被翻回启用必须拦住（定向修改 5）', async () => {
   const result = await validateMutation((text) => text
     .replace("id: tool-ralph\n                name: '@deepseek-ai/dsh-tool-ralph'\n                disabled: true",
       "id: tool-ralph\n                name: '@deepseek-ai/dsh-tool-ralph'\n                disabled: false"));
@@ -147,7 +163,7 @@ test('validate-preset：tool-ralph 被翻回启用必须拦住（定向修改 5�
     '报错必须指向 tool-ralph 的 disabled 项');
 });
 
-test('validate-preset：tool-plugin-manager 行被删必须拦住（定向修改 6 存在性）', async () => {
+hostTest('validate-preset：tool-plugin-manager 行被删必须拦住（定向修改 6 存在性）', async () => {
   const result = await validateMutation((text) => text.replace(
     / {10}- id: tool-plugin-manager\n(?: {12}.*\n)*/,
     ''));
@@ -156,7 +172,7 @@ test('validate-preset：tool-plugin-manager 行被删必须拦住（定向修改
     '报错必须点名改动项 6 的存在性');
 });
 
-test('validate-preset：persona 锚句被删必须拦住（含反恒真句）', async () => {
+hostTest('validate-preset：persona 锚句被删必须拦住（含反恒真句）', async () => {
   // persona 的该句跨两行（never pass / run_in_background: false.），变异按
   // 折叠后仍存在的子串删——锚句 'never pass run_in_background: false' 随之消失。
   const result = await validateMutation((text) => text
@@ -166,7 +182,7 @@ test('validate-preset：persona 锚句被删必须拦住（含反恒真句）', 
     '报错必须点名缺的那条锚句');
 });
 
-test('validate-preset：预设行重新带上 disabled 护栏必须拦住', async () => {
+hostTest('validate-preset：预设行重新带上 disabled 护栏必须拦住', async () => {
   // 护栏会在 agentPresets 服务就绪前把行静默杀死（loader refresh() 的 disabled 检查，
   // cordis-plugin-loader/lib/index.js:359-363），落成启动审计里的 "failed to import"。
   // 判据反转：护栏**存在**才是缺陷。
@@ -176,14 +192,14 @@ test('validate-preset：预设行重新带上 disabled 护栏必须拦住', asyn
   assert.ok(result.lines.some((l) => l.includes('不得带 disabled 护栏')));
 });
 
-test('validate-preset：YAML 语法坏了必须报解析失败而不是崩', async () => {
+hostTest('validate-preset：YAML 语法坏了必须报解析失败而不是崩', async () => {
   const result = await validateMutation((text) => `${text}\n  - : : broken\n    - ]]);
 `);
   assert.equal(result.ok, false);
   assert.ok(result.lines.some((l) => l.includes('解析失败')));
 });
 
-test('validate-preset：!!js 负表达式未加引号必须报解析失败', async () => {
+hostTest('validate-preset：!!js 负表达式未加引号必须报解析失败', async () => {
   // `!!js !ctx.get(...)` 的首字符 `!` 会被 YAML 当成第二个标签
   // （duplication of a tag property）。上游成例整体加引号
   // （`dsh-base/cordis.patch.yml:22`）。校验器必须真的能解析宿主方言才能抓住它。
@@ -196,7 +212,7 @@ test('validate-preset：!!js 负表达式未加引号必须报解析失败', asy
 
 // ══════════════════ dsh-async-create 补丁的判据（P2–P16）══════════════════════
 
-test('validate-preset：删基线行 tool-cordis 必须拦住（P2，③ 缺行）', async () => {
+hostTest('validate-preset：删基线行 tool-cordis 必须拦住（P2，③ 缺行）', async () => {
   const result = await validateMutation((text) => text.replace(
     "          - id: tool-cordis\n            name: '@deepseek-ai/dsh-tool-cordis'\n", ''),
     PATCH_CREATE, baselineCreate);
@@ -205,7 +221,7 @@ test('validate-preset：删基线行 tool-cordis 必须拦住（P2，③ 缺行�
     `报错必须点名缺的基线行，实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
 });
 
-test('validate-preset：多出基线期望之外的行必须拦住（P3，③ 多行）', async () => {
+hostTest('validate-preset：多出基线期望之外的行必须拦住（P3，③ 多行）', async () => {
   const result = await validateMutation((text) => text
     .replace("          - id: tool-cordis\n",
       "          - id: tool-web-extra\n            name: '@deepseek-ai/dsh-tool-web'\n          - id: tool-cordis\n"),
@@ -215,7 +231,7 @@ test('validate-preset：多出基线期望之外的行必须拦住（P3，③ �
     '报错必须点名多出的行');
 });
 
-test('validate-preset：tool-subagent 翻回启用必须拦住（P4，⑧ 结构性差异裁定）', async () => {
+hostTest('validate-preset：tool-subagent 翻回启用必须拦住（P4，⑧ 结构性差异裁定）', async () => {
   const result = await validateMutation((text) => text
     .replace("              - id: tool-subagent\n                name: '@deepseek-ai/dsh-tool-subagent'\n                disabled: true\n",
       "              - id: tool-subagent\n                name: '@deepseek-ai/dsh-tool-subagent'\n"),
@@ -225,7 +241,7 @@ test('validate-preset：tool-subagent 翻回启用必须拦住（P4，⑧ 结构
     '报错必须指向 ⑧ 的 disabled 项');
 });
 
-test('validate-preset：tool-plugin-manager 写回表达式必须拦住（P5，⑧ 布尔差异）', async () => {
+hostTest('validate-preset：tool-plugin-manager 写回表达式必须拦住（P5，⑧ 布尔差异）', async () => {
   const result = await validateMutation((text) => text
     .replace("          - id: tool-plugin-manager\n            name: '@deepseek-ai/dsh-plugin-manager/tools'\n            disabled: true",
       "          - id: tool-plugin-manager\n            name: '@deepseek-ai/dsh-plugin-manager/tools'\n            disabled: !!js \"!ctx.get('profileContext')\""),
@@ -235,7 +251,7 @@ test('validate-preset：tool-plugin-manager 写回表达式必须拦住（P5，�
     '报错必须指向布尔差异并区分表达式');
 });
 
-test('validate-preset：persona 唯一入口锚句被删必须拦住（P6，⑤）', async () => {
+hostTest('validate-preset：persona 唯一入口锚句被删必须拦住（P6，⑤）', async () => {
   const result = await validateMutation((text) => text
     .replace('async_agent is the ONLY delegation\n                entry in this preset', 'the delegation\n                entry in this preset'),
     PATCH_CREATE, baselineCreate);
@@ -244,7 +260,7 @@ test('validate-preset：persona 唯一入口锚句被删必须拦住（P6，⑤�
     '报错必须点名缺的那条锚句');
 });
 
-test('validate-preset：tool-pwsh 挂回创造补丁必须拦住（P7，③b）', async () => {
+hostTest('validate-preset：tool-pwsh 挂回创造补丁必须拦住（P7，③b）', async () => {
   const result = await validateMutation((text) => text
     .replace("name: '@deepseek-ai/dsh-tool-bash'",
       "name: '@deepseek-ai/dsh-tool-bash'\n          - id: tool-pwsh-sneak\n            name: '@deepseek-ai/dsh-tool-pwsh'"),
@@ -253,7 +269,7 @@ test('validate-preset：tool-pwsh 挂回创造补丁必须拦住（P7，③b）'
   assert.ok(result.lines.some((l) => l.includes('tool-pwsh')));
 });
 
-test('validate-preset：tool-bash 改平台表达式必须拦住（P8，②）', async () => {
+hostTest('validate-preset：tool-bash 改平台表达式必须拦住（P8，②）', async () => {
   const result = await validateMutation((text) => text
     .replace("          - id: tool-bash\n            name: '@deepseek-ai/dsh-tool-bash'\n            disabled: true",
       "          - id: tool-bash\n            name: '@deepseek-ai/dsh-tool-bash'\n            disabled: !!js process.platform === 'win32'"),
@@ -262,7 +278,7 @@ test('validate-preset：tool-bash 改平台表达式必须拦住（P8，②）',
   assert.ok(result.lines.some((l) => l.includes('tool-bash.disabled') && l.includes('布尔 true')));
 });
 
-test('validate-preset：config.id 改成无期望集的值必须拦住（P9，①）', async () => {
+hostTest('validate-preset：config.id 改成无期望集的值必须拦住（P9，①）', async () => {
   const result = await validateMutation((text) => text
     .replace('id: dsh-async-create', 'id: dsh-async-frobnicate'),
     PATCH_CREATE, baselineCreate);
@@ -271,7 +287,7 @@ test('validate-preset：config.id 改成无期望集的值必须拦住（P9，�
     '报错必须点名期望集缺失');
 });
 
-test('validate-preset：创造补丁预设行加护栏必须拦住（P10，⑥）', async () => {
+hostTest('validate-preset：创造补丁预设行加护栏必须拦住（P10，⑥）', async () => {
   const result = await validateMutation((text) => text
     .replace('    - id: preset-dsh-async-create\n', '    - id: preset-dsh-async-create\n      disabled: !!js "!ctx.get(\'agentPresets\')"\n'),
     PATCH_CREATE, baselineCreate);
@@ -279,7 +295,7 @@ test('validate-preset：创造补丁预设行加护栏必须拦住（P10，⑥�
   assert.ok(result.lines.some((l) => l.includes('不得带 disabled 护栏')));
 });
 
-test('validate-preset：活 subagent × async_agent 且缺锚句必须触发互斥判据（P11，⑦）', async () => {
+hostTest('validate-preset：活 subagent × async_agent 且缺锚句必须触发互斥判据（P11，⑦）', async () => {
   // 复合变异：subagent 翻活（⑧ 红）+ 删一句锚——⑦ 按句独立开火，两个分支各验一次，
   // 证明可验证段④的条件式守卫真的会开火（不是只有 ⑤⑧ 在兜）。
   const enableSubagent = (text) => text
@@ -299,7 +315,7 @@ test('validate-preset：活 subagent × async_agent 且缺锚句必须触发互�
     '⑦ 的取回专报必须在场');
 });
 
-test('validate-preset：删嵌套行 plan-mode 必须拦住（P12，③ 嵌套缺行）', async () => {
+hostTest('validate-preset：删嵌套行 plan-mode 必须拦住（P12，③ 嵌套缺行）', async () => {
   // 段内含空行，正则按行匹配会在空行截断——用锚定切割：从 plan-mode 行首删到
   // 下一个顶层行（compaction）之前。
   const result = await validateMutation((text) => {
@@ -312,7 +328,7 @@ test('validate-preset：删嵌套行 plan-mode 必须拦住（P12，③ 嵌套�
     '报错必须点名嵌套行判据');
 });
 
-test('validate-preset：创造补丁 toolName 写错必须拦住（P13，④）', async () => {
+hostTest('validate-preset：创造补丁 toolName 写错必须拦住（P13，④）', async () => {
   const result = await validateMutation((text) => text
     .replace('toolName: async_agent', 'toolName: async_frobnicate'),
     PATCH_CREATE, baselineCreate);
@@ -320,7 +336,7 @@ test('validate-preset：创造补丁 toolName 写错必须拦住（P13，④）'
   assert.ok(result.lines.some((l) => l.includes('toolName 五值缺')));
 });
 
-test('validate-preset：期望集必须与 shipped 基线的真实行集合逐条比对（P14，防快照漂移）', async () => {
+hostTest('validate-preset：期望集必须与 shipped 基线的真实行集合逐条比对（P14，防快照漂移）', async () => {
   const { load } = await loadYaml();
   for (const { configId, baselineFile, baselineName } of RECONCILE) {
     if (baselineFile === undefined || !existsSync(baselineFile)) {
@@ -403,7 +419,7 @@ test('validate-preset：期望集必须与 shipped 基线的真实行集合逐�
   }
 });
 
-test('validate-preset：组内行重复必须拦住', async () => {
+hostTest('validate-preset：组内行重复必须拦住', async () => {
   // 重复行不产生缺行/多行（两个 id 都在期望集里）——靠长度比对与行序比对抓住。
   const result = await validateMutation((text) => text
     .replace("              - id: compaction-basic\n                name: '@deepseek-ai/dsh-compaction-basic'\n",
@@ -414,7 +430,7 @@ test('validate-preset：组内行重复必须拦住', async () => {
     '报错必须指向嵌套行数判据');
 });
 
-test('validate-preset：组内行换序必须拦住', async () => {
+hostTest('validate-preset：组内行换序必须拦住', async () => {
   const result = await validateMutation((text) => text
     .replace("              - id: tool-subagent-control\n                name: '@deepseek-ai/dsh-tool-subagent-control'\n              - id: tool-subagent-list-agents\n",
       "              - id: tool-subagent-list-agents\n                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'\n              - id: tool-subagent-control\n"),
@@ -424,7 +440,7 @@ test('validate-preset：组内行换序必须拦住', async () => {
     '报错必须指向嵌套行序判据');
 });
 
-test('validate-preset：workflow-ptc 的 provider 改掉必须拦住（P15，⑨；两份补丁都守）', async () => {
+hostTest('validate-preset：workflow-ptc 的 provider 改掉必须拦住（P15，⑨；两份补丁都守）', async () => {
   const block = (indent) => `${indent}- id: workflow-ptc\n${' '.repeat(indent.length + 2)}name: '@deepseek-ai/dsh-workflow-ptc'\n${' '.repeat(indent.length + 2)}config:\n${' '.repeat(indent.length + 4)}provider: spawn\n`;
   for (const [path, text, indent] of [
     [PATCH_CREATE, baselineCreate, ' '.repeat(14)],
@@ -439,7 +455,7 @@ test('validate-preset：workflow-ptc 的 provider 改掉必须拦住（P15，⑨
   }
 });
 
-test('validate-preset：两份补丁的公共异步纪律段必须逐字同源（P16，设计 §3.6）', async () => {
+hostTest('validate-preset：两份补丁的公共异步纪律段必须逐字同源（P16，设计 §3.6）', async () => {
   const { load } = await loadYaml();
   const readPrefix = async (path) => {
     const doc = load(readFileSync(path, 'utf8'));
@@ -456,7 +472,7 @@ test('validate-preset：两份补丁的公共异步纪律段必须逐字同源�
 
 // ══════════════════ 第五行工具与禁用改动的判据（P17–P21）════════════════════════
 
-test('validate-preset：tool-workflow 翻回启用必须拦住（P17，⑧，R35-b；两份都守）', async () => {
+hostTest('validate-preset：tool-workflow 翻回启用必须拦住（P17，⑧，R35-b；两份都守）', async () => {
   const block = (indent) => `${indent}- id: tool-workflow\n${' '.repeat(indent.length + 2)}name: '@deepseek-ai/dsh-tool-workflow'\n${' '.repeat(indent.length + 2)}disabled: true\n`;
   const revived = (indent) => `${indent}- id: tool-workflow\n${' '.repeat(indent.length + 2)}name: '@deepseek-ai/dsh-tool-workflow'\n`;
   for (const [path, text, indent] of [
@@ -470,7 +486,7 @@ test('validate-preset：tool-workflow 翻回启用必须拦住（P17，⑧，R35
   }
 });
 
-test('validate-preset：dsh-async 的 tool-subagent 翻回启用必须拦住（P18，⑧，R35-c）', async () => {
+hostTest('validate-preset：dsh-async 的 tool-subagent 翻回启用必须拦住（P18，⑧，R35-c）', async () => {
   const result = await validateMutation((text) => text
     .replace("              - id: tool-subagent\n                name: '@deepseek-ai/dsh-tool-subagent'\n                disabled: true\n",
       "              - id: tool-subagent\n                name: '@deepseek-ai/dsh-tool-subagent'\n"));
@@ -479,7 +495,7 @@ test('validate-preset：dsh-async 的 tool-subagent 翻回启用必须拦住（P
     '报错必须指向 ⑧ 的 disabled 项');
 });
 
-test('validate-preset：删 async-workflow 行必须拦住（P19，③/④，R35-a；两份都守）', async () => {
+hostTest('validate-preset：删 async-workflow 行必须拦住（P19，③/④，R35-a；两份都守）', async () => {
   for (const [path, text] of [[PATCH, baseline], [PATCH_CREATE, baselineCreate]]) {
     const result = await validateMutation((t) => t
       .replace(/ {14}- id: async-workflow\n(?: {16}.*\n)*/, ''), path, text);
@@ -489,7 +505,7 @@ test('validate-preset：删 async-workflow 行必须拦住（P19，③/④，R35
   }
 });
 
-test('validate-preset：async-workflow 挪出 delegation 组必须拦住（P20，④ 行位，设计 §3.6）', async () => {
+hostTest('validate-preset：async-workflow 挪出 delegation 组必须拦住（P20，④ 行位，设计 §3.6）', async () => {
   // 变异 = 组内删行 + 顶层 async-agent 行后插同款行（挪到组外顶层——正是行位判据要拦的形态）。
   const removed = (t) => t.replace(/ {14}- id: async-workflow\n(?: {16}.*\n)*/, '');
   const movedOut = (t) => removed(t).replace(
@@ -501,7 +517,7 @@ test('validate-preset：async-workflow 挪出 delegation 组必须拦住（P20�
     `报错必须点名行位判据（设计 §3.6），实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
 });
 
-test('validate-preset：workflow-ptc 行删掉必须拦住（P21，⑨，R34 供电；create 侧）', async () => {
+hostTest('validate-preset：workflow-ptc 行删掉必须拦住（P21，⑨，R34 供电；create 侧）', async () => {
   const result = await validateMutation((text) => text.replace(
     / {14}- id: workflow-ptc\n(?: {16}.*\n)*/, ''),
     PATCH_CREATE, baselineCreate);
@@ -510,7 +526,7 @@ test('validate-preset：workflow-ptc 行删掉必须拦住（P21，⑨，R34 供
     '报错必须点名 ⑨ 的存在性');
 });
 
-test('validate-preset：async_workflow 门槛锚句被删必须拦住（P22，⑪，R34-h）', async () => {
+hostTest('validate-preset：async_workflow 门槛锚句被删必须拦住（P22，⑪，R34-h）', async () => {
   // ⑪ 读的是真 text.js，变异用例要把「校验器 + 文案表」成对复制到临时目录再动态导入
   // （保留相对布局 tmp/tools/validate-preset.mjs + tmp/lib/text.js），证 ⑪ 的检查
   // 对缺锚句的文案表真的开火——不是恒真。

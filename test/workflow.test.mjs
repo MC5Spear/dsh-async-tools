@@ -14,13 +14,19 @@
  * 引擎与注册表都是测试替身（`_helpers.mjs` 的 fakeCtx/fake jobs）；引擎替身只
  * 实现本插件真正调用到的成员（start → {id, meta, result, cancel, dispose}）。
  */
-import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createWorkflowTool as buildWorkflowTool } from '../lib/workflow.js';
-import { createWaitJobTool as buildWaitJobTool } from '../lib/wait-job.js';
+import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
 import { resolveConfig } from '../lib/config.js';
 import { LATE_ANSWER_EVENT } from '../lib/interrupts.js';
 import { checkedTool, fakeAgent, fakeCtx, freezeTimers, inboxPayload } from './_helpers.mjs';
+
+// 宿主链动态守卫（lib/workflow.js、lib/wait-job.js → dsh-tools/descriptions）：
+// 离线形态锚缺席时本文件仍可加载，全部用例自跳过并打印理由（ci.yml offline 作业的契约）。
+const workflowModule = await loadOfflineSafe('../lib/workflow.js');
+const waitJobModule = await loadOfflineSafe('../lib/wait-job.js');
+const { createWorkflowTool: buildWorkflowTool } = workflowModule ?? {};
+const { createWaitJobTool: buildWaitJobTool } = waitJobModule ?? {};
+const hostTest = await hostTestFor('../lib/workflow.js', '../lib/wait-job.js');
 
 const createWorkflowTool = (ctx, config) => checkedTool(buildWorkflowTool(ctx, config));
 const createWaitJobTool = (ctx, config) => checkedTool(buildWaitJobTool(ctx, config));
@@ -80,7 +86,7 @@ const BASE_ARGS = {
   yield_ms: 600000
 };
 
-test('async_workflow（R34-a/b/g）：预算内完成 → 宿主同形结算文本；注册字段与呈现层齐全', async () => {
+hostTest('async_workflow（R34-a/b/g）：预算内完成 → 宿主同形结算文本；注册字段与呈现层齐全', async () => {
   const { f, runs, agent, appends, tool } = rig();
   const exec = { agent, signal: new AbortController().signal };
   const pending = tool.execute(BASE_ARGS, exec);
@@ -117,7 +123,7 @@ test('async_workflow（R34-a/b/g）：预算内完成 → 宿主同形结算文�
   assert.equal(card.rawInput, 'return 1;');
 });
 
-test('async_workflow（R34-b）：准入先于引擎启动（注册表 start 在 engine.start 之前）', async () => {
+hostTest('async_workflow（R34-b）：准入先于引擎启动（注册表 start 在 engine.start 之前）', async () => {
   const { f, engine, runs, agent, tool } = rig();
   const order = [];
   const originalStart = f.ctx.jobs.start.bind(f.ctx.jobs);
@@ -138,7 +144,7 @@ test('async_workflow（R34-b）：准入先于引擎启动（注册表 start 在
   assert.deepEqual(order, ['admission', 'engine'], '引擎只许在准入之后启动（R34-b）');
 });
 
-test('async_workflow（R34-b）：引擎同步抛 → 原样重抛（不冒充准入拒绝、不包装）', async () => {
+hostTest('async_workflow（R34-b）：引擎同步抛 → 原样重抛（不冒充准入拒绝、不包装）', async () => {
   const f = fakeCtx();
   const { engine } = fakeEngine();
   let engineCalls = 0;
@@ -165,7 +171,7 @@ test('async_workflow（R34-b）：引擎同步抛 → 原样重抛（不冒充�
   assert.equal(engineCalls, 1, '服务现读恰好一次');
 });
 
-test('async_workflow（R34-b/R8）：宿主注册表拒绝 → 可读的启动前拒绝文案；引擎零调用', async () => {
+hostTest('async_workflow（R34-b/R8）：宿主注册表拒绝 → 可读的启动前拒绝文案；引擎零调用', async () => {
   const { f, engine, agent, tool } = rig();
   f.ctx.jobs.start = () => { throw new Error('owner limit: 10 concurrent jobs reached'); };
   await assert.rejects(
@@ -178,7 +184,7 @@ test('async_workflow（R34-b/R8）：宿主注册表拒绝 → 可读的启动�
   assert.equal(f.jobsFake.registeredSpecs.length, 0);
 });
 
-test('async_workflow（R34-a）：无 agent 语境 → 拒绝且零注册零引擎', async () => {
+hostTest('async_workflow（R34-a）：无 agent 语境 → 拒绝且零注册零引擎', async () => {
   const { f, engine, tool } = rig();
   await assert.rejects(
     () => tool.execute(BASE_ARGS, { signal: new AbortController().signal }),
@@ -189,7 +195,7 @@ test('async_workflow（R34-a）：无 agent 语境 → 拒绝且零注册零引�
   assert.equal(engine.calls.length, 0);
 });
 
-test('async_workflow（R34-a/需求 §3.2）：workflowEngine 缺席 → 可读错误；工具仍注册', async () => {
+hostTest('async_workflow（R34-a/需求 §3.2）：workflowEngine 缺席 → 可读错误；工具仍注册', async () => {
   const f = fakeCtx();
   f.ctx.get = () => undefined; // 组外行/无引擎部署的恒 miss 形态（需求 §3.2：可读拒绝）
   const agent = fakeAgent();
@@ -203,7 +209,7 @@ test('async_workflow（R34-a/需求 §3.2）：workflowEngine 缺席 → 可读�
   assert.equal(f.jobsFake.registeredSpecs.length, 0);
 });
 
-test('async_workflow（需求 §2.1.3）：空 meta.name → 自解释前置错误；零注册零引擎', async () => {
+hostTest('async_workflow（需求 §2.1.3）：空 meta.name → 自解释前置错误；零注册零引擎', async () => {
   // 宿主 jobs.start 对空 label 抛「invalid job label」——若不在插件侧先拦，
   // 这句参数校验错误会被准入拒绝包装带上"存活的作业…用 job_kill"的触顶出路，
   // 误导模型去杀无关作业。前置校验必须先于注册（变异：删前置校验 → 本测红）。
@@ -223,7 +229,7 @@ test('async_workflow（需求 §2.1.3）：空 meta.name → 自解释前置错�
   assert.equal(engine.calls.length, 0, '引擎不得启动');
 });
 
-test('async_workflow（R34-c·killed）：job_kill → run.cancel 一次；返回 killed 形状', async () => {
+hostTest('async_workflow（R34-c·killed）：job_kill → run.cancel 一次；返回 killed 形状', async () => {
   const { f, runs, agent, tool } = rig();
   freezeTimers(f.ctx);
   const exec = { agent, signal: new AbortController().signal };
@@ -244,7 +250,7 @@ test('async_workflow（R34-c·killed）：job_kill → run.cancel 一次；返�
   assert.equal(runs[0].disposeCalls, 1, 'cancelled 结算同样走 dispose（宿主次序）');
 });
 
-test('async_workflow（R34-c·插话）：让出窗口内用户消息 → 句柄 + 提前让出注记；run 存活', async () => {
+hostTest('async_workflow（R34-c·插话）：让出窗口内用户消息 → 句柄 + 提前让出注记；run 存活', async () => {
   const { f, runs, agent, tool } = rig();
   freezeTimers(f.ctx);
   const exec = { agent, signal: new AbortController().signal };
@@ -268,7 +274,7 @@ test('async_workflow（R34-c·插话）：让出窗口内用户消息 → 句柄
   assert.equal(f.jobsFake.wasAwaited(result.job_id), false, '撤销后的结算 → 完成通知照发');
 });
 
-test('async_workflow（R34-c·迟到作答）：让出窗口内迟到作答 → 句柄 + lateArrived 键', async () => {
+hostTest('async_workflow（R34-c·迟到作答）：让出窗口内迟到作答 → 句柄 + lateArrived 键', async () => {
   const { f, agent, tool } = rig();
   freezeTimers(f.ctx);
   const exec = { agent, signal: new AbortController().signal };
@@ -284,7 +290,7 @@ test('async_workflow（R34-c·迟到作答）：让出窗口内迟到作答 → 
   assert.equal(f.jobsFake.waitersOf(result.job_id), 0);
 });
 
-test('async_workflow（R34-c·abort）：GUI 停止 → 句柄形状、run 存活、cancel 零调用', async () => {
+hostTest('async_workflow（R34-c·abort）：GUI 停止 → 句柄形状、run 存活、cancel 零调用', async () => {
   const { f, runs, agent, tool } = rig();
   freezeTimers(f.ctx);
   const controller = new AbortController();
@@ -302,7 +308,7 @@ test('async_workflow（R34-c·abort）：GUI 停止 → 句柄形状、run 存�
   assert.equal(f.jobsFake.waitersOf(result.job_id), 0, 'wait 已被 abort 摘除');
 });
 
-test('async_workflow（R34-c·预算）：yield 到期 → 句柄 + 预算口径 note；引擎零扰动', async () => {
+hostTest('async_workflow（R34-c·预算）：yield 到期 → 句柄 + 预算口径 note；引擎零扰动', async () => {
   // minYieldMs:5 让 yield_ms:5 真生效（默认 1000 会把它夹紧——复查 N-2：
   // 下界必须锚生效窗口，否则「没等满」的变异不红）。
   const { f, runs, agent, tool } = rig({ minYieldMs: 5 });
@@ -322,7 +328,7 @@ test('async_workflow（R34-c·预算）：yield 到期 → 句柄 + 预算口径
   assert.equal(f.jobsFake.waitersOf(result.job_id), 0, '预算路同撤 waiter（四路同款，I-5）');
 });
 
-test('async_workflow（R34-d·mirror）：引擎生命周期事件 → 作业卡 log 通道与 progress', async () => {
+hostTest('async_workflow（R34-d·mirror）：引擎生命周期事件 → 作业卡 log 通道与 progress', async () => {
   const { f, runs, agent, tool } = rig();
   const exec = { agent, signal: new AbortController().signal };
   const pending = tool.execute(BASE_ARGS, exec);
@@ -357,7 +363,7 @@ test('async_workflow（R34-d·mirror）：引擎生命周期事件 → 作业卡
   assert.equal(f.jobsFake.views()[0].progress, 'Phase One', 'mirror.stop 后 progress 不再更新');
 });
 
-test('async_workflow（R34-d·recorder）：四类会话记录在册（run-start/agent-start/agent-end/run-end）', async () => {
+hostTest('async_workflow（R34-d·recorder）：四类会话记录在册（run-start/agent-start/agent-end/run-end）', async () => {
   const { f, runs, agent, appends, tool } = rig();
   const exec = { agent, signal: new AbortController().signal };
   const pending = tool.execute(BASE_ARGS, exec);
@@ -381,7 +387,7 @@ test('async_workflow（R34-d·recorder）：四类会话记录在册（run-start
   assert.equal(appends.length, 4, '结算后 recorder 不再写任何记录');
 });
 
-test('async_workflow（R34-d/recordsRun）：PTC 子调度调用不写持久记录（宿主 :242/:395 同判定）', async () => {
+hostTest('async_workflow（R34-d/recordsRun）：PTC 子调度调用不写持久记录（宿主 :242/:395 同判定）', async () => {
   const { f, runs, agent, appends, tool } = rig();
   // exec.parent 是 PTC transport 的子调度标记——宿主只让顶层调用写档
   // （README:88「记录只由顶层调用产生」），与宿主同判定。
@@ -393,7 +399,7 @@ test('async_workflow（R34-d/recordsRun）：PTC 子调度调用不写持久记�
   assert.equal(appends.length, 0, '子调度不写持久记录（run-start 也不写）');
 });
 
-test('async_workflow（R34-d·recorder 失败路径）：append 抛错 → warn + 该 run 永久停录', async () => {
+hostTest('async_workflow（R34-d·recorder 失败路径）：append 抛错 → warn + 该 run 永久停录', async () => {
   const f = fakeCtx();
   const { engine, runs } = fakeEngine();
   f.ctx.get = () => engine;
@@ -420,7 +426,7 @@ test('async_workflow（R34-d·recorder 失败路径）：append 抛错 → warn 
     '停录必须 warn（不是静默）');
 });
 
-test('async_workflow（R34-g）：超长返回值截断——保首尾、标省略量（与读取路径同款）', async () => {
+hostTest('async_workflow（R34-g）：超长返回值截断——保首尾、标省略量（与读取路径同款）', async () => {
   const { f, runs, agent, tool } = rig({ maxResultChars: 40 });
   agent.session.append = () => {};
   const exec = { agent, signal: new AbortController().signal };
@@ -432,7 +438,7 @@ test('async_workflow（R34-g）：超长返回值截断——保首尾、标省�
   assert.ok(result.result.endsWith('"\n}'), 'JSON 尾部必须保留——尾部内容不得因首截断永久丢失（需求 §2.2.3）');
 });
 
-test('async_workflow（R34-g·zh）：完成渲染与截断标注随 agentLang 切换', async () => {
+hostTest('async_workflow（R34-g·zh）：完成渲染与截断标注随 agentLang 切换', async () => {
   const { f, runs, agent, tool } = rig({ maxResultChars: 40, agentLang: 'zh' });
   agent.session.append = () => {};
   const exec = { agent, signal: new AbortController().signal };
@@ -449,7 +455,7 @@ test('async_workflow（R34-g·zh）：完成渲染与截断标注随 agentLang �
 // 预算不被实施两次）；取消与预算到期分别说明。
 // ---------------------------------------------------------------------------
 
-test('async_workflow（F8）：注册表收原始 JSON，一次内容预算不被实施两次', async () => {
+hostTest('async_workflow（F8）：注册表收原始 JSON，一次内容预算不被实施两次', async () => {
   const { f, runs, agent, tool } = rig({ maxResultChars: 5 });
   agent.session.append = () => {};
   const exec = { agent, signal: new AbortController().signal };
@@ -481,7 +487,7 @@ test('async_workflow（F8）：注册表收原始 JSON，一次内容预算不�
   assert.equal(rawNext.result, undefined, '注册表裸读不再有 result（一次性通道已被首次终态读取消费）');
 });
 
-test('async_workflow（F9）：取消与预算到期分别说明——abort 的 note 不冒称超出预算', async () => {
+hostTest('async_workflow（F9）：取消与预算到期分别说明——abort 的 note 不冒称超出预算', async () => {
   const { f, agent, tool } = rig();
   freezeTimers(f.ctx);
   const controller = new AbortController();

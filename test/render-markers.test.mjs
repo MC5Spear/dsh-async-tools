@@ -13,11 +13,16 @@
  *
  * 判据直接调 `tool.output.render`（不是读 `value`），因为**只有 render 的输出到得了模型**。
  */
-import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRunTool as buildRunTool } from '../lib/jobs.js';
+import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
 import { resolveConfig } from '../lib/config.js';
 import { checkedTool, fakeAgent, fakeCtx, fakeProc } from './_helpers.mjs';
+
+// 宿主链动态守卫（lib/jobs.js → dsh-tools/ask-takeover）：离线形态锚缺席时
+// 本文件仍可加载，全部用例自跳过并打印理由（ci.yml offline 作业的契约）。
+const jobsModule = await loadOfflineSafe('../lib/jobs.js');
+const { createRunTool: buildRunTool } = jobsModule ?? {};
+const hostTest = await hostTestFor('../lib/jobs.js');
 
 const config = resolveConfig({ toolName: 'async_run' });
 const exec = { agent: fakeAgent(), signal: new AbortController().signal };
@@ -41,25 +46,25 @@ async function runAndRender(procOptions) {
   return { value, rendered };
 }
 
-test('R11：非零退出必须在模型可见文本里给出 `[exit code: N]`', async () => {
+hostTest('R11：非零退出必须在模型可见文本里给出 `[exit code: N]`', async () => {
   const { value, rendered } = await runAndRender({ exitCode: 1 });
   assert.equal(value.exit_code, 1, '结构化值里本来就有退出码');
   assert.match(rendered, /\[exit code: 1\]/,
     '模型只看得见 render 的输出——不写进 render，退出码等于没给');
 });
 
-test('R11：干净退出（0、无信号）**不产生**退出码标记（与内置一致，不制造噪声）', async () => {
+hostTest('R11：干净退出（0、无信号）**不产生**退出码标记（与内置一致，不制造噪声）', async () => {
   const { rendered } = await runAndRender({ exitCode: 0 });
   assert.doesNotMatch(rendered, /\[exit code:/, '成功不该有标记——内置 pwsh 也是这个口径');
 });
 
-test('R11：信号杀死必须给出 `[killed by signal: X]`', async () => {
+hostTest('R11：信号杀死必须给出 `[killed by signal: X]`', async () => {
   const { rendered } = await runAndRender({ exitCode: 1, signal: 'SIGTERM' });
   assert.match(rendered, /\[killed by signal: SIGTERM\]/,
     '被信号杀死与"自己返回非零"是两回事，模型要分得清');
 });
 
-test('R11：退出码标记与沙箱标记**同时**出现时各占一行、都不丢', async () => {
+hostTest('R11：退出码标记与沙箱标记**同时**出现时各占一行、都不丢', async () => {
   const f = fakeCtx();
   const { proc, settle } = fakeProc({ text: 'OUT', exitCode: 1, status: 'running', autoResolve: false });
   proc.sandbox = { mode: 'workspace-write', denied: true };

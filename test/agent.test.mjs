@@ -12,32 +12,20 @@
  *   `parentAgentOptionsForDelegation`（真函数）读 `agent.session.requestHeader()`
  *   ——与 driver 的 `resolveChildAgentOptions` 同一数据源，假件按宿主形态造。
  */
-import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools';
-import { createAgentTool } from '../lib/agent.js';
+import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
 import { resolveConfig } from '../lib/config.js';
 import { makeConfigView } from '../lib/config-view.js';
-import { checkedTool } from './_helpers.mjs';
+import { validateJsonSchemaValue, checkedTool } from './_helpers.mjs';
 
-/**
- * 加载宿主入口（refreshToolDescriptions 所在的 `lib/index.js` 会拉进
- * `lib/ask-takeover.js` → `@deepseek-ai/dsh-llm`，本地 node_modules 没有）；
- * 只吞宿主包解析失败——其余错误原样抛，避免"跳过＝通过"的假绿。
- * @returns {Promise<object | undefined>} 模块；宿主包不可解析时为 `undefined`。
- */
-async function loadHost() {
-  try {
-    return await import('../lib/index.js');
-  } catch (error) {
-    const message = String(error?.message ?? error);
-    if (error?.code === 'ERR_MODULE_NOT_FOUND' && message.includes('@deepseek-ai/')) return undefined;
-    throw error;
-  }
-}
-
-const host = await loadHost();
-const { refreshToolDescriptions } = host ?? {};
+// 宿主链动态守卫：`lib/agent.js`（→ dsh-tools / dsh-subagent）与 `lib/index.js`
+// （refreshToolDescriptions 所在，经 ask-takeover → dsh-llm 拉进宿主包）在离线
+// 形态缺席——全部用例自跳过并打印理由（ci.yml offline 作业的契约）。
+const agentModule = await loadOfflineSafe('../lib/agent.js');
+const hostModule = await loadOfflineSafe('../lib/index.js');
+const { createAgentTool } = agentModule ?? {};
+const { refreshToolDescriptions } = hostModule ?? {};
+const hostTest = await hostTestFor('../lib/agent.js', '../lib/index.js');
 
 /**
  * 构造测试环境：假 subagents 服务 + 假 sessionProjections + 零等待原语记录器。
@@ -130,7 +118,7 @@ const EXEC = { agent: EXEC_AGENT };
 /** 白名单形态：`zai/glm-5.3` 在白名单、父路由不在。 */
 const POLICY = [{ provider: 'zai', model: 'glm-5.3' }];
 
-test('async_agent：立返 started + agent_id，note 含可复制的等待调用与生效数字（R13/R5）', async () => {
+hostTest('async_agent：立返 started + agent_id，note 含可复制的等待调用与生效数字（R13/R5）', async () => {
   const env = agentEnv();
   const tool = checkedTool(createAgentTool(env.ctx, env.view));
 
@@ -147,7 +135,7 @@ test('async_agent：立返 started + agent_id，note 含可复制的等待调用
   assert.match(rendered[0].text, /child-1/, 'render 文本必须含 agent_id（模型可见层）');
 });
 
-test('async_agent：note 示例数字随 defaultWaitMs 设置变化（现读现取，R5）', async () => {
+hostTest('async_agent：note 示例数字随 defaultWaitMs 设置变化（现读现取，R5）', async () => {
   const env = agentEnv();
   const tool = checkedTool(createAgentTool(env.ctx, env.view));
 
@@ -156,7 +144,7 @@ test('async_agent：note 示例数字随 defaultWaitMs 设置变化（现读现�
   assert.match(result.note, /wait_ms=1234/);
 });
 
-test('async_agent：startContinuable 恰一次，request 逐字段对齐宿主契约且不含透传键（R13）', async () => {
+hostTest('async_agent：startContinuable 恰一次，request 逐字段对齐宿主契约且不含透传键（R13）', async () => {
   const env = agentEnv();
   const tool = checkedTool(createAgentTool(env.ctx, env.view));
 
@@ -174,7 +162,7 @@ test('async_agent：startContinuable 恰一次，request 逐字段对齐宿主�
   assert.deepEqual(Object.keys(call.request).sort(), ['parent', 'prompt']);
 });
 
-test('async_agent：传入白名单命中的 provider+model → request.agentOptions 恰两键，note 报告 requested 路由（R13）', async () => {
+hostTest('async_agent：传入白名单命中的 provider+model → request.agentOptions 恰两键，note 报告 requested 路由（R13）', async () => {
   const env = agentEnv({ policy: POLICY });
   const tool = checkedTool(createAgentTool(env.ctx, env.view));
 
@@ -194,7 +182,7 @@ test('async_agent：传入白名单命中的 provider+model → request.agentOpt
   assert.equal(env.stateOfCalls[0].key, 'subagentModelSelectionPolicy');
 });
 
-test('async_agent：未传模型 → request 不带 agentOptions 键，note 报告继承的父路由（R13）', async () => {
+hostTest('async_agent：未传模型 → request 不带 agentOptions 键，note 报告继承的父路由（R13）', async () => {
   const env = agentEnv({ policy: POLICY });
   const tool = checkedTool(createAgentTool(env.ctx, env.view));
 
@@ -208,7 +196,7 @@ test('async_agent：未传模型 → request 不带 agentOptions 键，note 报�
   assert.deepEqual(env.stateOfCalls, [], '未选择路由时不得读白名单投影（纯继承不进 policy）');
 });
 
-test('async_agent：未声明键显式报错并零派生——零容忍的对冲（R13）', async () => {
+hostTest('async_agent：未声明键显式报错并零派生——零容忍的对冲（R13）', async () => {
   for (const extra of [
     { run_in_background: true },
     { reasoning_effort: 'high' },
@@ -233,7 +221,7 @@ test('async_agent：未声明键显式报错并零派生——零容忍的对冲
   }
 });
 
-test('async_agent：指定路由但 provider 未声明 agentOptions 能力 → 当场报错且零派生（零容忍）', async () => {
+hostTest('async_agent：指定路由但 provider 未声明 agentOptions 能力 → 当场报错且零派生（零容忍）', async () => {
   // 假件形状与宿主注册表保持一致：后端对象带 capabilities 字典；spawn-in-process 声明
   // agentOptions: true，这里造一个不声明的。
   const env = agentEnv({
@@ -257,7 +245,7 @@ test('async_agent：指定路由但 provider 未声明 agentOptions 能力 → �
   assert.equal(pass.status, 'started');
 });
 
-test('async_agent：provider 与 model 必须成对且非空（宿主同款文案，R13）', async () => {
+hostTest('async_agent：provider 与 model 必须成对且非空（宿主同款文案，R13）', async () => {
   // 只传其一（两个方向都要红）。
   for (const partial of [{ provider: 'zai' }, { model: 'glm-5.3' }]) {
     const env = agentEnv({ policy: POLICY });
@@ -280,7 +268,7 @@ test('async_agent：provider 与 model 必须成对且非空（宿主同款文�
   }
 });
 
-test('async_agent：白名单外的路由被拒且零派生（宿主同款文案，R13）', async () => {
+hostTest('async_agent：白名单外的路由被拒且零派生（宿主同款文案，R13）', async () => {
   const env = agentEnv({ policy: POLICY });
   const tool = createAgentTool(env.ctx, env.view);
   await assert.rejects(
@@ -290,7 +278,7 @@ test('async_agent：白名单外的路由被拒且零派生（宿主同款文案
   assert.deepEqual(env.continuables, [], '越界路由不得派生');
 });
 
-test('async_agent：无 policy 的会话拒绝指定模型——null 与读取抛错两种形态（R13）', async () => {
+hostTest('async_agent：无 policy 的会话拒绝指定模型——null 与读取抛错两种形态（R13）', async () => {
   // ① 投影状态为 null（reducer 在但没 record）：宿主在此形态下不暴露模型参数，
   //    本工具参数集合常开，用运行时拒绝与同一管控规则保持一致。键未注册时宿主 stateOf
   //    返回 undefined（不抛），与 null 同被折叠为"无 policy"，同一断言覆盖。
@@ -312,7 +300,7 @@ test('async_agent：无 policy 的会话拒绝指定模型——null 与读取�
   assert.deepEqual(envThrow.continuables, []);
 });
 
-test('async_agent（R29-f·判据 10）：投影返回非数组对象 → 按"无 policy"拒绝，不得当数组遍历', async () => {
+hostTest('async_agent（R29-f·判据 10）：投影返回非数组对象 → 按"无 policy"拒绝，不得当数组遍历', async () => {
   // 形状防御：routes 期望数组（口径）。实现若直接 `.map`/`.find` 一个对象，
   // 会 TypeError 或静默走错分支——守卫把它折叠成与 null 相同的"无 policy"拒绝。
   const env = agentEnv({ policy: { 'provider-a': { model: 'x' } } });
@@ -324,7 +312,7 @@ test('async_agent（R29-f·判据 10）：投影返回非数组对象 → 按"�
   assert.deepEqual(env.continuables, [], '不得派发任何子代理');
 });
 
-test('async_agent：零前台（哨兵不动）+ 零等待原语（timer/on 零调用）——"立返"的可失败判据（R13）', async () => {
+hostTest('async_agent：零前台（哨兵不动）+ 零等待原语（timer/on 零调用）——"立返"的可失败判据（R13）', async () => {
   const env = agentEnv();
   const tool = checkedTool(createAgentTool(env.ctx, env.view));
 
@@ -337,7 +325,7 @@ test('async_agent：零前台（哨兵不动）+ 零等待原语（timer/on 零�
   assert.deepEqual(env.onUses, [], 'async_agent 不得注册任何监听器（等待交给 async_wait_agent）');
 });
 
-test('async_agent：三种错误态互相可区分，且一个子代理都不派生（R13）', async () => {
+hostTest('async_agent：三种错误态互相可区分，且一个子代理都不派生（R13）', async () => {
   // ① agent-less 驱动（与单次提权用例同款纪律）。
   const envA = agentEnv();
   const toolA = createAgentTool(envA.ctx, envA.view);
@@ -368,7 +356,7 @@ test('async_agent：三种错误态互相可区分，且一个子代理都不派
   assert.deepEqual(envC.continuables, []);
 });
 
-test('async_agent：subagentProvider 设置改名后 getProvider 的查询对象跟着变（行为差异，R10）', async () => {
+hostTest('async_agent：subagentProvider 设置改名后 getProvider 的查询对象跟着变（行为差异，R10）', async () => {
   const env = agentEnv();
   const tool = checkedTool(createAgentTool(env.ctx, env.view));
 
@@ -380,8 +368,7 @@ test('async_agent：subagentProvider 设置改名后 getProvider 的查询对象
   assert.equal(env.getProviderQueries.at(-1), 'fork', '行为必须跟设置走，不停留在组合行默认');
 });
 
-test('async_agent：描述里的 provider 名随设置改名就地刷新（第五条改写规则）', async (t) => {
-  if (host === undefined) { t.skip('宿主包不可解析（离线环境），本用例跳过'); return; }
+hostTest('async_agent：描述里的 provider 名随设置改名就地刷新（第五条改写规则）', async () => {
   const env = agentEnv();
   const tool = createAgentTool(env.ctx, env.view);
 
@@ -394,8 +381,7 @@ test('async_agent：描述里的 provider 名随设置改名就地刷新（第�
   assert.doesNotMatch(tool.description, /currently: spawn/, '旧名字必须被改写掉，不能两处并存');
 });
 
-test('async_agent：provider 名是自由文本时，连续 refresh 描述不累积不展开', (t) => {
-  if (host === undefined) { t.skip('宿主包不可解析（离线环境），本用例跳过'); return; }
+hostTest('async_agent：provider 名是自由文本时，连续 refresh 描述不累积不展开', () => {
   // subagentProvider 是设置页的自由文本（仅 trim，无字符集校验）——刷新规则必须
   // 在怪名下仍然成立：①锚吃到 `)` 句界（`[^)]+`：窄锚会在带空格名下越刷越长，
   // 排除 `.` 的锚会让 `node.dev`/`claude-3.7` 这类版本号形态逐次累积、纯点号名空转）；
@@ -427,7 +413,7 @@ test('async_agent：provider 名是自由文本时，连续 refresh 描述不累
   assert.match(tool.description, /currently: a\$&b\)/, '$ 序列按字面保留（不做替换串展开）');
 });
 
-test('async_agent：缺 prompt 在宿主同款参数校验器下被拒', () => {
+hostTest('async_agent：缺 prompt 在宿主同款参数校验器下被拒', () => {
   const env = agentEnv();
   const tool = createAgentTool(env.ctx, env.view);
 
@@ -444,7 +430,7 @@ test('async_agent：缺 prompt 在宿主同款参数校验器下被拒', () => {
   );
 });
 
-test('async_agent：parameters 契约——两键必填、provider/model 可选、没有 run_in_background（R13 的结构保证）', () => {
+hostTest('async_agent：parameters 契约——两键必填、provider/model 可选、没有 run_in_background（R13 的结构保证）', () => {
   const env = agentEnv();
   const tool = createAgentTool(env.ctx, env.view);
 

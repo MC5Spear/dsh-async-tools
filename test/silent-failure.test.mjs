@@ -31,7 +31,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { createRunTool as buildRunTool } from '../lib/jobs.js';
+import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
 import { BUDGET_FIELD_KEYS, LANG_FIELD_KEYS, FLAG_FIELD_KEYS, ASK_FIELD_KEYS, resolveConfig } from '../lib/config.js';
 import { DENIAL_ANCHOR_PAIRS, hasCaptureForm, hasDenialAnchors, silentFailureNotes } from '../lib/silent-failure.js';
 import { t } from '../lib/text.js';
@@ -39,26 +39,16 @@ import { seedSnapshot, clearSnapshot } from '../lib/settings.js';
 import { checkedTool, fakeAgent, fakeCtx, fakeProc } from './_helpers.mjs';
 import { makePrimitivesDouble } from './_primitives-double.mjs';
 
-/**
- * 离线安全加载：`lib/host.js` 与 `lib/index.js` 都（经 `lib/ask-takeover.js`）
- * 拉进 `@deepseek-ai/dsh-llm`——本地 node_modules 没有。只吞宿主包解析失败，
- * 其余错误原样抛（语法错误、模块内部抛错不得被伪装成"离线环境"）。
- * @returns {Promise<object | undefined>} 模块；宿主包不可解析时为 `undefined`。
- */
-async function loadOfflineSafe(specifier) {
-  try {
-    return await import(specifier);
-  } catch (error) {
-    const message = String(error?.message ?? error);
-    if (error?.code === 'ERR_MODULE_NOT_FOUND' && message.includes('@deepseek-ai/')) return undefined;
-    throw error;
-  }
-}
-
+// 宿主链动态守卫（用例级）：判据 8–12 与 F3 需要 lib/jobs.js（→ dsh-tools/
+// ask-takeover）、lib/host.js、lib/index.js——离线形态缺席时这些用例自跳过并
+// 打印理由；判据 1–7 与 13 只用纯文本判据与 client.js 装载，离线照常跑。
+const jobsModule = await loadOfflineSafe('../lib/jobs.js');
 const hostHalf = await loadOfflineSafe('../lib/host.js');
 const hostIndex = await loadOfflineSafe('../lib/index.js');
+const { createRunTool: buildRunTool } = jobsModule ?? {};
 const { applyHostHalf } = hostHalf ?? {};
 const { refreshToolDescriptions } = hostIndex ?? {};
+const hostTest = await hostTestFor('../lib/jobs.js', '../lib/host.js', '../lib/index.js');
 
 const createRunTool = (ctx, config) => checkedTool(buildRunTool(ctx, config));
 const exec = { agent: fakeAgent(), callId: 'call_R28_1', signal: new AbortController().signal };
@@ -229,8 +219,7 @@ test('R28 判据7：输出非空且无锚 ⇒ 两条签名都不产出', () => {
   assert.deepEqual(notes, [], '健康结算是纯噪声禁区');
 });
 
-test('R28 判据8：开关关 ⇒ 三防线同断（行为差异，不是存在性；可失败 ③）', (t) => {
-  if (hostHalf === undefined) { t.skip('宿主包不可解析（离线环境），本用例跳过'); return; }
+hostTest('R28 判据8：开关关 ⇒ 三防线同断（行为差异，不是存在性；可失败 ③）', () => {
   // a：纯模块——两条签名的输入全部保持命中姿态，只关开关。
   const armed = {
     proc: { sandbox: { mode: 'workspace-write' } },
@@ -264,7 +253,7 @@ test('R28 判据8：开关关 ⇒ 三防线同断（行为差异，不是存在�
   clearSnapshot();
 });
 
-test('R28 判据9：前台出口——note 拼在标记之后且居尾；无值不写 note 键', async () => {
+hostTest('R28 判据9：前台出口——note 拼在标记之后且居尾；无值不写 note 键', async () => {
   const conf = confinedCtx();
   const config = resolveConfig({ toolName: 'async_run', silentFailureGuard: true });
   // 拒绝结算（真实形态）：提权拒绝标记 + 签名 2 直陈式同场——静默行必须在标记之后。
@@ -307,7 +296,7 @@ test('R28 判据9：前台出口——note 拼在标记之后且居尾；无值�
   assert.equal('note' in r3, false, '空 note 数组 ⇒ 键不出现，不是 note: ""');
 });
 
-test('R28 判据10：后台出口——detail 尾部拼静默行，开关在结算时刻现读', async () => {
+hostTest('R28 判据10：后台出口——detail 尾部拼静默行，开关在结算时刻现读', async () => {
   const conf = confinedCtx();
   conf.ctx.timer.timeout = (callback) => { const h = setTimeout(callback, 0); return () => clearTimeout(h); };
   // 活视图（resolveConfig 的产物是冻结对象，翻转必须走视图——真机上是 loader 原地改写的活 Ref）。
@@ -353,7 +342,7 @@ test('R28 判据10：后台出口——detail 尾部拼静默行，开关在结�
   assert.equal(flippedOff.detail.includes('Silent-failure guard:'), false, '结算时刻开关已关 ⇒ 无静默行');
 });
 
-test('F3（范围判定·前台）：调用主体不在本包预设 ⇒ 结果诊断不产生（开关开也一样）', async () => {
+hostTest('F3（范围判定·前台）：调用主体不在本包预设 ⇒ 结果诊断不产生（开关开也一样）', async () => {
   // confinedCtx('standard')：sessions.get 命中但 agentPreset 不是本包两预设——
   // guardActiveFor 走 inOwnPreset 判 false，前台 note 不拼静默行。
   const conf = confinedCtx('standard');
@@ -367,7 +356,7 @@ test('F3（范围判定·前台）：调用主体不在本包预设 ⇒ 结果�
   assert.equal('note' in result, false, '非归属主体的前台返回不得拼静默行（键都不出现）');
 });
 
-test('F3（范围判定·后台）：结算时刻主体不在本包预设 ⇒ detail 无静默行；服务缺席同样关闭', async () => {
+hostTest('F3（范围判定·后台）：结算时刻主体不在本包预设 ⇒ detail 无静默行；服务缺席同样关闭', async () => {
   const conf = confinedCtx('standard');
   conf.ctx.timer.timeout = (callback) => { const h = setTimeout(callback, 0); return () => clearTimeout(h); };
   const quiet = fakeProc({ text: '', exitCode: 1, status: 'running', autoResolve: false });
@@ -399,8 +388,7 @@ test('F3（范围判定·后台）：结算时刻主体不在本包预设 ⇒ de
   assert.equal(bareView.detail.includes('Silent-failure guard:'), false, '服务缺席 ⇒ 范围不可判定 ⇒ 不产生诊断（失效安全＝关）');
 });
 
-test('R28 判据11：b 段五门组合矩阵 + 描述就地增删（不复制 c 的纪律文本）', (t) => {
-  if (hostIndex === undefined) { t.skip('宿主包不可解析（离线环境），本用例跳过'); return; }
+hostTest('R28 判据11：b 段五门组合矩阵 + 描述就地增删（不复制 c 的纪律文本）', () => {
   const warnAnchor = /can die silently at process creation/;
   // 归属前提：F3 之后警示段是**三门**——执行器在场 × 开关开 × 行有归属声明
   // （owningPreset；设计 §6.2：自定义行不适用本包纪律段）。
@@ -454,8 +442,7 @@ test('R28 判据11：b 段五门组合矩阵 + 描述就地增删（不复制 c 
   assert.doesNotMatch(tool.description, warnAnchor, '归属不在本包两预设 ⇒ 警示段消失');
 });
 
-test('R28 判据12：c 段经 ctx.inject 注册 systemPrompt，文本每次组稿现读快照', (tc) => {
-  if (hostHalf === undefined) { tc.skip('宿主包不可解析（离线环境），本用例跳过'); return; }
+hostTest('R28 判据12：c 段经 ctx.inject 注册 systemPrompt，文本每次组稿现读快照', () => {
   const f = fakeCtx();
   const injectFns = new Map();
   const injectLists = [];

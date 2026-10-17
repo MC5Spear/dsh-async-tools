@@ -21,6 +21,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { HOST_SKIP_REASON, loadOfflineSafe } from './_host-gate.mjs';
 
 /** `lib/` 目录的绝对路径。 */
 const LIB_DIR = fileURLToPath(new URL('../lib/', import.meta.url));
@@ -28,19 +29,8 @@ const LIB_DIR = fileURLToPath(new URL('../lib/', import.meta.url));
 /** cordis 的 `FiberState.ACTIVE`（`@deepseek-ai/cordis` 4.0.4，`lib/types/fiber.d.ts:67-74` 的 const enum，ACTIVE = 2）。 */
 const ACTIVE = 2;
 
-/**
- * 加载宿主入口；只吞宿主包解析失败。
- * @returns {Promise<object | undefined>} 模块；宿主包不可解析时为 `undefined`。
- */
-async function loadHost() {
-  try {
-    return await import('../lib/index.js');
-  } catch (error) {
-    const message = String(error?.message ?? error);
-    if (error?.code === 'ERR_MODULE_NOT_FOUND' && message.includes('@deepseek-ai/')) return undefined;
-    throw error;
-  }
-}
+/** 加载宿主入口（守卫式动态 import，判据见 `_host-gate.mjs`）。 */
+const loadHost = () => loadOfflineSafe('../lib/index.js');
 
 /**
  * 动态加载真 cordis：静态 `import` 在离线环境会让**整个文件**加载失败，
@@ -312,7 +302,7 @@ const Context = await loadCordis();
 test('T6：lib/ 里访问的每个 ctx.<服务> 都必须在 inject 里声明', async (t) => {
   const host = await loadHost();
   if (host === undefined) {
-    t.skip('宿主包不可解析（离线环境），接线测试整体跳过');
+    t.skip(HOST_SKIP_REASON);
     return;
   }
 
@@ -376,7 +366,7 @@ test('T8：作废措辞"唯一途径"只许出现在标注其作废的上下文�
 test('T6b：`ctx.get("<字面量>")` 的第二种写法也要被看见（R3 审查点名的盲区）', async (t) => {
   const host = await loadHost();
   if (host === undefined) {
-    t.skip('宿主包不可解析（离线环境），接线测试整体跳过');
+    t.skip(HOST_SKIP_REASON);
     return;
   }
 
@@ -402,7 +392,7 @@ test('T6b：`ctx.get("<字面量>")` 的第二种写法也要被看见（R3 审�
 test('T3：inject 恰为八个服务；apply 按 config.toolName 注册工具；卸载后注销', async (t) => {
   const host = await loadHost();
   if (host === undefined || Context === undefined) {
-    t.skip('宿主包不可解析（离线环境），接线测试整体跳过');
+    t.skip(HOST_SKIP_REASON);
     return;
   }
 

@@ -19,7 +19,14 @@
  * ——把"返回值符合工具自己声明的 `output.schema`"变成每条用例的固定动作。
  */
 import assert from 'node:assert/strict';
-import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools';
+import { loadOfflineSafe } from './_host-gate.mjs';
+
+// 宿主校验器动态探测（守卫式）：离线形态下 dsh-tools 缺席时本模块仍可加载
+// ——interrupt / ask-takeover 等文件的纯文本用例照常跑。校验器缺席时
+// `assertOutputShape` 抛错而不是放宽：调用它的用例都应由 hostTest 守卫，
+// 离线形态整条跳过、走不到这里；非守卫用例误调它，抛错比静默假绿诚实。
+const toolsModule = await loadOfflineSafe('@deepseek-ai/dsh-tools');
+export const validateJsonSchemaValue = toolsModule?.validateJsonSchemaValue;
 
 /**
  * 断言工具的返回值真的符合它自己声明的 `output.schema`。
@@ -38,6 +45,8 @@ import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools';
  * @returns {unknown} 快照后的普通 JSON 值（与宿主校验的对象同形）。
  */
 export function assertOutputShape(tool, value, label = '') {
+  assert.ok(typeof validateJsonSchemaValue === 'function',
+    '宿主校验器不可用（离线环境）：assertOutputShape 需要 @deepseek-ai/dsh-tools 在场——本用例应由 hostTest 守卫');
   const detached = JSON.parse(JSON.stringify(value ?? null));
   const violations = validateJsonSchemaValue(tool.output.schema, detached, 'value');
   assert.deepEqual(
