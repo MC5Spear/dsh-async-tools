@@ -2,9 +2,13 @@
  * `async_agent` 的单元测试（需求 §2.3 子代理派生与 §3.1 预设 persona 的机制半边）。
  *
  * 假件纪律：
- * - 假 `subagents` 只实现被测代码真正调用的 `getProvider` / `startContinuable`；
+ * - 假 `subagents` 只实现被测代码真正调用的 `getProvider` / `startActivation`；
  * - **前台 `start` 是哨兵**：记录调用并抛可读错误——变异 M1 把
- *   `startContinuable` 换成 `start` 时，红因一目了然而不是泛型 TypeError；
+ *   `startActivation` 换成 `start` 时，红因一目了然而不是泛型 TypeError；
+ * - **回执形状对齐宿主 `SubagentActivation`**：`{ childId, result, dispose }`；
+ *   `result` 默认**永不落定**——execute 能带着它返回，本身就是"立返不 await
+ *   result"的行为证明；测试按需经 `settleActivation` 落定两个分支；
+ *   `dispose` 是哨兵：记录并抛可读错误（本包任何路径都不得调用它，设计 §3.3）；
  * - **零等待原语记录器**：`timer`/`on` 只记录不干活——"立返"由
  *   `execute` 全程零调用来证明，形状断言证明不了"没等"；
  * - **假 `sessionProjections`**（模型选择）：只实现 `stateOf`，形态可配——
@@ -44,8 +48,12 @@ function agentEnv({ providers, policy = null } = {}) {
     fork: { name: 'fork', prepareContinuable() {}, capabilities: { agentOptions: true } }
   };
   const getProviderQueries = [];
-  const continuables = [];
-  /** 前台哨兵：宿主工具的非 continuable 回退路径（本插件不走，只经 startContinuable——设计 §3.3）。 */
+  const activations = [];
+  /** 每次派生的 result 落定器（resolve/reject），测试按需驱动观察通道两分支。 */
+  const settlers = [];
+  /** dispose 哨兵记录：本包任何路径不得调用（设计 §3.3）。 */
+  const disposeCalls = [];
+  /** 前台哨兵：宿主公开面没有前台 `start`——实现若走它，当场可读地红。 */
   const foregroundStarts = [];
   const timerUses = [];
   const onUses = [];
@@ -55,14 +63,25 @@ function agentEnv({ providers, policy = null } = {}) {
       getProviderQueries.push(name);
       return Object.prototype.hasOwnProperty.call(registry, name) ? registry[name] : undefined;
     },
-    async startContinuable(call) {
-      continuables.push(call);
-      return { childId: `child-${continuables.length}` };
+    async startActivation(call) {
+      activations.push(call);
+      let resolve;
+      let reject;
+      const result = new Promise((res, rej) => { resolve = res; reject = rej; });
+      settlers.push({ resolve, reject });
+      return {
+        childId: `child-${activations.length}`,
+        result,
+        dispose() {
+          disposeCalls.push(activations.length);
+          throw new Error('[test sentinel] activation.dispose was called — async_agent must never dispose (host owns the activation lifecycle)');
+        }
+      };
     },
     // 哨兵：**调用**即记录并抛（访问本体会返回这个函数，不访问实现就测不到）。
     start(_provider, _request) {
       foregroundStarts.push({ provider: _provider, request: _request });
-      throw new Error('[test sentinel] ctx.subagents.start was called — async_agent must delegate via startContinuable only');
+      throw new Error('[test sentinel] ctx.subagents.start was called — async_agent must delegate via startActivation only');
     }
   };
 
@@ -92,11 +111,15 @@ function agentEnv({ providers, policy = null } = {}) {
     ctx,
     view,
     getProviderQueries,
-    continuables,
+    activations,
+    settlers,
+    disposeCalls,
     foregroundStarts,
     timerUses,
     onUses,
     stateOfCalls,
+    /** 落定第 i 次（默认最近一次）派生的 result——驱动观察通道的两个分支。 */
+    settleActivation(index) { return settlers.at(index ?? -1); },
     /** 模拟设置改写：换掉"当前生效配置"（视图按次现取）。 */
     setConfig(raw) { current = resolveConfig(raw); },
     getConfig() { return current; }
@@ -144,22 +167,26 @@ hostTest('async_agent：note 示例数字随 defaultWaitMs 设置变化（现读
   assert.match(result.note, /wait_ms=1234/);
 });
 
-hostTest('async_agent：startContinuable 恰一次，request 逐字段对齐宿主契约且不含透传键（R13）', async () => {
+hostTest('async_agent：startActivation 恰一次，spec 逐字段对齐宿主契约且不含透传键（R13）', async () => {
   const env = agentEnv();
   const tool = checkedTool(createAgentTool(env.ctx, env.view));
+  const exec = { agent: EXEC_AGENT, signal: AbortSignal.abort() };
 
-  await tool.execute({ description: '标签甲', prompt: '任务书。' }, EXEC);
+  await tool.execute({ description: '标签甲', prompt: '任务书。' }, exec);
 
-  assert.equal(env.continuables.length, 1, '恰调用一次');
-  const call = env.continuables[0];
+  assert.equal(env.activations.length, 1, '恰调用一次');
+  const call = env.activations[0];
   assert.equal(call.provider, 'spawn');
-  assert.equal(call.label, '标签甲', '展示名走 startContinuable 顶层 label');
+  assert.equal(call.label, '标签甲', '展示名走 startActivation 顶层 label');
+  assert.equal(call.delivery, 'parent', '投递策略固定 parent：答案经宿主通知进入父会话');
+  assert.equal(call.signal, exec.signal, '创建 signal 传 exec.signal（只管发布前取消）');
   assert.deepEqual(call.request.prompt, [{ type: 'text', text: '任务书。' }]);
-  assert.equal(call.request.parent, EXEC_AGENT, 'parent 必须是 exec.agent（:491）');
+  assert.equal(call.request.parent, EXEC_AGENT, 'parent 必须是 exec.agent（宿主校验注册表同一活 Agent）');
   // 参数集合=结构保证：request 的键集恰好是 prompt/parent（类型契约
-  // ContinuableStartSpec.request = Omit<SubagentStartRequest,'label'|'signal'|
-  // 'outputSchema'>，展示名不进 request）——透传键一概不得出现。
+  // SubagentActivationSpec.request = Omit<SubagentStartRequest,'label'|'signal'>，
+  // 展示名与投递策略不进 request）——透传键一概不得出现；spec 顶层恰五键。
   assert.deepEqual(Object.keys(call.request).sort(), ['parent', 'prompt']);
+  assert.deepEqual(Object.keys(call).sort(), ['delivery', 'label', 'provider', 'request', 'signal']);
 });
 
 hostTest('async_agent：传入白名单命中的 provider+model → request.agentOptions 恰两键，note 报告 requested 路由（R13）', async () => {
@@ -172,8 +199,8 @@ hostTest('async_agent：传入白名单命中的 provider+model → request.agen
   );
 
   // 通道：requested 经 request.agentOptions 交给 driver 合并（继承/覆盖都在宿主侧）。
-  assert.equal(env.continuables.length, 1);
-  assert.deepEqual(env.continuables[0].request.agentOptions, { provider: 'zai', model: 'glm-5.3' });
+  assert.equal(env.activations.length, 1);
+  assert.deepEqual(env.activations[0].request.agentOptions, { provider: 'zai', model: 'glm-5.3' });
   assert.match(result.note, /Child LLM route: zai\/glm-5\.3 \(requested\)\./, 'note 必须回执实际请求的路由');
   // 白名单读取：对本会话的 policy 投影，键名逐字正确（stateOf 的第一参是
   // agent.session——宿主投影 API 以 session 为键）。
@@ -188,7 +215,7 @@ hostTest('async_agent：未传模型 → request 不带 agentOptions 键，note 
 
   const result = await tool.execute({ description: '调研甲', prompt: '任务。' }, EXEC);
 
-  assert.equal('agentOptions' in env.continuables[0].request, false,
+  assert.equal('agentOptions' in env.activations[0].request, false,
     '未选择路由时 request 必须不带 agentOptions 键（driver 走父继承）');
   // 父路由现读：与 driver 的 resolveChildAgentOptions 同一数据源（requestHeader().config）。
   assert.match(result.note, /Child LLM route: deepseek-official\/deepseek-flash \(inherited from this agent\)\./);
@@ -217,7 +244,7 @@ hostTest('async_agent：未声明键显式报错并零派生——零容忍的�
       tool.execute(args, EXEC),
       /supported: description, prompt, provider, model/
     );
-    assert.deepEqual(env.continuables, [], '报错路径不得派生');
+    assert.deepEqual(env.activations, [], '报错路径不得派生');
   }
 });
 
@@ -238,7 +265,7 @@ hostTest('async_agent：指定路由但 provider 未声明 agentOptions 能力 �
     ),
     /"legacy" does not honor agentOptions.*requested route would be silently ignored/
   );
-  assert.deepEqual(env.continuables, [], '功能不达标不得派生');
+  assert.deepEqual(env.activations, [], '功能不达标不得派生');
 
   // 同一 provider 不指定路由时不受影响（功能预检只约束显式选择）。
   const pass = await tool.execute({ description: 'x', prompt: 'y' }, EXEC);
@@ -254,7 +281,7 @@ hostTest('async_agent：provider 与 model 必须成对且非空（宿主同款�
       tool.execute({ description: 'x', prompt: 'y', ...partial }, EXEC),
       /`provider` and `model` must be supplied together/
     );
-    assert.deepEqual(env.continuables, []);
+    assert.deepEqual(env.activations, []);
   }
   // 空串（DSL 的 type:'string' 不挡空串，执行层必须挡）。
   for (const blank of [{ provider: '', model: 'glm-5.3' }, { provider: 'zai', model: '' }]) {
@@ -264,7 +291,7 @@ hostTest('async_agent：provider 与 model 必须成对且非空（宿主同款�
       tool.execute({ description: 'x', prompt: 'y', ...blank }, EXEC),
       /must be non-empty/
     );
-    assert.deepEqual(env.continuables, []);
+    assert.deepEqual(env.activations, []);
   }
 });
 
@@ -275,7 +302,7 @@ hostTest('async_agent：白名单外的路由被拒且零派生（宿主同款�
     tool.execute({ description: 'x', prompt: 'y', provider: 'zai', model: 'glm-4.9' }, EXEC),
     /child LLM route "zai\/glm-4\.9" is not allowed for this session/
   );
-  assert.deepEqual(env.continuables, [], '越界路由不得派生');
+  assert.deepEqual(env.activations, [], '越界路由不得派生');
 });
 
 hostTest('async_agent：无 policy 的会话拒绝指定模型——null 与读取抛错两种形态（R13）', async () => {
@@ -288,7 +315,7 @@ hostTest('async_agent：无 policy 的会话拒绝指定模型——null 与读�
     toolNull.execute({ description: 'x', prompt: 'y', provider: 'zai', model: 'glm-5.3' }, EXEC),
     /child model selection is not available for this session \(no model-selection policy\)/
   );
-  assert.deepEqual(envNull.continuables, []);
+  assert.deepEqual(envNull.activations, []);
 
   // ② 投影读取抛错（如投影折叠异常）：异常被承接，同样按"无 policy"拒绝。
   const envThrow = agentEnv({ policy: 'throw' });
@@ -297,7 +324,7 @@ hostTest('async_agent：无 policy 的会话拒绝指定模型——null 与读�
     toolThrow.execute({ description: 'x', prompt: 'y', provider: 'zai', model: 'glm-5.3' }, EXEC),
     /child model selection is not available for this session/
   );
-  assert.deepEqual(envThrow.continuables, []);
+  assert.deepEqual(envThrow.activations, []);
 });
 
 hostTest('async_agent（R29-f·判据 10）：投影返回非数组对象 → 按"无 policy"拒绝，不得当数组遍历', async () => {
@@ -309,7 +336,7 @@ hostTest('async_agent（R29-f·判据 10）：投影返回非数组对象 → �
     tool.execute({ description: 'x', prompt: 'y', provider: 'zai', model: 'glm-5.3' }, EXEC),
     /child model selection is not available for this session \(no model-selection policy\)/
   );
-  assert.deepEqual(env.continuables, [], '不得派发任何子代理');
+  assert.deepEqual(env.activations, [], '不得派发任何子代理');
 });
 
 hostTest('async_agent：零前台（哨兵不动）+ 零等待原语（timer/on 零调用）——"立返"的可失败判据（R13）', async () => {
@@ -333,7 +360,7 @@ hostTest('async_agent：三种错误态互相可区分，且一个子代理都�
     toolA.execute({ description: 'x', prompt: 'y' }, { agent: undefined }),
     /requires an initiator agent/
   );
-  assert.deepEqual(envA.continuables, [], '报错路径不得派生');
+  assert.deepEqual(envA.activations, [], '报错路径不得派生');
 
   // ② provider 未注册（设置里写了个不存在的名字）。
   const envB = agentEnv();
@@ -343,9 +370,10 @@ hostTest('async_agent：三种错误态互相可区分，且一个子代理都�
     toolB.execute({ description: 'x', prompt: 'y' }, EXEC),
     /subagent provider "nope" is not registered.*'subagentProvider'/
   );
-  assert.deepEqual(envB.continuables, []);
+  assert.deepEqual(envB.activations, []);
 
-  // ③ provider 不支持 continuable 后台（缺 prepareContinuable，插件级预检 :380）。
+  // ③ provider 不支持 continuable 后台（缺 prepareContinuable——宿主以该方法
+  //    在场性选择本地执行，本包预检在派生前）。
   const envC = agentEnv({ providers: { codex: { name: 'codex' } } });
   const toolC = createAgentTool(envC.ctx, envC.view);
   envC.setConfig({ subagentProvider: 'codex' });
@@ -353,7 +381,7 @@ hostTest('async_agent：三种错误态互相可区分，且一个子代理都�
     toolC.execute({ description: 'x', prompt: 'y' }, EXEC),
     /"codex" does not support background delegation \(missing prepareContinuable\)/
   );
-  assert.deepEqual(envC.continuables, []);
+  assert.deepEqual(envC.activations, []);
 });
 
 hostTest('async_agent：subagentProvider 设置改名后 getProvider 的查询对象跟着变（行为差异，R10）', async () => {
@@ -441,4 +469,63 @@ hostTest('async_agent：parameters 契约——两键必填、provider/model 可
     ['description', 'model', 'prompt', 'provider'],
     '参数集合恰四键——run_in_background 一概不暴露（后台不是模型的选择），'
       + '成对/非空/白名单三条纪律由执行层强制（需求 §2.3.2、设计 §3.3）');
+});
+
+/** 捕获 stderr 一段窗口内的输出（notice 出口的默认落点），用完恢复。 */
+async function captureStderr(action) {
+  const original = process.stderr.write;
+  const chunks = [];
+  process.stderr.write = (chunk) => { chunks.push(String(chunk)); return true; };
+  try {
+    await action();
+    // 观察处理器在 result 落定后的微任务里运行——让出一个宏任务再收网。
+    await new Promise((r) => { setImmediate(r); });
+  } finally {
+    process.stderr.write = original;
+  }
+  return chunks.join('');
+}
+
+hostTest('async_agent：result 观察通道——completed 静默，非完成结局与拒绝走 stderr 且附 child id（设计 §3.3）', async () => {
+  const env = agentEnv();
+  const tool = checkedTool(createAgentTool(env.ctx, env.view));
+
+  // ① 正常结算：不产生任何 stderr 行（答案交付归宿主通知，本包不复述）。
+  const first = await tool.execute({ description: '甲', prompt: '任务。' }, EXEC);
+  const quiet = await captureStderr(() => env.settleActivation().resolve({ stopReason: 'completed', output: [] }));
+  assert.equal(quiet, '', 'completed 结算不得产生诊断行');
+  assert.equal(env.disposeCalls.length, 0, '结算后也不得调用 dispose（宿主自然释放）');
+
+  // ② 非完成结局：stderr 一行，含准确 child id、stopReason 与 diagnostic。
+  await tool.execute({ description: '乙', prompt: '任务。' }, EXEC);
+  const abnormal = await captureStderr(() => env.settleActivation().resolve({
+    stopReason: 'error',
+    output: [],
+    diagnostic: 'transport reset'
+  }));
+  assert.match(abnormal, /child-2/, '诊断必须附准确 child id');
+  assert.match(abnormal, /stopReason=error/, '诊断必须点名非完成结局');
+  assert.match(abnormal, /transport reset/, 'provider 诊断文本保留');
+
+  // ③ 基础设施拒绝（capture 失败）：stderr 一行，含 child id 与拒绝事实。
+  await tool.execute({ description: '丙', prompt: '任务。' }, EXEC);
+  const rejected = await captureStderr(() => env.settleActivation().reject(new Error('capture failed: EPIPE')));
+  assert.match(rejected, /child-3/, '拒绝诊断必须附准确 child id');
+  assert.match(rejected, /capture failed: EPIPE/, '拒绝原文保留');
+
+  // 三个 activation 都已落定，dispose 全程零调用（设计 §3.3：本包从不 dispose）。
+  assert.equal(env.disposeCalls.length, 0, '任何路径都不得调用 dispose');
+  assert.equal(first.status, 'started');
+});
+
+hostTest('async_agent：result 永不落定时 execute 照常立返（不 await result 的行为证明）', async () => {
+  const env = agentEnv();
+  const tool = checkedTool(createAgentTool(env.ctx, env.view));
+
+  // 假件 result 默认永不落定：execute 若 await 了 result，本用例会超时挂死——
+  // 这就是「调用只等启动被接受」的可失败判据（与零 timer/on 用例互补）。
+  const result = await tool.execute({ description: '挂起', prompt: '任务。' }, EXEC);
+  assert.equal(result.status, 'started');
+  assert.equal(result.agent_id, 'child-1');
+  assert.deepEqual(env.disposeCalls, []);
 });

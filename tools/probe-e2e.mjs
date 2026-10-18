@@ -123,9 +123,14 @@ function makeContext() {
       { kind: 'child', id: 'child-probe', mode: 'continuable', label: 'probe', activity: 'inactive', hasChildren: false }
     ],
     interrupt: () => 'requested',
-    // async_agent 的执行侧：替身 provider 支持 continuable。
+    // async_agent 的执行侧：替身 provider 支持 continuable；result 永不落定
+    // （观察通道只承接不等待），dispose 哨兵在（本包不得调用）。
     getProvider: (providerName) => ({ name: providerName, prepareContinuable() {} }),
-    startContinuable: async () => ({ childId: 'child-probe-spawned' })
+    startActivation: async () => ({
+      childId: 'child-probe-spawned',
+      result: new Promise(() => {}),
+      dispose: () => Promise.resolve()
+    })
   });
   ctx.provide('timer', {
     // 保留延迟语义的真实定时器：让出竞速的胜者必须由"命令是否已结束"决定。

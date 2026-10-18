@@ -126,11 +126,15 @@ async function probe(label, tool, args) {
   await probe('async_wait_agent(not_found)', waitAgent, { agent_id: 'child-1', wait_ms: 50 });
 }
 
-// 7) `async_agent` 的立返分支：替身 provider 走 startContinuable。
+// 7) `async_agent` 的立返分支：替身 provider 走 startActivation（result 永不落定）。
 {
   const f = fakeCtx();
   f.ctx.subagents.getProvider = (providerName) => ({ name: providerName, prepareContinuable() {} });
-  f.ctx.subagents.startContinuable = async () => ({ childId: 'child-spawn-1' });
+  f.ctx.subagents.startActivation = async () => ({
+    childId: 'child-spawn-1',
+    result: new Promise(() => {}),
+    dispose: () => Promise.resolve()
+  });
   await probe('async_agent(started)', createAgentTool(f.ctx, config),
     { description: 'probe', prompt: '报告。' });
 }

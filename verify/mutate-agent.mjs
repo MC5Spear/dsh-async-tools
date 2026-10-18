@@ -2,7 +2,7 @@
  * 守哪条需求：需求 §2.3.1（async_agent 永远后台、立返、零等待原语）+ §3.1（persona 强制规则锚句）
  *
  * 两个变异，方向互补：
- * - M1 **前台形态回潮**：把 `startContinuable` 换成宿主的非 continuable 前台 `start`
+ * - M1 **前台形态回潮**：把 `startActivation` 换成宿主公开面不存在的前台 `start`
  *   → 必须红在 test/agent.test.mjs 的"零前台哨兵"上（哨兵记录调用并抛可读错误，
  *   红因一目了然，不是泛型 TypeError）。
  * - M2 **强制规则被删**：把预设模板 persona 里的 DELEGATION RULES 段整段删掉
@@ -119,13 +119,14 @@ function restore() {
   }
 }
 
-// M1 的锚点：lib/agent.js 的派生调用（设计 §3.3 可续子代理）。变异体走前台 start。
+// M1 的锚点：lib/agent.js 的派生调用（设计 §3.3 startActivation 契约）。变异体走前台 start。
 const M1_ANCHOR = [
-  '      const { childId } = await ctx.subagents.startContinuable({',
+  '      const activation = await ctx.subagents.startActivation({',
   '        provider: providerName,',
   '        label: args.description,',
   '        request,',
-  '        signal: exec.signal',
+  '        signal: exec.signal,',
+  "        delivery: 'parent'",
   '      });'
 ].join('\n');
 const M1_MUTATED = [
@@ -163,7 +164,7 @@ let ok = true;
 try {
   // ── M1：前台形态回潮 ─────────────────────────────────────────────────────
   if (!agentOriginal.includes(M1_ANCHOR)) {
-    console.log('SKIP  找不到 M1 锚点（startContinuable 调用），本变异失效——当失败处理。');
+    console.log('SKIP  找不到 M1 锚点（startActivation 调用），本变异失效——当失败处理。');
     ok = false;
   } else {
     writeFileSync(AGENT, agentOriginal.replace(M1_ANCHOR, M1_MUTATED), 'utf8');
@@ -173,7 +174,7 @@ try {
       ok = false;
     } else {
       const caught = after.state === 'red';
-      console.log(`${caught ? 'CAUGHT' : 'MISSED'}  M1 startContinuable→start（前台形态回潮）  ${after.summary}`);
+      console.log(`${caught ? 'CAUGHT' : 'MISSED'}  M1 startActivation→start（前台形态回潮）  ${after.summary}`);
       if (after.firstFail !== '') console.log(`        ${after.firstFail}`);
       ok = caught && ok;
     }
