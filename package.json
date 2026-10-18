@@ -1,6 +1,6 @@
 {
   "name": "dsh-async-tools",
-  "version": "0.2.3+dsh.0.2.0-rc.2",
+  "version": "0.2.4+dsh.0.2.1-rc.2",
   "description": "Bounded-yield async execution tools for DSH: `async_run` yields to a background job instead of killing long commands, `async_wait_job` / `async_wait_agent` wait within a required bounded budget and return early when the user speaks, without disturbing the background work.",
   "license": "MIT",
   "author": "MC5Spear (https://github.com/MC5Spear)",
@@ -77,20 +77,20 @@
     "subagent-wait"
   ],
   "dependencies": {
-    "@deepseek-ai/schemastery": "~3.18.4",
-    "zod": "~4.6.5"
+    "@deepseek-ai/schemastery": "~3.18.5",
+    "zod": "~4.6.7"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "~4.0.4",
-    "@deepseek-ai/cordis-plugin-timer": "~1.1.6",
-    "@deepseek-ai/dsh": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-jobs": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-sandbox": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-shell": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-shell-env": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-subagent": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-tools": "0.2.0-rc.2"
+    "@deepseek-ai/cordis": "~4.0.5",
+    "@deepseek-ai/cordis-plugin-timer": "~1.1.7",
+    "@deepseek-ai/dsh": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-jobs": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-sandbox": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-shell": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-shell-env": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-subagent": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2"
   }
 }

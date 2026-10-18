@@ -8,6 +8,27 @@
 > `0.2.2` 是本仓的**首个公开发布版本**。它之前的版本线（`0.1.5`–`0.2.1`）用于内部开发与
 > 真机验证，**从未公开发布**；下表只记它们的实质变化，不记过程。
 
+## [0.2.4] — 未发布 · 完整标识 `0.2.4+dsh.0.2.1-rc.2`
+
+### 与宿主的关系（本条主线：适配 dsh `0.2.1-rc.2`）
+
+- 九个 `@deepseek-ai/dsh*` peer **精确锁定版本 `0.2.1-rc.2`**；`cordis ~4.0.5`、
+  `cordis-plugin-timer ~1.1.7`；依赖 `schemastery ~3.18.5`、`zod ~4.6.7`。
+- **`async_agent` 迁移 `startActivation` 契约**：宿主 0.2.1 以 `SubagentActivationSpec`
+  （`delivery: 'parent'`）承接后台派生，本包不再触碰旧 `start` 形态；派生结果由宿主
+  结算通道送达，本包只挂**观察器**——非完成结局与结果通道拒绝经 stderr 通告操作者
+  （附子代理 id），不缓存、不等待、不 dispose。
+- **`async_run` 会话当前有效目录改走 `workingDirectory.ensure`**：审批后、准入前
+  `await ensure(agent, signal)` 取当前目录（缺省→该目录、相对→以其为基、绝对→原样），
+  会话内切目录即时生效；ensure 失败或其后取消发生在零注册零启动之时。固定依赖
+  （inject）由八项升九项。
+- **预设按 0.2.1 shipped 基线重建**：补 time-context / tool-schedule / tool-plugin-market
+  行，delegation 组随基线去掉 codex / claude-code / ralph（不再适用的配置同步删除），
+  plan-mode 文案随基线更新；persona 不再复活基线已删的 `{{cwd}}` suffix（工作目录由
+  working-directory 服务经系统提示提供）。预设校验器期望集与两份 shipped 基线对账换代。
+- 测试与校验锚整体切至 0.2.1 安装树（证据树加 `021` 档，`020` 转历史线）；CI 的
+  宿主锚断言换代。
+
 ## [0.2.3] — 2026-10-17 · 完整标识 `0.2.3+dsh.0.2.0-rc.2`
 
 ### 新增功能

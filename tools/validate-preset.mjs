@@ -29,7 +29,8 @@
  * 7. 互斥判据（期望集 `bothAliveRule` 开时；两套都开）：活 `tool-subagent`
  *    行与 `async_agent` 行同时在场 ⇒ persona 必须写明唯一派生入口与取回通道，否则红；
  * 8. 期望集 `disabledBoolean` 列的每行必须在场且布尔 `disabled: true`（两套期望集
- *    同含六行，含 `tool-subagent` / `tool-subagent-fork`，无差异）；
+ *    同含五行，含 `tool-subagent` / `tool-subagent-fork`，无差异——0.2.1 基线已无
+ *    codex / claude-code / ralph 行，无三行可禁）；
  * 9. `workflow-ptc` 行在场且 `config.provider === 'spawn'`（形态守卫 + 供电）；
  * 10. 禁用行 `tool-subagent` / `tool-subagent-fork` 的 config 键值逐字锁死
  *     （删键/改值/加键必红）；
@@ -61,7 +62,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
  *
  * 每个基目录下认**两种布局**：
  *   - **提升形** `<base>/js-yaml/index.js`——npm 装 `@deepseek-ai/dsh` 时把依赖提升到
- *     node_modules 根；CI 的 `npm install @deepseek-ai/dsh@0.2.0-rc.2` 就是这一种；
+ *     node_modules 根；CI 的 `npm install @deepseek-ai/dsh@0.2.1-rc.2` 就是这一种；
  *   - **嵌套形** `<base>/@deepseek-ai/dsh/node_modules/js-yaml/index.js`——全局安装树
  *     与运行树的形状（自带一份嵌套副本）。
  * 只认嵌套形会让「干净环境 + npm 锚」的预设用例整片全红（实测 35 条失红），
@@ -93,23 +94,24 @@ const ASYNC_ROW_IDS = ['async-run', 'async-wait-job', 'async-wait-agent', 'async
 /** toolName 五值（判据④：顶层四行 + delegation 组内第五行）。 */
 const EXPECTED_TOOL_NAMES = ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent', 'async_workflow'];
 
-/** 嵌套行序列（两基线同构：planning 1 + compaction 3 + delegation 10；
- * delegation 组在 tool-workflow 行后多一行 async-workflow——行位判据）。 */
+/** 嵌套行序列（两基线同构：planning 1 + compaction 3 + delegation 6；0.2.1 基线
+ * 的 delegation 组不再挂 codex / claude-code / ralph 行；组在 tool-workflow 行后
+ * 多一行 async-workflow——行位判据）。 */
 const NESTED_ROWS = [
   'plan-mode',
   'compaction-basic', 'command-compact', 'tool-result-pruner',
   'tool-subagent-control', 'tool-subagent-list-agents', 'tool-subagent', 'tool-subagent-fork',
-  'tool-subagent-codex', 'tool-subagent-claude-code', 'workflow-ptc', 'tool-workflow',
-  'async-workflow', 'tool-ralph'
+  'workflow-ptc', 'tool-workflow', 'async-workflow'
 ];
 
-/** 禁用行 config 逐字期望（键与值都锁死——删键/改值必红）。 */
+/** 禁用行 config 逐字期望（键与值都锁死——删键/改值必红；与 0.2.1 基线同形，
+ * 无 backgroundMode 键）。 */
 const SUBAGENT_CONFIG_VERBATIM = {
   'tool-subagent': {
-    provider: 'spawn', toolName: 'subagent', modelSelectionSettings: true, backgroundMode: 'continuable'
+    provider: 'spawn', toolName: 'subagent', modelSelectionSettings: true
   },
   'tool-subagent-fork': {
-    provider: 'fork', toolName: 'subagent_fork', backgroundMode: 'continuable'
+    provider: 'fork', toolName: 'subagent_fork'
   }
 };
 
@@ -124,15 +126,15 @@ export const EXPECTATIONS = {
     configId: 'dsh-async',
     patchRel: join('presets', 'dsh-async.patch.yml'),
     baselineTop: [
-      'persona', 'agent-instructions', 'tool-bash',
+      'persona', 'agent-instructions', 'time-context', 'tool-bash',
       ...ASYNC_ROW_IDS,
-      'tool-fs', 'tool-fs-search', 'tool-jobs', 'skill-filesystem', 'tool-skill',
+      'tool-fs', 'tool-fs-search', 'tool-jobs', 'tool-schedule', 'skill-filesystem', 'tool-skill',
       'command-goal', 'tool-goal',
       'planning', 'compaction', 'delegation',
-      'tool-ask-user', 'tool-todo', 'tool-web', 'present', 'tool-plugin-manager'
+      'tool-ask-user', 'tool-todo', 'tool-web', 'present', 'tool-plugin-manager', 'tool-plugin-market'
     ],
     baselineNested: NESTED_ROWS,
-    disabledBoolean: ['tool-bash', 'tool-subagent', 'tool-subagent-fork', 'tool-workflow', 'tool-ralph', 'tool-plugin-manager'],
+    disabledBoolean: ['tool-bash', 'tool-subagent', 'tool-subagent-fork', 'tool-workflow', 'tool-plugin-manager'],
     forbidden: ['@deepseek-ai/dsh-tool-pwsh', '@deepseek-ai/dsh-workflow-worker-thread'],
     personaAnchors: [
       'ALWAYS',
@@ -148,17 +150,17 @@ export const EXPECTATIONS = {
     configId: 'dsh-async-create',
     patchRel: join('presets', 'dsh-async-create.patch.yml'),
     baselineTop: [
-      'persona', 'agent-instructions', 'tool-bash',
+      'persona', 'agent-instructions', 'time-context', 'tool-bash',
       ...ASYNC_ROW_IDS,
-      'tool-fs', 'tool-fs-search', 'tool-jobs',
+      'tool-fs', 'tool-fs-search', 'tool-jobs', 'tool-schedule',
       'command-goal', 'tool-goal',
       'planning', 'compaction', 'delegation',
       'tool-ask-user', 'tool-todo', 'tool-web', 'tool-cordis',
-      'skill-filesystem', 'tool-skill', 'present', 'tool-plugin-manager'
+      'skill-filesystem', 'tool-skill', 'present', 'tool-plugin-manager', 'tool-plugin-market'
     ],
     baselineNested: NESTED_ROWS,
     disabledBoolean: [
-      'tool-bash', 'tool-subagent', 'tool-subagent-fork', 'tool-workflow', 'tool-ralph', 'tool-plugin-manager'
+      'tool-bash', 'tool-subagent', 'tool-subagent-fork', 'tool-workflow', 'tool-plugin-manager'
     ],
     forbidden: ['@deepseek-ai/dsh-tool-pwsh', '@deepseek-ai/dsh-workflow-worker-thread'],
     personaAnchors: [

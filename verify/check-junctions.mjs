@@ -2,15 +2,15 @@
  * 开发树 node_modules 七条 junction 的重锚核验。
  *
  * 判据：六条 `@deepseek-ai` junction（cordis / dsh-jobs / dsh-sandbox / dsh-subagent /
- * dsh-tools / schemastery）必须逐条存在、逐条指向 0.2.0 线树的 `@deepseek-ai` 目录，
- * 且目标的版本串符合线（dsh* = 0.2.0-rc.2；cordis 4.0.4；schemastery 3.18.4）；
+ * dsh-tools / schemastery）必须逐条存在、逐条指向 0.2.1 线树的 `@deepseek-ai` 目录，
+ * 且目标的版本串符合线（dsh* = 0.2.1-rc.2；cordis 4.0.5；schemastery 3.18.5）；
  * 第七条 zod（**顶层平铺**，非 `@deepseek-ai` 域）锚树顶层 `node_modules\zod`，
- * 版本 4.6.5——投影 stateSchema 的注册表契约是 zod，与宿主同一物理实例、零版本漂移。
+ * 版本 4.6.7——投影 stateSchema 的注册表契约是 zod，与宿主同一物理实例、零版本漂移。
  *
  * ## 树根从哪来
  *
  * 树根**只有一个来源**：`tools/_local-config.mjs` 从本机侧读（或环境变量
- * `DSAT_HOST_MODULES`）。`evidenceTree['020']` 的缺省值就是 `<hostModules>/@deepseek-ai`，
+ * `DSAT_HOST_MODULES`）。`evidenceTree['021']` 的缺省值就是 `<hostModules>/@deepseek-ai`，
  * 所以"宿主锚"与"证据锚"在构造上不可能指向两棵不同的树。
  *
  * 对账段保留，形态是断言"树的消费者不许自带树根"——
@@ -29,7 +29,7 @@
  * 本机环境缺席（CI、外部 clone）时打一行 `SKIP` 放过。本机上**没有跳过态**：
  * junction 是开发机接线状态，缺席就是红（那份七条清单是交付物本身）。
  *
- * 用法：`node verify/check-junctions.mjs [--tree <0.2.0 线树的 @deepseek-ai 目录>]`
+ * 用法：`node verify/check-junctions.mjs [--tree <0.2.1 线树的 @deepseek-ai 目录>]`
  */
 import { readFileSync, readlinkSync, lstatSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -42,33 +42,33 @@ const NM = join(ROOT, 'node_modules', '@deepseek-ai');
 
 const TREE_ARG = process.argv.includes('--tree') ? process.argv[process.argv.indexOf('--tree') + 1] : undefined;
 if (process.argv.includes('--tree') && (TREE_ARG === undefined || TREE_ARG.startsWith('--'))) {
-  console.error('用法：node verify/check-junctions.mjs [--tree <0.2.0 线树的 @deepseek-ai 目录>]');
+  console.error('用法：node verify/check-junctions.mjs [--tree <0.2.1 线树的 @deepseek-ai 目录>]');
   process.exit(2);
 }
 
 const config = await loadLocalPlaneOrSkip('verify/check-junctions.mjs（开发树 junction 核验）');
-const TREE = TREE_ARG ?? config.evidenceTree['020'];
+const TREE = TREE_ARG ?? config.evidenceTree['021'];
 if (TREE === undefined) {
-  console.error('宿主锚无来源：配置里既没有 evidenceTree[\'020\']，也没有 hostModules。');
+  console.error('宿主锚无来源：配置里既没有 evidenceTree[\'021\']，也没有 hostModules。');
   console.error(`二选一：在 ${LOCAL_DIR}/config.mjs 里写 hostModules，或设环境变量 DSAT_HOST_MODULES；`
     + '也可以临时用 --tree <路径> 覆盖。');
   process.exit(2);
 }
 
-/** 期望表：junction 名 → 目标版本串（dsh* 精确锁 0.2.0-rc.2；平台包随上游）。 */
+/** 期望表：junction 名 → 目标版本串（dsh* 精确锁 0.2.1-rc.2；平台包随上游）。 */
 const EXPECTED = {
-  cordis: '4.0.4',
-  'dsh-jobs': '0.2.0-rc.2',
-  'dsh-sandbox': '0.2.0-rc.2',
-  'dsh-subagent': '0.2.0-rc.2',
-  'dsh-tools': '0.2.0-rc.2',
-  schemastery: '3.18.4'
+  cordis: '4.0.5',
+  'dsh-jobs': '0.2.1-rc.2',
+  'dsh-sandbox': '0.2.1-rc.2',
+  'dsh-subagent': '0.2.1-rc.2',
+  'dsh-tools': '0.2.1-rc.2',
+  schemastery: '3.18.5'
 };
 
 /** zod 在**顶层平铺**（非 `@deepseek-ai` 域）——junction 落在 `node_modules\zod`。 */
-const ZOD = { name: 'zod', wantVersion: '4.6.5' };
+const ZOD = { name: 'zod', wantVersion: '4.6.7' };
 
-const TREE_TOP = dirname(TREE); // 0.2.0 树 node_modules 根（zod 顶层平铺用）
+const TREE_TOP = dirname(TREE); // 0.2.1 树 node_modules 根（zod 顶层平铺用）
 
 /**
  * 树根的消费者：每个都**必须**从配置加载器取树，不许自带树根字面量。

@@ -37,6 +37,7 @@ const original = readFileSync(join(localConfig.root, LOCAL_DIR, 'docs', 'facts.m
  * 它立刻 BASELINE-RED。
  */
 const TREES = {
+  tree021: localConfig.evidenceTree['021'],
   tree020: localConfig.evidenceTree['020'],
   tree017: localConfig.evidenceTree['017'],
   tree015: localConfig.evidenceTree['015']

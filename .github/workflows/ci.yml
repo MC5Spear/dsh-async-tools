@@ -71,8 +71,8 @@ jobs:
             throw "宿主锚缺席（$anchor）——接线用例会全部自跳过，这个作业就白跑了"
           }
           $dsh = Get-Content 'node_modules/@deepseek-ai/dsh/package.json' -Raw | ConvertFrom-Json
-          if ($dsh.version -ne '0.2.0-rc.2') {
-            throw "宿主版本不是 0.2.0-rc.2，而是 $($dsh.version)"
+          if ($dsh.version -ne '0.2.1-rc.2') {
+            throw "宿主版本不是 0.2.1-rc.2，而是 $($dsh.version)"
           }
           Write-Host "宿主锚在场 ✔ dsh@$($dsh.version)"
 

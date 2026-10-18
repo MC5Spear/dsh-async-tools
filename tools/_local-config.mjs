@@ -83,7 +83,7 @@ export function localPlanePresent(root = MODULE_ROOT) {
  * @returns {Promise<{
  *   root: string, source: 'file' | 'both', configFile: string | undefined,
  *   hostModules: string | undefined,
- *   evidenceTree: { '020': string | undefined, '017': string | undefined, '015': string | undefined },
+ *   evidenceTree: { '021': string | undefined, '020': string | undefined, '017': string | undefined, '015': string | undefined },
  *   instanceUrl: string | undefined, tokenFile: string | undefined,
  *   instanceHome: string | undefined, serviceLog: string | undefined,
  *   junctions: Array<{ name: string, link: string, target: string, version: string }> | undefined,
@@ -137,19 +137,21 @@ export async function loadLocalConfig({ root = MODULE_ROOT, env = process.env } 
   const hostModules = pick('hostModules');
   const fileTrees = (fromFile.evidenceTree ?? {});
   /**
-   * 证据树三档（口径见本机侧事实登记簿）：
-   * `020` = 0.2.0 线运行树、`017` = 0.1.7 线树、`015` = 0.1.5 线（npm 全局树）。
+   * 证据树四档（口径见本机侧事实登记簿）：
+   * `021` = 0.2.1 线运行树（当前线）、`020` = 0.2.0 线树（历史线，显式配置）、
+   * `017` = 0.1.7 线树、`015` = 0.1.5 线（npm 全局树）。
    *
-   * `020` 有**结构性缺省**：它就是 `hostModules` 下的 `@deepseek-ai` 域目录。
+   * `021` 有**结构性缺省**：它就是 `hostModules` 下的 `@deepseek-ai` 域目录。
    * 这条缺省让"宿主锚"与"证据锚"不可能指向两棵不同的树，
    * `verify/check-junctions.mjs` 的同根对账因此是构造性的，不靠让两处常量保持一致。
    */
   const evidenceTree = {
-    '020': fileTrees['020'] ?? (hostModules === undefined ? undefined : join(hostModules, '@deepseek-ai')),
+    '021': fileTrees['021'] ?? (hostModules === undefined ? undefined : join(hostModules, '@deepseek-ai')),
+    '020': fileTrees['020'],
     '017': fileTrees['017'],
     '015': fileTrees['015']
   };
-  for (const key of ['020', '017', '015']) {
+  for (const key of ['021', '020', '017', '015']) {
     if (evidenceTree[key] === undefined) notes.push(`evidenceTree['${key}'] 无来源（该档判据将跳过）`);
   }
 
@@ -224,7 +226,7 @@ export function describeConfig(config) {
   return [
     `本机配置 来源=${config.source} 文件=${config.configFile ?? '（无）'}`,
     line('hostModules', config.hostModules),
-    line("evidenceTree020", config.evidenceTree['020']),
+    line("evidenceTree021", config.evidenceTree['021']),
     line("evidenceTree017", config.evidenceTree['017']),
     line("evidenceTree015", config.evidenceTree['015']),
     line('instanceUrl', config.instanceUrl),

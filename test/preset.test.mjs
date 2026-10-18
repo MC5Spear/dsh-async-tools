@@ -15,7 +15,7 @@
  * dsh-async-create 专属用例：P1 基线绿、P2/P3 基线行缺/多、P4 派生入口翻活、
  * P5 plugin-manager 表达式、P6 persona 锚句、P7 pwsh 挂回、P8 tool-bash 表达式、
  * P9 未知 config.id、P10 护栏、P11 互斥判据复合、P12 嵌套行缺失、P13 toolName、
- * P14 期望集与 0.2.0-rc.2 证据树对账、P15 provider 形态、P16 公共异步纪律段同源。
+ * P14 期望集与 0.2.1-rc.2 证据树对账、P15 provider 形态、P16 公共异步纪律段同源。
  * 第五行工具与禁用改动专属用例：P17 tool-workflow 翻活、P18 dsh-async 的
  * tool-subagent 翻活、P19 删 async-workflow 行、P20 async-workflow 挪出
  * delegation 组（设计 §3.6 行位）、P21 删 workflow-ptc（create 侧）、P22 门槛锚句。
@@ -55,7 +55,7 @@ const baselineCreate = readFileSync(PATCH_CREATE, 'utf8');
  *  出处 = 宿主安装树里的 `@deepseek-ai/dsh-web-app/presets/`，目录按
  *  `DSAT_HOST_MODULES` → `DSH_HOME/profiles` → `%APPDATA%/npm` 次序推导
  *  （与 `tools/_host-resolve.mjs` 同一套候选），**不写死机器路径**——公开仓的 CI 用
- *  `npm install @deepseek-ai/dsh@0.2.0-rc.2` 提供这个包。
+ *  `npm install @deepseek-ai/dsh@0.2.1-rc.2` 提供这个包。
  *
  *  npm 公开发布版与本机安装树的两份文件**逐字节相同**（sha256 相同；
  *  standard 7511 B、cordis 8089 B——基线漂移会先在这里露头）。锚点取哪边
@@ -100,7 +100,7 @@ hostTest('validate-preset：合法补丁必须通过（基线，防止断言恒�
 hostTest('validate-preset：dsh-async-create 基线必须通过（P1，R26）', async () => {
   const result = await validatePatch(PATCH_CREATE, { quiet: true });
   assert.equal(result.ok, true, `创造补丁基线应当通过，失败行：\n${result.lines.filter((l) => l.includes('FAIL')).join('\n')}`);
-  assert.ok(result.lines.some((l) => l.includes('顶层 23 行 + 嵌套 14 行')), '③ 的对账读数必须是 23+14（R35-a 起嵌套多一行 async-workflow）');
+  assert.ok(result.lines.some((l) => l.includes('顶层 26 行 + 嵌套 11 行')), '③ 的对账读数必须是 26+11（0.2.1 基线 delegation 组 6 行 + async-workflow）');
 });
 
 hostTest('validate-preset：tool-bash 被改成平台表达式必须拦住（需求 §3.3：Linux 也要无条件禁用）', async () => {
@@ -154,13 +154,16 @@ hostTest('validate-preset：workflow-ptc 行被删必须拦住（定向修改 4 
     `报错必须点名改动项 4 的存在性，实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
 });
 
-hostTest('validate-preset：tool-ralph 被翻回启用必须拦住（定向修改 5）', async () => {
+hostTest('validate-preset：挂回已从基线消失的 tool-ralph 行必须拦住（定向修改 5 的 0.2.1 形态）', async () => {
+  // 0.2.1 基线的 delegation 组不再有 ralph / codex / claude-code 行——"翻活"变异
+  // 失去对象，回归形态变成"挂回整行"：③ 的嵌套序列判据（多出基线期望之外的行）
+  // 必须拦住复活的委托入口。
   const result = await validateMutation((text) => text
-    .replace("id: tool-ralph\n                name: '@deepseek-ai/dsh-tool-ralph'\n                disabled: true",
-      "id: tool-ralph\n                name: '@deepseek-ai/dsh-tool-ralph'\n                disabled: false"));
-  assert.equal(result.ok, false, 'tool-ralph 翻回启用必须被拦');
-  assert.ok(result.lines.some((l) => l.includes('tool-ralph.disabled')),
-    '报错必须指向 tool-ralph 的 disabled 项');
+    .replace("              - id: async-workflow",
+      "              - id: tool-ralph\n                name: '@deepseek-ai/dsh-tool-ralph'\n                config:\n                  subagentProvider: spawn\n                  maxRounds: 64\n              - id: async-workflow"));
+  assert.equal(result.ok, false, '挂回 tool-ralph 行必须被拦');
+  assert.ok(result.lines.some((l) => l.includes('tool-ralph') && l.includes('多出')),
+    '报错必须指向③的嵌套多行判据');
 });
 
 hostTest('validate-preset：tool-plugin-manager 行被删必须拦住（定向修改 6 存在性）', async () => {
@@ -340,7 +343,7 @@ hostTest('validate-preset：期望集必须与 shipped 基线的真实行集合�
   const { load } = await loadYaml();
   for (const { configId, baselineFile, baselineName } of RECONCILE) {
     if (baselineFile === undefined || !existsSync(baselineFile)) {
-      assert.fail(`P14 对账依赖的基线补丁读不到：@deepseek-ai/dsh-web-app/presets/${baselineName}（期望集 ${configId} 的出处就是它）。候选锚 = DSAT_HOST_MODULES → DSH_HOME/profiles → %APPDATA%/npm 全局树；CI 上由 npm install @deepseek-ai/dsh@0.2.0-rc.2 提供。锚缺失不许静默跳过。`);
+      assert.fail(`P14 对账依赖的基线补丁读不到：@deepseek-ai/dsh-web-app/presets/${baselineName}（期望集 ${configId} 的出处就是它）。候选锚 = DSAT_HOST_MODULES → DSH_HOME/profiles → %APPDATA%/npm 全局树；CI 上由 npm install @deepseek-ai/dsh@0.2.1-rc.2 提供。锚缺失不许静默跳过。`);
     }
     const doc = load(readFileSync(baselineFile, 'utf8'));
     const exp = EXPECTATIONS[configId];

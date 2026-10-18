@@ -87,6 +87,8 @@ const DRIVE_LITERAL_ALLOW = new Map([
   ['test/interrupt.test.mjs', '同上'],
   ['test/jobs.test.mjs', '同上'],
   ['test/wait-job.test.mjs', '同上'],
+  ['test/index.test.mjs', '同上（挂载级假件的 workingDirectory 目录与 fakeAgent 会话头同源）'],
+  ['test/two-planes.test.mjs', '同上（挂载级假件的 workingDirectory 目录与 fakeAgent 会话头同源）'],
   ['tools/probe-e2e.mjs', '同上（接线自检的替身夹具）'],
   ['tools/probe-output-schema.mjs', '同上（接线自检的替身夹具）'],
   ['test/public-surface.test.mjs', '同上（边界检查器的合成语料要种下本机路径，判据才会红）'],

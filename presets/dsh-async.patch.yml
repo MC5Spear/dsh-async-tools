@@ -4,7 +4,7 @@
 # （`@deepseek-ai/dsh-agent-preset`），config.plugins 是完整子清单。预设生命周期由
 # loader 拥有：本包从 bundles 移除即预设消失，无清理代码（设计 §7.1）。
 #
-# 基线 = 随宿主 0.2.0-rc.2 发布的 shipped standard 预设补丁（需求 §7.3；基线位置由
+# 基线 = 随宿主 0.2.1-rc.2 发布的 shipped standard 预设补丁（需求 §7.3；基线位置由
 # tools/validate-preset.mjs 按需求读取，不硬编码本机路径）。相对基线的改动
 # （设计 §3.6"两者相对基线的共同差异"，逐条给依据）：
 #   1. tool-bash 无条件 disabled: true——禁同步 shell（需求 §3.1），两平台工具清单
@@ -14,24 +14,26 @@
 #      async_workflow 在 delegation 组内 tool-workflow 行后——编排引擎是组内隔离服务，
 #      组外行取不到（需求 §3.2 末条、设计 §3.5）。五行 config 均携带
 #      owningPreset 归属声明（设计 §6.2——描述警示按行归属判定，非 volatile）；
-#   4. tool-workflow 与 tool-subagent 系委托入口（单发 / fork / codex / claude-code）
-#      置 disabled: true（需求 §3.1：禁可前台占住批次的原生委托／编排入口；config
-#      逐字保留以便翻转）。被禁入口的功能出路 = async_agent / async_workflow，或按
-#      宿主规则换预设开新会话（需求 §3.1 末条）；workflow-ptc（引擎服务，为
-#      async_workflow 提供编排引擎）与 tool-subagent-control / -list-agents（非阻塞检查／管理
-#      侧，需求 §3.1"保留宿主非阻塞的检查、消息和停止管理工具"）保留在场；
-#   5. tool-ralph 按基线置 disabled: true（config 保留以便翻转）；
-#   6. persona prefix 在基线之上加异步工作纪律与后台委托强制规则（需求 §3.1；
-#      锚句被 tools/validate-preset.mjs 锁死：`ALWAYS` + `async_agent is the ONLY
-#      delegation entry` + `never pass run_in_background: false`、`Do not poll in a loop`）；
-#   7. 预设行**不带** disabled 护栏：loader 的 `refresh()` 在服务就绪前求值
+#   4. tool-workflow 与 tool-subagent 系委托入口（单发 / fork）置 disabled: true
+#      （需求 §3.1：禁可前台占住批次的原生委托／编排入口；config 逐字保留以便翻转）。
+#      被禁入口的功能出路 = async_agent / async_workflow，或按宿主规则换预设开新会话
+#      （需求 §3.1 末条）；workflow-ptc（引擎服务，为 async_workflow 提供编排引擎）与
+#      tool-subagent-control / -list-agents（非阻塞检查／管理侧，需求 §3.1"保留宿主
+#      非阻塞的检查、消息和停止管理工具"）保留在场；
+#   5. persona 只改 prefix：基线身份句之上加异步工作纪律与后台委托强制规则（需求
+#      §3.1；锚句被 tools/validate-preset.mjs 锁死：`ALWAYS` + `async_agent is the
+#      ONLY delegation entry` + `never pass run_in_background: false`、
+#      `Do not poll in a loop`）。基线 persona 无 `{{cwd}}` suffix——工作目录由
+#      working-directory 服务经系统提示提供，本预设不复活失效模板变量；
+#   6. 预设行**不带** disabled 护栏：loader 的 `refresh()` 在服务就绪前求值
 #      `disabled`——`agentPresets` 服务缺席时**静默跳过 init**，行永远不导入
 #      （cordis-plugin-loader `refresh()` 的服务就绪检查）；shipped 预设行也都不带
 #      护栏——`dsh-agent-preset` 自带 `inject = ['agentPresets']`，注册表缺席时行以
 #      pending 等待（Cordis 原生机制），注册失败沿 fiber 抛出时**可选行只是启动
 #      警告**、不拖垮进程（dsh-app-boot 的 activationDiagnostic）。判据反转：
 #      validate-preset ⑥ 锁死"不得出现该护栏"）。
-# 其余行（含 workflow-ptc、tool-plugin-manager 等）与基线逐字一致，以免行为漂移。
+# 其余行（含 time-context、tool-schedule、plan-mode 文案、tool-plugin-manager 与
+# tool-plugin-market 的基线禁用态、workflow-ptc 等）与基线逐字一致，以免行为漂移。
 - insert:
     - id: preset-dsh-async
       name: '@deepseek-ai/dsh-agent-preset'
@@ -41,11 +43,10 @@
         description: 在标准模式基础上改用异步 shell 的编码 Agent：async_run 的命令超出首次等待不会被杀掉，而是转后台并返回作业编号（job_id）；async_wait_job / async_wait_agent 都是有界等待读取，用户插话时立即返回且后台工作不受影响。
         order: 5
         plugins:
-          # ── identity ──
+          # ── identity（改动项 5：persona prefix）──
           - id: persona
             name: '@deepseek-ai/dsh-persona'
             config:
-              suffix: Your working directory is {{cwd}}.
               prefix: >-
                 You are a coding agent powered by the {{model}} model.
                 This deployment runs commands ASYNCHRONOUSLY. `async_run` returns a job_id
@@ -67,6 +68,8 @@
             name: '@deepseek-ai/dsh-agent-instructions'
             config:
               maxBytes: 65536
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
           # ── shell（改动项 1/2/3）──
           - id: tool-bash
             name: '@deepseek-ai/dsh-tool-bash'
@@ -99,6 +102,8 @@
               sampleOverCapGlobResults: false
           - id: tool-jobs
             name: '@deepseek-ai/dsh-tool-jobs'
+          - id: tool-schedule
+            name: '@deepseek-ai/dsh-tool-schedule'
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
           - id: tool-skill
@@ -118,7 +123,7 @@
                 name: '@deepseek-ai/dsh-plan-mode'
                 config:
                   section: |
-                    You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+                    You are in plan mode. Stay in plan mode until the user approves your plan through exit_plan_mode or switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
 
                     Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
 
@@ -147,7 +152,7 @@
                   thresholdChars: 8192
                   headChars: 4096
                   tailChars: 1024
-          # ── delegation（改动项 4/5 在此组）──
+          # ── delegation（改动项 4 在此组）──
           - id: delegation
             name: cordis:group
             group: true
@@ -169,30 +174,12 @@
                   provider: spawn
                   toolName: subagent
                   modelSelectionSettings: true
-                  backgroundMode: continuable
               - id: tool-subagent-fork
                 name: '@deepseek-ai/dsh-tool-subagent'
                 disabled: true
                 config:
                   provider: fork
                   toolName: subagent_fork
-                  backgroundMode: continuable
-              - id: tool-subagent-codex
-                name: '@deepseek-ai/dsh-tool-subagent'
-                disabled: true
-                config:
-                  provider: codex
-                  toolName: subagent_codex
-                  backgroundMode: one-shot
-                  maxDepth: provider-managed
-              - id: tool-subagent-claude-code
-                name: '@deepseek-ai/dsh-tool-subagent'
-                disabled: true
-                config:
-                  provider: claude-code
-                  toolName: subagent_claude_code
-                  backgroundMode: one-shot
-                  maxDepth: provider-managed
               - id: workflow-ptc
                 name: '@deepseek-ai/dsh-workflow-ptc'
                 config:
@@ -208,13 +195,7 @@
                 config:
                   toolName: async_workflow
                   owningPreset: dsh-async
-              - id: tool-ralph
-                name: '@deepseek-ai/dsh-tool-ralph'
-                disabled: true
-                config:
-                  subagentProvider: spawn
-                  maxRounds: 64
-          # ── remaining model-facing rows（改动项 6）──
+          # ── remaining model-facing rows（plugin-manager 与 plugin-market 保持基线禁用态）──
           - id: tool-ask-user
             name: '@deepseek-ai/dsh-tool-ask-user'
           - id: tool-todo
@@ -230,4 +211,7 @@
             name: '@deepseek-ai/dsh-tool-present'
           - id: tool-plugin-manager
             name: '@deepseek-ai/dsh-plugin-manager/tools'
+            disabled: true
+          - id: tool-plugin-market
+            name: '@deepseek-ai/dsh-plugin-market/tools'
             disabled: true

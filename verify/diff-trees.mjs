@@ -18,9 +18,9 @@ import { loadLocalPlaneOrSkip, LOCAL_DIR } from '../tools/_local-config.mjs';
 
 const config = await loadLocalPlaneOrSkip('verify/diff-trees.mjs（两棵安装树的差异对照器）');
 const A = config.evidenceTree['017'];
-const B = config.evidenceTree['020'];
+const B = config.evidenceTree['021'];
 if (A === undefined || B === undefined) {
-  console.error(`两档树都要有来源才能对照（017=${String(A)} 020=${String(B)}）。`);
+  console.error(`两档树都要有来源才能对照（017=${String(A)} 021=${String(B)}）。`);
   console.error(`在 ${LOCAL_DIR}/config.mjs 的 evidenceTree 里补齐，`
     + '或设环境变量 DSAT_HOST_MODULES。');
   process.exit(2);

@@ -8,7 +8,8 @@
  * 3. **区间合法**：`:A-B` 形态要求 A ≤ B 且 B 在范围内；
  * 4. **四字段齐**：每个 `## F…` 条目里"现行值 / 依据 / 核销日期 / 更新入口"各恰好一处。
  *
- * 三类前缀：`[0.2.0]` → `'020'` 树、`[0.1.7]` → `'017'` 树、`PKGS/` 与未标前缀 → `'015'` 树。
+ * 四类前缀：`[0.2.1]` → `'021'` 树（当前线，缺省 = 宿主锚同根）、`[0.2.0]` → `'020'`
+ * 树（历史线，须显式配置）、`[0.1.7]` → `'017'` 树、`PKGS/` 与未标前缀 → `'015'` 树。
  *
  * ## 登记簿与树根都不在代码里
  *
@@ -26,7 +27,7 @@
  * stdout 的形态在默认沙箱下必成假红。分析逻辑以纯函数导出、直接吃文本，
  * 变异脚本不起子进程，默认沙箱下即可运行。
  *
- * 用法：`node verify/check-facts-anchors.mjs [--facts <路径>] [--tree020 <路径>] [--tree017 <路径>] [--tree015 <路径>]`
+ * 用法：`node verify/check-facts-anchors.mjs [--facts <路径>] [--tree021 <路径>] [--tree020 <路径>] [--tree017 <路径>] [--tree015 <路径>]`
  */
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -36,21 +37,22 @@ import { LOCAL_DIR, loadLocalPlaneOrSkip } from '../tools/_local-config.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
 const COMMON_DIRS = new Set(['lib', 'types', 'presets', 'src', 'dist', 'node_modules']);
-const CITATION = /(?:\[0\.1\.7\]\s*|\[0\.2\.0\]\s*|PKGS\/)?((?:@[^/\s]+\/)?[A-Za-z0-9._-]+)\/([\w./-]+?\.(?:js|mjs|cjs|ts|d\.ts|yml|yaml|json)):(\d+)(?:-(\d+))?/g;
+const CITATION = /(?:\[0\.2\.1\]\s*|\[0\.2\.0\]\s*|\[0\.1\.7\]\s*|PKGS\/)?((?:@[^/\s]+\/)?[A-Za-z0-9._-]+)\/([\w./-]+?\.(?:js|mjs|cjs|ts|d\.ts|yml|yaml|json)):(\d+)(?:-(\d+))?/g;
 const FIELDS = ['现行值', '依据', '核销日期', '更新入口'];
 
 /**
  * 分析一份事实登记簿文本。
  *
  * @param {string} text - 登记簿全文。
- * @param {{ tree020?: string, tree017?: string, tree015?: string, repoRoot?: string }} [options]
- *   三棵安装树与本仓根。**树可以是 `undefined`**：那一档的引用逐条记为 `TREE-ABSENT`
+ * @param {{ tree021?: string, tree020?: string, tree017?: string, tree015?: string, repoRoot?: string }} [options]
+ *   四棵安装树与本仓根。**树可以是 `undefined`**：那一档的引用逐条记为 `TREE-ABSENT`
  *   并计入 `treeAbsent`，不算失败项——缺配置与"引用错误"是两件事，不能混。
  * @returns {{ citations: number, ok: number, viaRepoFallback: number, treeAbsent: number,
  *   hardErrors: number, fieldProblems: number, entryCount: number, report: string[] }}
  *   读数与逐行报告。
  */
 export function analyzeFacts(text, options = {}) {
+  const TREE_021 = options.tree021;
   const TREE_020 = options.tree020;
   const TREE_017 = options.tree017;
   const TREE_015 = options.tree015;
@@ -75,13 +77,14 @@ export function analyzeFacts(text, options = {}) {
   }
   for (const current of blocks) {
     const joined = current.lines.map((l) => l.text).join('\n');
-    const entryTree = /\[0\.2\.0\]/.test(joined) ? '020' : (/\[0\.1\.7\]/.test(joined) ? '017' : '015');
+    const entryTree = /\[0\.2\.1\]/.test(joined) ? '021' : (/\[0\.2\.0\]/.test(joined) ? '020' : (/\[0\.1\.7\]/.test(joined) ? '017' : '015'));
     const packages = [...joined.matchAll(/(?:@[A-Za-z0-9._-]+\/)?[A-Za-z0-9._-]+\/(?=[\w./-]+?\.(?:js|mjs|cjs|ts|d\.ts|yml|yaml|json):\d)/g)]
       .map((m) => m[0].slice(0, -1))
       .filter((name) => !COMMON_DIRS.has(name));
     let lastPackage = '';
     for (const line of current.lines) {
       for (const match of line.text.matchAll(CITATION)) {
+        const explicit021 = /\[0\.2\.1\]/.test(match[0]);
         const explicit020 = /\[0\.2\.0\]/.test(match[0]);
         const explicit017 = /\[0\.1\.7\]/.test(match[0]);
         const explicit015 = /PKGS\//.test(match[0]);
@@ -95,7 +98,7 @@ export function analyzeFacts(text, options = {}) {
           rel: bare ? `${match[1]}/${match[2]}` : match[2],
           from: Number(match[3]),
           to: match[4] === undefined ? Number(match[3]) : Number(match[4]),
-          tree: explicit020 ? '020' : (explicit015 ? '015' : (explicit017 ? '017' : entryTree))
+          tree: explicit021 ? '021' : (explicit020 ? '020' : (explicit015 ? '015' : (explicit017 ? '017' : entryTree)))
         });
       }
     }
@@ -114,7 +117,9 @@ export function analyzeFacts(text, options = {}) {
    * （形如 `lib/jobs.js:458-468`），两者写法一样、只能靠"文件在不在"分辨。
    */
   function resolve(citation) {
-    const treeRoot = citation.tree === '017' ? TREE_017 : (citation.tree === '020' ? TREE_020 : TREE_015);
+    const treeRoot = citation.tree === '021' ? TREE_021
+      : (citation.tree === '020' ? TREE_020
+        : (citation.tree === '017' ? TREE_017 : TREE_015));
     if (treeRoot === undefined) return { absent: true };
     const roots = [
       join(treeRoot, citation.pkg, citation.rel),
@@ -222,16 +227,18 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.
     process.exit(0);
   }
 
+  const TREE_021 = argOf('--tree021', config.evidenceTree['021']);
   const TREE_020 = argOf('--tree020', config.evidenceTree['020']);
   const TREE_017 = argOf('--tree017', config.evidenceTree['017']);
   const TREE_015 = argOf('--tree015', config.evidenceTree['015']);
 
   console.log(`事实依据可解析性：${FACTS}`);
+  console.log(`  0.2.1 树：${TREE_021 ?? '（无来源，该档跳过）'}`);
   console.log(`  0.2.0 树：${TREE_020 ?? '（无来源，该档跳过）'}`);
   console.log(`  0.1.7 树：${TREE_017 ?? '（无来源，该档跳过）'}`);
   console.log(`  0.1.5 树：${TREE_015 ?? '（无来源，该档跳过）'}`);
   const result = analyzeFacts(readFileSync(FACTS, 'utf8'), {
-    tree020: TREE_020, tree017: TREE_017, tree015: TREE_015
+    tree021: TREE_021, tree020: TREE_020, tree017: TREE_017, tree015: TREE_015
   });
   for (const line of result.report) console.log(line);
   console.log(`\n引用 ${result.citations} 处：可解析 ${result.ok}（其中经本仓回退 ${result.viaRepoFallback}）、`

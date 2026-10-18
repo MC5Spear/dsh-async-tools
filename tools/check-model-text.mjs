@@ -105,6 +105,12 @@ const ALLOWLIST = {
     { needle: 'Session 注册表缺席', why: 'stderr 通告（emitLifecycleNotice），操作者一侧（sessions 缺席只跳父继承分支）' },
     { needle: '顶层新会话采样不受影响', why: '同上通告的续行字符串，操作者一侧' }
   ],
+  // startActivation result 观察通道的两条诊断（emitLifecycleNotice → stderr）：
+  // 子代理非完成结局/结果通道拒绝是操作者线索，最终回答走宿主通知（设计 §3.3）。
+  'agent.js': [
+    { needle: '以非完成结局收场', why: 'stderr 通告（emitLifecycleNotice），操作者一侧（result 观察通道）' },
+    { needle: '结果通道拒绝（基础设施故障）', why: '同上通道的拒绝分支通告，操作者一侧' }
+  ],
   // 静默失败签名 2 的 ZH 拒绝锚：**判定常量**——匹配的是命令输出文本，不是面向模型的文案
   // （EN 对零 CJK 不触发本层；文案本身在 text.js 的 note.silentDenied）。
   'silent-failure.js': [

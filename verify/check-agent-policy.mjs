@@ -26,7 +26,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
 
 /**
- * 宿主源在 0.2.0 线树里的相对位置。
+ * 宿主源在 0.2.1 线树里的相对位置。
  *
  * 树根**不在这里**——它经 `tools/_local-config.mjs` 从本机侧读（或环境变量
  * `DSAT_HOST_MODULES`）。写死树根会让仓内多处各写一份，漏改一处不会有任何检查器红。
@@ -81,7 +81,7 @@ export function analyzeAgentPolicy(texts) {
     report.push(`${id} MISSING ${label}：${why}`);
   };
   if (texts.hostText === null) {
-    red('HOST', '宿主源文件', '读不到（0.2.0 树缺席或路径不对——缺树即红，不许静默跳过）');
+    red('HOST', '宿主源文件', '读不到（0.2.1 树缺席或路径不对——缺树即红，不许静默跳过）');
   } else {
     for (const [id, re, label] of HOST_ANCHORS) {
       if (re.test(texts.hostText)) report.push(`${id} OK       ${label}`);
@@ -104,14 +104,14 @@ const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? '').href;
 if (isMain) {
   const hostArgIdx = process.argv.indexOf('--host-file');
   const config = await loadLocalPlaneOrSkip('verify/check-agent-policy.mjs（模型策略钉版看守）');
-  const tree020 = config.evidenceTree['020'];
-  if (hostArgIdx < 0 && tree020 === undefined) {
-    console.error('宿主锚无来源：配置里既没有 evidenceTree[\'020\']，也没有 hostModules。');
+  const tree021 = config.evidenceTree['021'];
+  if (hostArgIdx < 0 && tree021 === undefined) {
+    console.error('宿主锚无来源：配置里既没有 evidenceTree[\'021\']，也没有 hostModules。');
     console.error(`二选一：在 ${LOCAL_DIR}/config.mjs 里写 hostModules，或设环境变量 DSAT_HOST_MODULES；`
       + '也可以临时用 --host-file <路径> 覆盖。');
     process.exit(2);
   }
-  const hostPath = hostArgIdx >= 0 ? process.argv[hostArgIdx + 1] : join(tree020, ...HOST_REL);
+  const hostPath = hostArgIdx >= 0 ? process.argv[hostArgIdx + 1] : join(tree021, ...HOST_REL);
   const readOr = (path) => {
     try {
       return readFileSync(path, 'utf8');
