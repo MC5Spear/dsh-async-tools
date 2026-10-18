@@ -350,13 +350,14 @@ hostTest('async_wait_agent（absent 仲裁·existed）：目录行在 + 注册�
   freezeTimers(f.ctx);
   installChildren(f, { children: [runningChild()] });
   f.ctx.agents = { get: () => undefined };
-  agent.inbox.nextStep.push({ id: 'relay-2', source: { kind: 'agent-message', form: 'relay' } });
+  agent.inbox.nextStep.push({ id: 'relay-2', source: { kind: 'agent-message', form: 'relay', senderSessionId: CHILD } });
   const tool = createWaitAgentTool(f.ctx, config);
 
   const result = await withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec));
   assert.equal(result.status, 'settled', '目录有行 = 存在过 → noResident 停止态');
   assert.match(result.note, /no longer resident in the agent registry/, 'via=noResident');
   assert.doesNotMatch(result.note, /\(\)/, 'relay 无摘要时括号不得空置（回退文案在场）');
+  assert.match(result.note, new RegExp(CHILD), '回退文案点名消息来源（senderSessionId，盲测第三轮低①）');
   agent.inbox.nextStep.length = 0;
 });
 

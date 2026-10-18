@@ -30,16 +30,27 @@ test('wakesWait/classifyWake：form notice / relay 命中（结算通知与转�
   assert.equal(wake.summary, 'child done', 'source.summary 透传');
 });
 
-test('classifyWake：summary 空档回退——relay/notice 无摘要给最小描述，user 维持空串（盲测第二轮发现④）', () => {
+test('classifyWake：summary 空档回退——relay/notice 无摘要给最小描述并点名来源，user 维持空串（盲测第二轮发现④、第三轮低①）', () => {
   // "A processable message arrived ()" 的括号空置不满足需求 §2.1.3（结束
   // 原因清楚可见）；user 插话的 summary 不进任何渲染模板，维持既有空串契约。
-  const relayEn = classifyWake({ id: 'm3', source: { kind: 'agent-message', form: 'relay' } }, 'en');
+  // 宿主契约：relay / 结算通知 source 恒带 senderSessionId——回退优先点名。
+  const sender = 'child-77';
+  const relayEn = classifyWake(
+    { id: 'm3', source: { kind: 'agent-message', form: 'relay', senderSessionId: sender } }, 'en'
+  );
   assert.equal(relayEn.via, 'relay');
-  assert.ok(relayEn.summary.length > 0 && /^[A-Za-z]/.test(relayEn.summary), `en 回退为可读英文短语（实得 ${JSON.stringify(relayEn.summary)}）`);
-  const relayZh = classifyWake({ id: 'm4', source: { kind: 'agent-message', form: 'relay' } }, 'zh');
-  assert.ok(relayZh.summary.length > 0 && relayZh.summary !== relayEn.summary, 'zh 回退为中文短语（两语言独立）');
-  const noticeBlank = classifyWake({ id: 'm5', source: { kind: 'x', form: 'notice', summary: '   ' } }, 'en');
-  assert.ok(noticeBlank.summary.length > 0, '纯空白 summary 视同缺席，同样回退');
+  assert.ok(relayEn.summary.includes(sender) && /^[A-Za-z]/.test(relayEn.summary),
+    `en 回退点名来源 id（实得 ${JSON.stringify(relayEn.summary)}）`);
+  const relayZh = classifyWake(
+    { id: 'm4', source: { kind: 'agent-message', form: 'relay', senderSessionId: sender } }, 'zh'
+  );
+  assert.ok(relayZh.summary.includes(sender) && relayZh.summary !== relayEn.summary, 'zh 回退点名来源且两语言独立');
+  const noticeBlank = classifyWake(
+    { id: 'm5', source: { kind: 'subagent-settled', form: 'notice', senderSessionId: sender, summary: '   ' } }, 'en'
+  );
+  assert.ok(noticeBlank.summary.includes(sender), '纯空白 summary 视同缺席，同样点名回退');
+  const oldShape = classifyWake({ id: 'm7', source: { kind: 'agent-message', form: 'relay' } }, 'en');
+  assert.ok(oldShape.summary.length > 0 && !oldShape.summary.includes(sender), '老形状无 senderSessionId → 无名占位（防御旧版本通知）');
   const user = classifyWake({ id: 'm6', source: { kind: 'user' } }, 'en');
   assert.equal(user.summary, '', 'user 插话不回退（维持既有契约）');
 });
