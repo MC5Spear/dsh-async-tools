@@ -145,7 +145,7 @@ hostTest('async_wait_job：未知作业 id 必须报错并指向 job_list', asyn
   );
 });
 
-hostTest('async_wait_job（0.2.0-rc.2）：jobs 调用全部带 caller=SessionId（归属栅栏）', async () => {
+hostTest('async_wait_job（0.2.1-rc.2）：jobs 调用全部带 caller=SessionId（归属栅栏）', async () => {
   const f = fakeCtx();
   const { waitCalls, listCalls, readCalls } = installJobs(f, { status: 'completed' });
   const tool = createWaitJobTool(f.ctx, config);
@@ -169,7 +169,7 @@ hostTest('async_wait_job：作业已终态 → 屏障直接返回输出，不发
   assert.equal(waitCalls.length, 0, '已终态时不得再等待');
 });
 
-hostTest('async_wait_job（0.2.0-rc.2）：多 chunk 拼接 + lossy 前缀标记', async () => {
+hostTest('async_wait_job（0.2.1-rc.2）：多 chunk 拼接 + lossy 前缀标记', async () => {
   const f = fakeCtx();
   installJobs(f, {
     status: 'completed',
@@ -183,7 +183,7 @@ hostTest('async_wait_job（0.2.0-rc.2）：多 chunk 拼接 + lossy 前缀标记
   assert.match(result.output, /AAABBBE$/, 'chunks 按顺序拼接（含全部 channel）');
 });
 
-hostTest('async_wait_job（0.2.0-rc.2）：stopping 是中间态 → 仍按 running 返回', async () => {
+hostTest('async_wait_job（0.2.1-rc.2）：stopping 是中间态 → 仍按 running 返回', async () => {
   // kill 已请求、进程未收尾：此时返回 running 句柄是对的，模型再等一次即可。
   const f = fakeCtx();
   freezeTimers(f.ctx);
@@ -195,7 +195,7 @@ hostTest('async_wait_job（0.2.0-rc.2）：stopping 是中间态 → 仍按 runn
   assert.equal(waitCalls.length, 1);
 });
 
-hostTest('async_wait_job（0.2.0-rc.2）：jobs.wait 超时是 resolve 回 running 视图 → 不报错，走 running 分支', async () => {
+hostTest('async_wait_job（0.2.1-rc.2）：jobs.wait 超时是 resolve 回 running 视图 → 不报错，走 running 分支', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   // 让 jobs.wait 自行到期（确定性驱动），不依赖被替换的定时器。
@@ -219,7 +219,7 @@ hostTest('async_wait_job（0.2.0-rc.2）：jobs.wait 超时是 resolve 回 runni
   assert.equal(probes.killCalls, 0);
 });
 
-hostTest('async_wait_job（0.2.0-rc.2）：到期双源合并——本地 deadline 与 jobs.wait 的到时信号谁先到，返回体都逐字段相等', async () => {
+hostTest('async_wait_job（0.2.1-rc.2）：到期双源合并——本地 deadline 与 jobs.wait 的到时信号谁先到，返回体都逐字段相等', async () => {
   // 合并规则的"两路同时触发"形态：真实调度里本地 timer 与
   // jobs.wait 的到时信号几乎同拍，**谁先到都不允许改变返回体**（终态只认复查快照
   // （list 基）、waited_ms 只用本地时钟）。两腿对照，作业全程 running：
@@ -251,7 +251,7 @@ hostTest('async_wait_job（0.2.0-rc.2）：到期双源合并——本地 deadli
     '两条到时信号谁先到，返回体都必须逐字段相等（到期双源合并规则）');
 });
 
-hostTest('async_wait_job（0.2.0-rc.2）：jobs.wait 被 abort → 竞速收敛不报错（raceAbort 的撤销路径）', async () => {
+hostTest('async_wait_job（0.2.1-rc.2）：jobs.wait 被 abort → 竞速收敛不报错（raceAbort 的撤销路径）', async () => {
   const f = fakeCtx();
   // 注意**不冻定时器**：本用例要的就是本地 deadline 真实到期（冻住会四路全挂死）。
   // jobs.wait 装成永不自行 resolve（waitDelayMs=0）——竞速只能由本地 deadline 收敛，

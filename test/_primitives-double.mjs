@@ -13,10 +13,18 @@
  * 订阅重渲染、字段渲染、启用条件、卸载丢弃）；**真实集成**由验证实例端到端验收承担——
  * 浏览器侧经冻结平台模块表拿到的是真 primitives。
  *
- * ## 忠实性口径（基准 = 0.2.0-rc.2，验证实例同版部署）
+ * ## 忠实性口径（转录基准 = [0.2.0-rc.2]；0.2.1 侧可用性已证、逐行基准缺席）
  *
- * 以下实现**逐行转录**自 [0.2.0-rc.2] `dsh-client-ui-primitives/lib/index.js`
- * （行号为转录时亲读核对）：`settingsNumberField` `:7110-7124`；
+ * 0.2.1-rc.2 的安装树**不再单独发布** `dsh-client-ui-primitives` 包（client-ui
+ * 拆成按域包），但 web 外壳的**建资产仍以同一模块 id 内联提供它**（实测
+ * `dsh-web-frontend/dist/assets/index-*.js` 的冻结模块表含
+ * `"@deepseek-ai/dsh-client-ui-primitives"` 键，本包消费的全部导出
+ * `SettingsFormModel` / `settingsNumberField` / `settingsTextField` /
+ * `SettingsForm` / `SettingsValueField` / `IconQuestionOutlineRegular`
+ * 在建资产中都在场）——client.js 的 `require` 在 0.2.1 运行时有效。
+ * 替身的**逐行转录基准**因此仍是 [0.2.0-rc.2] 的独立包源码（唯一可逐行读的
+ * 文本，行号为转录时亲读核对）：
+ * `settingsNumberField` `:7110-7124`；
  * `settingsTextField` `:7131-7143`；`SettingsFormModel` `:7151-7377`（含
  * `plan`/`save`/`stage`/`field`/`shell`/`actions`/`dispose`）；`SettingsForm`
  * `:6918-6956`；`SettingsValueField` `:6973-7043`；`Switch` `:3394-3408`；
@@ -25,13 +33,14 @@
  * `createSnapshotStore`，Node 侧同样不可达；对外仍是
  * `{getSnapshot, subscribe, set}`）；② 组件用 `React.createElement` 而非 `jsx()` 运行时，
  * 类名用可读字面量（测试断言结构/属性，不断言类名）；③ `SettingsValueField`
- * 整体省略 help 子系统（helpButton/help region/helpId——本包按 0.2.0-rc.2 基线，
- * 字段壳全部走自绘 `FieldShell`，不使用该控件，替身仅为对照保留结构）；
+ * 整体省略 help 子系统（helpButton/help region/helpId——本包字段壳全部走自绘
+ * `FieldShell`，不使用该控件，替身仅为对照保留结构）；
  * ④ `IconQuestionOutlineRegular` 只替形状（`size` 透传为 svg 尺寸），图标本体
  * 由真机视觉验收承担。
  *
  * 实现审查应把本文件与官方源码逐行对照（这是它最大的风险：替身漂移会让单元层
- * 假绿）。
+ * 假绿）；0.2.1 侧的对照入口是建资产（模块表键 `client-ui-primitives` 指向的
+ * 内联块），真机行为由验证实例端到端承担。
  */
 
 /** 手写快照存储：对外接口 = `{getSnapshot, subscribe, set}`（官方 `createSnapshotStore` 的最小集）。 */

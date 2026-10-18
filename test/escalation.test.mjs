@@ -248,7 +248,7 @@ hostTest('R11：没有审批服务 → 抛出可读错误且不启动进程', as
 
 hostTest('同级与更窄目标都在启动前可读拒绝、零注册零启动（需求 §6.1）', async () => {
   // 本包口径严于宿主助手：宿主 `approveEscalation` 对**同级**免审批直接放行
-  // （[0.2.0-rc.2] `dsh-sandbox/lib/index.js:101` 早退）；需求 §6.1 要求非严格
+  // （[0.2.1-rc.2] `dsh-sandbox/lib/index.js:101` 早退）；需求 §6.1 要求非严格
   // 加宽一律**启动前**可读拒绝——同级不是加宽请求，更窄/不在梯上同样拒绝，
   // 两类都给本包口径的双语文案，进程一个都不起。
   const { f, seen, asks } = confinedCtx('allowed-once');

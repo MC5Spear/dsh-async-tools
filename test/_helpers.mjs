@@ -1,5 +1,5 @@
 /**
- * 测试替身：不启动真实进程、不依赖 dsh 宿主的假件（0.2.0-rc.2 契约）。
+ * 测试替身：不启动真实进程、不依赖 dsh 宿主的假件（0.2.1-rc.2 契约）。
  *
  * 每个假件只实现被测代码**真正调用到**的成员；任何契约漂移都会立刻变成测试失败，
  * 而不是被宽容的 mock 掩盖。
@@ -75,7 +75,7 @@ export function checkedTool(tool) {
 }
 
 /**
- * 行为完整的假作业注册表（0.2.0-rc.2 `JobRegistry` 的测试投影）。
+ * 行为完整的假作业注册表（0.2.1-rc.2 `JobRegistry` 的测试投影）。
  *
  * 只实现本插件真正调用到的成员（start/get/read/wait/list），外加测试探针
  * （settleJob / views / waitersOf / wasAwaited / readCalls）。两个关键行为纪律：
@@ -85,7 +85,7 @@ export function checkedTool(tool) {
  *   与真实契约一致（`JobHooks.done: Promise<JobOutcome>`）；
  * - **wait 双路径**：超时是 **resolve 回当时的 JobView**（可能是 running），
  *   abort 才 reject（`"wait aborted"`）；被结算释放的活 wait 记 `awaited` 旗标
- *   （0.2.0-rc.2 通知语义的判据）。
+ *   （0.2.1-rc.2 通知语义的判据）。
  *
  * @param {object} [options] - `{ now }` 可注入时钟。
  * @returns {object} `{ service, settleJob, views, waitersOf, wasAwaited, readCalls, specs }`。
@@ -179,7 +179,7 @@ export function createFakeJobs({ now = () => Date.now() } = {}) {
       job.cancel = hooks.cancel;
       void Promise.resolve(hooks.done).then(
         (outcome) => settle(job, outcome ?? { status: 'completed' }),
-        // 宿主 `[0.2.0-rc.2] dsh-jobs-local/lib/index.js:472-478`：done 拒绝 → 作业按 failed 结算。
+        // 宿主 `[0.2.1-rc.2] dsh-jobs-local/lib/index.js:476-487`：done 拒绝 → 作业按 failed 结算。
         // 本包生产者的 done 自分类（jobs.js 的 done 链不拒绝），此分支是替身与宿主
         // 契约保持一致的回退路径——没有它，done 拒绝在 fake 上变成 unhandled rejection
         // 且作业永不结算。
@@ -548,7 +548,7 @@ export function guardedWaitAgentCtx() {
 }
 
 /**
- * 构造假 shell 进程句柄（0.2.0-rc.2 `ShellExecution` 形状）。
+ * 构造假 shell 进程句柄（0.2.1-rc.2 `ShellExecution` 形状）。
  *
  * - `readOutput()` 按真实契约返回**增量**结构 `{ delta, lossy, stdoutSpillPath? }`
  *   ——消费型游标（每次只给新增量，不持续读就丢字节）；
@@ -592,7 +592,7 @@ export function fakeProc({
     exitCode,
     signal,
     done,
-    /** 非消费偏移读（observed.stderr 在 spawn 失败时承载失败说明——0.2.0-rc.2 契约）。 */
+    /** 非消费偏移读（observed.stderr 在 spawn 失败时承载失败说明——0.2.1-rc.2 契约）。 */
     observed: {
       stdout: makeReader(text),
       stderr: makeReader(spawnFailed)

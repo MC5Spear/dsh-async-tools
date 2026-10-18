@@ -110,7 +110,7 @@ hostTest('async_run（R32/R33）：注册字段——label=命令原文、progre
   assert.equal(spec.kind, config.jobKind);
   // label 是命令原文（不截断、不换用 description； pwsh 先例）。
   assert.equal(spec.label, 'build --flag with spaces');
-  // [0.2.0-rc.2]：owner 是 SessionId（agent.id）。
+  // [0.2.1-rc.2]：owner 是 SessionId（agent.id）。
   assert.equal(spec.owner, exec.agent.id, '作业归属发起 agent 的 SessionId');
   // 通知截断口径：outputLimitBytes 必须还在（字节量纲）。
   assert.ok(Number.isSafeInteger(spec.outputLimitBytes) && spec.outputLimitBytes > 0,
@@ -158,7 +158,7 @@ hostTest('async_run（R32·prep 窗口）：拉式源在 proc 到位前被泵 �
   assert.deepEqual(f.jobsFake.chunksOf(jobId), [], '空读不得产生分块');
 });
 
-hostTest('async_run（0.2.0-rc.2）：请求显式 onExpiry:"none"——内置到期杀进程与本插件语义正面冲突', async () => {
+hostTest('async_run（0.2.1-rc.2）：请求显式 onExpiry:"none"——内置到期杀进程与本插件语义正面冲突', async () => {
   const f = fakeCtx();
   const { proc } = fakeProc({ text: 'ok' });
   const seen = [];
@@ -456,7 +456,7 @@ hostTest('async_run（R32-d）：插话与结算同拍 → 完成优先，返回
 
 hostTest('async_run：结算挂在 done.then 上 → start() 返回后同步读必然是 running（注册即终态读不到）', async () => {
   // 这条用例证明的是**否定命题**：注册复查窗口在同构实现上不存在。
-  // `JobHooks.done: Promise<JobOutcome>`（[0.2.0-rc.2] dsh-jobs/lib/types/types.d.ts:96-110）
+  // `JobHooks.done: Promise<JobOutcome>`（[0.2.1-rc.2] dsh-jobs/lib/types/types.d.ts:146-158）
   // 决定了结算至少晚一个 microtask——即便生产者的 done 在 start 内就已 resolve。
   const store = new Map();
   const settled = [];
