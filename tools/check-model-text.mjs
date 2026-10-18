@@ -95,7 +95,8 @@ const ALLOWLIST = {
     { needle: 'volatile 提交未生效', why: 'stderr 通告（emitLifecycleNotice），操作者一侧' },
     { needle: '宿主行配置自检失败', why: '首次装载降级的 logger.warn，操作者一侧' },
     { needle: '宿主行忽略持久化的非法设置', why: '首次装载降级的 stderr 通告，操作者一侧' },
-    { needle: '设置变更广播失败', why: '悬空动态 import 的 .catch warn，操作者一侧（快照已落，只影响描述刷新转达）' }
+    { needle: '设置变更广播失败', why: '悬空动态 import 的 .catch warn，操作者一侧（快照已落，只影响描述刷新转达）' },
+    { needle: '降级警示的描述刷新失败', why: '降级登记（markDegraded）同款动态 import 的 .catch warn，操作者一侧（登记已落，只影响警示段刷新转达）' }
   ],
   // 装载期的两条降级通告（emitLifecycleNotice → stderr）：与 index.js 的
   // 「设置快照缺席」同类先例——部署期线索给操作者，不进模型上下文。

@@ -322,6 +322,61 @@ hostTest('async_wait_agent（入口三态）：注册表无驻留（absent）→
   assert.match(result.note, /no longer resident in the agent registry/, 'via=noResident');
 });
 
+// ── absent 仲裁三分（盲测第二轮发现①：对从未存在的 id 不得套停止态承诺） ──
+
+hostTest('async_wait_agent（absent 仲裁·never）：从未存在的 id + 先到 relay 消息 → not_found，不得承诺终答', async () => {
+  // 真机形态：等待开始前收件箱里滞留一条转达消息（form=relay、无摘要），
+  // 注册表查无此人（absent），目录里也从来没有这个 id——旧代码在入口就套
+  // 「不再观察到运行 + 终答稍后送达」的停止态，对不存在的目标这份承诺永不
+  // 兑现（需求 §2.3.3 查无与查询失败分开、§2.1.3 不把无法证实的写成事实）。
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  installChildren(f, { children: [] });
+  f.ctx.agents = { get: () => undefined };
+  agent.inbox.nextStep.push({ id: 'relay-1', source: { kind: 'agent-message', form: 'relay' } });
+  const tool = createWaitAgentTool(f.ctx, config);
+
+  const result = await withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec));
+  assert.equal(result.status, 'not_found', '目录查无 + 注册表查无 = 从未存在 → not_found');
+  assert.equal(result.agent_id, CHILD);
+  assert.ok(Array.isArray(result.known_children), 'not_found 附已知子代理清单（与屏障耗尽出口同款）');
+  agent.inbox.nextStep.length = 0;
+});
+
+hostTest('async_wait_agent（absent 仲裁·existed）：目录行在 + 注册表查无 + 先到 relay → settled（noResident）', async () => {
+  // 存在过但已不驻留：仲裁查目录有行 → 维持停止态交回（不因仲裁误伤真目标）；
+  // 同时锁 relay 无摘要的兜底文案（括号不再空置，需求 §2.1.3）。
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  installChildren(f, { children: [runningChild()] });
+  f.ctx.agents = { get: () => undefined };
+  agent.inbox.nextStep.push({ id: 'relay-2', source: { kind: 'agent-message', form: 'relay' } });
+  const tool = createWaitAgentTool(f.ctx, config);
+
+  const result = await withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec));
+  assert.equal(result.status, 'settled', '目录有行 = 存在过 → noResident 停止态');
+  assert.match(result.note, /no longer resident in the agent registry/, 'via=noResident');
+  assert.doesNotMatch(result.note, /\(\)/, 'relay 无摘要时括号不得空置（兜底文案在场）');
+  agent.inbox.nextStep.length = 0;
+});
+
+hostTest('async_wait_agent（absent 仲裁·unknown）：目录查询失败 + absent + 先到 relay → 运行句柄＋未证实，不冒称查无', async () => {
+  // 查询失败 ≠ 查无（需求 §2.3.3）：仲裁读不了目录时存在性未定，交运行句柄
+  // 与未证实口径（不制造 not_found，也不制造停止态）。
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  installChildren(f, { children: [], throws: true });
+  f.ctx.agents = { get: () => undefined };
+  agent.inbox.nextStep.push({ id: 'relay-3', source: { kind: 'agent-message', form: 'relay' } });
+  const tool = createWaitAgentTool(f.ctx, config);
+
+  const result = await withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec));
+  assert.equal(result.status, 'running', '存在性未定 → 不判 not_found 也不判 settled');
+  assert.match(result.note, /A processable message arrived \(/, '唤醒说明在场');
+  assert.doesNotMatch(result.note, /no longer resident/, '不得套停止态文案');
+  agent.inbox.nextStep.length = 0;
+});
+
 hostTest('async_wait_agent（入口三态）：注册表查询抛错/服务缺席（unknown）→ 照常进入等待', async () => {
   const f = fakeCtx();
   // 不冻结：预算到期要真的到（unknown 只是不在入口提前返回，等待语义照旧）。

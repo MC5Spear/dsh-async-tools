@@ -440,8 +440,9 @@ test('T12：设置快照链的三种故障姿态——首播降级、刷新保�
   // ② 刷新失败 = 用户输入问题（跨字段违例）→ **保旧快照 + warn + stderr 说出来**
   //    （绝不打掉宿主行，也绝不静默——"保存成功但行为没变且零线索"是要避免的缺陷形态）；
   // ③ 宿主行卸载 → disposer 清空快照（需求 §7.2：插件效应完全跟随插件生命周期）。
-  const { attachSnapshotSource, readSnapshot, clearSnapshot } = await import('../lib/settings.js');
+  const { attachSnapshotSource, readSnapshot, clearSnapshot, readDegraded, clearDegraded } = await import('../lib/settings.js');
   clearSnapshot();
+  clearDegraded();
 
   // ① 首播非法（持久化着 min > max）→ 降级而不是抛。
   //：stderr 通告行也必须有行为断言——只断言 warn 的话，删掉 notice 出口
@@ -465,6 +466,7 @@ test('T12：设置快照链的三种故障姿态——首播降级、刷新保�
   }
   assert.equal(degradedWiring.seeded, true);
   assert.equal(degradedWiring.degraded, true, '降级状态必须可观察');
+  assert.ok(String(readDegraded()).includes('minWaitMs > maxWaitMs'), '首播降级同样登记（模型可见侧；detail 带日志前缀原文）');
   assert.equal(readSnapshot().minWaitMs, 250, '降级快照 = 出厂默认（minWaitMs）');
   assert.equal(readSnapshot().maxResultChars, 30000, '降级快照 = 出厂默认（maxResultChars）');
   assert.ok(degradeEvents.some((message) => /宿主行配置自检失败/.test(String(message)) && /按出厂默认运行/.test(String(message))),
@@ -480,9 +482,11 @@ test('T12：设置快照链的三种故障姿态——首播降级、刷新保�
   await Promise.resolve();
   await Promise.resolve();
   assert.equal(degradedWiring.degraded, false, '合法提交后降级状态必须复位');
+  assert.equal(readDegraded(), undefined, '首播降级的登记随自愈清空');
   assert.equal(readSnapshot().maxResultChars, 4321, '自愈后快照来自重新物化（不是默认值）');
   degradedWiring.dispose();
   assert.equal(readSnapshot(), undefined);
+  assert.equal(readDegraded(), undefined, '卸载清空降级登记（无跨装载残留）');
 
   // ② 正常首播 + 刷新失败保旧。liveConfig 就是 apply 第二参（= fiber.config）：
   //    每次重物化都从**这个对象**现读——cordis 没有 ctx.config 访问接口。
@@ -508,6 +512,7 @@ test('T12：设置快照链的三种故障姿态——首播降级、刷新保�
   assert.equal(readSnapshot().maxResultChars, 30000, '刷新失败必须保住旧快照');
   assert.ok(events.some(([kind, message]) => kind === 'warn' && /volatile 提交后配置自检失败/.test(String(message))),
     '必须 warn 说明是哪次提交没生效');
+  assert.ok(String(readDegraded()).includes('minWaitMs > maxWaitMs'), '刷新失败必须登记降级（模型可见侧随描述警示段出现）');
 
   // 刷新成功路径：config 合法变更 → 快照整体替换。
   liveConfig.minWaitMs = 250;
@@ -517,11 +522,49 @@ test('T12：设置快照链的三种故障姿态——首播降级、刷新保�
   await Promise.resolve();
   await Promise.resolve();
   assert.equal(readSnapshot().maxResultChars, 4321, '合法提交后快照必须更新');
+  assert.equal(readDegraded(), undefined, '合法提交自愈——降级登记清空（警示段随刷新消失）');
 
   // ③ 卸载：disposer 清快照 + 撤监听。
   wiring.dispose();
   assert.equal(readSnapshot(), undefined, '宿主行卸载必须清空快照（无跨装载残留）');
   assert.equal(listener, undefined, '事件监听必须一并撤销');
+});
+
+test('T12b：降级登记的模型可见侧——seedDegraded/readDegraded/clearDegraded + 描述警示段', async () => {
+  // 需求 §5.1「运行中收到非法配置时保留上一合法值并告警」：stderr 告警只到
+  // 操作者（设计 §6.3），模型侧的告警载体是**工具描述尾部的警示段**——构建时
+  // 读 `readDegraded()`，有降级就拼段（en/zh 随 agentLang），自愈后消失
+  // （行为差异而非"存在但空"）。真机盲测 2026-10-20 第二轮发现③：此前告警
+  // 只有操作员 stderr，模型无从得知降级事实。
+  const { seedDegraded, clearDegraded, readDegraded } = await import('../lib/settings.js');
+  const { buildToolText } = await import('../lib/descriptions.js');
+  const { resolveConfig } = await import('../lib/config.js');
+  try {
+    clearDegraded();
+    const cleanConfig = resolveConfig({ toolName: 'async_run' });
+    assert.equal(readDegraded(), undefined, '干净状态无降级');
+    assert.ok(!buildToolText('async_run', cleanConfig).description.includes('Live config self-check failed'),
+      '无降级时描述不得出现警示段');
+
+    seedDegraded('minYieldMs > maxYieldMs');
+    assert.equal(readDegraded(), 'minYieldMs > maxYieldMs', '登记原样可读');
+    const enDesc = buildToolText('async_run', cleanConfig).description;
+    assert.ok(enDesc.includes('Live config self-check failed') && enDesc.includes('minYieldMs > maxYieldMs'),
+      '降级时 en 描述尾部必须带警示段与违例明细');
+    for (const name of ['async_wait_job', 'async_wait_agent', 'async_agent', 'async_workflow']) {
+      assert.ok(buildToolText(name, resolveConfig({ toolName: name })).description.includes('Live config self-check failed'),
+        `${name} 的描述同样拼警示段（五个工具一律）`);
+    }
+    const zhConfig = resolveConfig({ toolName: 'async_run', agentLang: 'zh' });
+    assert.ok(buildToolText('async_run', zhConfig).description.includes('生效配置自检失败'),
+      'zh 档警示段为中文');
+
+    clearDegraded();
+    assert.ok(!buildToolText('async_run', cleanConfig).description.includes('Live config self-check failed'),
+      '清空后警示段消失（自愈可见）');
+  } finally {
+    clearDegraded();
+  }
 });
 
 test('T14：lib/ 的裸包 import 清单 ⊆ package.json 的 deps∪peers——漏声明即红', async () => {
