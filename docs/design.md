@@ -322,6 +322,8 @@ loader 给 apply 第二参中的 volatile Ref 在输入与 schema resolve 输出
 
 表单框架与模型用官方件：`SettingsForm`（只读／不可用通告、页脚保存与卸载丢弃）、`SettingsFormModel`（暂存、差集与保存）、`settingsNumberField`／`settingsTextField` spec；布尔控件本体用官方 `P.Switch`，徽标用官方 `P.Tag`（`P.`＝宿主 primitives 命名空间，即 `@deepseek-ai/dsh-client-ui-primitives` 的导入句柄，全文 `P.` 前缀同指）。字段壳统一自绘，取舍依据与度量口径见设计 5.5；主题仅用定义存在的别名 token。
 
+待核验对象：`@deepseek-ai/dsh-client-ui-primitives` 包实体未随目标宿主 `0.2.1-rc.2` 安装树分发，在该安装树中仅作为 `dsh-client-ui-*` 系列包的声明依赖出现。本节与 5.5 中涉及该包的细节断言——primitives 公开导出（含 `P.IconQuestionOutlineRegular`）、`SettingsValueField` 内建帮助形状、`fields.module.css` 逐项度量、`bg-layer-4` 在主题定义表中未定义——当前依据为 `0.2.0` 世代源树与目标版压缩产物的标识符命中，须在取得该包目标版源码或真机 DOM 后重核；重核前不把这些细节当作已证实的目标宿主事实。重核动作见 8.2“按目标 primitives 重核表单替身”。
+
 ### 5.4 草稿、提交与恢复
 
 输入先进入草稿模型。清空输入表示取消该字段的覆盖，恢复默认也只暂存 unset；保存只提交改过的 set／unset，并携 revision 一次 mutate。保存应答为假时按失败处理，草稿保留。
@@ -461,7 +463,7 @@ div.ats-enum-field（字段列；上下 12 px，相邻字段 0.5 px border-l2 �
 
 开关控制结果、描述与纪律三处，全部局限本包两个预设，三处判定时机不同。结果诊断在执行期按调用主体的实际预设判定，读取路径与纪律组稿同一条；非本包两预设时不产生防护内容。
 
-描述警示是装载期静态文本：宿主工具投影按 agent 链分层解析可见工具，描述只取行上注册的静态串（经公开投影接口 `get(name, scope)` 与 `schemas(scope)` 读取），不存在按会话求值描述的机制。描述警示因此按工具行的装载组合判定：本包两份预设补丁的工具行在行配置中携带预设归属声明 `owningPreset`（值为本包预设名；行身份字段，性质同 `toolName`——非 volatile、无默认值，仅两份 patch 文件设置，不是设置字段、不进设置表单），描述警示只出现在携带该声明的工具行；自建预设的工具行不含声明，描述警示不出现，开关不影响其描述。声明是公开挂载入口的一部分，不禁用自定义挂载；自建行显式复制声明视为显式选用防护文本。
+描述警示是装载期静态文本：宿主工具投影按 agent 链分层解析可见工具，描述只取行上注册的静态串（经公开投影接口 `get(name, scope)` 与 `schemas(scope)` 读取），不存在按会话求值描述的机制。描述警示因此按工具行的装载组合判定：本包两份预设补丁的工具行在行配置中携带预设归属声明 `owningPreset`（值为本包预设名；行身份字段，性质同 `toolName`——非 volatile、无默认值，仅两份预设补丁文件设置，不是设置字段、不进设置表单），描述警示只出现在携带该声明的工具行；自建预设的工具行不含声明，描述警示不出现，开关不影响其描述。声明是公开挂载入口的一部分，不禁用自定义挂载；自建行显式复制声明视为显式选用防护文本。
 
 纪律 context 注册留在宿主行，组稿时按实际预设过滤：宿主 `systemPrompt.assemble` 把组稿上下文 `{agent, scope, signal}` 传给每个 context 的 text 函数，text 现读快照开关与目标 agent 的实际预设——经 `sessions.get(agent.id)` 与 `sessionProjections.stateOf(session, 'agentPreset')` 读取，与提问接管判定的预设路径同一条。预设不等于本包两预设之一时返回空串。
 
