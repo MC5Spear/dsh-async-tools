@@ -235,7 +235,7 @@ function mountListener({ timer, clock, config, services }) {
 
 // ── 判定序（J1–J5，经真实接线观察 next() 语义）────────────────────────────
 
-hostTest('inOwnPreset（F3 范围判定底座）：三态读取路径 + 失效安全方向＝关', () => {
+hostTest('inOwnPreset（F3 范围判定基件）：三态读取路径 + 失效安全方向＝关', () => {
   // 与 shouldTakeover 判定②同一条读取路径（sessions.get → stateOf('agentPreset')），
   // 供 lib/jobs.js 的结果诊断范围判定复用——两处口径必须一致。
   const scope = (preset, session = { id: 's1' }) => ({

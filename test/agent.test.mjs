@@ -170,7 +170,7 @@ hostTest('async_agent：note 示例数字随 defaultWaitMs 设置变化（现读
 hostTest('async_agent：startActivation 恰一次，spec 逐字段对齐宿主契约且不含透传键（R13）', async () => {
   const env = agentEnv();
   const tool = checkedTool(createAgentTool(env.ctx, env.view));
-  const exec = { agent: EXEC_AGENT, signal: AbortSignal.abort() };
+  const exec = { agent: EXEC_AGENT, signal: new AbortController().signal };
 
   await tool.execute({ description: '标签甲', prompt: '任务书。' }, exec);
 

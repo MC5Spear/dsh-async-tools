@@ -164,7 +164,7 @@ hostTest('async_wait_job：作业已终态 → 屏障直接返回输出，不发
 
   const result = await tool.execute({ job_id: 'j-1', wait_ms: 30000 }, exec);
   assert.equal(result.status, 'completed');
-  assert.equal(result.output, '[job completed]\ndone!', '输出 = 状态行 + chunks[].text 拼接（0.2.0-rc.2 JobRead；需求 §2.2.2 终态可见）');
+  assert.equal(result.output, '[job completed]\ndone!', '输出 = 状态行 + chunks[].text 拼接（0.2.1-rc.2 JobRead；需求 §2.2.2 终态可见）');
   assert.equal(result.truncated, false);
   assert.equal(waitCalls.length, 0, '已终态时不得再等待');
 });

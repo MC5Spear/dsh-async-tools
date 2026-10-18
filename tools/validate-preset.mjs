@@ -134,7 +134,7 @@ export const EXPECTATIONS = {
       'tool-ask-user', 'tool-todo', 'tool-web', 'present', 'tool-plugin-manager', 'tool-plugin-market'
     ],
     baselineNested: NESTED_ROWS,
-    disabledBoolean: ['tool-bash', 'tool-subagent', 'tool-subagent-fork', 'tool-workflow', 'tool-plugin-manager'],
+    disabledBoolean: ['tool-bash', 'tool-subagent', 'tool-subagent-fork', 'tool-workflow', 'tool-plugin-manager', 'tool-plugin-market'],
     forbidden: ['@deepseek-ai/dsh-tool-pwsh', '@deepseek-ai/dsh-workflow-worker-thread'],
     personaAnchors: [
       'ALWAYS',
