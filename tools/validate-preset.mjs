@@ -28,9 +28,10 @@
  *    cordis-plugin-loader/lib/index.js:359-363）；
  * 7. 互斥判据（期望集 `bothAliveRule` 开时；两套都开）：活 `tool-subagent`
  *    行与 `async_agent` 行同时在场 ⇒ persona 必须写明唯一派生入口与取回通道，否则红；
- * 8. 期望集 `disabledBoolean` 列的每行必须在场且布尔 `disabled: true`（两套期望集
- *    同含五行，含 `tool-subagent` / `tool-subagent-fork`，无差异——0.2.1 基线已无
- *    codex / claude-code / ralph 行，无三行可禁）；
+ * 8. 期望集 `disabledBoolean` 列的每行必须在场且布尔 `disabled: true`（dsh-async
+ *    六行——`tool-plugin-market` 的布尔禁用一并锁；create 五行——market 保持
+ *    基线 `!!js` 表达式，进不了本判据。两套都含 `tool-subagent` /
+ *    `tool-subagent-fork`；0.2.1 基线已无 codex / claude-code / ralph 行）；
  * 9. `workflow-ptc` 行在场且 `config.provider === 'spawn'`（形态守卫 + 供电）；
  * 10. 禁用行 `tool-subagent` / `tool-subagent-fork` 的 config 键值逐字锁死
  *     （删键/改值/加键必红）；
