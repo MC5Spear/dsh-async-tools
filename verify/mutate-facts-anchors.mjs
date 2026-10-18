@@ -30,7 +30,7 @@ const localConfig = await loadLocalPlaneOrSkip('verify/mutate-facts-anchors.mjs�
 const original = readFileSync(join(localConfig.root, LOCAL_DIR, 'docs', 'facts.md'), 'utf8');
 
 /**
- * 三档事实锚的树根——从配置加载器取，与 `check-facts-anchors.mjs` 的 CLI **同源**。
+ * 四档事实锚的树根——从配置加载器取，与 `check-facts-anchors.mjs` 的 CLI **同源**。
  * `analyzeFacts` 的树参数是"可选-undefined"（缺席时该档引用记 `TREE-ABSENT`），
  * 本脚本必须**显式传树**：不传则每条引用都落进 `TREE-ABSENT`，`OUT-OF-RANGE`
  * 与 `MISSING` 两个分支进不去。基线那条"遗留钉子"就是这里的守卫——树一缺席
