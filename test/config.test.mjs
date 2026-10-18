@@ -33,7 +33,20 @@ test('resolveConfig：askUiSeat 默认 sidebar（需求 §5.2），显式两档�
   assert.equal(resolveConfig({ toolName: 'async_agent', askUiSeat: 'sidebar' }).askUiSeat, 'sidebar',
     '显式 sidebar 保留');
   assert.throws(() => resolveConfig({ toolName: 'async_agent', askUiSeat: 'corner' }),
-    /askUiSeat|invalid/i, '枚举外取值在 schema 层被拒（不静默回默认）');
+    /askUiSeat|invalid|sidebar/i, '枚举外取值在 schema 层被拒（不静默回默认）');
+});
+
+test('Config 枚举字段在写入层拒绝枚举外值并给原因（需求 §5.1/§5.2）', () => {
+  // 设置网关（settings/update）按 schema 校验合并后的整份配置——枚举字段用
+  // z.union 字面量集合，枚举外的值在**写入那一刻**被拒（真机盲测 2026-10-20
+  // 坐实的缺口：uiLang:'fr' 曾被网关接受并落库）。报错带字段路径前缀。
+  assert.throws(() => Config({ uiLang: 'fr' }), /uiLang.*(auto|zh|en)/is);
+  assert.throws(() => Config({ agentLang: 'jp' }), /agentLang.*(en|zh)/is);
+  assert.throws(() => Config({ askUiSeat: 'corner' }), /askUiSeat.*(sidebar|overlay)/is);
+  // 合法值逐档原样通过（resolve 不是清洗器；volatile Ref 经 resolveConfig 拆包后读值）。
+  for (const v of ['auto', 'zh', 'en']) assert.equal(resolveConfig({ uiLang: v }).uiLang, v);
+  for (const v of ['en', 'zh']) assert.equal(resolveConfig({ agentLang: v }).agentLang, v);
+  for (const v of ['sidebar', 'overlay']) assert.equal(resolveConfig({ askUiSeat: v }).askUiSeat, v);
 });
 
 test('resolveConfig：owningPreset 透传——无默认、非 volatile 的行身份字段（设计 §6.2）', () => {
