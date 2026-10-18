@@ -282,6 +282,9 @@ function makeContext(Context) {
   // 第八服务：公开 Agent 注册表（wait-agent 三态判定消费；挂载级假件
   // 只需"查无驻留"形态）。
   ctx.provide('agents', { get: () => undefined });
+  // 第九服务：会话当前有效目录（async_run 启动前 ensure；挂载级假件只需
+  // 返回固定目录——目录解析行为由 test/jobs.test.mjs 专测）。
+  ctx.provide('workingDirectory', { ensure: async () => 'D:\\work' });
   return { ctx, registered };
 }
 
@@ -389,7 +392,7 @@ test('T6b：`ctx.get("<字面量>")` 的第二种写法也要被看见（R3 审�
   assert.deepEqual(stale, [], `OPTIONAL_SERVICE_READS 里的这些名字已不再被读取，请清掉：${stale.join(', ')}`);
 });
 
-test('T3：inject 恰为八个服务；apply 按 config.toolName 注册工具；卸载后注销', async (t) => {
+test('T3：inject 恰为九项服务；apply 按 config.toolName 注册工具；卸载后注销', async (t) => {
   const host = await loadHost();
   if (host === undefined || Context === undefined) {
     t.skip(HOST_SKIP_REASON);
@@ -398,7 +401,7 @@ test('T3：inject 恰为八个服务；apply 按 config.toolName 注册工具；
 
   assert.deepEqual(
     host.inject,
-    ['tools', 'jobs', 'shell', 'shellEnv', 'subagents', 'timer', 'sessionProjections', 'agents'],
+    ['tools', 'jobs', 'shell', 'shellEnv', 'subagents', 'timer', 'sessionProjections', 'agents', 'workingDirectory'],
     'inject 是与宿主组合的唯一契约，多一个少一个都是加载期错误'
   );
 

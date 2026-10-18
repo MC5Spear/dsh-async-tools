@@ -184,7 +184,7 @@ hostTest('async_run：killed 状态的进程映射为 killed 结局并带 signal
   assert.match(view.detail, /SIGTERM/);
 });
 
-hostTest('async_run：workdir 缺省取会话工作目录（workdir 字段）', async () => {
+hostTest('async_run：workdir 缺省取 ensure 返回的会话当前有效目录（不再直读会话头）', async () => {
   const f = fakeCtx();
   const { proc } = fakeProc({ text: 'ok' });
   const seen = [];
@@ -192,8 +192,60 @@ hostTest('async_run：workdir 缺省取会话工作目录（workdir 字段）', 
   f.installShellExecute(() => Promise.resolve(proc));
 
   await createRunTool(f.ctx, config).execute({ command: 'echo', description: 'echo' }, exec);
-  assert.equal(seen[0].workdir, 'D:\\work', '缺省应取 exec.agent.session.header.cwd');
+  assert.equal(f.ensureCalls.length, 1, '启动前恰调一次 ensure');
+  assert.strictEqual(f.ensureCalls[0].agent, exec.agent, 'ensure 收到发起 agent');
+  assert.strictEqual(f.ensureCalls[0].signal, exec.signal, 'ensure 收到 exec.signal（取消通道）');
+  assert.equal(seen[0].workdir, 'D:\\work', '缺省取 ensure 返回的当前有效目录');
   assert.equal(seen[0].command, 'echo');
+});
+
+hostTest('async_run：会话内切目录后缺省与相对 workdir 用新目录，绝对路径原样（需求 §2.2.1）', async () => {
+  const f = fakeCtx();
+  const { proc } = fakeProc({ text: 'ok' });
+  const seen = [];
+  f.installShellResolve((request) => { seen.push(request); return request; });
+  f.installShellExecute(() => Promise.resolve(proc));
+  // 模拟会话切到新目录：ensure 返回 B，会话头仍是 A——直读 header.cwd 会错拿 A。
+  f.setWorkingDir('D:\\elsewhere');
+
+  await createRunTool(f.ctx, config).execute({ command: 'a', description: 'a' }, exec);
+  assert.equal(seen[0].workdir, 'D:\\elsewhere', '缺省随 ensure 的新目录走，不吃会话头旧值');
+
+  await createRunTool(f.ctx, config).execute({ command: 'b', description: 'b', workdir: 'sub\\x' }, exec);
+  assert.equal(seen[1].workdir, resolve('D:\\elsewhere', 'sub\\x'), '相对 workdir 按 ensure 目录解析');
+
+  await createRunTool(f.ctx, config).execute({ command: 'c', description: 'c', workdir: 'E:\\abs' }, exec);
+  assert.equal(seen[2].workdir, 'E:\\abs', '绝对 workdir 不被改写');
+});
+
+hostTest('async_run：ensure 失败 → 按原因可读拒绝，零作业注册、零进程启动（需求 §2.2.1）', async () => {
+  const f = fakeCtx();
+  f.setWorkingDir(new Error('工作目录不可用：D:\\gone 已删除且恢复失败'));
+  const tool = createRunTool(f.ctx, config);
+
+  await assert.rejects(
+    tool.execute({ command: 'echo', description: 'echo' }, exec),
+    /工作目录不可用/,
+    'ensure 的失败原因必须原样可见，不静默换目录执行'
+  );
+  assert.equal(f.jobsFake.registeredSpecs.length, 0, '零作业注册');
+  assert.equal(f.startedSpecs.length, 0, '零进程启动');
+});
+
+hostTest('async_run：ensure 返回后已取消 → 按取消拒绝，注册与启动仍为零', async () => {
+  const f = fakeCtx();
+  const controller = new AbortController();
+  const execX = { agent: fakeAgent(), signal: controller.signal };
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  f.ctx.workingDirectory.ensure = async () => { await gate; return 'D:\\work'; };
+  const pending = createRunTool(f.ctx, config).execute({ command: 'echo', description: 'echo' }, execX);
+
+  controller.abort();
+  release();
+  await assert.rejects(pending, /tool call aborted/);
+  assert.equal(f.jobsFake.registeredSpecs.length, 0, '取消发生在准入前——零注册');
+  assert.equal(f.startedSpecs.length, 0, '取消发生在启动前——零进程');
 });
 
 hostTest('async_run：执行器声明约束时必须随请求带上 sandboxPolicy（勘误）', async () => {

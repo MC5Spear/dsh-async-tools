@@ -538,6 +538,8 @@ test('T10：宿主侧的 volatile 提交必须真的到达预设工具的描述'
     sessionProjections: { stateOf: () => null },
     // 第八服务：公开 Agent 注册表（挂载级假件只需"查无驻留"形态）。
     agents: { get: () => undefined },
+    // 第九服务：会话当前有效目录（挂载级假件返回固定目录即可）。
+    workingDirectory: { ensure: async () => 'D:\\work' },
     logger: { info() {}, warn() {}, debug() {} }
   };
 
@@ -635,9 +637,10 @@ test('T11（R6）：包清单事实必须自洽', () => {
     '同上：peerDependencies 也不得依赖 dsh-async-tools-host');
 });
 
-test('T13：静态 inject 八服务；设置链不引入任何服务依赖', () => {
-  // 唯一的静态 `inject` 在 `lib/index.js`（工具角色的八个固定依赖，宿主行共用；
-  // `sessionProjections` 是模型选择的白名单读取）。
+test('T13：静态 inject 九项服务；设置链不引入任何服务依赖', () => {
+  // 唯一的静态 `inject` 在 `lib/index.js`（工具角色的九项固定依赖，宿主行共用；
+  // `sessionProjections` 是模型选择的白名单读取，`workingDirectory` 是 async_run
+  // 的会话当前有效目录）。
   // `settings` / `agentPresets` 不得出现在其中：写了就等于要求"这个部署必须有它们"，
   // 缺一个就让整行不激活 → 升级成 dsh 启动失败。设置快照链**不依赖任何
   // 服务**（宿主行读自己的 ctx.config、监听 loader 事件），所以这两个名字没有

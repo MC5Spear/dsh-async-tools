@@ -304,10 +304,27 @@ export function fakeCtx() {
 
   const jobsFake = createFakeJobs();
 
+  // 假 workingDirectory：ensure 记录调用并返回"会话当前有效目录"。默认取
+  // 调用方 session.header.cwd（镜像宿主投影初值来源），测试经 setWorkingDir
+  // 改写返回值模拟会话内切目录，或装一个 Error 模拟目录失效恢复失败。
+  const ensureCalls = [];
+  let workingDirOverride;
+  let workingDirError;
+  const workingDirectory = {
+    async ensure(agent, signal) {
+      ensureCalls.push({ agent, signal });
+      if (workingDirError !== undefined) throw workingDirError;
+      if (workingDirOverride !== undefined) return workingDirOverride;
+      const headerCwd = agent?.session?.header?.cwd;
+      return typeof headerCwd === 'string' && headerCwd.length > 0 ? headerCwd : undefined;
+    }
+  };
+
   const ctx = {
     jobs: jobsFake.service,
     shell,
     shellEnv,
+    workingDirectory,
     // 宿主半边构造 AskTakeoverService（cordis Service 基类在构造里调
     // `ctx.reflect.provide` 注册服务）——假 ctx 提供空实现即可（服务随 ctx 处置）。
     reflect: {
@@ -364,6 +381,22 @@ export function fakeCtx() {
     logs,
     listeners,
     shellEnvCalls,
+    /** 每次 `workingDirectory.ensure(agent, signal)` 的实参记录。 */
+    ensureCalls,
+    /**
+     * 改写假 workingDirectory.ensure 的行为：
+     * 字符串=返回该目录（模拟切目录）；Error=ensure 抛它（模拟恢复失败）；
+     * undefined=回默认（session.header.cwd）。
+     */
+    setWorkingDir(value) {
+      if (value instanceof Error) {
+        workingDirError = value;
+        workingDirOverride = undefined;
+        return;
+      }
+      workingDirError = undefined;
+      workingDirOverride = value;
+    },
     /** 假 shellEnv 的 `collect()` 返回值（冻结对象），供身份相等断言。 */
     shellEnvSnapshot,
     /** 每次 `shell.execute(spec)` 用过的 spec（按调用顺序）。 */

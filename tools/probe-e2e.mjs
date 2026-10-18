@@ -118,6 +118,10 @@ function makeContext() {
   ctx.provide('shellEnv', {
     collect: () => Object.freeze({ DSH_HOME: 'C:\\fake-dsh-home', DSH_SHELL: '1' })
   });
+  // async_run 启动前经 ensure 取会话当前有效目录（固定依赖之一，设计 §3.1）。
+  ctx.provide('workingDirectory', {
+    ensure: async () => 'D:\\probe-work'
+  });
   ctx.provide('subagents', {
     listChildren: async () => [
       { kind: 'child', id: 'child-probe', mode: 'continuable', label: 'probe', activity: 'inactive', hasChildren: false }
