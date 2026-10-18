@@ -16,8 +16,9 @@
 #      owningPreset 归属声明（设计 §6.2——描述警示按行归属判定，非 volatile）；
 #   4. tool-workflow 与 tool-subagent 系委托入口（单发 / fork）置 disabled: true
 #      （需求 §3.1：委托／编排入口收归本包——派生入口唯一化为 async_agent、
-#      编排入口唯一化为 async_workflow；原生 tool-workflow 同步等待整场编排、
-#      会占住调用步骤。config 逐字保留以便翻转）。
+#      编排入口唯一化为 async_workflow，统一等待预算与消息纪律；原生
+#      tool-workflow 默认前台等待整场编排、另有 run_in_background 后台形态。
+#      config 逐字保留以便翻转）。
 #      被禁入口的功能出路 = async_agent / async_workflow，或按宿主规则换预设开新会话
 #      （需求 §3.1 末条）；workflow-ptc（引擎服务，为 async_workflow 提供编排引擎）与
 #      tool-subagent-control / -list-agents（非阻塞检查／管理侧，需求 §3.1"保留宿主
@@ -167,7 +168,7 @@
                 name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
               # 宿主单发／派生委托入口禁用（需求 §3.1：委托入口收归本包——派生
               # 入口唯一化为 async_agent，等待纪律单点；config 逐字保留以便翻转）。
-              # 宿主行的 reasoning_effort / agent_preset 模型参数与行配置的
+              # 宿主行的 cwd / reasoning_effort / agent_preset 模型参数与行配置的
               # agentOptions / maxDepth 不在本包创建工具中——需要时按宿主规则
               # 换预设开新会话（需求 §3.1 末条）。
               - id: tool-subagent

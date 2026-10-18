@@ -390,7 +390,8 @@ hostTest('async_workflow（R34-d·recorder）：四类会话记录在册（run-s
 hostTest('async_workflow（R34-d/recordsRun）：PTC 子调度调用不写持久记录（[0.2.1-rc.2] 宿主 :393/:406 同判定）', async () => {
   const { f, runs, agent, appends, tool } = rig();
   // exec.parent 是 PTC transport 的子调度标记——宿主只让顶层调用写档
-  // （README:88「记录只由顶层调用产生」），与宿主同判定。
+  // （[0.2.1-rc.2] README:173「durable records are top-level and
+  // observational」），与宿主同判定。
   const exec = { agent, signal: new AbortController().signal, parent: {} };
   const pending = tool.execute(BASE_ARGS, exec);
   await new Promise((r) => { setTimeout(r, 5); });

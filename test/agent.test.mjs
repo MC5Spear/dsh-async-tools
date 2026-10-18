@@ -5,7 +5,7 @@
  * - 假 `subagents` 只实现被测代码真正调用的 `getProvider` / `startActivation`；
  * - **前台 `start` 是哨兵**：记录调用并抛可读错误——变异 M1 把
  *   `startActivation` 换成 `start` 时，红因一目了然而不是泛型 TypeError；
- * - **回执形状对齐宿主 `SubagentActivation`**：`{ childId, result, dispose }`；
+ * - **回执形状与宿主 `SubagentActivation` 一致**：`{ childId, result, dispose }`；
  *   `result` 默认**永不落定**——execute 能带着它返回，本身就是"立返不 await
  *   result"的行为证明；测试按需经 `settleActivation` 落定两个分支；
  *   `dispose` 是哨兵：记录并抛可读错误（本包任何路径都不得调用它，设计 §3.3）；
@@ -167,7 +167,7 @@ hostTest('async_agent：note 示例数字随 defaultWaitMs 设置变化（现读
   assert.match(result.note, /wait_ms=1234/);
 });
 
-hostTest('async_agent：startActivation 恰一次，spec 逐字段对齐宿主契约且不含透传键（R13）', async () => {
+hostTest('async_agent：startActivation 恰一次，spec 逐字段与宿主契约一致且不含透传键（R13）', async () => {
   const env = agentEnv();
   const tool = checkedTool(createAgentTool(env.ctx, env.view));
   const exec = { agent: EXEC_AGENT, signal: new AbortController().signal };
