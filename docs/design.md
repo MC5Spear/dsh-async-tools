@@ -242,6 +242,7 @@ activation = { childId, [messageId], result, dispose }
 基线同步还包括以下目标约束：
 
 - 保留 `time-context`、`tool-schedule`、`tool-plugin-market` 等目标基线行的顺序、配置及禁用条件。standard 的插件市场行保持禁用；cordis 保持按 `profileContext` 决定的条件，不为提供异步入口改变市场或调度工具的权限。
+- `tool-plugin-manager` 在两份补丁中同为布尔 `disabled: true`：standard 基线即布尔禁用、逐字保留；cordis 基线为按 `profileContext` 决定的条件禁用，创造补丁改为布尔 `true`，不随 `profileContext` 启用。
 - persona 只补充本产品的后台入口和有界等待纪律，不设置含 `{{cwd}}` 的 suffix。当前目录由宿主必需上下文 `working-directory:current` 提供，不另写静态目录提示。
 - 计划模式说明按目标基线整段同步，再核对本产品入口纪律不存在冲突。目标基线不存在的行和配置键不补造回来；原生派生行的禁用仅作为入口控制，不用不存在的配置键表达后台行为。
 - delegation 组保留 `workflowEngine` 隔离，`workflow-ptc` 继续使用 `provider: spawn`；按 3.5 核对新依赖可见范围。目标 standard／cordis 基线未声明 `working_directory` 工具行，本次基线同步不另增该直接工具入口，也不以工具行是否在场代替目录服务验证。
