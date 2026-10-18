@@ -345,7 +345,7 @@ hostTest('async_wait_agent（absent 仲裁·never）：从未存在的 id + 先�
 
 hostTest('async_wait_agent（absent 仲裁·existed）：目录行在 + 注册表查无 + 先到 relay → settled（noResident）', async () => {
   // 存在过但已不驻留：仲裁查目录有行 → 维持停止态交回（不因仲裁误伤真目标）；
-  // 同时锁 relay 无摘要的兜底文案（括号不再空置，需求 §2.1.3）。
+  // 同时锁 relay 无摘要的回退文案（括号不再空置，需求 §2.1.3）。
   const f = fakeCtx();
   freezeTimers(f.ctx);
   installChildren(f, { children: [runningChild()] });
@@ -356,7 +356,7 @@ hostTest('async_wait_agent（absent 仲裁·existed）：目录行在 + 注册�
   const result = await withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec));
   assert.equal(result.status, 'settled', '目录有行 = 存在过 → noResident 停止态');
   assert.match(result.note, /no longer resident in the agent registry/, 'via=noResident');
-  assert.doesNotMatch(result.note, /\(\)/, 'relay 无摘要时括号不得空置（兜底文案在场）');
+  assert.doesNotMatch(result.note, /\(\)/, 'relay 无摘要时括号不得空置（回退文案在场）');
   agent.inbox.nextStep.length = 0;
 });
 
