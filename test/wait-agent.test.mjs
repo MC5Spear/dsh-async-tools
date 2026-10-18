@@ -375,6 +375,8 @@ hostTest('async_wait_agent（absent 仲裁·unknown）：目录查询失败 + ab
   assert.equal(result.status, 'running', '存在性未定 → 不判 not_found 也不判 settled');
   assert.match(result.note, /A processable message arrived \(/, '唤醒说明在场');
   assert.doesNotMatch(result.note, /no longer resident/, '不得套停止态文案');
+  assert.doesNotMatch(result.note, /null/, '未证实档不得渲染字面 null（复读回退到未证实文案）');
+  assert.match(result.note, /unverified/, '未证实口径在场（重查出路）');
   agent.inbox.nextStep.length = 0;
 });
 
