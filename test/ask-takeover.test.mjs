@@ -1509,7 +1509,7 @@ test('AskItem 本地走秒——轮询挂起时读数照走，不冻结在最后
     const tick = localTicks.find((entry) => entry.ms === 1000);
     assert.ok(tick !== undefined, 'AskItem 挂本地秒拍（1000 ms）');
     fakeNow += 1000; tick.fn();
-    assert.match(leftSeconds(), /59 s/, '+1 s：读数走秒（旧代码无本地拍，这里冻结在 60）');
+    assert.match(leftSeconds(), /59 s/, '+1 s：读数走秒（本地拍驱动倒计时刷新）');
     fakeNow += 4000; tick.fn();
     assert.match(leftSeconds(), /55 s/, '+5 s 累计：继续走');
     // 出窗：读数翻「已超时」同样由本地拍驱动（键名即 t 的回显）。

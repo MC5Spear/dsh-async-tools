@@ -51,7 +51,7 @@ test('yieldNote（R1 硬性需求）：必须带 job_id、可复制的调用示�
   assert.match(note, /async-command-7/, '必须含 job_id');
   assert.match(note, /async_wait_job\(job_id="async-command-7", wait_ms=30000\)/, '必须含可照抄的调用示例');
   assert.match(note, /20000 ms/, '必须写出实际生效的首次等待');
-  assert.match(note, /600000 ms/, '必须写出实际生效的等待上限（补此前的缺口）');
+  assert.match(note, /600000 ms/, '必须写出实际生效的等待上限');
   assert.match(note, /It was NOT terminated; the background task keeps running/, '必须说明命令没有被杀死');
 });
 

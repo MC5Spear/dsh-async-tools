@@ -451,9 +451,12 @@ test('T12：设置快照链的三种故障姿态——首播降级、刷新保�
   const realStderrWrite = process.stderr.write.bind(process.stderr);
   process.stderr.write = (chunk) => { stderrChunks.push(String(chunk)); return true; };
   const degradeEvents = [];
-  let degradeListener;
+  // 监听器按事件名收（装配接线登记两类监听：volatile-update 与 internal/config，
+  // 单变量会被后登记者顶掉）。驱动只回调 volatile-update（internal/config 是
+  // loader 的 waterfall 事件，假件不经它）。
+  const degradeListeners = new Map();
   const degradeCtx = {
-    on: (name, cb) => { degradeListener = cb; return () => { degradeListener = undefined; }; },
+    on: (name, cb) => { degradeListeners.set(name, cb); return () => { degradeListeners.delete(name); }; },
     logger: { warn: (message) => degradeEvents.push(message) }
   };
   const badLive = { minWaitMs: 999999, maxWaitMs: 250 };
@@ -478,7 +481,7 @@ test('T12：设置快照链的三种故障姿态——首播降级、刷新保�
   badLive.minWaitMs = 250;
   badLive.maxWaitMs = 600000;
   badLive.maxResultChars = 4321;
-  degradeListener();
+  degradeListeners.get('loader/volatile-update')();
   await Promise.resolve();
   await Promise.resolve();
   assert.equal(degradedWiring.degraded, false, '合法提交后降级状态必须复位');
@@ -487,15 +490,16 @@ test('T12：设置快照链的三种故障姿态——首播降级、刷新保�
   degradedWiring.dispose();
   assert.equal(readSnapshot(), undefined);
   assert.equal(readDegraded(), undefined, '卸载清空降级登记（无跨装载残留）');
+  assert.equal(degradeListeners.size, 0, '卸载撤销全部事件监听（volatile-update 与 internal/config）');
 
   // ② 正常首播 + 刷新失败保旧。liveConfig 就是 apply 第二参（= fiber.config）：
   //    每次重物化都从**这个对象**现读——cordis 没有 ctx.config 访问接口。
   const events = [];
   const logger = { warn: (message) => events.push(['warn', message]) };
   let liveConfig = { maxResultChars: 30000, minWaitMs: 250, maxWaitMs: 600000 };
-  let listener;
+  const listeners = new Map();
   const hostCtx = {
-    on: (name, cb) => { listener = cb; events.push(['subscribe', name]); return () => { listener = undefined; }; },
+    on: (name, cb) => { listeners.set(name, cb); events.push(['subscribe', name]); return () => { listeners.delete(name); }; },
     logger
   };
   const wiring = attachSnapshotSource(hostCtx, liveConfig);
@@ -505,37 +509,40 @@ test('T12：设置快照链的三种故障姿态——首播降级、刷新保�
   // volatile 提交后 config 变坏 → 保旧快照 + warn（不打掉、不静默）。
   // 必须原地改字段：attachSnapshotSource 闭包捕获的是这个对象本身（真实调用链里
   // loader 也是对同一份 fiber.config 原地 `updateVolatile`，对象恒同一）。
+  // 此时模块处于武装态（①' 的合法提交已再武装）：拒绝文案是 transform 回调的
+  // `[async-tools] cross-field violation: minWaitMs=… > maxWaitMs=…`；容忍态下则是
+  // assertCrossFieldOrder 的 `minWaitMs > maxWaitMs`——两态断言都收。
   liveConfig.minWaitMs = 999999;
   liveConfig.maxWaitMs = 250;
-  listener();
+  listeners.get('loader/volatile-update')();
   await Promise.resolve();
   assert.equal(readSnapshot().maxResultChars, 30000, '刷新失败必须保住旧快照');
   assert.ok(events.some(([kind, message]) => kind === 'warn' && /volatile 提交后配置自检失败/.test(String(message))),
     '必须 warn 说明是哪次提交没生效');
-  assert.ok(String(readDegraded()).includes('minWaitMs > maxWaitMs'), '刷新失败必须登记降级（模型可见侧随描述警示段出现）');
+  assert.match(String(readDegraded()), /minWaitMs(=\d+)? > maxWaitMs(=\d+)?/,
+    '刷新失败必须登记降级（模型可见侧随描述警示段出现；武装/容忍两态文案都认）');
 
   // 刷新成功路径：config 合法变更 → 快照整体替换。
   liveConfig.minWaitMs = 250;
   liveConfig.maxWaitMs = 600000;
   liveConfig.maxResultChars = 4321;
-  listener();
+  listeners.get('loader/volatile-update')();
   await Promise.resolve();
   await Promise.resolve();
   assert.equal(readSnapshot().maxResultChars, 4321, '合法提交后快照必须更新');
   assert.equal(readDegraded(), undefined, '合法提交自愈——降级登记清空（警示段随刷新消失）');
 
-  // ③ 卸载：disposer 清快照 + 撤监听。
+  // ③ 卸载：disposer 清快照 + 撤监听（两类监听一并撤销）。
   wiring.dispose();
   assert.equal(readSnapshot(), undefined, '宿主行卸载必须清空快照（无跨装载残留）');
-  assert.equal(listener, undefined, '事件监听必须一并撤销');
+  assert.equal(listeners.size, 0, '事件监听必须一并撤销');
 });
 
 test('T12b：降级登记的模型可见侧——seedDegraded/readDegraded/clearDegraded + 描述警示段', async () => {
   // 需求 §5.1「运行中收到非法配置时保留上一合法值并告警」：stderr 告警只到
   // 操作者（设计 §6.3），模型侧的告警载体是**工具描述尾部的警示段**——构建时
   // 读 `readDegraded()`，有降级就拼段（en/zh 随 agentLang），自愈后消失
-  // （行为差异而非"存在但空"）。真机盲测 2026-10-20 第二轮发现③：此前告警
-  // 只有操作员 stderr，模型无从得知降级事实。
+  // （行为差异而非"存在但空"）。
   const { seedDegraded, clearDegraded, readDegraded } = await import('../lib/settings.js');
   const { buildToolText } = await import('../lib/descriptions.js');
   const { resolveConfig } = await import('../lib/config.js');

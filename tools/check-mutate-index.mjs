@@ -44,7 +44,7 @@ const EXEMPT_FROM_TABLE = new Map([
   ['verify/mutate-r24-ui.mjs', '验证 verify/r24-judgements.mjs 的界面判据（下发字节 / 配置页读数 / 保存往返 / 两段读数）都能失败，不改交付实现'],
   ['verify/mutate-model-text.mjs', '验证 tools/check-model-text.mjs 的硬编码文案层（像句子的字面量必须来自 lib/text.js）能失败，不改交付实现'],
   ['verify/mutate-alias-tokens.mjs', '验证 tools/check-alias-tokens.mjs 能拦住未定义的 --dsw-alias-* 引用；判据长在检查器而非测试文件，没有"跑的测试文件"一列'],
-  ['verify/mutate-agent-policy.mjs', '验证 verify/check-agent-policy.mjs 的钉版判据（宿主锚与本包锚整段互锚）都能失败——变异打的是检查器的输入（本包副本/宿主源文本），不改交付行为；交付侧单测在 test/agent-policy.test.mjs，与本表无关'],
+  ['verify/mutate-agent-policy.mjs', '验证 verify/check-agent-policy.mjs 的钉版判据（宿主锚与本包锚有限锚集互锚）都能失败——变异打的是检查器的输入（本包副本/宿主源文本），不改交付行为；交付侧单测在 test/agent-policy.test.mjs，与本表无关'],
   ['verify/mutate-public-surface.mjs', '验证 tools/check-public-surface.mjs 的三类判据（结构 / 本机指纹 / 内部引用）都能失败——变异打在**合成树**上（不碰真仓），不改交付实现；判据语义的单测在 test/public-surface.test.mjs']
 ]);
 

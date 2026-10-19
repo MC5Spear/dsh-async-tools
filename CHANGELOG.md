@@ -1,6 +1,6 @@
 # 变更记录
 
-> 本文件是发布历史，不是当前产品规范。当前行为与兼容要求以需求为准，实施与验证差距集中在设计工作清单。文档目标的修订不表示这些功能已经随下面的版本发布。
+> 本文件是发布历史，不是当前产品规范。当前行为与兼容要求以需求为准，实施与验证状态分档见设计第 9 章。文档目标的修订不表示这些功能已经随下面的版本发布。
 
 本文件记录本包**对外可见**的变更。版本号遵循 SemVer，但有一条强制约束：
 **必须与宿主同线**——`@deepseek-ai/dsh` 换代时本包跟着换代（九个 dsh* peer 精确锁定版本）。
@@ -31,11 +31,36 @@
 
 ### 行为修正（真机盲测驱动）
 
+- **设置 schema 换 settings 子树形态，跨字段非法保存在写入层拦截**：
+  `Config` 根改为「行身份字段（`toolName`／`owningPreset`，非 volatile 固定路径）+
+  `settings` 子树（17 个可编辑字段，`transform` 包住整体、子树上 `.volatile()`）」。
+  子树 transform 回调对五条链式不等式（`minYieldMs≤maxYieldMs`、
+  `defaultYieldMs∈[minYieldMs,maxYieldMs]`、`minWaitMs≤maxWaitMs`、
+  `defaultWaitMs∈[minWaitMs,maxWaitMs]`、`pollIntervalMs≤maxWaitMs`）违例抛
+  `[async-tools] cross-field violation: …`（双侧字段名与取值齐备），设置链
+  `update`／`replace`／`mutate` 落盘前的 resolve 即拒绝（patch 文件不动）；
+  回调自续序列化（`toJSON` 重建自身源），表单重建与 describe 输出两跳后仍可校验。
+- **行身份字段 RPC 写保护**：身份字段不进 volatile 子树，设置网关路径检查对
+  身份写入抛 `Config field "toolName" is not volatile`（update 携带与 mutate 路径
+  双拒、不触发重挂）；行身份只能经 profile／补丁文件层变更（普通重挂语义）。
+- **校验回调两态（武装／容忍）**：宿主行装配自检成功即武装（首播与每次合法
+  volatile 提交重新确认），失败即解除并降级。容忍窗换取「启动遇非法持久值时
+  修复入口不死」（行保持激活、设置卡片显示原始非法值、按出厂默认运行）；
+  武装态下启动遇非法持久值行装配失败（设置卡片消失——写入拒绝是健康态保证）。
+  运行中非法重载被 loader 的 resolve 拒绝挡在 refs 之外（保留 raw、不派发
+  volatile-update），宿主行在 `internal/config` waterfall 上登记
+  「最近提交原始值自检失败」降级明细，下次合法提交自愈；waterfall 候选先过
+  归属甄别——全树级 waterfall 上宿主与其他插件的行（如 `subagent`）不进本包
+  自检，不产生假降级登记。
 - **设置枚举字段在 schema 层收严**：`uiLang`／`agentLang`／`askUiSeat` 改枚举字面量，
   写入网关对枚举外值在写入时拒绝并给原因（此前可落库，需求 §5.1/§5.2）。
-- **`async_wait_agent` 查无目标不再套停止态承诺**：早到消息路径的注册表无驻留改为
-  目录三态仲裁——从未存在返回 `not_found` 并附已知子代理清单；存在过按 noResident
-  停止态；目录查询失败按存在性未定口径交回（需求 §2.3.3 查无与查询失败分开）。
+- **`async_wait_agent` 停止候选先证合法子代理关系**：早到消息路径读到注册表
+  `idle`／无驻留不再直接套停止态——先经目录定性查询证明父会话目录行在（与
+  工具取消、新到信号、定性窗口 `min(pollIntervalMs, 剩余预算)`、总截止竞速），
+  复核仍为 `idle`／无驻留才按停止态交回；定性查得行但复核翻成 running 回落
+  消息口径。定性查无该 id 不构成「从未存在」断言，按存在性未定交回运行句柄
+  （查无断言与已知子代理清单由下一次调用的存在屏障交付）；目录查询失败同
+  存在性未定口径（需求 §2.3.3 查无与查询失败分开）。
 - **配置降级告警补模型可见侧**：自检失败登记违例明细，五个工具描述尾部出现警示段
   （违例明细 + 上一合法值说明 + 修复指引，en/zh 随 `agentLang`），设置改正自愈即撤；
   操作员 stderr 通告保持（需求 §5.1 保留上一合法值并告警）。

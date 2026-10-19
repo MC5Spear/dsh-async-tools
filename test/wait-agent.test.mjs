@@ -322,30 +322,43 @@ hostTest('async_wait_agent（入口三态）：注册表无驻留（absent）→
   assert.match(result.note, /no longer resident in the agent registry/, 'via=noResident');
 });
 
-// ── absent 仲裁三分（盲测第二轮发现①：对从未存在的 id 不得套停止态承诺） ──
+// ── 早到消息的关系定性（停止候选先证关系；查无与查询失败分开） ──
 
-hostTest('async_wait_agent（absent 仲裁·never）：从未存在的 id + 先到 relay 消息 → not_found，不得承诺终答', async () => {
-  // 真机形态：等待开始前收件箱里滞留一条转达消息（form=relay、无摘要），
-  // 注册表查无此人（absent），目录里也从来没有这个 id——旧代码在入口就套
-  // 「不再观察到运行 + 终答稍后送达」的停止态，对不存在的目标这份承诺永不
-  // 兑现（需求 §2.3.3 查无与查询失败分开、§2.1.3 不把无法证实的写成事实）。
+hostTest('async_wait_agent（早到消息·查无未定）：从未存在的 id + 先到 relay → 运行句柄＋未证实，查无断言留给下一次调用', async () => {
+  // 真实形态：等待开始前收件箱里滞留一条转达消息（form=relay、无摘要），
+  // 注册表查无此人（absent），目录里也从来没有这个 id。入口定性一次查空
+  // 不构成「从未存在」的断言（与屏障重试同一理由：查无与查询失败分开，
+  // 需求 §2.3.3）：先按存在性未定交回运行句柄＋未证实口径，不套停止态
+  // 承诺也不报 not_found——查无断言与已知子代理清单由下一次调用的存在
+  // 屏障交付（先到消息不得为屏障重试排队，设计 §2.2）。
   const f = fakeCtx();
-  freezeTimers(f.ctx);
+  // pollIntervalMs 调小：定性窗口与屏障重试睡眠都按它计时（真机上窗口与
+  // 重试间隔为配置值，测试里 2ms 保持快；目录替身微任务即返回，窗口不抢跑）。
+  const quick = resolveConfig({ toolName: 'async_run', pollIntervalMs: 2 });
   installChildren(f, { children: [] });
   f.ctx.agents = { get: () => undefined };
   agent.inbox.nextStep.push({ id: 'relay-1', source: { kind: 'agent-message', form: 'relay' } });
-  const tool = createWaitAgentTool(f.ctx, config);
+  const tool = createWaitAgentTool(f.ctx, quick);
 
   const result = await withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec));
-  assert.equal(result.status, 'not_found', '目录查无 + 注册表查无 = 从未存在 → not_found');
-  assert.equal(result.agent_id, CHILD);
-  assert.ok(Array.isArray(result.known_children), 'not_found 附已知子代理清单（与屏障耗尽出口同款）');
+  assert.equal(result.status, 'running', '单次查空 = 存在性未定 → 运行句柄＋未证实，不判 not_found');
+  assert.match(result.note, /A processable message arrived \(/, '唤醒说明在场');
+  assert.match(result.note, /unverified/, '未证实口径在场（重查出路）');
+  assert.doesNotMatch(result.note, /no longer resident/, '不得套停止态文案（对不存在的 id 是永不兑现的承诺）');
+  assert.doesNotMatch(result.note, /null/, '未证实档不得渲染字面 null');
   agent.inbox.nextStep.length = 0;
+
+  // 第二次调用（收件箱已清）：存在屏障接管——重试耗尽后交付 not_found
+  // 主断言与可选纠错清单。
+  const second = await withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 1000 }, exec));
+  assert.equal(second.status, 'not_found', '屏障重试耗尽 = 从未存在 → not_found（由屏障交付，不是入口定性）');
+  assert.equal(second.agent_id, CHILD);
+  assert.ok(Array.isArray(second.known_children), 'not_found 附已知子代理清单');
 });
 
-hostTest('async_wait_agent（absent 仲裁·existed）：目录行在 + 注册表查无 + 先到 relay → settled（noResident）', async () => {
-  // 存在过但已不驻留：仲裁查目录有行 → 维持停止态交回（不因仲裁误伤真目标）；
-  // 同时锁 relay 无摘要的回退文案（括号不再空置，需求 §2.1.3）。
+hostTest('async_wait_agent（早到消息·定性证关系）：目录行在 + 注册表查无 + 先到 relay → settled（noResident）', async () => {
+  // 存在过但已不驻留：定性查目录有行、复核仍查无 → 维持停止态交回（不因
+  // 定性误伤真目标）；同时锁 relay 无摘要的回退文案（括号不再空置，需求 §2.1.3）。
   const f = fakeCtx();
   freezeTimers(f.ctx);
   installChildren(f, { children: [runningChild()] });
@@ -357,12 +370,12 @@ hostTest('async_wait_agent（absent 仲裁·existed）：目录行在 + 注册�
   assert.equal(result.status, 'settled', '目录有行 = 存在过 → noResident 停止态');
   assert.match(result.note, /no longer resident in the agent registry/, 'via=noResident');
   assert.doesNotMatch(result.note, /\(\)/, 'relay 无摘要时括号不得空置（回退文案在场）');
-  assert.match(result.note, new RegExp(CHILD), '回退文案点名消息来源（senderSessionId，盲测第三轮低①）');
+  assert.match(result.note, new RegExp(CHILD), '回退文案点名消息来源（senderSessionId）');
   agent.inbox.nextStep.length = 0;
 });
 
-hostTest('async_wait_agent（absent 仲裁·unknown）：目录查询失败 + absent + 先到 relay → 运行句柄＋未证实，不冒称查无', async () => {
-  // 查询失败 ≠ 查无（需求 §2.3.3）：仲裁读不了目录时存在性未定，交运行句柄
+hostTest('async_wait_agent（早到消息·定性失败）：目录查询失败 + absent + 先到 relay → 运行句柄＋未证实，不冒称查无', async () => {
+  // 查询失败 ≠ 查无（需求 §2.3.3）：定性读不了目录时存在性未定，交运行句柄
   // 与未证实口径（不制造 not_found，也不制造停止态）。
   const f = fakeCtx();
   freezeTimers(f.ctx);
@@ -378,6 +391,163 @@ hostTest('async_wait_agent（absent 仲裁·unknown）：目录查询失败 + ab
   assert.doesNotMatch(result.note, /null/, '未证实档不得渲染字面 null（复读回退到未证实文案）');
   assert.match(result.note, /unverified/, '未证实口径在场（重查出路）');
   agent.inbox.nextStep.length = 0;
+});
+
+hostTest('async_wait_agent（早到消息·定性窗口）：目录查询挂起时窗口封顶，先到消息不等查询也不等预算', async () => {
+  // 定性查询永悬（真实形态：宿主投影挂起）：定性窗口 min(pollIntervalMs,
+  // 剩余预算) 到点按「关系未证明」交回（设计 §3.4／§2.1 辅助查询全竞速）——
+  // 不恢复「仅与总截止竞速」的旧形态的话，本用例要等满 1000ms 预算才红。
+  const f = fakeCtx();
+  installChildren(f, { children: [runningChild()] });
+  f.ctx.subagents.listChildren = () => new Promise(() => {});
+  f.ctx.agents = { get: () => ({ status: 'idle' }) };
+  agent.inbox.nextStep.push({ id: 'relay-w', source: { kind: 'agent-message', form: 'relay' } });
+  const tool = createWaitAgentTool(f.ctx, resolveConfig({ toolName: 'async_run', pollIntervalMs: 120 }));
+  const startedAt = Date.now();
+
+  const result = await withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 1000 }, exec));
+  const took = Date.now() - startedAt;
+  assert.equal(result.status, 'running', '窗口耗尽 = 关系未证明 → 运行句柄＋未证实，不冒停止态');
+  assert.match(result.note, /unverified/, '未证实口径在场');
+  assert.doesNotMatch(result.note, /status turned idle/, '注册表 idle 只是停止候选——关系未证不得套停止态文案');
+  assert.ok(took < 450, `定性窗口 120ms 封顶（实得 ${String(took)}ms，窗口 120ms＋300ms 容差＝420ms，取 450ms 冗余上界）`);
+  agent.inbox.nextStep.length = 0;
+});
+
+hostTest('async_wait_agent（早到消息·定性窗口新插话）：挂起定性查询期间 user 插话到达 → 及时按消息口径交回', async () => {
+  // 唤醒类竞速成员的护栏（设计 §2.1「辅助查询与可处理消息竞速」）：
+  // watchWakeSignal 无起始检查，先到唤醒不解析唤醒 promise——定性窗口内
+  // **新到**的 user 插话必须能切断挂起的定性查询。若唤醒成员被误排除
+  // （比如把先到消息一律当已解析信号排除），本用例会等满定性窗口才红。
+  const f = fakeCtx();
+  installChildren(f, { children: [runningChild()] });
+  f.ctx.subagents.listChildren = () => new Promise(() => {});
+  f.ctx.agents = { get: () => ({ status: 'idle' }) };
+  agent.inbox.nextStep.push({ id: 'relay-nw', source: { kind: 'agent-message', form: 'relay' } });
+  const tool = createWaitAgentTool(f.ctx, resolveConfig({ toolName: 'async_run', pollIntervalMs: 1500 }));
+  const startedAt = Date.now();
+
+  const pending = withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 2000 }, exec));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  f.emit('agent/inbox/inserted', inboxPayload({ agent, sourceKind: 'user', text: '先回来', target: 'next-step' }));
+  const result = await pending;
+  const took = Date.now() - startedAt;
+  assert.equal(result.status, 'running', '定性未完成（查询挂起）→ 消息口径交回运行句柄＋未证实');
+  assert.ok(took < 500, `新到插话切断定性（实得 ${String(took)}ms），不等窗口也不等挂起查询`);
+  agent.inbox.nextStep.length = 0;
+});
+
+hostTest('async_wait_agent（早到消息·定性期结算先到）：先到 user 插话 + 挂起定性查询 + 结算通知中途到达 → settled（完成优先）', async () => {
+  // 定性竞速里的新到信号先复核未领取结算通知（设计 §3.4：完成优先）——
+  // 结算通知在定性查询挂起期间到达时按 settled 交回，不等查询也不等预算。
+  const f = fakeCtx();
+  installChildren(f, { children: [runningChild()] });
+  f.ctx.subagents.listChildren = () => new Promise(() => {});
+  f.ctx.agents = { get: () => ({ status: 'idle' }) };
+  agent.inbox.nextStep.push({ id: 'steer-cls', source: { kind: 'user' } });
+  const tool = createWaitAgentTool(f.ctx, resolveConfig({ toolName: 'async_run', pollIntervalMs: 1500 }));
+  const startedAt = Date.now();
+
+  const pending = withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 2000 }, exec));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  // 事件驱动结算（订阅通道）＋投递账本同步（真实宿主两侧一致；假件只发
+  // 事件不落 inbox，复核读的是账本）。
+  const notice = settledNotice({ senderSessionId: CHILD });
+  f.emit('agent/inbox/inserted', notice);
+  agent.inbox.nextStep.push({ id: 'msg-settle-cls', ...notice.message });
+  const result = await pending;
+  const took = Date.now() - startedAt;
+  assert.equal(result.status, 'settled', '定性期结算通知到达 → 完成优先，settled 交回');
+  assert.match(result.note, /had already arrived before the wait started/, 'via.noticePreexisting（结算通知先于定性结论）');
+  assert.ok(took < 500, `结算到达后及时交回（实得 ${String(took)}ms），不等挂起查询`);
+  agent.inbox.nextStep.length = 0;
+});
+
+hostTest('async_wait_agent（早到消息·复核翻档）：定性查到行但注册表复核翻成 running → 回落消息口径', async () => {
+  // 定性四档里的「复核」不是装饰：目录行在、入口读 idle、复核瞬间翻成
+  // running（真实形态：目标恰好重启驱动）——停止候选作废，按消息口径交回，
+  // 不把 idle 旧读当停止证据。
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  installChildren(f, { children: [runningChild()] });
+  let registryCalls = 0;
+  f.ctx.agents = { get: () => { registryCalls += 1; return registryCalls <= 1 ? { status: 'idle' } : { status: 'running' }; } };
+  agent.inbox.nextStep.push({ id: 'relay-flip', source: { kind: 'agent-message', form: 'relay' } });
+  const tool = createWaitAgentTool(f.ctx, config);
+
+  const result = await withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec));
+  assert.equal(result.status, 'running', '复核翻档 → 停止候选作废，回落消息口径（运行句柄）');
+  assert.match(result.note, /A processable message arrived \(/, '唤醒说明在场');
+  assert.doesNotMatch(result.note, /status turned idle|no longer resident/, '不得套任一停止态文案');
+  agent.inbox.nextStep.length = 0;
+});
+
+hostTest('async_wait_agent（早到消息·迟到作答矩阵）：先到迟到作答 + 注册表 idle + 目录行在 → 定性证关系后 settled', async () => {
+  // 早到迟到作答与 user／relay 同受合法关系约束（设计 §3.4 出口矩阵）：
+  // 停止候选先证关系，证得后以 lateArrived 前缀交停止态。
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  installChildren(f, { children: [runningChild()] });
+  f.ctx.agents = { get: (id) => (id === CHILD ? { status: 'idle' } : undefined) };
+  agent.inbox.nextStep.push({
+    id: 'late-1',
+    source: { kind: 'async-tools-late-answer', form: 'notice', questionId: 'q-1' }
+  });
+  const tool = createWaitAgentTool(f.ctx, config);
+
+  const result = await withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec));
+  assert.equal(result.status, 'settled', '目录行 + 复核仍 idle = 关系已证 → settled');
+  assert.match(result.note, /late answer/, 'lateArrived 前缀在场（并存消息以说明表达）');
+  assert.match(result.note, /status turned idle/, 'via=idle（停止证据）');
+  agent.inbox.nextStep.length = 0;
+});
+
+hostTest('async_wait_agent（屏障查无·清单竞速×取消）：not_found 的清单查询挂起时取消先到 → 取消口径，不等清单', async () => {
+  // 屏障重试耗尽后的可选清单查询与工具取消同时竞速（设计 §2.1）：主断言
+  // 已证但控制信号优先——不得为等清单把取消压到预算尽头。
+  const f = fakeCtx();
+  const { calls } = installChildren(f, { children: [] });
+  const realList = f.ctx.subagents.listChildren.bind(f.ctx.subagents);
+  f.ctx.subagents.listChildren = async (...a) => {
+    if (calls.length >= 4) return new Promise(() => {}); // 第 5 路起＝清单查询，永悬
+    return realList(...a);
+  };
+  f.ctx.agents = { get: () => ({ status: 'running' }) };
+  const controller = new AbortController();
+  const tool = createWaitAgentTool(f.ctx, resolveConfig({ toolName: 'async_run', pollIntervalMs: 2 }));
+  const startedAt = Date.now();
+
+  const pending = tool.execute({ agent_id: CHILD, wait_ms: 2000 }, { agent, signal: controller.signal });
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  controller.abort(new Error('caller cancelled'));
+  const result = await pending;
+  const took = Date.now() - startedAt;
+  assert.equal(result.status, 'interrupted', '取消胜出清单查询 → 取消口径（不是 not_found）');
+  assert.ok(!('known_children' in result), '取消出口不带清单（没等到也不需要）');
+  assert.ok(took < 400, `取消后及时交回（实得 ${String(took)}ms）——清单只与总截止竞速的旧形态会红`);
+});
+
+hostTest('async_wait_agent（屏障查无·清单竞速×插话）：not_found 的清单查询挂起时插话先到 → interrupted，不谎报查无', async () => {
+  // 清单查询挂起期间 user 插话到达（设计 §2.1 辅助查询全竞速＋需求 §2.1.2）：
+  // 已到消息的处理不等诊断清单——交回控制权给模型。
+  const f = fakeCtx();
+  const { calls } = installChildren(f, { children: [] });
+  const realList = f.ctx.subagents.listChildren.bind(f.ctx.subagents);
+  f.ctx.subagents.listChildren = async (...a) => {
+    if (calls.length >= 4) return new Promise(() => {});
+    return realList(...a);
+  };
+  f.ctx.agents = { get: () => ({ status: 'running' }) };
+  const tool = createWaitAgentTool(f.ctx, resolveConfig({ toolName: 'async_run', pollIntervalMs: 2 }));
+  const startedAt = Date.now();
+
+  const pending = withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 2000 }, exec));
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  f.emit('agent/inbox/inserted', inboxPayload({ agent, sourceKind: 'user', text: '先回来', target: 'next-step' }));
+  const result = await pending;
+  const took = Date.now() - startedAt;
+  assert.equal(result.status, 'interrupted', '插话胜出清单查询 → interrupted（不是 not_found）');
+  assert.ok(took < 400, `插话后及时交回（实得 ${String(took)}ms）`);
 });
 
 hostTest('async_wait_agent（入口三态）：注册表查询抛错/服务缺席（unknown）→ 照常进入等待', async () => {
@@ -655,7 +825,7 @@ hostTest('async_wait_agent：预算到期 → running 且提示可再次等待�
   firstTimerOnly(f.ctx);
   installChildren(f, { children: [runningChild()] });
   // 证实档的前提（设计 §1.3）：注册表现读 running 才允许说"尚未结束"——
-  // 目录行不算数（R29-c 判据 6·注册表读不到用例锁同场景的未证实档）。
+  // 目录行不算数（R29-c 判据 6·注册表读不到用例锁同款用例的未证实档）。
   f.ctx.agents = { get: () => ({ status: 'running' }) };
   const tool = createWaitAgentTool(f.ctx, config);
 
@@ -890,8 +1060,9 @@ hostTest('async_wait_agent（R8 第一条）：只走公共查询与公共事件
  * 进程级 unhandledRejection 探针的核心断言集。
  *
  * 宿主 `installFailLoud` 语义下，一条无人接住的 reject 就是整实例退出。
- * 测试里用 `process.on('unhandledRejection')` 复刻同一道关卡——no-op catch 撤掉后，
- * 本探针非空，用例当场红。
+ * 测试里用 `process.on('unhandledRejection')` 复刻同一道关卡——取消归一
+ * （wait-agent.js 在创建点同步挂接的双分支 `.then(onOk, onErr)`，把 reject
+ * 归一成标签）撤掉后，本探针非空，用例当场红。
  *
  * @returns {{take: Function, off: Function}} 探针：`take()` 读累计数组，`off()` 摘除。
  */
@@ -902,11 +1073,11 @@ function unhandledProbe() {
   return { take: () => seen, off: () => process.off('unhandledRejection', onUnhandled) };
 }
 
-hostTest('R29-a（判据 1·屏障窗口）：工具取消落在竞速组装之前——屏障及时交回 interrupted，no-op catch 承接不外泄', async () => {
+hostTest('R29-a（判据 1·屏障窗口）：工具取消落在竞速组装之前——屏障及时交回 interrupted，取消归一承接不外泄', async () => {
   const f = fakeCtx();
   const quick = resolveConfig({ toolName: 'async_run', pollIntervalMs: 2 });
   // 列表恒空 → 屏障按 pollIntervalMs 有界重试 → abort 落在"第一个 await childOf
-  // 之后"的窗口里（窗口长达 3×pollIntervalMs，正是 no-op catch 的靶区）。
+  // 之后"的窗口里（窗口长达 3×pollIntervalMs，正是取消归一的靶区）。
   const { calls } = installChildren(f, { children: [] });
   const controller = new AbortController();
   const tool = createWaitAgentTool(f.ctx, quick);
@@ -921,7 +1092,7 @@ hostTest('R29-a（判据 1·屏障窗口）：工具取消落在竞速组装之�
   assert.equal(result.status, 'interrupted', '屏障期取消必须及时结束等待，不得跑满重试/预算');
   assert.ok(calls.length >= 1);
   assert.equal(probe.take().length, 0,
-    'no-op catch（wait-agent.js `aborted.catch(() => {})`）必须承接窗口期 reject——撤掉它，本断言必红（整实例退出）');
+    '取消归一（wait-agent.js 创建点同步挂接的双分支 .then(onOk, onErr)）必须承接窗口期 reject——撤掉它，本断言必红（整实例退出）');
   probe.off();
 });
 
@@ -1133,7 +1304,6 @@ hostTest('R29-d（判据 9a·等待段半边）：子代理在场时全程 ≈ w
   // （在场路径屏障根本不睡，屏障加重只在重试路径可红）。
   const poll = 20;
   const waitMs = 60;
-  const tolerance = 300;
   const f = fakeCtx();
   const quick = resolveConfig({ toolName: 'async_run', pollIntervalMs: poll });
   installChildren(f, { children: [runningChild()] });
@@ -1145,19 +1315,24 @@ hostTest('R29-d（判据 9a·等待段半边）：子代理在场时全程 ≈ w
 
   assert.equal(result.status, 'running');
   assert.ok(result.waited_ms >= waitMs - 10, `等待段要用满预算（实得 ${String(result.waited_ms)} ms）`);
-  const bound = waitMs + 3 * poll + tolerance;
+  // 总时长上界＝有效 wait_ms＋300ms 容差（设计 §2.1：不追加轮询间隔或重试
+  // 时长——屏障睡与轮询拍都计入总预算，预算口径是平上界）。
+  const bound = waitMs + 300;
   assert.ok(elapsed <= bound,
-    `总时长 ${String(elapsed)} ms 不得超过 waitMs + 3×pollIntervalMs + 容差 = ${String(bound)} ms`);
+    `总时长 ${String(elapsed)} ms 不得超过 waitMs + 300ms = ${String(bound)} ms`);
 });
 
-hostTest('R29-d（判据 9b·屏障段半边）：重试路径下屏障睡也计入总时长，屏障加重必红', async () => {
+hostTest('R29-d（判据 9b·屏障段半边）：重试睡眠计入总预算的平上界——等待侧加重必红', async () => {
   // 目录投影刷新窗口的最小模拟：子代理行第一个 poll 之后才出现 → 屏障
   // 恰好睡一次重试一次。全程 = 屏障段（1×poll）+ 等待段（waitMs）。
-  // 变异"屏障睡定值远超 pollIntervalMs"（如 +2000ms）会让本用例击穿上界——
-  // 这是判据 9 对屏障段的可达红锚。
+  // 红锚归因（受控变异实证）：本用例锁「屏障睡计入总时长」的平上界——
+  // 拉伸屏障睡（+2000ms）由 not_found 重试族与早到消息族用例抓住（睡与
+  // 四类信号竞速）；睡眠竞速成员在 not_found 族用例（R29-a 判据 1·屏障
+  // 睡眠）以「睡眠中的取消/插话及时交回」形态被直接钉住。注：睡眠竞速
+  // 数组里的总截止成员在 min(pollIntervalMs, 剩余) 封顶下不单独产生可观测
+  // 反例（睡眠本身不越剩余预算），属结构性冗余防线。
   const poll = 20;
   const waitMs = 60;
-  const tolerance = 300;
   const f = fakeCtx();
   const quick = resolveConfig({ toolName: 'async_run', pollIntervalMs: poll });
   const { setRows } = installChildren(f, { children: [] });
@@ -1170,9 +1345,29 @@ hostTest('R29-d（判据 9b·屏障段半边）：重试路径下屏障睡也计
 
   assert.equal(result.status, 'running');
   assert.ok(elapsed >= poll - 5, `屏障段确实睡过（实得 ${String(elapsed)} ms，应 ≥ 1×poll）`);
-  const bound = waitMs + 3 * poll + tolerance;
+  // 总时长上界＝有效 wait_ms＋300ms（平上界：屏障睡占的是同一份预算，不叠加；
+  // 假时钟口径下改轮询间隔或重试次数不得延长总预算——此处用真时钟锁同一判据）。
+  const bound = waitMs + 300;
   assert.ok(elapsed <= bound,
-    `总时长 ${String(elapsed)} ms 不得超过 waitMs + 3×pollIntervalMs + 容差 = ${String(bound)} ms——屏障睡加重（如 +2000ms）时此处必红`);
+    `总时长 ${String(elapsed)} ms 不得超过 waitMs + 300ms = ${String(bound)} ms——等待侧加重（含睡眠不计入总预算的形态）时此处必红`);
+});
+
+hostTest('R29-d（判据 9c·夹紧口径）：wait_ms 低于 minWaitMs 时上界按有效值计（60 → 250 → 550）', async () => {
+  // 夹紧感知上界（设计 §2.1 时间判据）：请求 60ms 被夹紧到 minWaitMs=250，
+  // 总时长上界是**有效** wait_ms＋300ms（550ms），不是请求值＋300ms——
+  // 上界写请求值会让夹紧路径的预算漂移被吞掉。
+  const f = fakeCtx();
+  installChildren(f, { children: [runningChild()] });
+  f.ctx.agents = { get: () => ({ status: 'running' }) };
+  const tool = createWaitAgentTool(f.ctx, resolveConfig({ toolName: 'async_run', minWaitMs: 250 }));
+
+  const startedAt = Date.now();
+  const result = await tool.execute({ agent_id: CHILD, wait_ms: 60 }, exec);
+  const elapsed = Date.now() - startedAt;
+
+  assert.equal(result.status, 'running');
+  assert.ok(result.waited_ms >= 240, `有效预算是夹紧后的 250ms（实得 ${String(result.waited_ms)} ms）`);
+  assert.ok(elapsed <= 550, `总时长 ${String(elapsed)} ms 不得超过有效 250ms + 300ms = 550ms`);
 });
 
 // ── 起始检查（设计 §2.2 消息集合和入口扫描的工具级落点） ──
@@ -1301,27 +1496,27 @@ hostTest('R55（判据 5）：先到插话与未领取结算通知并存 → set
   agent.inbox.nextStep.length = 0; // 还原共享 fixture
 });
 
-hostTest('R55（判据 5b·注册表侧并存）：先到 user 插话 + 注册表现读 idle → settled 并存插话说明（完成优先于打断）', async () => {
+hostTest('R55（判据 5b·注册表侧并存）：先到 user 插话 + 注册表现读 idle → 定性证关系后 settled 并存插话说明', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   const { calls } = installChildren(f, { children: [runningChild()] });
-  // 先到 user 插话 + 注册表读 idle：没有结算通知，但注册表现读是当次权威观察
-  // （事件通道在等待开始前已发生过、不会再来）——idle 按停止态交回，插话以
-  // 并存说明表达，不吞也不翻案成 interrupted。
+  // 先到 user 插话 + 注册表读 idle：idle 只是停止候选——必须先经目录定性证明
+  // 合法子代理关系（设计 §3.4 无关目标不得套停止态），目录行在且复核仍 idle
+  // 才按停止态交回；插话以并存说明表达，不吞也不翻案成 interrupted。
   f.ctx.agents = { get: (id) => (id === CHILD ? { status: 'idle' } : undefined) };
   agent.inbox.nextStep.push({ id: 'steer-1', source: { kind: 'user' } });
   const tool = createWaitAgentTool(f.ctx, config);
 
   const result = await withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec));
-  assert.notEqual(result.status, '__test-hang__', '入口三分复查必须立即返回');
-  assert.equal(result.status, 'settled', '注册表 idle 是停止证据 → settled（不按插话走 interrupted）');
-  assert.ok(result.waited_ms < 25, `入口早退（实得 ${String(result.waited_ms)} ms）`);
+  assert.notEqual(result.status, '__test-hang__', '定性竞速必须立即返回');
+  assert.equal(result.status, 'settled', '目录行 + 复核仍 idle = 关系已证 → settled（不按插话走 interrupted）');
+  assert.ok(result.waited_ms < 25, `入口定性毫秒级交回（实得 ${String(result.waited_ms)} ms）`);
   // note 三段：插话到达说明（wait.wokeByMessage，含"本次等待没有终止目标的工作"）
   // + via.idle + settledNote。
   assert.match(result.note, /A processable message arrived/, '先到的插话以并存说明在场（wokeByMessage）');
   assert.match(result.note, /This wait did not stop the target/, '并存说明是行为陈述（不断言插话终止了什么）');
   assert.match(result.note, /status turned idle/, 'via=idle（注册表现读的停止证据）');
-  assert.equal(calls.length, 0, '并存决定走入口早退——不进存在屏障');
+  assert.ok(calls.length >= 1, 'idle 停止候选经过了目录定性查询（不再无证据直返）');
   agent.inbox.nextStep.length = 0; // 还原共享 fixture
 });
 

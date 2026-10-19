@@ -3,9 +3,10 @@
  *
  * 为什么需要这个文件：这个脚本的失效形态**不是"漏了某个名字"**，而是"打印了却不失败"：
  *   - 白名单默认放行 → 新建一份带「勘误」的现行文档被静默放过、退出 0；
- *   - `bad` 把已登记档案排除 → 给档案加未闭合围栏只打印 WARN、退出 0。
- * 两种形态都是"输出看起来在报问题，退出码却说是好的"。**光靠人读输出发现不了**，
- * 必须有一条能失败的断言——本文件里的 C1–C8 就是那几条。
+ *   - `bad` 把已登记档案排除 → 给档案加未闭合围栏只打印 WARN、退出 0；
+ *   - 角色豁免静默化 → 档案里的历史叙述词既不计数也不留痕，"查过"与"没查"不可分辨。
+ * 三种形态都是"输出看起来在报问题（或什么都不报），退出码却说是好的"。**光靠人读
+ * 输出发现不了**，必须有一条能失败的断言——本文件里的 C1–C11 就是那几条。
  *
  * 做法：在包外的一次性副本上跑检查函数。不复制整包（那要几秒），
  * 只把它的输入（`docs/`、`README.md`、`verify/README.md`、本机侧语料目录）
@@ -35,7 +36,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = 'tools/check-docs.mjs';
 
 /**
- * 现行文档清单——**必须与 `tools/check-docs.mjs` 的 `CURRENT_DOCUMENTS` 一致**。
+ * 现行文档清单——**必须与 `tools/check-docs.mjs` 的 `DOCUMENTS` 责任表一致**
+ * （本文件按现行/档案分组列路径，只是排版差异）。
  *
  * 这里写第二份而不是 import 脚本的常量：脚本的 CLI 入口会 `process.exit`，
  * 静态导入有顺带执行整场检查的风险（函数形态只在调用时跑，但双份清单的漂移风险
@@ -44,11 +46,12 @@ const SCRIPT = 'tools/check-docs.mjs';
 const CURRENT_DOCS = ['requirements.md', 'design.md'];
 
 /**
- * `docs/` **之外**的现行文档，同样必须与脚本一致。
+ * `docs/` **之外**的登记文档，同样必须与脚本的责任表一致（脚本里 CHANGELOG 是
+ * archive 角色、另两份是 current——但三份都是检查输入，沙箱缺一不可）。
  *
  * 除 `verify/README.md`（验证目录的唯一脚本清单）外，还有两份社区文件——
- * 版本变更与参与方式。它们不在 `docs/` 下，所以脚本的"未分类/幽灵"对账
- * 不覆盖它们——**但沙箱必须把它们也铺进去**，否则脚本会在沙箱里报"现行文档本身不存在"，
+ * 发布历史与参与方式。它们不在 `docs/` 下，所以脚本的"未分类/幽灵"对账
+ * 不覆盖它们——**但沙箱必须把它们也铺进去**，否则脚本会在沙箱里报"登记文档本身不存在"，
  * 而那条失败与代码无关。
  */
 const CURRENT_OUTSIDE_DOCS = ['verify/README.md', 'CHANGELOG.md', 'CONTRIBUTING.md'];
@@ -92,7 +95,7 @@ async function sandbox({ corpus = true } = {}) {
   };
 }
 
-test('C1 check-docs：干净时退出 0', async (t) => {
+test('C1 check-docs：干净时退出 0（四态之③：正常文档全绿）', async (t) => {
   const box = await sandbox();
   t.after(box.cleanup);
   const { code, out } = box.runChecker();
@@ -155,7 +158,7 @@ test('C5 check-docs：只准读那几个相对路径（新增输入必须同步�
   const source = readFileSync(join(ROOT, SCRIPT), 'utf8');
   const literalReads = [...source.matchAll(/(?:readFileSync|readdirSync|existsSync)\(([^)]*)\)/g)]
     .map((match) => match[1].trim())
-    // `file` / `name` 是循环变量（值来自 CURRENT_DOCUMENTS / 语料清点结果），不是新输入。
+    // `file` / `name` 是循环变量（值来自 DOCUMENTS 责任表 / 语料清点结果），不是新输入。
     .filter((argument) => argument !== 'file' && argument !== 'name' && argument !== 'abs');
   const suspicious = literalReads.filter((argument) => argument.startsWith("'") && argument !== "'docs'");
   assert.deepEqual(suspicious, [],
@@ -218,4 +221,45 @@ test('C4 check-docs：名单里的文件在盘上不存在时必须报出来', a
   const { code, out } = box.runChecker();
   assert.equal(code, 1, '名单指向不存在的文件时必须失败');
   assert.match(out, /在盘上不存在/, `输出必须说明名单与现实漂了，实际：${out.slice(-300)}`);
+});
+
+test('C9 check-docs：档案里的历史叙述词合法（四态之①：计数留痕、退出 0）', async (t) => {
+  const box = await sandbox();
+  t.after(box.cleanup);
+  // 场景：CHANGELOG（责任表 role=archive）的条目里出现历史叙述词。按文件责任，
+  // 档案记过去是它的本分——不算失败；但必须**计数留痕**，否则"查过"与"没查"
+  // 在输出上不可分辨（静默跳过形态）。
+  appendFileSync(
+    join(box.dir, 'CHANGELOG.md'),
+    '\n## [0.0.0-test] — 档案判据夹具\n\n这是一处勘误；先前版本原写如此，曾经另有写法。\n',
+    'utf8'
+  );
+  const { code, out } = box.runChecker();
+  assert.equal(code, 0, `档案里的历史叙述词必须合法（退出 0），实际退出 ${String(code)}：${out.slice(-300)}`);
+  assert.match(out, /OK\s+档案\s+CHANGELOG\.md/, `输出必须按档案角色标记 CHANGELOG，实际：${out.slice(-300)}`);
+  assert.match(out, /历史叙述词 [1-9]\d* 处（档案合法，留痕）/, `档案命中必须计数留痕，实际：${out.slice(-300)}`);
+});
+
+test('C10 check-docs：现行文档里的历史叙述词仍然必红（四态之②：责任豁免不外溢）', async (t) => {
+  const box = await sandbox();
+  t.after(box.cleanup);
+  // 场景：现行文档（CONTRIBUTING.md）里出现历史叙述词——责任模型只豁免档案，
+  // 现行档"清零"口径不变；若角色建模把现行档也放过，这条就是那个反例。
+  appendFileSync(join(box.dir, 'CONTRIBUTING.md'), '\n这是一处勘误。\n', 'utf8');
+  const { code, out } = box.runChecker();
+  assert.equal(code, 1, `现行文档的历史叙述词必须失败，实际退出 ${String(code)}：${out.slice(-300)}`);
+  assert.match(out, /WARN\s+现行\s+CONTRIBUTING\.md/, `输出必须按现行角色点名 CONTRIBUTING，实际：${out.slice(-300)}`);
+  assert.match(out, /历史叙述词 1 处（现行文档应清零）/, `输出必须报历史叙述词命中，实际：${out.slice(-300)}`);
+});
+
+test('C11 check-docs：档案的围栏损坏仍然必红（四态之④：结构性判据不随角色豁免）', async (t) => {
+  const box = await sandbox();
+  t.after(box.cleanup);
+  // 场景：给档案（CHANGELOG）加未闭合围栏。档案豁免的只有历史叙述词；围栏配对
+  // 是结构性判据，坏围栏让任何读者都读不了，照红。
+  appendFileSync(join(box.dir, 'CHANGELOG.md'), '\n```\n', 'utf8');
+  const { code, out } = box.runChecker();
+  assert.equal(code, 1, `档案的围栏不配对必须失败，实际退出 ${String(code)}：${out.slice(-300)}`);
+  assert.match(out, /WARN\s+档案\s+CHANGELOG\.md/, `输出必须点名档案文件，实际：${out.slice(-300)}`);
+  assert.match(out, /代码围栏 \d+ 个（不配对）/, `输出必须点名围栏问题，实际：${out.slice(-300)}`);
 });

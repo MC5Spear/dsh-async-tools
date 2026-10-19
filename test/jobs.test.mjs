@@ -519,6 +519,23 @@ hostTest('async_run：elapsed_ms 覆盖整个让出窗口，不能恒为 0', asy
   assert.match(result.note, new RegExp(`about ${String(result.elapsed_ms)} ms elapsed`), 'note 里的数字必须与 elapsed_ms 一致');
 });
 
+hostTest('async_run（总预算平上界）：首次等待路径全程不得超有效 yield_ms + 300ms', async () => {
+  // 首次等待路径同口径（设计 §2.1／§8.2 总预算行）：全程上界＝有效
+  // yield_ms＋300ms——首次等待之后的收尾（结算注册、note 组装）不得另行
+  // 拖延；把 yield 处理挪成定值睡眠或附加等待的变异在此必红。
+  const f = fakeCtx();
+  const fastConfig = resolveConfig({ toolName: 'async_run', minYieldMs: 20, defaultYieldMs: 40 });
+  const { proc } = fakeProc({ text: '', status: 'running', autoResolve: false });
+  f.installShellExecute(() => Promise.resolve(proc));
+
+  const startedAt = Date.now();
+  const result = await createRunTool(f.ctx, fastConfig)
+    .execute({ command: 'build', description: 'long build', yield_ms: 40 }, exec);
+  const took = Date.now() - startedAt;
+  assert.equal(result.status, 'running');
+  assert.ok(took <= 340, `总时长 ${String(took)} ms 不得超过有效 40ms + 300ms = 340ms`);
+});
+
 hostTest('async_run：lossy 且有落点 → note 与作业结局都给出 spill 路径', async () => {
   const f = fakeCtx();
   const first = lossyProc({ spillPath: 'C:\\spill\\stdout.txt' });

@@ -229,7 +229,7 @@ const OPERATOR_MARKERS = ['LOG_PREFIX', 'logger.', 'logger?.', 'diag(', 'process
  * 允许的有三类——**定长标记**（宿主同款英文，不是句子）、**校验/断言错误**
  * （操作者一侧：降级 stderr 与开发期断言，schemastery 同层也是英文）与
  * **宿主逐字同形副本**：宿主源码里逐字存在的
- * 串，钉版看守整段互锚要求本包副本与宿主逐字同形——双语化即破坏锚、即与宿主
+ * 串，钉版看守（有限锚集）要求被锚住的串与宿主逐字同形——双语化即破坏锚、即与宿主
  * 行为漂移。判定特征统一为"宿主侧同串同现 + 看守锚定于宿主源"。
  */
 const PROSE_ALLOWLIST = {
@@ -288,10 +288,10 @@ const PROSE_ALLOWLIST = {
   ],
   // 宿主副本豁免类：assertRoutes 三条 + fold 空名单 throw 一条，全部是宿主
   // `dsh-tool-subagent` 源码的逐字同形串——verify/check-agent-policy.mjs 钉版看守
-  // （整段互锚）锚的就是这些串的逐字形态；改一字（含双语化）看守即红、
+  // （有限锚集）锚住这些串的逐字形态；改一字（含双语化）看守即红、
   // 本包即与宿主行为漂移。宿主侧同串同现，不是本包自有文案。
   'agent-policy.js': [
-    { needle: 'subagent model selection requires an array of routes', why: '宿主逐字同形副本（assertRoutes ↔ 宿主 assertAllowedModelRoutes；钉版看守整段互锚要求逐字，双语化即破坏锚）' },
+    { needle: 'subagent model selection requires an array of routes', why: '宿主逐字同形副本（assertRoutes ↔ 宿主 assertAllowedModelRoutes；钉版看守锚住该串、要求逐字，双语化即破坏锚）' },
     { needle: 'subagent model selection requires non-empty provider and model ids', why: '同上（宿主 assertAllowedModelRoutes 的第二条校验串）' },
     { needle: 'subagent model selection repeats route', why: '同上（重复路由 throw 的模板串；needle 取插值前的稳定前缀）' },
     { needle: 'requires at least one route', why: '宿主逐字同形副本（fold 空名单 throw ↔ 宿主投影定义同串；「≥1 条」分列在此处与 settings current() 等三处校验，不在 assertRoutes）' }

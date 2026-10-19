@@ -2,16 +2,16 @@
  * `verify/check-agent-policy.mjs` 的变异证明（新判据必须自带「改坏必红」的用例）。
  * 进程内 import 纯函数（不起子进程——沙箱禁止管道捕获子进程输出）。
  *
- * 11 处变异分打宿主锚与本包锚：改常量 / 换库 / 删校验 / 改短路 / 宿主侧漂移
- * （stateVersion、init）——任何一处没红就报 UNCAUGHT 并退出 1；BASELINE-GREEN
- * 先证明未变异时恰绿。
+ * 13 处变异分打宿主锚、本包锚与检查器锚表：改常量 / 换库 / 删校验 / 改短路 /
+ * 宿主侧漂移（stateVersion、init）/ 锚表改错行号与移除被锚住的行——任何一处
+ * 没红就报 UNCAUGHT 并退出 1；BASELINE-GREEN 先证明未变异时恰绿。
  *
  * 用法：node verify/mutate-agent-policy.mjs
  */
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { analyzeAgentPolicy } from './check-agent-policy.mjs';
+import { analyzeAgentPolicy, OUR_ANCHORS } from './check-agent-policy.mjs';
 import { loadLocalPlaneOrSkip } from '../tools/_local-config.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -122,6 +122,23 @@ const MUTATIONS = [
     side: 'our',
     expect: /^O3 MISSING/m,
     mutate: (t) => t.replace("import { z } from 'zod';", "// import { z } from 'zod';")
+  },
+  {
+    name: 'M12 检查器 fold 返回值锚改错误行号 → O13 必红（行号钉腿）',
+    side: 'our',
+    expect: /^O13 MISSING/m,
+    // 源不动，改的是检查器锚表：O13 钉到的行号 +1（那里是 fold 的收尾花括号）。
+    // 钉版机制必须把「锚指错行」读成红，否则行号钉只是装饰。
+    anchors: (table) => table.map((entry) => (entry[0] === 'O13'
+      ? [entry[0], entry[1], entry[2], entry[3] + 1]
+      : entry)),
+    mutate: (t) => t
+  },
+  {
+    name: 'M13 本包删 provider/model 字段类型行 → O14 必红（移除被锚住的断言行）',
+    side: 'our',
+    expect: /^O14 MISSING/m,
+    mutate: (t) => t.replace(/ {4}provider: z\.string\(\)\.min\(1\),\r?\n {4}model: z\.string\(\)\.min\(1\)\r?\n/, '')
   }
 ];
 
@@ -129,11 +146,17 @@ let uncaught = 0;
 for (const mutation of MUTATIONS) {
   const original = mutation.side === 'host' ? hostOriginal : ourOriginal;
   const mutated = mutation.mutate(original);
-  const changed = mutated !== original;
-  const result = analyzeAgentPolicy({
-    hostText: mutation.side === 'host' ? mutated : hostOriginal,
-    ourText: mutation.side === 'our' ? mutated : ourOriginal
-  });
+  // M12 一类「打检查器锚表」的变异：源文本不动，锚表经覆盖参数换入。
+  const anchors = mutation.anchors === undefined ? undefined : mutation.anchors(OUR_ANCHORS);
+  const changed = mutated !== original
+    || (anchors !== undefined && JSON.stringify(anchors) !== JSON.stringify(OUR_ANCHORS));
+  const result = analyzeAgentPolicy(
+    {
+      hostText: mutation.side === 'host' ? mutated : hostOriginal,
+      ourText: mutation.side === 'our' ? mutated : ourOriginal
+    },
+    anchors === undefined ? {} : { ourAnchors: anchors }
+  );
   const hit = mutation.expect.test(result.report.join('\n'));
   const ok = changed && result.failures > 0 && hit;
   if (!ok) uncaught += 1;
@@ -145,6 +168,6 @@ for (const mutation of MUTATIONS) {
 }
 
 console.log(uncaught === 0
-  ? `全部 ${String(MUTATIONS.length)} 处变异被抓住（本包锚腿 + 宿主漂移腿 + 值锚/注释化腿）`
+  ? `全部 ${String(MUTATIONS.length)} 处变异被抓住（本包锚腿 + 宿主漂移腿 + 值锚/注释化腿 + 行号钉腿）`
   : `${String(uncaught)} 处未抓住——看守存在恒真缺口`);
 process.exitCode = uncaught === 0 ? 0 : 1;

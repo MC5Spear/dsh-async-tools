@@ -219,6 +219,22 @@ hostTest('async_wait_job（0.2.1-rc.2）：jobs.wait 超时是 resolve 回 runni
   assert.equal(probes.killCalls, 0);
 });
 
+hostTest('async_wait_job（总预算平上界）：作业运行中全程 ≈ waitMs，不得超有效 wait_ms + 300ms', async () => {
+  // 总时长上界＝有效 wait_ms＋300ms（设计 §2.1：两等待工具同一口径，不追加
+  // 轮询或复查时长）：jobs.wait 永不自行 resolve（真实形态：宿主等待挂起），
+  // 本地总截止驱动返回——等待侧任何加重（如复查无界等）在此必红。
+  const f = fakeCtx();
+  installJobs(f, { waitDelayMs: 0 });
+  const tool = createWaitJobTool(f.ctx, config);
+
+  const startedAt = Date.now();
+  const result = await tool.execute({ job_id: 'j-1', wait_ms: 250 }, exec);
+  const took = Date.now() - startedAt;
+  assert.equal(result.status, 'running', '预算到期照常 running');
+  assert.ok(result.waited_ms >= 240, `等待段要用满预算（实得 ${String(result.waited_ms)} ms）`);
+  assert.ok(took <= 550, `总时长 ${String(took)} ms 不得超过有效 250ms + 300ms = 550ms`);
+});
+
 hostTest('async_wait_job（0.2.1-rc.2）：到期双源合并——本地 deadline 与 jobs.wait 的到时信号谁先到，返回体都逐字段相等', async () => {
   // 合并规则的"两路同时触发"形态：真实调度里本地 timer 与
   // jobs.wait 的到时信号几乎同拍，**谁先到都不允许改变返回体**（终态只认复查快照

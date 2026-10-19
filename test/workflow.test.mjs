@@ -328,6 +328,23 @@ hostTest('async_workflow（R34-c·预算）：yield 到期 → 句柄 + 预算�
   assert.equal(f.jobsFake.waitersOf(result.job_id), 0, '预算路同撤 waiter（四路同款，I-5）');
 });
 
+hostTest('async_workflow（总预算平上界）：首次等待路径全程不得超有效 yield_ms + 300ms', async () => {
+  // 首次等待路径同口径（设计 §2.1／§8.2 总预算行，真时钟）：全程上界＝
+  // 有效 yield_ms＋300ms。engine 永不 resolve（真实形态：编排长时间运行），
+  // 让出由首次等待到期驱动——让出之后的收尾（作业结算注册、note 组装）
+  // 不得另行拖延。
+  const { f, runs, tool } = rig({ minYieldMs: 20 });
+  const exec = { agent: fakeAgent(), signal: new AbortController().signal };
+  const startedAt = Date.now();
+  const result = await tool.execute({ ...BASE_ARGS, yield_ms: 40 }, exec);
+  const took = Date.now() - startedAt;
+  assert.equal(result.status, 'running');
+  assert.ok(took <= 340, `总时长 ${String(took)} ms 不得超过有效 40ms + 300ms = 340ms`);
+  assert.equal(runs[0].cancelCalls, 0, '预算让出不取消 run（同款前提）');
+  runs[0]._resolve({ stopReason: 'completed', agentsStarted: 1, value: 1 });
+  f.jobsFake.settleJob(result.job_id, { status: 'completed', detail: '1 agent' });
+});
+
 hostTest('async_workflow（R34-d·mirror）：引擎生命周期事件 → 作业卡 log 通道与 progress', async () => {
   const { f, runs, agent, tool } = rig();
   const exec = { agent, signal: new AbortController().signal };

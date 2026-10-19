@@ -253,8 +253,8 @@ test('T5：单包两形态正确——bundle 补丁数组、宿主行不带 tool
   // 表单本体是官方 `SettingsFormModel`（scope = 控制器），重渲染走模型的快照存储 +
   // `useSyncExternalStore`——订阅责任从卡片手写 effect 移到模型构造里。
   assert.match(client, /ctx\.configForms\.get\(ENTRY\)/, '表单必须由卡片自取控制器');
-  assert.match(client, /new P\.SettingsFormModel\(scope, makeSpecs\(\)\)/,
-    '控制器必须交给官方 SettingsFormModel（R27：暂存/差集/保存语义不自绘）');
+  assert.match(client, /new P\.SettingsFormModel\(view, makeSpecs\(\)\)/,
+    '控制器（经 settings 子树→平铺寻址的适配视图）必须交给官方 SettingsFormModel（R27：暂存/差集/保存语义不自绘）');
   assert.match(client, /useSyncExternalStore\(card\.store\.subscribe, card\.store\.getSnapshot\)/,
     '卡片必须订阅模型的快照存储（bind 的 store）重渲染——不订阅就停在旧值');
 });
@@ -275,16 +275,17 @@ test('T6（R10）：浏览器半边不引入会被打包器执行不到的 ESM �
 test('T7（R10）：校验只有一套判据 —— 非法值必须在 schema 层被拒', () => {
   // 缺陷形态：`Config` 的数值字段若没有下界约束，则
   // ① 设置页放行 `-1` / `0` / 空串；② 运行时 `resolveConfig` 才抛错并被吞掉。
-  // 修法是把约束放进 schema —— 它同时就是设置页逐字段校验用的那份 schema。
+  // 修法是把约束放进 schema —— 它同时就是设置页逐字段校验用的那份 schema
+  //（字段校验住进 settings 子树，设计 §5.1）。
   return import('../lib/config.js').then(({ Config }) => {
-    // **每个 patch 都必须带上 `toolName`**，否则 `toolName` 的 `.required()` 会让
-    // **每一条**都抛错——于是本用例变成恒真：它测的就成了"缺字段会被拒"，
-    // 而不是"这一条约束会被拒"。"判据因为别的原因也成立"的坑会让用例恒真。
-    //
-    // 反向那组同样要带：没有 `toolName` 的回退语义，缺省即宿主角色。
-    const BASE = { toolName: 'async_run' };
-    const rejects = (patch) => {
-      try { Config({ ...BASE, ...patch }); return false; } catch { return true; }
+    // 值字段判据挂在 **settings 子树**上；身份字段（toolName）在根上单独测。
+    // 子树基底带 `toolName`：否则宿主行缺省语义混进判据；恒真检查在最后
+    //（"基底本身必须通过"——不通过则"必须被拒"那组没有区分力）。
+    const rejectsSettings = (patch) => {
+      try { Config({ toolName: 'async_run', settings: patch }); return false; } catch { return true; }
+    };
+    const rejectsRoot = (patch) => {
+      try { Config(patch); return false; } catch { return true; }
     };
     for (const [label, patch] of [
       ['jobKind 空串', { jobKind: '' }],
@@ -292,21 +293,22 @@ test('T7（R10）：校验只有一套判据 —— 非法值必须在 schema �
       ['maxResultChars 负数', { maxResultChars: -5 }],
       ['pollIntervalMs 负数', { pollIntervalMs: -1 }],
       ['minYieldMs = 0', { minYieldMs: 0 }],
-      ['maxWaitMs 负数', { maxWaitMs: -1 }],
-      ['toolName 不在枚举里', { toolName: 'nope' }]
+      ['maxWaitMs 负数', { maxWaitMs: -1 }]
     ]) {
-      assert.equal(rejects(patch), true, `${label} 必须被 schema 拒绝`);
+      assert.equal(rejectsSettings(patch), true, `${label} 必须被 schema 拒绝`);
     }
+    assert.equal(rejectsRoot({ toolName: 'nope' }), true, 'toolName 不在枚举里必须被 schema 拒绝');
     // 反向：别把正常路径一起挡掉。
     for (const [label, patch] of [
-      ['只给 toolName', { toolName: 'async_run' }],
+      ['空子树（全默认）', {}],
       ['正常区间', { minWaitMs: 250, maxWaitMs: 600000 }],
       ['极小但合法', { maxResultChars: 1, pollIntervalMs: 1 }]
     ]) {
-      assert.equal(rejects(patch), false, `${label} 必须通过`);
+      assert.equal(rejectsSettings(patch), false, `${label} 必须通过`);
     }
-    // 恒真检查：基底本身**必须通过**。若不通过，上面那组"必须被拒"就是白测的。
-    assert.equal(rejects({}), false, 'BASIC 配置（含 toolName）必须通过——否则上面的拒绝断言没有区分力');
+    assert.equal(rejectsRoot({ toolName: 'async_run' }), false, '只给 toolName 必须通过');
+    // 恒真检查：两个基底本身**必须通过**。
+    assert.equal(rejectsSettings({}), false, 'settings 基底必须通过——否则上面的拒绝断言没有区分力');
 
     // 宿主行没有 toolName，`Config` 必须放行（角色分派的前提），
     // 且**不得回填默认值**——默认值会让宿主行静默变成工具行，把工具泄漏进全局工具层（需求 §3.2）。
@@ -563,13 +565,14 @@ test('T10：宿主侧的 volatile 提交必须真的到达预设工具的描述'
   assert.ok(bus.listenerCount() >= 1, '预设层装载后登记表里必须有刷新回调');
   assert.match(tool.description, /First wait bounded to 1000–600000 ms/, '快照缺席时描述用本行默认值');
 
-  // ② 宿主侧（同一插件、行配置没有 toolName）：首播快照。
+  // ② 宿主侧（同一插件、行配置没有 toolName）：首播快照。settings 子树形态：
+  //    17 个可编辑字段住在 `settings` 键下（设计 §5.1——新根形态）。
   const hostCtx = new Context();
   for (const [name, value] of Object.entries(services)) hostCtx.provide(name, value);
   const hostFork = await mount(
     hostCtx,
     { name: preset.name, inject: preset.inject, Config: preset.Config, apply: preset.apply },
-    { toolName: undefined, maxWaitMs: 600000 }
+    { settings: { maxWaitMs: 600000 } }
   );
   assert.equal(hostFork.state, 2, '宿主角色必须激活');
   assert.equal(registeredTools.size, 1,
@@ -580,11 +583,14 @@ test('T10：宿主侧的 volatile 提交必须真的到达预设工具的描述'
   //    （`updateVolatile(ref, createVolatile(newValue))`，`cosmokit/lib/index.js:149-151`），
   //    再在 **fiber 自己的 ctx** 上派发事件（loader 也是 `fiber.ctx.emit`，cordis 的
   //    事件向上冒泡，从根 ctx 派发到不了 fiber 的监听）——快照必须重播、描述必须就地刷新。
-  assert.equal(typeof hostFork.config.maxWaitMs?.get, 'function',
-    'fiber.config 的 volatile 字段必须是 Ref（Schema.resolve 包的 createVolatile）——不是的话就地提交链不成立');
+  assert.equal(typeof hostFork.config.settings?.get, 'function',
+    'fiber.config 的 settings 子树必须是 Ref（Schema.resolve 包的 createVolatile）——不是的话就地提交链不成立');
   const before = tool.description;
-  updateVolatile(hostFork.config.maxWaitMs, createVolatile(130000));
-  updateVolatile(hostFork.config.defaultYieldMs, createVolatile(5000));
+  updateVolatile(hostFork.config.settings, createVolatile({
+    ...hostFork.config.settings.get(),
+    maxWaitMs: 130000,
+    defaultYieldMs: 5000
+  }));
   hostFork.ctx.emit('loader/volatile-update');
   // 快照重播是同步的（先于 refresh-bus 的动态 import）；描述刷新要等微任务+宏任务。
   assert.equal(readSnapshot().maxWaitMs, 130000, '事件派发后快照必须同步重播');
@@ -1008,8 +1014,9 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
 
   // 控制器替身：真实形态是 `ctx.configForms.get(<entryId>)` 返回的 `ConfigFormController`
   // （`getSnapshot` / `subscribe` / `mutate`）。假件必须给**完整** SettingsFormScope
-  // ——模型构造时就 subscribe（T9 ② 验过缺成员会抛错）。value 层给**全字段**（真机的
-  // schema-resolved section 总是全字段——毫秒说明行的读数才有东西可换算）。
+  // ——模型构造时就 subscribe（T9 ② 验过缺成员会抛错）。value/user 层给**全字段**
+  // 嵌套形状（真机 describe 把 17 字段展平在 `settings` 键下——毫秒说明行的读数
+  // 才有东西可换算；client.js 经 makeSettingsScopeView 适配官方模型的平铺寻址）。
   const DEFAULTS = {
     defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
     defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000,
@@ -1020,9 +1027,9 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   };
   const snapshot = (revision, user, overrides) => ({
     status: 'ready',
-    value: { ...DEFAULTS, ...overrides },
+    value: { settings: { ...DEFAULTS, ...overrides } },
     base: {},
-    user,
+    user: { settings: user },
     revision,
     writable: true,
     mode: 'host'
@@ -1247,8 +1254,8 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   assert.equal(buttonByLabel(tree, 'save|').props.disabled, false, '有改动时保存可用');
   await buttonByLabel(tree, 'save|').props.onClick();
   assert.equal(mutateCalls.length, 1, '保存必须恰一次 mutate（判据 8）');
-  assert.deepEqual(mutateCalls[0].ops, [{ op: 'set', path: ['jobKind'], value: 'my-kind' }],
-    '保存必须只发用户真的改过的字段（模型只遍历被暂存的字段）');
+  assert.deepEqual(mutateCalls[0].ops, [{ op: 'set', path: ['settings', 'jobKind'], value: 'my-kind' }],
+    '保存必须只发用户真的改过的字段（模型只遍历被暂存的字段；路径带 settings 前缀＝嵌套形状线上契约）');
   assert.equal(mutateCalls[0].rev, 7, '写入必须带暂存开始时的 revision（revision 栅栏）');
   // 成功：快照换新（宿主写进新值）⇒ 字段回到生效值、按钮重新禁用（成功不弹文案）。
   replace(snapshot(8, { jobKind: 'my-kind' }, { jobKind: 'my-kind' }));
@@ -1316,8 +1323,8 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   assert.equal(mutateCalls.length, beforeReset, '恢复默认只暂存，不得直接发写（判据 3 保存前半）');
   await buttonByLabel(tree, 'save|').props.onClick();
   const lastCall = mutateCalls[mutateCalls.length - 1];
-  assert.deepEqual(lastCall.ops, [{ op: 'unset', path: ['jobKind'] }],
-    '保存把「恢复默认」做成 unset op（清除用户层覆盖）');
+  assert.deepEqual(lastCall.ops, [{ op: 'unset', path: ['settings', 'jobKind'] }],
+    '保存把「恢复默认」做成 unset op（清除用户层覆盖；路径带 settings 前缀）');
 
   // ⑦ 卸载丢弃（判据 9）：① 接线侧——SettingsForm 收到的 onDiscard 必须真的是模型的
   //    discard（清得掉暂存；换成 noop 这条就红）；② 观察侧——改字段不保存 → 卸载 →
@@ -1392,8 +1399,8 @@ test('T18h（R24/R27·设计 §5.5）：字段帮助——问号按钮、开合�
     askTakeover: false, askTimeoutMs: 60000, askExtendMs: 60000, askUiSeat: 'sidebar'
   };
   const snapshot = (revision, user, overrides) => ({
-    status: 'ready', value: { ...DEFAULTS, ...overrides }, base: {}, user,
-    revision, writable: true, mode: 'host'
+    status: 'ready', value: { settings: { ...DEFAULTS, ...overrides } }, base: {},
+    user: { settings: user }, revision, writable: true, mode: 'host'
   });
   let current = snapshot(7, {});
   let mutateOk = () => new Promise(() => {});
@@ -1881,10 +1888,16 @@ test('T21（R25）：展示范围语言开关——auto 跟随宿主、zh/en 用
   assert.deepEqual(byKey.agentLang.options, ['en', 'zh'], 'agentLang 的选项集（模型侧只有两档）');
 
   // 生效值的判定：用户层优先，其次实时值，未知值当 auto（不把脏值当语言用）。
-  assert.equal(product.uiLangOf({ user: { uiLang: 'en' }, value: { uiLang: 'zh' } }), 'en', '用户层优先');
-  assert.equal(product.uiLangOf({ user: {}, value: { uiLang: 'zh' } }), 'zh', '其次实时解析值');
-  assert.equal(product.uiLangOf({ user: {}, value: {} }), 'auto', '都没有 → auto');
-  assert.equal(product.uiLangOf({ user: { uiLang: 'fr' }, value: {} }), 'auto', '未知取值 → auto（不猜）');
+  // 生产形态是 describe 的嵌套值层（settings 键下，设计 §5.1）；平铺输入是
+  // settingsLayerOf 的防御回退（值层整体缺席的部署形态不抛错），一并钉住。
+  assert.equal(product.uiLangOf({ user: { settings: { uiLang: 'en' } }, value: { settings: { uiLang: 'zh' } } }), 'en', '用户层优先（嵌套）');
+  assert.equal(product.uiLangOf({ user: { settings: {} }, value: { settings: { uiLang: 'zh' } } }), 'zh', '其次实时解析值（嵌套）');
+  assert.equal(product.uiLangOf({ user: { settings: {} }, value: { settings: {} } }), 'auto', '都没有 → auto（嵌套）');
+  assert.equal(product.uiLangOf({ user: { settings: { uiLang: 'fr' } }, value: { settings: {} } }), 'auto', '未知取值 → auto（不猜）');
+  assert.equal(product.uiLangOf({ user: { uiLang: 'en' }, value: { uiLang: 'zh' } }), 'en', '用户层优先（平铺回退）');
+  assert.equal(product.uiLangOf({ user: {}, value: { uiLang: 'zh' } }), 'zh', '其次实时解析值（平铺回退）');
+  assert.equal(product.uiLangOf({ user: {}, value: {} }), 'auto', '都没有 → auto（平铺回退）');
+  assert.equal(product.uiLangOf({ user: { uiLang: 'fr' }, value: {} }), 'auto', '未知取值 → auto（平铺回退，不猜）');
 
   // 两档词典的键集必须相等：少一个键就是少一句界面文案（与模型侧表的同一条纪律）。
   assert.deepEqual(Object.keys(product.DICTIONARIES.zh).sort(), Object.keys(product.DICTIONARIES.en).sort(),

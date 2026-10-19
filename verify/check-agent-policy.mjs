@@ -1,6 +1,7 @@
 /**
- * 钉版看守（设计 §3.3 整段互锚）：本包 `lib/agent-policy.js` 的
- * 投影定义/采样链副本与宿主 `dsh-tool-subagent` 的现行源**整段互锚**。
+ * 钉版看守（设计 §3.3 有限锚集）：本包 `lib/agent-policy.js` 的投影定义/采样链
+ * 副本与宿主 `dsh-tool-subagent` 的现行源按**有限锚集**逐行互锚——锚外漂移不红、
+ * **不证明语义等价**，也不代替实际指定路由验证（清单以本脚本的锚表为准）。
  *
  * ## 为什么要有它
  *
@@ -11,9 +12,12 @@
  * ## 判据（缺一即红；缺树即红——显式红，与 preset.test 的对账口径一致）
  *
  * 宿主侧（H1–H9）：投影定义 key/stateVersion/zod import/schema 串/init 短路/
- * assert 调用/空名单 throw/采样链四锚。本包侧（O1–O11）：与宿主逐条对应的常量与
- * 实现行。纯函数 `analyzeAgentPolicy` 供变异看守（`verify/mutate-agent-policy.mjs`）
- * 进程内复用（默认沙箱下不起子进程）。
+ * assert 调用/空名单 throw/采样链四锚。本包侧（O1–O14）：与宿主逐条对应的常量与
+ * 实现行；O13/O14 额外钉**行号**（fold 返回值行、provider/model 字段类型行——
+ * 行被移走或行序漂移即红，行号以现行 `lib/agent-policy.js` 为准，改行序须重锚）。
+ * 纯函数 `analyzeAgentPolicy` 供变异看守（`verify/mutate-agent-policy.mjs`）
+ * 进程内复用（默认沙箱下不起子进程）；锚表可经第二参数覆盖（变异看守的
+ * 「锚改错行号」腿用，缺省即本表）。
  *
  * 用法：node verify/check-agent-policy.mjs [--host-file <tool-subagent index.js>]
  */
@@ -49,8 +53,9 @@ const HOST_ANCHORS = [
   ['H9d', /settings\.current\(\)/, '采样链：全局白名单读取']
 ];
 
-/** 本包侧锚（lib/agent-policy.js，与宿主逐条对应；**一律行锚**——注释化/删行变异不许命中）。 */
-const OUR_ANCHORS = [
+/** 本包侧锚（lib/agent-policy.js，与宿主逐条对应；**一律行锚**——注释化/删行变异不许命中。
+ * 第 4 元（可选）＝1-based 行号：正则须**从该行行首**命中，行被移走或行序漂移即红。） */
+export const OUR_ANCHORS = [
   ['O1', /^\s*export const POLICY_KEY = 'subagentModelSelectionPolicy';/m, '键常量（与 H1 同串）'],
   ['O2', /^\s*export const POLICY_STATE_VERSION = 1;/m, '版本常量（与 H2 同值）'],
   ['O3', /^\s*import \{ z \} from 'zod';/m, 'zod import（换成 schemastery 必红）'],
@@ -65,15 +70,38 @@ const OUR_ANCHORS = [
   ['O11b', /session\.firstLiveSeq === 0 && session\.eventAt\(0\)\?\.type !== 'session\/end-seed'/, '采样链：fresh 判定'],
   ['O11c', /'session\/end-seed'/, '采样链：恢复会话排除'],
   ['O11d', /^\s*routes = current\.enabled \? current\.allowedModels : undefined;/m, '采样链：白名单开关短路'],
-  ['O12', /^\s*export const POLICY_EVENT = 'subagent\/model-selection-policy';/m, '事件类型**值**锚（标识符锚不住串值改错）']
+  ['O12', /^\s*export const POLICY_EVENT = 'subagent\/model-selection-policy';/m, '事件类型**值**锚（标识符锚不住串值改错）'],
+  // O13/O14 补齐设计 §3.3 锚清单里的「fold 返回值」与「schema 内层字段类型」两项；
+  // 行号对应现行 lib/agent-policy.js（provider/model 在 :96-97，fold 的 return 在 :105）。
+  ['O13', /^ {4}return allowedModels;$/m, 'fold 返回值（首条策略事件折出路由表）', 105],
+  ['O14', /^ {4}provider: z\.string\(\)\.min\(1\),\r?\n {4}model: z\.string\(\)\.min\(1\)$/m, 'provider/model 字段类型（z.string().min(1)）', 96]
 ];
+
+/** 每行行首偏移（含首行 0）。行号钉版锚取「从该行行首起」的文本切片。 */
+function lineStartOffsets(text) {
+  const starts = [0];
+  for (let i = 0; i < text.length; i += 1) {
+    if (text.charCodeAt(i) === 10) starts.push(i + 1);
+  }
+  return starts;
+}
+
+/** 行号钉版：正则须从第 `lineNo` 行行首命中（跨行正则以起始行计；行号越界即红）。 */
+function pinnedAt(text, starts, lineNo, re) {
+  const start = starts[lineNo - 1];
+  if (start === undefined) return false;
+  const match = re.exec(text.slice(start));
+  return match !== null && match.index === 0;
+}
 
 /**
  * 纯分析：两份文本互锚。缺文本（null）按「文件缺席」成红行。
  * @param {{hostText: string|null, ourText: string|null}} texts
+ * @param {{hostAnchors?: Array, ourAnchors?: Array}} [overrides] - 锚表覆盖（变异看守
+ *   的「锚改错行号」腿用）；缺省用本模块的现行锚表。
  * @returns {{report: string[], failures: number}}
  */
-export function analyzeAgentPolicy(texts) {
+export function analyzeAgentPolicy(texts, { hostAnchors = HOST_ANCHORS, ourAnchors = OUR_ANCHORS } = {}) {
   const report = [];
   let failures = 0;
   const red = (id, label, why) => {
@@ -83,7 +111,7 @@ export function analyzeAgentPolicy(texts) {
   if (texts.hostText === null) {
     red('HOST', '宿主源文件', '读不到（0.2.1 树缺席或路径不对——缺树即红，不许静默跳过）');
   } else {
-    for (const [id, re, label] of HOST_ANCHORS) {
+    for (const [id, re, label] of hostAnchors) {
       if (re.test(texts.hostText)) report.push(`${id} OK       ${label}`);
       else red(id, label, '宿主源锚漂移——宿主已改而我们未跟（或宿主换行形，须重锚）');
     }
@@ -91,9 +119,15 @@ export function analyzeAgentPolicy(texts) {
   if (texts.ourText === null) {
     red('OURS', '本包 lib/agent-policy.js', '读不到');
   } else {
-    for (const [id, re, label] of OUR_ANCHORS) {
-      if (re.test(texts.ourText)) report.push(`${id} OK       ${label}`);
-      else red(id, label, '本包副本锚漂移——实现与设计 §3.3 副本不同形');
+    const ourStarts = lineStartOffsets(texts.ourText);
+    for (const entry of ourAnchors) {
+      const [id, re, label, lineNo] = entry;
+      const hitAnchor = lineNo === undefined
+        ? re.test(texts.ourText)
+        : pinnedAt(texts.ourText, ourStarts, lineNo, re);
+      if (hitAnchor) report.push(`${id} OK       ${label}`);
+      else if (lineNo === undefined) red(id, label, '本包副本锚漂移——实现与设计 §3.3 副本不同形');
+      else red(id, label, `本包副本锚不在钉住的第 ${String(lineNo)} 行——行序漂移或行形改坏`);
     }
   }
   return { report, failures };

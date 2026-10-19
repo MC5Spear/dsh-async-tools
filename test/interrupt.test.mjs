@@ -30,7 +30,7 @@ test('wakesWait/classifyWake：form notice / relay 命中（结算通知与转�
   assert.equal(wake.summary, 'child done', 'source.summary 透传');
 });
 
-test('classifyWake：summary 空档回退——relay/notice 无摘要给最小描述并点名来源，user 维持空串（盲测第二轮发现④、第三轮低①）', () => {
+test('classifyWake：summary 空档回退——relay/notice 无摘要给最小描述并点名来源，user 维持空串', () => {
   // "A processable message arrived ()" 的括号空置不满足需求 §2.1.3（结束
   // 原因清楚可见）；user 插话的 summary 不进任何渲染模板，维持既有空串契约。
   // 宿主契约：relay / 结算通知 source 恒带 senderSessionId——回退优先点名。

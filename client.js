@@ -63,13 +63,15 @@ var PACKAGE_NAME = "dsh-async-tools";
 /** 词典命名空间（本插件自有）。 */
 var NS = "settings.async-tools";
 
-// 字段表：key 与宿主 Config 的 volatile 字段一一对应；ms 字段的说明行带秒数读数。
+// 字段表：key 与宿主 Config 的 settings 子树字段一一对应（设计 §5.1：17 个
+// 可编辑字段全在子树里，值投影展平在 `settings` 键下，经 makeSettingsScopeView
+// 适配成官方模型的平铺寻址）；ms 字段的说明行带秒数读数。
 // 顺序 = `lib/config.js` 四组键的拼接：BUDGET_FIELD_KEYS → LANG_FIELD_KEYS →
 // FLAG_FIELD_KEYS → ASK_FIELD_KEYS（提问接管组殿后；与 test/two-planes.test.mjs
 // T19 的键集对账，静默失败开关字段在列）。
-// `toolName` 不在表里（它不是 volatile，不可用户写——写会被宿主拒绝
+// `toolName` 不在表里（它在根的非 volatile 固定路径，不可用户写——写会被宿主拒绝
 // `Config field "toolName" is not volatile`，`dsh-settings/lib/index.js:507`），
-// 这正是「volatile 才可编辑」语义的正确表达。
+// 这正是「volatile 子树才可编辑」语义的正确表达。
 var FIELDS = [
   { key: "defaultYieldMs", label: "defaultYieldMs", ms: true },
   { key: "minYieldMs", label: "minYieldMs", ms: true },
@@ -578,13 +580,28 @@ function FieldShell(props) {
 }
 
 /**
+ * 从 describe 快照的值层（value/user/base）里取 settings 子树的内容
+ * （设计 §5.1：17 字段全部展平在 `settings` 键下）。
+ *
+ * 防御回退：`settings` 键缺席时把该层本身当字段层用（快照值层整体缺席的
+ * 部署形态不因此抛错，座位/语言回退默认值——同 `readConfig` 的口径）。
+ * @param {object|undefined} layer - describe 快照的某一值层。
+ * @returns {object} 该层的 settings 字段内容（缺席为空对象）。
+ */
+function settingsLayerOf(layer) {
+  if (layer === undefined || layer === null) return {};
+  if (layer.settings !== undefined && layer.settings !== null) return layer.settings;
+  return layer;
+}
+
+/**
  * 生效的 `uiLang`：用户层在场就用它，否则用实时解析值，再否则 `"auto"`。
  * @param {object|undefined} snapshot - 控制器快照。
  * @returns {string} `"auto" | "zh" | "en"`。
  */
 function uiLangOf(snapshot) {
-  var user = snapshot !== undefined && snapshot !== null && snapshot.user ? snapshot.user : {};
-  var value = snapshot !== undefined && snapshot !== null && snapshot.value ? snapshot.value : {};
+  var user = settingsLayerOf(snapshot !== undefined && snapshot !== null ? snapshot.user : undefined);
+  var value = settingsLayerOf(snapshot !== undefined && snapshot !== null ? snapshot.value : undefined);
   var lang = user.uiLang !== undefined ? user.uiLang : value.uiLang;
   return lang === "zh" || lang === "en" ? lang : "auto";
 }
@@ -618,20 +635,59 @@ function makeTranslator(uiLang, hostT) {
 function projectCardState(model, scope) {
   var snapshot = scope.getSnapshot();
   var state = { shell: model.shell(), uiLang: uiLangOf(snapshot), fields: {}, effective: {} };
+  var valueLayer = settingsLayerOf(snapshot !== undefined && snapshot !== null ? snapshot.value : undefined);
   for (var i = 0; i < FIELDS.length; i += 1) {
     var field = FIELDS[i];
     state.fields[field.key] = model.field(field.key);
     if (field.ms === true) {
-      state.effective[field.key] = snapshot.value === undefined || snapshot.value === null
-        ? undefined
-        : snapshot.value[field.key];
+      state.effective[field.key] = valueLayer[field.key];
     }
   }
   return state;
 }
 
 /**
- * 建卡片模型：控制器交给官方 `SettingsFormModel`，`bind` 只调一次，
+ * 官方 `SettingsFormModel` 的字段寻址是**根平铺**（`value?.[field]`、
+ * `path:[field]`，冻结平台模块表的建资产实证）；本包的行 Config 是
+ * `settings` 子树形态（设计 §5.1），值投影在 `settings` 键下。适配层把
+ * 控制器包装成官方模型看得懂的形状：`value`/`base`/`user` 三层经
+ * `settingsLayerOf` 展平，`mutate` 的 op 路径整体加 `settings` 前缀——
+ * UI 结构语义不变，只有线上的寻址形状换轨。
+ *
+ * @param {object} scope - 控制器（`ctx.configForms.get(ENTRY)`）。
+ * @returns {object} 官方模型可用的同接口控制器视图。
+ */
+function makeSettingsScopeView(scope) {
+  function flatSnapshot() {
+    var snap = scope.getSnapshot();
+    if (snap === undefined || snap === null) return snap;
+    var flat = {};
+    for (var key in snap) {
+      if (!Object.prototype.hasOwnProperty.call(snap, key)) continue;
+      flat[key] = (key === "value" || key === "base" || key === "user")
+        ? settingsLayerOf(snap[key])
+        : snap[key];
+    }
+    return flat;
+  }
+  return {
+    getSnapshot: flatSnapshot,
+    subscribe: function (listener) { return scope.subscribe(listener); },
+    mutate: function (ops, revision) {
+      var prefixed = (ops || []).map(function (op) {
+        var next = { op: op.op, path: ["settings"].concat(op.path || []) };
+        // unset 不携带 value 键（官方 plan 的 op 形状按动作分档，适配层不改形状）。
+        if (op.value !== undefined) next.value = op.value;
+        return next;
+      });
+      return scope.mutate(prefixed, revision);
+    }
+  };
+}
+
+/**
+ * 建卡片模型：控制器先经 `makeSettingsScopeView` 适配（嵌套根 → 官方模型的
+ * 平铺寻址），再交给官方 `SettingsFormModel`，`bind` 只调一次，
  * 返回 `{model, store, dispose}`——`dispose` 解除模型对 scope 的订阅。
  *
  * @param {object} ctx - 客户端上下文（`configForms` 由 inject 声明）。
@@ -639,7 +695,8 @@ function projectCardState(model, scope) {
  */
 function createCardModel(ctx) {
   var scope = ctx.configForms.get(ENTRY);
-  var model = new P.SettingsFormModel(scope, makeSpecs());
+  var view = makeSettingsScopeView(scope);
+  var model = new P.SettingsFormModel(view, makeSpecs());
   var store = model.bind(function () { return projectCardState(model, scope); });
   return {
     model: model,
@@ -1153,8 +1210,8 @@ function createAskModel(ctx, remote) {
 
   function readConfig() {
     var snap = scope.getSnapshot();
-    var user = snap && snap.user ? snap.user : {};
-    var value = snap && snap.value ? snap.value : {};
+    var user = settingsLayerOf(snap && snap.user);
+    var value = settingsLayerOf(snap && snap.value);
     var takeover = user.askTakeover !== undefined ? user.askTakeover : value.askTakeover;
     var seat = user.askUiSeat !== undefined ? user.askUiSeat : value.askUiSeat;
     return {
@@ -1750,6 +1807,8 @@ module.exports = {
   FieldShell: FieldShell,
   resolveCopy: resolveCopy,
   createCardModel: createCardModel,
+  makeSettingsScopeView: makeSettingsScopeView,
+  settingsLayerOf: settingsLayerOf,
   createAskModel: createAskModel,
   AskList: AskList,
   AskItem: AskItem,

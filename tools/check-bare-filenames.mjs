@@ -46,7 +46,7 @@ const MODULE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
  */
 const DEFAULT_EXTRA_ROOTS = [];
 
-/** 现行文档清单，与 `tools/check-docs.mjs` 的 `CURRENT_DOCUMENTS` 一致。 */
+/** 文档清单，与 `tools/check-docs.mjs` 的 `DOCUMENTS` 责任表同集（含档案 CHANGELOG——文件名判据不分角色）。 */
 const CURRENT = [
   'README.md',
   'docs/requirements.md',
