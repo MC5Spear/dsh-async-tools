@@ -13,6 +13,9 @@
  * 2. 准入后逐字段取非空环境变量优先、文件值备用；支持 `DSAT_HOST_MODULES` /
  *    `DSAT_INSTANCE_URL` / `DSAT_TOKEN_FILE` 等。文件为 ESM 默认导出对象，示例为
  *    `tools/local-config.example.mjs`。宿主解析钩子可单独用环境变量跑单测，与本入口不同。
+ *    两个例外：`siblingBundles` 以文件数组为准（含空数组 `[]`＝只断言本包自己），
+ *    `DSAT_SIBLING_BUNDLES` 仅当文件未提供该字段时作为回退；`evidenceDir` /
+ *    `workspaceDir` / `tmpDir` 与普通字段同规则（env→文件→派生缺省），不是固定值。
  * 3. 两个来源都没有相关字段时留 `undefined`，调用方打印理由并跳过相应本机判据。
  *
  * ## 缺席与损坏是两件事（这条分开是本模块的关键设计）
@@ -91,12 +94,14 @@ export function localPlanePresent(root = MODULE_ROOT) {
  *   evidenceDir: string, workspaceDir: string, tmpDir: string,
  *   notes: string[]
  * }>} 归一化配置；缺席/不可用的字段为 `undefined`，`notes` 逐条说明来源与跳过理由。
- *   `evidenceDir` / `workspaceDir` / `tmpDir` 是**派生**字段（不是配置项）：`evidenceDir`
- *   固定指向本机侧的证据目录（探针的落盘位置）；`workspaceDir` 是探针驱动远端会话时
- *   该用的工作目录；`tmpDir` 是探针运行期要建/删的目录的落点（缺省 `.local/tmp`，
- *   可被同名字段覆盖）——运行产物不落公开范围。
- *   `siblingBundles` 是"这台部署的 profile 里除本包之外还应当挂着的包名"，
- *   缺省空数组——空数组的含义是"只断言本包自己"，这正是外部读者的形态。
+ *   `evidenceDir` / `workspaceDir` / `tmpDir` 是**带派生缺省的可配置字段**（与普通
+ *   字段同规则：环境变量→文件→缺省）：`evidenceDir` 缺省指向本机侧的证据目录
+ *   （探针的落盘位置）；`workspaceDir` 是探针驱动远端会话时该用的工作目录（缺省
+ *   仓根）；`tmpDir` 是探针运行期要建/删的目录的落点（缺省 `.local/tmp`）——运行
+ *   产物不落公开范围。
+ *   `siblingBundles` 是"这台部署的 profile 里除本包之外还应当挂着的包名"，以文件
+ *   数组为准（含空数组 `[]`——空数组的含义是"只断言本包自己"，这正是外部读者的
+ *   形态）；`DSAT_SIBLING_BUNDLES` 仅当文件未提供该字段时作为回退。
  * @throws {LocalPlaneAbsent} `.local/` 不存在。
  * @throws {LocalConfigInvalid} `.local/` 存在但 `config.mjs` 缺失或装载失败。
  */
@@ -156,7 +161,9 @@ export async function loadLocalConfig({ root = MODULE_ROOT, env = process.env } 
   }
 
   const junctions = Array.isArray(fromFile.junctions) ? fromFile.junctions : undefined;
-  // `siblingBundles` 只能用逗号分隔的环境变量覆盖（数组没法定成字符串环境变量）。
+  // `siblingBundles` 以文件数组为准（含空数组＝只断言本包自己）；环境变量
+  // `DSAT_SIBLING_BUNDLES` 仅当文件未提供该字段时作为回退（数组没法定成
+  // 字符串环境变量，文件是首选形状）。
   const siblingBundles = Array.isArray(fromFile.siblingBundles)
     ? fromFile.siblingBundles
     : (typeof env.DSAT_SIBLING_BUNDLES === 'string' && env.DSAT_SIBLING_BUNDLES.length > 0

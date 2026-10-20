@@ -9,8 +9,10 @@
  * 输出发现不了**，必须有一条能失败的断言——本文件里的 C1–C11 就是那几条。
  *
  * 做法：在包外的一次性副本上跑检查函数。不复制整包（那要几秒），
- * 只把它的输入（`docs/`、`README.md`、`verify/README.md`、本机侧语料目录）
- * 铺到一个临时目录里——检查只读这些相对路径，所以沙箱是前后一致的。
+ * 只把它的输入铺到一个临时目录里：公开范围 `docs/`、根下 `README.md`、
+ * 责任表里 `docs/` 外的登记文档（见 `CURRENT_OUTSIDE_DOCS`——沙箱必须覆盖
+ * 责任表全集），以及本机侧语料目录——检查只读这些相对路径，所以沙箱是
+ * 前后一致的。
  *
  * ## 进程内调用
  *
@@ -237,7 +239,23 @@ test('C9 check-docs：档案里的历史叙述词合法（四态之①：计数�
   const { code, out } = box.runChecker();
   assert.equal(code, 0, `档案里的历史叙述词必须合法（退出 0），实际退出 ${String(code)}：${out.slice(-300)}`);
   assert.match(out, /OK\s+档案\s+CHANGELOG\.md/, `输出必须按档案角色标记 CHANGELOG，实际：${out.slice(-300)}`);
-  assert.match(out, /历史叙述词 [1-9]\d* 处（档案合法，留痕）/, `档案命中必须计数留痕，实际：${out.slice(-300)}`);
+  assert.match(out, /历史叙述词 [1-9]\d* 处、退役机制名 \d+ 处（档案合法，留痕）/, `档案命中必须计数留痕，实际：${out.slice(-300)}`);
+});
+
+test('C9b check-docs：档案里的退役机制名合法（责任豁免的第二类，与四态之①同口径留痕）', async (t) => {
+  const box = await sandbox();
+  t.after(box.cleanup);
+  // 场景：CHANGELOG（role=archive）的旧条目里出现退役机制名。旧条目记录当时
+  // 的状态，退役名在条目里本来就是"当时的现役名"——不算失败，但必须**计数
+  // 留痕**（与历史叙述词同一套留痕口径，设计 §8.3）。
+  appendFileSync(
+    join(box.dir, 'CHANGELOG.md'),
+    '\n## [0.0.0-test] — 档案判据夹具（退役名）\n\n当时的 waiters 计数与 reported 事件名已按新宿主改代。\n',
+    'utf8'
+  );
+  const { code, out } = box.runChecker();
+  assert.equal(code, 0, `档案里的退役机制名必须合法（退出 0），实际退出 ${String(code)}：${out.slice(-300)}`);
+  assert.match(out, /历史叙述词 \d+ 处、退役机制名 [1-9]\d* 处（档案合法，留痕）/, `退役名命中必须计数留痕，实际：${out.slice(-300)}`);
 });
 
 test('C10 check-docs：现行文档里的历史叙述词仍然必红（四态之②：责任豁免不外溢）', async (t) => {
@@ -252,11 +270,23 @@ test('C10 check-docs：现行文档里的历史叙述词仍然必红（四态之
   assert.match(out, /历史叙述词 1 处（现行文档应清零）/, `输出必须报历史叙述词命中，实际：${out.slice(-300)}`);
 });
 
+test('C10b check-docs：现行文档里的退役机制名仍然必红（退役判据的现行侧反例）', async (t) => {
+  const box = await sandbox();
+  t.after(box.cleanup);
+  // 场景：现行文档（CONTRIBUTING.md）里出现退役机制名——档案豁免不外溢到
+  // 现行档；退役名在现行文档里按名单判红（这是该判据在本测试里唯一能失败
+  // 的用例形态，补上脚本输入契约要求的"每条判据至少一条会失败的用例"）。
+  appendFileSync(join(box.dir, 'CONTRIBUTING.md'), '\n等待方计数见 waiters 列表。\n', 'utf8');
+  const { code, out } = box.runChecker();
+  assert.equal(code, 1, `现行文档的退役机制名必须失败，实际退出 ${String(code)}：${out.slice(-300)}`);
+  assert.match(out, /已退役机制名 1 处（waiters）/u, `输出必须报退役机制名命中，实际：${out.slice(-300)}`);
+});
+
 test('C11 check-docs：档案的围栏损坏仍然必红（四态之④：结构性判据不随角色豁免）', async (t) => {
   const box = await sandbox();
   t.after(box.cleanup);
-  // 场景：给档案（CHANGELOG）加未闭合围栏。档案豁免的只有历史叙述词；围栏配对
-  // 是结构性判据，坏围栏让任何读者都读不了，照红。
+  // 场景：给档案（CHANGELOG）加未闭合围栏。档案豁免的只有历史叙述词与退役
+  // 机制名两类；围栏配对是结构性判据，坏围栏让任何读者都读不了，照红。
   appendFileSync(join(box.dir, 'CHANGELOG.md'), '\n```\n', 'utf8');
   const { code, out } = box.runChecker();
   assert.equal(code, 1, `档案的围栏不配对必须失败，实际退出 ${String(code)}：${out.slice(-300)}`);

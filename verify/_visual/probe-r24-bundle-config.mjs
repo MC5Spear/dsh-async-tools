@@ -256,8 +256,8 @@ try {
     typedLive === 'typed' && liveRead.input.endsWith(NEW_SECONDS)
       && liveRead.effective.endsWith(DEFAULT_SECONDS),
     `输入段=${JSON.stringify(liveRead.input)}`);
-  // 截图前把目标字段滚进视口——fullPage 截图不总可靠（历史轮次三张图逐字节相同，
-  // 目标字段在视口外），视觉证据必须真的包含被断言的字段。
+  // 截图前把目标字段滚进视口——fullPage 截图不总可靠（目标字段可能在视口外），
+  // 视觉证据必须真的包含被断言的字段。
   await evaluate(page, `document.getElementById('plugin-config-${FIELD}')?.scrollIntoView({ block: 'center' }), true`);
   await sleep(300);
   await screenshot(page, `${SHOTS}\\r24-05-plugin-page-typed.png`);

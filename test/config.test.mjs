@@ -3,14 +3,15 @@
  * 与 §5.1 的跨字段拦截）。
  *
  * 分两段：
- * - 单元段（离线可跑）：根形态、双向解包、嵌套禁令、自续序列化、武装两态、
- *   两侧判据对账与既有夹紧/枚举/身份透传判据；
+ * - 单元段（离线可跑）：根形态、双向解包、嵌套禁令、自续序列化、回调三形
+ *   （武装／降级基线／初始容忍）、两侧判据对账与既有夹紧/枚举/身份透传判据；
  * - 进程内段（宿主锚在场才跑）：真实 loader／config-editor／settings 链上的
- *   describe 投影、写入拒绝、行身份保护、两态启动与运行中非法重载（替身插件
- *   `test/_host-row-standin.mjs` 挂真实 `Config` 与真实接线）。
+ *   describe 投影、写入拒绝、行身份保护、三形启动、降级基线与运行中非法重载
+ *   （替身插件 `test/_host-row-standin.mjs` 挂真实 `Config` 与真实接线）。
  *
- * 武装位是模块级状态（宿主行与工具行共用同一模块实例，设计 §5.1）：依赖容忍态
- * 的用例入口先复位，武装用例收尾复位——进程内整链测试同进程串行，不互相污染。
+ * 回调形态是模块级状态（宿主行与工具行共用同一模块实例，设计 §5.1）：依赖
+ * 初始态的用例入口先复位，武装用例收尾复位——进程内整链测试同进程串行，
+ * 不互相污染。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,7 +20,8 @@ import { join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   Config, TOOL_NAMES, clamp, resolveConfig, resolveWait, resolveYield,
-  assertCrossFieldOrder, setConfigValidationArmed, isConfigValidationArmed,
+  assertCrossFieldOrder, setConfigValidationArmed, setConfigValidationDegraded,
+  isConfigValidationArmed, degradedSettingsCallback, resolveSettingsValue,
   isOwnConfigCandidate
 } from '../lib/config.js';
 import { HOST_SKIP_REASON, loadOfflineSafe } from './_host-gate.mjs';
@@ -149,7 +151,7 @@ test('resolveConfig：非法配置 fail-fast', () => {
   assert.throws(() => resolveConfig({ toolName: 'async_run', minYieldMs: 0 }), /expected number >= 1/);
   assert.throws(() => resolveConfig({ toolName: 'async_run', maxWaitMs: -1 }), /expected number >= 1/);
   assert.throws(() => resolveConfig({ toolName: 'async_run', jobKind: '' }), /expected string/);
-  // 跨字段约束：容忍态由 resolveConfig 的运行侧判据承接（武装态另测）。
+  // 跨字段约束：初始态由 resolveConfig 的运行侧判据承接（武装态另测）。
   assert.throws(() => resolveConfig({ toolName: 'async_run', minYieldMs: 5000, maxYieldMs: 1000 }), /minYieldMs > maxYieldMs/);
   assert.throws(() => resolveConfig({ toolName: 'async_run', minWaitMs: 900, maxWaitMs: 800 }), /minWaitMs > maxWaitMs/);
   assert.throws(() => resolveConfig({ toolName: 'async_run', defaultYieldMs: 1 }), /must lie within/);
@@ -234,12 +236,83 @@ test('武装态：五条链式不等式在 schema 层拒绝，消息双侧字段
       () => Config({ settings: { minYieldMs: 5000, maxYieldMs: 1000, minWaitMs: 500, maxWaitMs: 100 } }),
       /minYieldMs=5000 > maxYieldMs=1000[^\n]*;[^\n]*minWaitMs=500 > maxWaitMs=100/
     );
-    // 容忍态对照：同款非法值放行（启动容错），运行侧第二道防线仍拒。
+    // 初始态对照：同款非法值放行（启动容错），运行侧第二道防线仍拒。
     setConfigValidationArmed(false);
     const tolerated = Config({ settings: { defaultWaitMs: 1 } });
-    assert.equal(tolerated.settings.get().defaultWaitMs, 1, '容忍态原样放行非法值');
+    assert.equal(tolerated.settings.get().defaultWaitMs, 1, '初始态原样放行非法值');
     assert.throws(() => resolveConfig({ settings: { defaultWaitMs: 1 } }), /must lie within/,
-      '容忍态的运行侧判据（assertCrossFieldOrder）仍拒绝');
+      '初始态的运行侧判据（assertCrossFieldOrder）仍拒绝');
+  } finally {
+    setConfigValidationArmed(false);
+  }
+});
+
+test('降级态（回调三形＋降级基线）：基线等值放行、不同非法拒绝、不同合法放行（设计 §5.1）', () => {
+  // 基线＝降级时刻自检失败的已解析 settings 值：与它深度相等的输入放行
+  // （回调无法区分 loader 再解析与用户原样重存），其余照常五条校验。
+  const baseline = resolveSettingsValue({ settings: { defaultWaitMs: 1 } });
+  assert.equal(baseline.defaultWaitMs, 1, '基线取当次已解析值（不因跨字段违例抛错）');
+  const callback = degradedSettingsCallback(baseline);
+
+  // ① 基线等值（含逐字段相等的对象副本）→ 原样放行。
+  const again = { ...baseline };
+  assert.equal(callback(again), again, '基线等值输入放行（原样重存同一非法值＝放行）');
+
+  // ② 与基线不同的非法值 → 拒绝，消息与武装态同形（带值、双侧字段名）。
+  assert.throws(() => callback({ ...baseline, defaultWaitMs: 2 }), /cross-field violation: defaultWaitMs=2 outside/);
+  assert.throws(() => callback({ ...baseline, minWaitMs: 999999 }), /cross-field violation: minWaitMs=999999 > maxWaitMs/);
+
+  // ②b 只改其他合法字段、不修复非法字段（设计 §8.2 验收形态）：合并结果与
+  // 基线不等（pollIntervalMs 变了）但非法字段仍在（defaultWaitMs=1）——照拒。
+  //    「先把非法字段修好再改别的」是唯一出路，不能靠改无关字段绕过降级。
+  assert.throws(() => callback({ ...baseline, pollIntervalMs: 700 }), /cross-field violation: defaultWaitMs=1 outside/,
+    '只改其他合法字段（非法字段原样）的提交照常拒绝');
+
+  // ③ 与基线不同的合法值 → 放行（降级不拦合法修复）。
+  const legal = callback({ ...baseline, defaultWaitMs: 30000 });
+  assert.equal(legal.defaultWaitMs, 30000, '不同合法值照常放行');
+
+  // ④ 键集不同（多键/少键）不算基线等值——深度相等按 17 键全集判。
+  assert.throws(() => callback({ ...baseline, extra: 1 }), /cross-field violation/,
+    '多出未知键不按基线等值放行');
+
+  // ⑤ 自续序列化往返后基线语义不变（两跳 schema 投影的硬约束；复活方式与
+  //    schemastery 对端一致：new Function 求值 toJSON 的自重建表达式）。
+  const serialized = JSON.parse(JSON.stringify({ cb: callback })).cb;
+  assert.equal(typeof serialized, 'string', 'toJSON 产出自重建表达式字符串');
+  const revived = new Function(`return ${serialized}`)();
+  assert.equal(typeof revived, 'function', '经 toJSON 自续表达式复活为函数');
+  assert.equal(revived({ ...baseline }).defaultWaitMs, 1, '复活副本对基线等值输入放行且携带原值');
+  assert.throws(() => revived({ ...baseline, defaultWaitMs: 2 }), /cross-field violation: defaultWaitMs=2/,
+    '复活副本对与基线不同的非法值照常拒绝');
+  assert.ok(!/BASELINE\s*=\s*\[native/.test(String(callback)), '基线以 JSON 字面量嵌入源码（不引用闭包）');
+
+  // ⑥ 最小形状 raw（simplify 写回剥除与默认值相等的键）再解析给同一份已解析
+  //    值——基线比较落在已解析值上，剥键不产生假差异（loader 写回形态）。
+  const defaults = resolveSettingsValue({});
+  const fromStripped = resolveSettingsValue({ settings: { defaultWaitMs: 1 } });
+  const fromFullKeys = resolveSettingsValue({ settings: { ...defaults, defaultWaitMs: 1 } });
+  assert.deepEqual(fromStripped, fromFullKeys, '剥键 raw 与全量 raw 解析出同一份基线值（无假差异）');
+  assert.equal(callback({ ...fromStripped }).defaultWaitMs, callback({ ...fromFullKeys }).defaultWaitMs,
+    '两形状解析值对降级回调同等放行（基线等值）');
+});
+
+test('降级态切换：setConfigValidationDegraded 置未武装；setConfigValidationArmed(true) 清基线再武装（设计 §5.1）', () => {
+  try {
+    const baseline = resolveSettingsValue({ settings: { defaultWaitMs: 1 } });
+    setConfigValidationDegraded(baseline);
+    assert.equal(isConfigValidationArmed(), false, '降级记作未武装');
+    const again = Config({ settings: { defaultWaitMs: 1 } });
+    assert.equal(again.settings.get().defaultWaitMs, 1, '活 schema 节点挂降级回调：基线等值 resolve 放行（行不死）');
+    assert.throws(() => Config({ settings: { defaultWaitMs: 2 } }), /cross-field violation: defaultWaitMs=2/,
+      '活 schema 节点挂降级回调：与基线不同的非法值拒绝');
+
+    // 合法修复 → 换回无基线武装回调：同一份基线等值输入现在照常拒绝
+    // （原样重存只在降级期间放行）。
+    setConfigValidationArmed(true);
+    assert.equal(isConfigValidationArmed(), true, '合法修复后重新武装');
+    assert.throws(() => Config({ settings: { defaultWaitMs: 1 } }), /cross-field violation: defaultWaitMs=1/,
+      '清基线后原样重存不再放行（武装态对一切非法输入拒绝）');
   } finally {
     setConfigValidationArmed(false);
   }
@@ -268,6 +341,61 @@ test('两侧判据对账：武装 callback 与 assertCrossFieldOrder 对同一�
       assert.equal(schemaRejected, runtimeRejected,
         `两侧裁决必须一致：${JSON.stringify(value)}（schema=${schemaRejected}; runtime=${runtimeRejected}）`);
     }
+  } finally {
+    setConfigValidationArmed(false);
+  }
+});
+
+test('两形同值对账：武装与降级基线（非基线值）对同一组值同判同文案（设计 §5.1）', () => {
+  // 降级回调的五查是源码复制（自包含约束，见 degradedSettingsCallback）——
+  // 与武装形没有共享代码路径，单侧漂移没有任何判据会红。这里用同一组值
+  // 对两形对账：裁决必须一致，拒绝文案里的 cross-field violation 段必须
+  // 逐字一致（单侧改消息或改判据都红）。基线本身除外——两形在那儿有意
+  // 分叉（降级放行基线等值、武装拒绝一切非法）。
+  const cases = [
+    { minYieldMs: 5000, maxYieldMs: 1000 },
+    { defaultYieldMs: 99, minYieldMs: 1, maxYieldMs: 10 },
+    { minWaitMs: 500, maxWaitMs: 100 },
+    { defaultWaitMs: 99, minWaitMs: 1, maxWaitMs: 10 },
+    { pollIntervalMs: 900, maxWaitMs: 100 },
+    { minWaitMs: 250, maxWaitMs: 600000 },
+    { defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000 },
+    { pollIntervalMs: 500, maxWaitMs: 600000 }
+  ];
+  const violationOf = (message) => /(\[async-tools\] cross-field violation: [^\n]*)/.exec(String(message))?.[1];
+  const attempt = (fn) => {
+    try {
+      fn();
+      return { rejected: false, violation: undefined };
+    } catch (error) {
+      return { rejected: true, violation: violationOf(error.message) };
+    }
+  };
+  const baseline = resolveSettingsValue({ settings: { defaultWaitMs: 1 } });
+  const degraded = degradedSettingsCallback(baseline);
+  setConfigValidationArmed(true);
+  try {
+    for (const value of cases) {
+      // 两形必须吃同一份输入：先在容忍形下把用例解析成完整 17 键值（与武装
+      // 形经 Config 的确定性解析给回调的输入逐键相同），再分别投给两形——
+      // 否则默认值补齐差异会混进消息聚合，对账就不是同值对账。
+      const resolved = resolveSettingsValue({ settings: { ...value } });
+      const armedResult = attempt(() => Config({ settings: { ...resolved } }));
+      const degradedResult = attempt(() => degraded({ ...resolved }));
+      assert.equal(degradedResult.rejected, armedResult.rejected,
+        `两形裁决必须一致：${JSON.stringify(value)}（armed=${armedResult.rejected}; degraded=${degradedResult.rejected}）`);
+      if (armedResult.rejected) {
+        assert.ok(armedResult.violation !== undefined && degradedResult.violation !== undefined,
+          `两形拒绝都必须带 cross-field violation 段：${JSON.stringify(value)}`);
+        assert.equal(degradedResult.violation, armedResult.violation,
+          `两形拒绝文案必须逐字一致：${JSON.stringify(value)}\n  armed:   ${String(armedResult.violation)}\n  degraded:${String(degradedResult.violation)}`);
+      }
+    }
+    // 基线本身：降级放行（等值重存语义）、武装拒绝——两形唯一的有意分叉。
+    const baselineAttempt = attempt(() => degraded({ ...baseline }));
+    assert.equal(baselineAttempt.rejected, false, '降级形对基线等值输入放行');
+    const armedFormAttempt = attempt(() => Config({ settings: { ...baseline } }));
+    assert.equal(armedFormAttempt.rejected, true, '武装形对同一份基线值照常拒绝');
   } finally {
     setConfigValidationArmed(false);
   }
@@ -593,7 +721,7 @@ test('进程内（真实链）：投影形态、写入拒绝与行身份字段�
   }
 });
 
-test('进程内（真实链）：两态启动与运行中非法重载（设计 §5.1）', async (t) => {
+test('进程内（真实链）：三形启动、降级基线与运行中非法重载（设计 §5.1）', async (t) => {
   const anchors = await Promise.all([
     loadOfflineSafe('@deepseek-ai/cordis'),
     loadOfflineSafe('@deepseek-ai/cordis-plugin-loader'),
@@ -627,45 +755,67 @@ test('进程内（真实链）：两态启动与运行中非法重载（设计 �
     assert.ok(/recent commit failed self-check/.test(String(readDegraded() ?? '')),
       `internal/config waterfall 必须登记「最近提交原始值自检失败」：${readDegraded()}`);
 
-    // ② 下次合法提交自愈（降级明细清空、快照跟进）。宿主顺序事实：① 的
-    //    entry.update 留下挂起重挂，直接再 entry.update 时 volatile-update 的
-    //    派发可能落在重挂窗口里（旧接线已摘、新接线未上）——自愈断言改走
-    //    settings RPC（经 edit() 的 reconcile 重挂 + 提交），顺序无关。
+    // ② 下次合法提交自愈（降级明细清空、快照跟进）。自愈断言走 settings RPC
+    //    而不是再 entry.update：settings/update 经 edit() 的 reconcile 重挂＋
+    //    提交链——① 的拒绝提交不改 refs、不派发 volatile-update（上面已断言），
+    //    reconcile 把任何重挂时序吸收进同一次提交，断言顺序无关。
     await settings.update(ns, { settings: { defaultWaitMs: 30000 } });
     assert.equal(liveSettings()?.defaultWaitMs, 30000, '合法重载后活 Ref 更新');
     assert.equal(readDegraded(), undefined, '合法提交自愈（降级明细清空）');
 
-    // ③ 容忍窗内的登记代价（设计 §5.1）：跨字段非法的 RPC 保存被放行落盘——
-    //    refs 吃进非法值，快照保旧＋告警双登记（运行侧第二道防线），页面草稿
-    //    校验仍拦；首次合法保存重新武装并自愈。
+    // ③ 降级基线（设计 §5.1 回调三形）：降级期间与基线深度相等的提交（含用户
+    //    原样重存同一非法值）放行——回调无法区分 loader 再解析与重存，放行不
+    //    改变持久状态；与基线不同的非法值在 edit 落盘前 resolve 被拒（文件
+    //    不动）；首次合法保存清基线并重新武装、自愈。
     //    顺序事实（宿主行为）：entry.update 之后的第一次 edit() 会经 reconcile
-    //    重挂主行，apply 重新武装——先做一次合法保存消耗掉挂起重挂，再解除
-    //    武装演示容忍窗，另在 loader.create 之前做（create 留下的组合变更同样
-    //    会触发重挂）。
+    //    重挂主行，apply 重新武装——先做一次合法保存消耗掉挂起重挂，再切换
+    //    降级态演示基线语义。
     await settings.update(ns, { settings: { defaultWaitMs: 30000 } });
-    setConfigValidationArmed(false);
-    await settings.update(ns, { settings: { defaultWaitMs: 1 } });
-    assert.equal(entry.fiber?.state, 2, '容忍窗内非法保存不杀伤行');
-    assert.equal(liveSettings()?.defaultWaitMs, 1, 'loader 就地提交放行：活 Ref 吃进非法值');
+    const baseline = resolveSettingsValue({ settings: { ...BASE_SETTINGS, defaultWaitMs: 1 } });
+    setConfigValidationDegraded(baseline);
+    // ③a 与基线不同的非法值：拒绝于落盘前（refs 与 raw 都不动）。
+    const rawBefore = { ...entry.options.config?.settings };
+    await assert.rejects(
+      () => settings.update(ns, { settings: { defaultWaitMs: 2 } }),
+      /cross-field violation: defaultWaitMs=2/
+    );
+    assert.equal(liveSettings()?.defaultWaitMs, 30000, '活 Ref 保留旧值（edit 落盘前被拒）');
+    assert.deepEqual(entry.options.config?.settings, rawBefore, 'patch 文件不动（拒绝不落盘）');
+    // ③b 基线等值重存：放行（edit 成功、refs 吃进），快照保旧＋告警双登记，
+    //     页面维持降级警示。
+    await settings.update(ns, { settings: baseline });
+    assert.equal(entry.fiber?.state, 2, '基线等值重存不杀伤行');
+    assert.equal(liveSettings()?.defaultWaitMs, 1, 'loader 就地提交放行：活 Ref 吃进基线值');
     assert.notEqual(readSnapshot()?.defaultWaitMs, 1, '快照保旧（volatile-update 监听 catch）');
     assert.ok(/must lie within|cross-field violation/.test(String(readDegraded() ?? '')),
       '保旧＋告警（降级登记在场）');
+    // ③c 合法修复：清基线再武装，自愈。
     await settings.update(ns, { settings: { defaultWaitMs: 30000 } });
-    assert.equal(isConfigValidationArmed(), true, '首次合法保存重新武装');
+    assert.equal(isConfigValidationArmed(), true, '首次合法保存清基线并重新武装');
     assert.equal(readDegraded(), undefined, '合法提交自愈（降级明细清空）');
 
-    // ④ 启动遇非法持久值——容忍态（模拟新进程初态：武装位复位）。
+    // ④ 启动遇非法持久值——降级基线（模拟新进程初态：回调复位初始态；装配
+    //    自检失败自动切降级，并把当次已解析值写成基线）。
     setConfigValidationArmed(false);
     await loader.create({ id: 'f04-host-t1', name: pluginSpec, config: { settings: { ...BASE_SETTINGS, defaultWaitMs: 1 } } }, 'include');
     await loader.await();
     const entryT1 = loader.resolve('include:f04-host-t1');
-    assert.equal(entryT1.fiber?.state, 2, '容忍态下非法配置仍激活（修复入口不死）');
+    assert.equal(entryT1.fiber?.state, 2, '降级态下非法配置仍激活（修复入口不死）');
     assert.equal(standin.STATE.wirings.at(-1)?.degraded, true, '该行装配侧自检失败（降级接线）');
     const viewT1 = settings.describe().find((row) => row.ns === 'f04-host-t1');
     assert.ok(viewT1 !== undefined, 'describe 仍含该 ns（设置卡片在场）');
     assert.equal(viewT1?.value?.settings?.defaultWaitMs, 1, '值投影显示原始非法值');
     const decodeT1 = await clientValidate(viewT1.schema, viewT1.value);
-    assert.equal(decodeT1.ok, true, `容忍态表单可渲染：${decodeT1.message ?? ''}`);
+    assert.equal(decodeT1.ok, true, `降级态表单可渲染（客户端复活副本携带同一基线，等值草稿放行）：${decodeT1.message ?? ''}`);
+
+    // ④b 启动降级后的降级期守护：与基线不同的非法 RPC 保存必须被拒——
+    //     若 ④ 的装配自检失败路径退化成「停留初始容忍」（忘了挂基线），这里
+    //     会放行落盘、本断言必红（那正是本版要移除的容忍窗形态）。
+    await assert.rejects(
+      () => settings.update(ns, { settings: { defaultWaitMs: 2 } }),
+      /cross-field violation: defaultWaitMs=2/
+    );
+    assert.equal(liveSettings()?.defaultWaitMs, 30000, '主行活 Ref 不动（基线来自 t1，主行值原样保留）');
 
     // ⑤ 武装态对照：启动遇非法持久值 → 装配失败（FiberState.FAILED = 3），
     //    卡片消失——这是「写入拒绝是健康态保证」的另一面，登记在案的取舍。
@@ -691,7 +841,7 @@ test('进程内（真实链）：两态启动与运行中非法重载（设计 �
     const foreignEntry = loader.resolve('include:f04-foreign');
     assert.equal(foreignEntry?.fiber?.state, 2, '外来行照常激活（甄别不改写别家候选）');
     assert.equal(readDegraded(), degradeBeforeForeign,
-      '外来行流经 waterfall 不得触发本包降级登记（甄别前此断言必红——真实实例启动日志实证过污染形态）');
+      '外来行流经 waterfall 不得触发本包降级登记（否则启动即污染模型可见的描述警示段——真实实例启动日志实证过该污染形态）');
   } finally {
     setConfigValidationArmed(false);
     chain.clearSnapshot();

@@ -8,14 +8,16 @@
  *
  * 判据：**非法值必须在 schema 这一层被拒**（`Config` 就是设置页用的 schema），
  * 合法值必须通过。根形态是 `settings` 子树（设计 §5.1）：字段校验住进子树
- * 字段对象，跨字段不等式住进子树的 transform 回调（武装态生效——写入拒绝
- * 与运行中重载拦截；判据与 `assertCrossFieldOrder` 同源，探针对账）。
+ * 字段对象，跨字段不等式住进子树的 transform 回调（回调三形——武装态写入
+ * 拒绝与运行中重载拦截；降级态仅放行与降级基线深度相等的重存；判据与
+ * `assertCrossFieldOrder` 同源，探针对账）。
  *
  * 用法：node --import ./tools/_host-hooks.mjs tools/probe-config-validation.mjs
  */
 import {
   Config, resolveConfig, assertCrossFieldOrder,
-  setConfigValidationArmed, isConfigValidationArmed
+  setConfigValidationArmed, setConfigValidationDegraded,
+  isConfigValidationArmed, resolveSettingsValue
 } from '../lib/config.js';
 
 const checks = [];
@@ -96,17 +98,38 @@ record('拒绝原因可读（双侧字段名齐备）', (() => {
 })());
 
 console.log('');
-console.log('=== 容忍态对照（启动容错：同款非法值放行，运行侧第二道防线仍拒）===');
+console.log('=== 初始态对照（启动容错：同款非法值放行，运行侧第二道防线仍拒）===');
 setConfigValidationArmed(false);
-record('容忍态放行非法值（settings 为 Ref）', (() => {
+record('初始态放行非法值（settings 为 Ref）', (() => {
   const tolerated = Config({ settings: { defaultWaitMs: 1 } });
   return typeof tolerated?.settings?.get === 'function' && tolerated.settings.get().defaultWaitMs === 1;
 })());
-record('容忍下 resolveConfig 运行侧仍拒', (() => {
+record('初始态下 resolveConfig 运行侧仍拒', (() => {
   try { resolveConfig({ settings: { defaultWaitMs: 1 } }); return false; } catch { return true; }
 })());
 setConfigValidationArmed(true);
 record('武装开关状态位可读', isConfigValidationArmed() === true);
+
+console.log('');
+console.log('=== 降级基线（回调三形：基线等值放行，不同非法拒绝，不同合法放行）===');
+const baseline = resolveSettingsValue({ settings: { defaultWaitMs: 1 } });
+setConfigValidationDegraded(baseline);
+record('降级态：基线等值再解析放行（行不死、修复入口在）', (() => {
+  const tolerated = Config({ settings: { defaultWaitMs: 1 } });
+  return typeof tolerated?.settings?.get === 'function' && tolerated.settings.get().defaultWaitMs === 1;
+})());
+record('降级态：与基线不同的非法值拒绝', (() => {
+  try { Config({ settings: { defaultWaitMs: 2 } }); return false; } catch (e) { return /cross-field violation: defaultWaitMs=2/.test(e.message); }
+})());
+record('降级态：不同合法值放行（修复通道）', (() => {
+  const fixed = Config({ settings: { defaultWaitMs: 30000 } });
+  return typeof fixed?.settings?.get === 'function' && fixed.settings.get().defaultWaitMs === 30000;
+})());
+record('降级记作未武装', isConfigValidationArmed() === false);
+setConfigValidationArmed(true);
+record('合法修复后清基线再武装（原样重存不再放行）', (() => {
+  try { Config({ settings: { defaultWaitMs: 1 } }); return false; } catch (e) { return /cross-field violation: defaultWaitMs=1/.test(e.message); }
+})());
 setConfigValidationArmed(false);
 
 console.log('');

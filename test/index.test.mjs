@@ -469,13 +469,13 @@ test('T12：设置快照链的三种故障姿态——首播降级、刷新保�
   }
   assert.equal(degradedWiring.seeded, true);
   assert.equal(degradedWiring.degraded, true, '降级状态必须可观察');
-  assert.ok(String(readDegraded()).includes('minWaitMs > maxWaitMs'), '首播降级同样登记（模型可见侧；detail 带日志前缀原文）');
+  assert.ok(/minWaitMs(=\d+)? > maxWaitMs(=\d+)?/.test(String(readDegraded())), '首播降级同样登记（模型可见侧；detail 带日志前缀原文；两态错误文本——裸名或带值——都必须命中）');
   assert.equal(readSnapshot().minWaitMs, 250, '降级快照 = 出厂默认（minWaitMs）');
   assert.equal(readSnapshot().maxResultChars, 30000, '降级快照 = 出厂默认（maxResultChars）');
   assert.ok(degradeEvents.some((message) => /宿主行配置自检失败/.test(String(message)) && /按出厂默认运行/.test(String(message))),
     '必须 warn 说明"忽略了什么、正在按什么运行"');
-  assert.ok(stderrChunks.some((line) => line.includes('宿主行忽略持久化的非法设置') && line.includes('minWaitMs > maxWaitMs')),
-    'stderr 通告行必须真的写出去且带上违例明细（进程外唯一出口）');
+  assert.ok(stderrChunks.some((line) => line.includes('宿主行忽略持久化的非法设置') && /minWaitMs(=\d+)? > maxWaitMs(=\d+)?/.test(line)),
+    'stderr 通告行必须真的写出去且带上违例明细（进程外唯一出口；两态错误文本都算命中）');
 
   // ①' 降级后的自愈：同一份活配置被改正（模拟用户在设置页把值改回合法再保存）。
   badLive.minWaitMs = 250;
@@ -510,8 +510,8 @@ test('T12：设置快照链的三种故障姿态——首播降级、刷新保�
   // 必须原地改字段：attachSnapshotSource 闭包捕获的是这个对象本身（真实调用链里
   // loader 也是对同一份 fiber.config 原地 `updateVolatile`，对象恒同一）。
   // 此时模块处于武装态（①' 的合法提交已再武装）：拒绝文案是 transform 回调的
-  // `[async-tools] cross-field violation: minWaitMs=… > maxWaitMs=…`；容忍态下则是
-  // assertCrossFieldOrder 的 `minWaitMs > maxWaitMs`——两态断言都收。
+  // `[async-tools] cross-field violation: minWaitMs=… > maxWaitMs=…`；初始态下则是
+  // assertCrossFieldOrder 的 `minWaitMs > maxWaitMs`——两种错误文本都收。
   liveConfig.minWaitMs = 999999;
   liveConfig.maxWaitMs = 250;
   listeners.get('loader/volatile-update')();
@@ -634,8 +634,8 @@ test('T15（R38；R44 换钉）：peer 版本锁定整体换代——九个 dsh*
     `peerDependencies 必须与需求 §7.3 兼容基准逐键逐值一致（实际：${JSON.stringify(pkg.peerDependencies)}）`);
   assert.equal(pkg.dependencies?.['@deepseek-ai/schemastery'], '~3.18.5',
     'schemastery 叶子依赖形态不变（~ 窗随目标树）');
-  assert.equal(pkg.version, '0.2.4+dsh.0.2.1-rc.2',
-    '本包 version 必须按需求 §7.3.1 带构建元数据全标识（核心 0.2.4 + 目标宿主 dsh.0.2.1-rc.2）——漏元数据会让用户失去兼容信息');
+  assert.equal(pkg.version, '0.2.5+dsh.0.2.1-rc.2',
+    '本包 version 必须按需求 §7.3.1 带构建元数据全标识（核心 0.2.5 + 目标宿主 dsh.0.2.1-rc.2）——漏元数据会让用户失去兼容信息');
 });
 
 

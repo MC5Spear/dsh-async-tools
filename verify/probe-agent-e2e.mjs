@@ -11,13 +11,17 @@
  *     run_in_background——后台是结构保证，需求 §2.3.1 的机制半边），结果**立返** started+agent_id，
  *     note 里带可照抄的 async_wait_agent 调用；随后模型用 async_wait_agent 等到 settled，
  *     子代理的最终回答作为**独立消息**出现在会话里（不是塞在等待返回值里）。
- *  2. persona 强制规则（需求 §3.1）的**行为判据**：固定格式四问，值全部定向
- *     （FALSE_ALLOWED=no 是 persona 独有的"无条件禁止"——宿主 subagent 工具描述是
- *     "需要前台时**可以**传 false"的条件允许，只学工具描述的模型会答 yes）。
- *     该轮断言零 tool/call，防止模型现读仓库里的模板污染来源。
- *     口径边界：转录的 `request/header` 不含 systemPrompt，
- *     "规则段真的在系统提示里"这半边**真机不可直接取证**——由模板侧看守：
- *     validate-preset 五锚句 + `test/preset.test.mjs` + `verify/mutate-agent.mjs` M2。
+ *  2. persona 强制规则（需求 §3.1）的**行为判据**：固定格式四问，值全部定向。
+ *     口径（源已核证）：目标宿主 `0.2.1-rc.2` 的 `subagent`／`subagent_fork`
+ *     **没有 `run_in_background` 参数**（dsh-tool-subagent 全包无此字面量；工具
+ *     描述明说 independently managed、立返 id——结构上恒后台），因此
+ *     FALSE_ALLOWED=no **不能区分**「答自 persona」与「答自工具表面」：只看
+ *     工具描述的模型同样可能答 no。四问只证**模型作答与 persona 规则一致**
+ *     （行为半边）；「规则段真的在系统提示里且生效」的来源半边由模板侧静态
+ *     看守承担：validate-preset 五锚句 + `test/preset.test.mjs` +
+ *     `verify/mutate-agent.mjs` M2。该轮断言零 tool/call，防止模型现读仓库里
+ *     的模板污染行为来源；转录的 `request/header` 不含 systemPrompt，系统
+ *     提示原文真机不可直接取证。
  *  3. 隔离对照：standard 预设的会话里四个 async 工具**一个都没有**（需求 §1.2）。
  *
  * 用法：node verify/probe-agent-e2e.mjs；全过退出码 0，证据落盘到本机证据目录的 logs/agent-e2e.json。
@@ -215,12 +219,15 @@ await ask(sid,
 console.log('');
 console.log('=== 2) persona 强制规则的行为判据 ===');
 {
-  // 固定格式四问 + 定向断言。区分点在 FALSE_ALLOWED：persona 是**无条件**禁止
-  // run_in_background:false；宿主 subagent/subagent_fork 的工具描述是"需要前台时可以传
-  // false"的**条件允许**（dsh-tool-subagent lib/index.js:400/:428/:579）——只学到工具
-  // 描述的模型会答 yes。该轮零 tool/call（会话 cwd 就在本仓工作树里，模型现读仓库模板即可
-  // 污染来源）。系统提示原文不可从转录取证（request/header 无
-  // systemPrompt），"规则段在系统提示里"的半边由模板侧看守（见文件头注）。
+  // 固定格式四问 + 定向断言（行为判据，见文件头注的口径）：目标宿主
+  // `0.2.1-rc.2` 的 subagent/subagent_fork 没有 run_in_background 参数
+  // （dsh-tool-subagent 全包无此字面量，工具描述 :384 明说 independently
+  // managed、立返 id——结构上恒后台），所以 FALSE_ALLOWED=no 不区分答案来源：
+  // 只学工具描述的模型也可能答 no。四问证「作答与 persona 规则一致」；
+  // 「规则段在系统提示里且生效」的来源半边由模板侧看守（见文件头注）。
+  // 该轮零 tool/call（会话 cwd 就在本仓工作树里，模型现读仓库模板即可
+  // 污染行为来源）；系统提示原文不可从转录取证（request/header 无
+  // systemPrompt）。
   const watermark = await seqOf(sid);
   await ask(sid, '不要调用任何工具（本轮一次工具都不许调）。只输出下面四行，每行严格按 `键=值` 格式，'
     + '值只能从各自括号里选一个：\n'
@@ -236,7 +243,7 @@ console.log('=== 2) persona 强制规则的行为判据 ===');
 
   record('问答轮零工具调用（防现读模板污染来源）', calls.length === 0,
     calls.length === 0 ? '游标之后无 tool/call' : `意外调用=${calls.map((c) => c.name).join(',')}`);
-  record('FALSE_ALLOWED=no（persona 独有的无条件禁止；只学工具描述会答 yes）', pick('FALSE_ALLOWED') === 'no',
+  record('FALSE_ALLOWED=no（行为判据：作答与 persona 的无条件禁止一致；来源不由此问鉴别）', pick('FALSE_ALLOWED') === 'no',
     `实答=${String(pick('FALSE_ALLOWED'))}`);
   record('AGENT_FOREGROUND=no（async_agent 无前台模式）', pick('AGENT_FOREGROUND') === 'no',
     `实答=${String(pick('AGENT_FOREGROUND'))}`);

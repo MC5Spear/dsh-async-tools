@@ -908,6 +908,31 @@ hostTest('R29-e（判据 7b·无文形态）：killed 且无任何输出 → 不
   assert.match(killedText, /^signal: SIGKILL/, '渲染只剩 detail 行');
 });
 
+hostTest('F-D：killed 无 signal／无丢失标记／无输出 → 渲染仍含两语终态状态行，不得为空串', () => {
+  // 设计 §3.1（对齐需求 §2.2.2 终态可分辨）：无细节形态的可见文本同样非空——
+  // 空串会让模型把被杀当成「没有结果」，三形终态必须可分辨。
+  const f = fakeCtx();
+  const tool = createRunTool(f.ctx, config);
+
+  const enText = tool.output.render({ command: 'x' }, { status: 'killed' }).map((p) => p.text).join('\n');
+  assert.notEqual(enText, '', '无 signal、无丢失标记、无输出的 killed 不得渲染成空串');
+  assert.match(enText, /\[job killed\]/, 'en 终态状态行回退在场');
+
+  const zhTool = createRunTool(f.ctx, resolveConfig({ toolName: 'async_run', agentLang: 'zh' }));
+  const zhText = zhTool.output.render({ command: 'x' }, { status: 'killed' }).map((p) => p.text).join('\n');
+  assert.match(zhText, /\[作业已终止\]/, 'zh 终态状态行回退在场');
+
+  // detail 缺席但有部分输出 → 状态行＋输出，两段都在（不能只剩裸输出认不出被杀）。
+  const withOutput = tool.output.render({ command: 'x' }, { status: 'killed', output: 'partial' }).map((p) => p.text).join('\n');
+  assert.match(withOutput, /\[job killed\]/);
+  assert.match(withOutput, /^partial$/m);
+
+  // detail 在场 → 维持既有形态：头条仍是 signal 细节，不叠加状态行。
+  const withDetail = tool.output.render({ command: 'x' }, { status: 'killed', detail: 'signal: SIGTERM' }).map((p) => p.text).join('\n');
+  assert.match(withDetail, /^signal: SIGTERM/);
+  assert.doesNotMatch(withDetail, /\[job killed\]/);
+});
+
 hostTest('R29-c（判据 5·drain 读失败）：readOutput 抛错 → 结局必须带丢失标记，不得静默吞掉', async () => {
   const f = fakeCtx();
   // 自造句柄：readOutput 永远抛（模拟宿主输出通道在结算瞬间坏掉）。

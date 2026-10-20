@@ -414,6 +414,26 @@ hostTest('async_wait_agent（早到消息·定性窗口）：目录查询挂起�
   agent.inbox.nextStep.length = 0;
 });
 
+hostTest('async_wait_agent（早到消息·固定响应上限）：合法高轮询值＋挂起目录查询，先到消息仍在 2000 ms 上限内按消息口径交回', async () => {
+  // 反例形态（设计 §3.4／§8.2 总预算行）：pollIntervalMs=10000 合法（仅受
+  // 与 maxWaitMs 配对约束），目录查询永久挂起，收件箱预存 user 插话——旧实现
+  // 窗口＝min(轮询, 剩余预算)，消息要等满轮询间隔；三取小后被 2000 ms 固定
+  // 响应上限封顶，为 §8.1 的 5000 ms 真机响应窗留六成余量。
+  const f = fakeCtx();
+  installChildren(f, { children: [runningChild()] });
+  f.ctx.subagents.listChildren = () => new Promise(() => {});
+  f.ctx.agents = { get: () => ({ status: 'idle' }) };
+  agent.inbox.nextStep.push({ id: 'user-hi', source: { kind: 'user' } });
+  const tool = createWaitAgentTool(f.ctx, resolveConfig({ toolName: 'async_run', pollIntervalMs: 10000, maxWaitMs: 600000 }));
+  const startedAt = Date.now();
+
+  const result = await withHangGuard(tool.execute({ agent_id: CHILD, wait_ms: 60000 }, exec), 2600);
+  const took = Date.now() - startedAt;
+  assert.equal(result.status, 'interrupted', '先到 user 插话按消息口径交回（关系未证明不套停止态）');
+  assert.ok(took < 2600, `定性窗口被 2000 ms 固定上限封顶（实得 ${String(took)}ms，上限 2000ms＋300ms 容差＝2300ms，取 2600ms 冗余上界）`);
+  agent.inbox.nextStep.length = 0;
+});
+
 hostTest('async_wait_agent（早到消息·定性窗口新插话）：挂起定性查询期间 user 插话到达 → 及时按消息口径交回', async () => {
   // 唤醒类竞速成员的护栏（设计 §2.1「辅助查询与可处理消息竞速」）：
   // watchWakeSignal 无起始检查，先到唤醒不解析唤醒 promise——定性窗口内
@@ -959,8 +979,10 @@ hostTest('async_wait_agent：diagnostic 行不算子代理，但仍要写进纠�
 
 hostTest('async_wait_agent：目标被判为不可用（diagnostic 行）→ not_found，不得进入等待', async () => {
   const f = fakeCtx();
-  // 不再 freezeTimers：屏障重试需要真的定时器（冻住会把重试睡死）；
-  // not_found 从屏障直接返回，deadline 根本不会被武装。
+  // 不 freezeTimers：屏障重试睡用的是 ctx.timer（冻住会把重试睡死），需要真
+  // 定时器。总截止在参数解析后即武装、先于屏障（设计 §2.1 单一总截止）；屏障
+  // 判 not_found 提前返回时由 cleanup 撤销定时器——不是「deadline 没被武装」，
+  // 武装与撤销都发生在本次调用内部。
   const quick = resolveConfig({ toolName: 'async_run', pollIntervalMs: 2 });
   installChildren(f, { children: [{ kind: 'diagnostic', id: CHILD, reason: 'unavailable' }] });
   const tool = createWaitAgentTool(f.ctx, quick);
@@ -1298,12 +1320,16 @@ hostTest('R29-c（判据 6·正文回退 + 复查确认）：命中且复查已�
   assert.match(result.note, /message text/, '必须注明走的是正文回退通道（via.textFallback）');
 });
 
-hostTest('R29-d（判据 9a·等待段半边）：子代理在场时全程 ≈ waitMs，不得超总时长上界', async () => {
+hostTest('R29-d（判据 9a·等待段半边）：子代理在场时全程 ≈ 有效 waitMs，不得超总时长上界', async () => {
   // 本用例锁**等待段**半边：子代理在场 → 屏障首查即中（barrierSleep 零调用，
   // 屏障段恒为零）→ 全程 = 等待段。屏障段的可达红判据在 9b
   // （在场路径屏障根本不睡，屏障加重只在重试路径可红）。
+  // 夹紧口径：请求 60ms 低于 minWaitMs 默认 250 → 有效预算是 250（resolveWait
+  // 夹紧，9c 同口径）——断言按有效值计，不写 60（写请求值会把夹紧路径的
+  // 预算漂移吞掉：夹紧被拆掉时 waited_ms 只等 60ms 也照样过 `>= 50`）。
   const poll = 20;
   const waitMs = 60;
+  const effectiveWaitMs = 250;
   const f = fakeCtx();
   const quick = resolveConfig({ toolName: 'async_run', pollIntervalMs: poll });
   installChildren(f, { children: [runningChild()] });
@@ -1314,25 +1340,29 @@ hostTest('R29-d（判据 9a·等待段半边）：子代理在场时全程 ≈ w
   const elapsed = Date.now() - startedAt;
 
   assert.equal(result.status, 'running');
-  assert.ok(result.waited_ms >= waitMs - 10, `等待段要用满预算（实得 ${String(result.waited_ms)} ms）`);
+  assert.ok(result.waited_ms >= effectiveWaitMs - 10, `等待段要用满**有效**预算 250ms（实得 ${String(result.waited_ms)} ms）`);
   // 总时长上界＝有效 wait_ms＋300ms 容差（设计 §2.1：不追加轮询间隔或重试
   // 时长——屏障睡与轮询拍都计入总预算，预算口径是平上界）。
-  const bound = waitMs + 300;
+  const bound = effectiveWaitMs + 300;
   assert.ok(elapsed <= bound,
-    `总时长 ${String(elapsed)} ms 不得超过 waitMs + 300ms = ${String(bound)} ms`);
+    `总时长 ${String(elapsed)} ms 不得超过有效 250ms + 300ms = ${String(bound)} ms`);
 });
 
 hostTest('R29-d（判据 9b·屏障段半边）：重试睡眠计入总预算的平上界——等待侧加重必红', async () => {
   // 目录投影刷新窗口的最小模拟：子代理行第一个 poll 之后才出现 → 屏障
-  // 恰好睡一次重试一次。全程 = 屏障段（1×poll）+ 等待段（waitMs）。
+  // 恰好睡一次重试一次。总截止在参数解析后即武装（设计 §2.1 单一总截止，
+  // 起点 t0）——屏障睡与等待段共享同一份预算：全程 ≈ 有效 waitMs（请求 60ms
+  // 被夹紧到 minWaitMs 默认 250），不是「屏障段＋等待段」两段相加。
   // 红锚归因（受控变异实证）：本用例锁「屏障睡计入总时长」的平上界——
   // 拉伸屏障睡（+2000ms）由 not_found 重试族与早到消息族用例抓住（睡与
   // 四类信号竞速）；睡眠竞速成员在 not_found 族用例（R29-a 判据 1·屏障
-  // 睡眠）以「睡眠中的取消/插话及时交回」形态被直接钉住。注：睡眠竞速
-  // 数组里的总截止成员在 min(pollIntervalMs, 剩余) 封顶下不单独产生可观测
-  // 反例（睡眠本身不越剩余预算），属结构性冗余防线。
+  // 睡眠）以「睡眠中的取消/插话及时交回」形态被直接钉住；「两段相加」
+  // 形态的假时钟红锚在同族假时钟用例。注：睡眠竞速数组里的总截止成员在
+  // min(pollIntervalMs, 剩余) 封顶下不单独产生可观测反例（睡眠本身不越剩余
+  // 预算），属结构性冗余防线。
   const poll = 20;
   const waitMs = 60;
+  const effectiveWaitMs = 250;
   const f = fakeCtx();
   const quick = resolveConfig({ toolName: 'async_run', pollIntervalMs: poll });
   const { setRows } = installChildren(f, { children: [] });
@@ -1347,9 +1377,9 @@ hostTest('R29-d（判据 9b·屏障段半边）：重试睡眠计入总预算的
   assert.ok(elapsed >= poll - 5, `屏障段确实睡过（实得 ${String(elapsed)} ms，应 ≥ 1×poll）`);
   // 总时长上界＝有效 wait_ms＋300ms（平上界：屏障睡占的是同一份预算，不叠加；
   // 假时钟口径下改轮询间隔或重试次数不得延长总预算——此处用真时钟锁同一判据）。
-  const bound = waitMs + 300;
+  const bound = effectiveWaitMs + 300;
   assert.ok(elapsed <= bound,
-    `总时长 ${String(elapsed)} ms 不得超过 waitMs + 300ms = ${String(bound)} ms——等待侧加重（含睡眠不计入总预算的形态）时此处必红`);
+    `总时长 ${String(elapsed)} ms 不得超过有效 250ms + 300ms = ${String(bound)} ms——等待侧加重（含睡眠不计入总预算的形态）时此处必红`);
 });
 
 hostTest('R29-d（判据 9c·夹紧口径）：wait_ms 低于 minWaitMs 时上界按有效值计（60 → 250 → 550）', async () => {
@@ -1374,10 +1404,10 @@ hostTest('R29-d（判据 9c·夹紧口径）：wait_ms 低于 minWaitMs 时上�
 
 /** 挂起护栏：起始检查被拆掉（纯事件驱动回潮）时用例必须红得快，不是挂死套件。 */
 const HANG_MARKER = { status: '__test-hang__' };
-function withHangGuard(pending) {
+function withHangGuard(pending, thresholdMs = 250) {
   return Promise.race([
     pending,
-    new Promise((resolve) => { setTimeout(() => resolve(HANG_MARKER), 250); })
+    new Promise((resolve) => { setTimeout(() => resolve(HANG_MARKER), thresholdMs); })
   ]);
 }
 

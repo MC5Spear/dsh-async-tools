@@ -328,6 +328,37 @@ hostTest('async_workflow（R34-c·预算）：yield 到期 → 句柄 + 预算�
   assert.equal(f.jobsFake.waitersOf(result.job_id), 0, '预算路同撤 waiter（四路同款，I-5）');
 });
 
+hostTest('async_workflow（F-C·未证实档）：yield 到期且复查读取失败 → 未证实口径＋工作流称谓，不冒称命令', async () => {
+  // 设计 §3.5／§2.5：编排首次等待同受证据分级——jobs.list 抛错按不可证处理，
+  // note 换未证实变体（不作「仍在运行」断言），句柄与复查出路保留；共享模板
+  // 的主体称谓按路径取「工作流」，编排不得误称命令。
+  const { f, runs, agent, tool } = rig({ minYieldMs: 5 });
+  f.ctx.jobs.list = () => { throw new Error('registry read failed'); };
+  const exec = { agent, signal: new AbortController().signal };
+
+  const result = await tool.execute({ ...BASE_ARGS, yield_ms: 20 }, exec);
+
+  assert.equal(result.status, 'running', '句柄照常交付');
+  assert.match(result.note, /could not confirm/, '未证实档：复查失败不作「仍在运行」断言');
+  assert.match(result.note, /workflow/, '主体称谓是 workflow（共享模板分档）');
+  assert.doesNotMatch(result.note, /\bcommand\b/, '编排不冒称 command');
+  assert.match(result.note, /async_wait_job\(job_id="/);
+  assert.equal(runs[0].cancelCalls, 0, '复查失败不影响 run 存活');
+});
+
+hostTest('async_workflow（F-D）：killed 无 detail → 渲染带终态状态行，不得为空串', () => {
+  // 设计 §3.1（对齐需求 §2.2.2）：编排 killed 无 detail 的可见文本同样非空——
+  // 与 async_run 的 killed 渲染同口径（设计 §3.5 称谓分档之外的一致形态）。
+  const { tool } = rig();
+
+  const bare = tool.output.render(BASE_ARGS, { status: 'killed' }).map((p) => p.text).join('\n');
+  assert.notEqual(bare, '', '无 detail 的 killed 不得渲染成空串');
+  assert.match(bare, /\[job killed\]/, '终态状态行回退在场');
+
+  const withDetail = tool.output.render(BASE_ARGS, { status: 'killed', detail: 'kill reason: budget' }).map((p) => p.text).join('\n');
+  assert.match(withDetail, /^kill reason: budget/, 'detail 在场时头条仍是 detail，维持既有形态');
+});
+
 hostTest('async_workflow（总预算平上界）：首次等待路径全程不得超有效 yield_ms + 300ms', async () => {
   // 首次等待路径同口径（设计 §2.1／§8.2 总预算行，真时钟）：全程上界＝
   // 有效 yield_ms＋300ms。engine 永不 resolve（真实形态：编排长时间运行），

@@ -96,7 +96,9 @@ const ALLOWLIST = {
     { needle: '宿主行配置自检失败', why: '首次装载降级的 logger.warn，操作者一侧' },
     { needle: '宿主行忽略持久化的非法设置', why: '首次装载降级的 stderr 通告，操作者一侧' },
     { needle: '设置变更广播失败', why: '悬空动态 import 的 .catch warn，操作者一侧（快照已落，只影响描述刷新转达）' },
-    { needle: '降级警示的描述刷新失败', why: '降级登记（markDegraded）同款动态 import 的 .catch warn，操作者一侧（登记已落，只影响警示段刷新转达）' }
+    { needle: '降级警示的描述刷新失败', why: '降级登记（markDegraded）同款动态 import 的 .catch warn，操作者一侧（登记已落，只影响警示段刷新转达）' },
+    { needle: '最近提交的原始值自检失败', why: 'internal/config waterfall 降级通告的 logger.warn，操作者一侧（同 volatile 提交后配置自检失败一条的通道）' },
+    { needle: '最近提交的设置未生效', why: '同上通道的 stderr 通告（emitLifecycleNotice），操作者一侧（同 volatile 提交未生效一条）' }
   ],
   // 装载期的两条降级通告（emitLifecycleNotice → stderr）：与 index.js 的
   // 「设置快照缺席」同类先例——部署期线索给操作者，不进模型上下文。
@@ -257,7 +259,12 @@ const PROSE_ALLOWLIST = {
     { needle: 'must lie within', why: '同上（跨字段顺序）' },
     { needle: 'uiLang must be one of', why: '同上（语言字段值域）' },
     { needle: 'agentLang must be', why: '同上（语言字段值域）' },
-    { needle: 'jobKind must be a non-empty string', why: '同上' }
+    { needle: 'jobKind must be a non-empty string', why: '同上' },
+    { needle: '[async-tools] cross-field violation', why: '跨字段校验错误的组装前缀（操作者一侧：武装/降级回调的 schema 拒绝与降级 stderr，与前缀拼 detail 的 must lie within 同类；detail 部分来自 error.message 变量，本就不过字面量层）' },
+    { needle: 'const BASELINE', why: '降级回调的 Function 构造源码模板（一段 JS 源码片段，不是面向模型的文案——模板内嵌的拒绝前缀经上一条豁免，五查判据由两形同值对账测试与 armed 形锁定）' }
+  ],
+  'settings.js': [
+    { needle: 'recent commit failed self-check', why: '降级登记明细的组装前缀（markDegraded 前缀 + error.message 变量；与 config.js 校验错误同类：明细主体是操作者一侧的校验错误文本，同路径 seed/volatile 两条直接透传 error.message）' }
   ],
   'descriptions.js': [
     { needle: 'unknown tool name', why: '构建器的开发期断言（工具名写错时立刻炸，不进模型上下文）' }

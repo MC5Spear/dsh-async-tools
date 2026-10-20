@@ -1,6 +1,7 @@
 /**
- * 文档结构快检（按文件责任适用判据，设计 §8.3）：现行文档历史叙述词归零、
- * 档案历史叙述词计数留痕、公开范围 `docs/` 无未分类文档、语料围栏配对。
+ * 文档结构快检（按文件责任适用判据，设计 §8.3）：现行文档历史叙述词与退役
+ * 机制名归零、档案两类都按份计数留痕、公开范围 `docs/` 无未分类文档、语料
+ * 围栏配对。
  *
  * 用法：node tools/check-docs.mjs
  *
@@ -16,9 +17,13 @@
  *
  * ## 输入契约（改这个脚本时必须一起改 `test/check-docs.test.mjs`）
  *
- * 本脚本读的输入**只有这几样**：`README.md`、公开范围 `docs/`（目录项与其中的 `.md`）、
- * 本机侧的语料目录（`<LOCAL_DIR>/docs/`，**可以整个不在**），以及自身的常量表。
- * 它的测试把这些铺到临时沙箱里**进程内**跑，所以：
+ * 本脚本读的输入是：**责任表 `DOCUMENTS` 登记的全部文件**（含 `docs/` 外的
+ * `verify/README.md`、`CHANGELOG.md`（档案）、`CONTRIBUTING.md`——清单以
+ * `DOCUMENTS` 为唯一权威，本段不另建会漂移的穷尽清单）、公开范围 `docs/` 的
+ * 目录项（未分类/幽灵对账）、本机侧的语料目录（`<LOCAL_DIR>/docs/`，**可以
+ * 整个不在**，缺席按文档化跳过），以及自身的常量表。它的测试把这些铺到临时
+ * 沙箱里**进程内**跑（沙箱必须覆盖责任表全集，缺一份就会报与代码无关的假红），
+ * 所以：
  *
  * - 新增任何**输入**（再读一份文档、读一个配置）都必须同步改 `test/check-docs.test.mjs`
  *   的 `sandbox()`，否则沙箱里读不到、测试要么假红要么失去意义；
@@ -63,9 +68,10 @@ import { LOCAL_DIR } from './_local-config.mjs';
  * 文档责任表（设计 §8.3 按文件责任适用判据）：每份公开文档登记 `{file, role}`。
  *
  * - `current`：现行规范文档，承载"现在是什么"——历史叙述词与退役机制名清零。
- * - `archive`：历史档案，职责就是记录过去——历史叙述词在其条目内合法，命中按份
- *   计数写进输出留痕（不是静默跳过，也不进退出码）；围栏配对等结构性判据与
- *   退役机制名仍按现行口径红。
+ * - `archive`：历史档案，职责就是记录过去——历史叙述词与退役机制名在其条目内
+ *   合法（档案记录的是当时的状态，退役名在旧条目里本来就是"当时的现役名"），
+ *   两类命中都按份计数写进输出留痕（不是静默跳过，也不进退出码）；围栏配对等
+ *   结构性判据仍按现行口径红。
  */
 const DOCUMENTS = [
   { file: 'README.md', role: 'current' },
@@ -94,6 +100,8 @@ const HISTORICAL_WORDS = /勘误|原写|先前版本|已作废|曾经|以前是|
  * 已退役机制名：现行文档里不该出现（某个机制按新宿主改成事件上的
  * `awaited` 之后，设计稿与需求稿若还留着旧代的 `reported`/`waiters` 叙述，两处
  * 对不上而没有任何判据会红）。退役名的处置是**连禁令一起删净**，所以这里按名单判红。
+ * 档案（role=archive）另按文件责任豁免：旧条目记录当时的状态，退役名在条目内
+ * 合法、按份计数留痕（与历史叙述词同一套留痕口径，设计 §8.3）。
  */
 const RETIRED_MECHANISM_WORDS = /\breported\b|\bwaiters\b/g;
 
@@ -147,8 +155,9 @@ export function checkDocs(root = process.cwd(), { quiet = false } = {}) {
     problem(file, '名单里的这份登记文档在盘上不存在——名单与现实漂移了，检查会静默失去作用');
   }
 
-  // ── 登记文档：围栏配对（全角色）+ 历史叙述词（按责任）+ 退役机制名（全角色）────
+  // ── 登记文档：围栏配对（全角色）+ 历史叙述词与退役机制名（按责任）──────
   const archiveHits = new Map();
+  const retiredHits = new Map();
   for (const { file, role } of DOCUMENTS) {
     let text;
     try {
@@ -167,9 +176,12 @@ export function checkDocs(root = process.cwd(), { quiet = false } = {}) {
       problem(file, `历史叙述词 ${String(hits)} 处（现行文档应清零）`);
     }
     const retired = [...text.matchAll(RETIRED_MECHANISM_WORDS)].map((m) => m[0]);
-    if (retired.length > 0) {
+    if (role === 'archive') {
+      // 档案：退役机制名同样合法（旧条目记录当时的状态），按份计数留痕。
+      retiredHits.set(file, retired.length);
+    } else if (retired.length > 0) {
       problem(file, `已退役机制名 ${String(retired.length)} 处（${[...new Set(retired)].join('、')}）——`
-        + '档案豁免的只有历史叙述词；退役名照红');
+        + '现行文档应清零；档案豁免的只有历史叙述词与退役机制名');
     }
   }
 
@@ -205,7 +217,7 @@ export function checkDocs(root = process.cwd(), { quiet = false } = {}) {
     const tag = ROLE_LABEL[role];
     if (list === undefined) {
       const trace = role === 'archive'
-        ? `  历史叙述词 ${String(archiveHits.get(file) ?? 0)} 处（档案合法，留痕）`
+        ? `  历史叙述词 ${String(archiveHits.get(file) ?? 0)} 处、退役机制名 ${String(retiredHits.get(file) ?? 0)} 处（档案合法，留痕）`
         : '';
       say(`OK    ${tag}  ${file.padEnd(28)} ${String(readFileSync(join(root, file)).length).padStart(6)}B${trace}`);
     } else {
@@ -244,18 +256,19 @@ export function checkDocs(root = process.cwd(), { quiet = false } = {}) {
 
   // **任何**一项问题都算失败——包括语料的围栏不配对。
   //
-  // 档案（role=archive）按文件责任豁免的**只有历史叙述词**：豁免以角色建模、以
-  // 命中计数留痕（见输出里的档案行），不是"打印 WARN 却退出 0"那种把告警从退出码
-  // 里摘除的形态。围栏配对与退役机制名对档案同样算失败——档案记得再旧，结构坏了
-  // 读者照样读不了。
+  // 档案（role=archive）按文件责任豁免的**只有历史叙述词与退役机制名两类**：
+  // 豁免以角色建模、以命中计数留痕（见输出里的档案行），不是"打印 WARN 却退出 0"
+  // 那种把告警从退出码里摘除的形态。围栏配对等结构性判据对档案同样算失败——
+  // 档案记得再旧，结构坏了读者照样读不了。
   const bad = problemsByFile.size;
   const currentCount = DOCUMENTS.filter((doc) => doc.role === 'current').length;
   const archiveDocs = DOCUMENTS.filter((doc) => doc.role === 'archive');
   const archiveHitTotal = archiveDocs.reduce((sum, doc) => sum + (archiveHits.get(doc.file) ?? 0), 0);
+  const retiredHitTotal = archiveDocs.reduce((sum, doc) => sum + (retiredHits.get(doc.file) ?? 0), 0);
   say('');
   say(bad === 0
-    ? `文档结构检查通过（现行 ${String(currentCount)} 份历史叙述词归零；`
-      + `档案 ${String(archiveDocs.length)} 份历史叙述词 ${String(archiveHitTotal)} 处留痕；`
+    ? `文档结构检查通过（现行 ${String(currentCount)} 份历史叙述词与退役机制名归零；`
+      + `档案 ${String(archiveDocs.length)} 份历史叙述词 ${String(archiveHitTotal)} 处、退役机制名 ${String(retiredHitTotal)} 处留痕；`
       + `公开范围 \`docs/\` 无未分类文档；语料${corpusPresent ? ` ${String(corpus.length)} 份围栏配对` : '缺席（跳过）'}）。`
     : `${String(bad)} 份文档有告警。`);
   return { ok: bad === 0, code: bad === 0 ? 0 : 1, out: lines.join('\n'), corpusPresent, corpusCount: corpus.length };

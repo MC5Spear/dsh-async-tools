@@ -46,7 +46,7 @@
         description: 在标准模式基础上改用异步 shell 的编码 Agent：async_run 的命令超出首次等待不会被杀掉，而是转后台并返回作业编号（job_id）；async_wait_job / async_wait_agent 都是有界等待读取，用户插话时立即返回且后台工作不受影响。
         order: 5
         plugins:
-          # ── identity（改动项 5：persona prefix）──
+          # ── 身份（改动项 5：persona prefix）──
           - id: persona
             name: '@deepseek-ai/dsh-persona'
             config:
@@ -73,7 +73,7 @@
               maxBytes: 65536
           - id: time-context
             name: '@deepseek-ai/dsh-time-context'
-          # ── shell（改动项 1/2/3）──
+          # ── 同步 shell（改动项 1/2/3）──
           - id: tool-bash
             name: '@deepseek-ai/dsh-tool-bash'
             disabled: true
@@ -199,7 +199,7 @@
                 config:
                   toolName: async_workflow
                   owningPreset: dsh-async
-          # ── remaining model-facing rows（plugin-manager 与 plugin-market 保持基线禁用态）──
+          # ── 其余面向模型的行（plugin-manager 与 plugin-market 保持基线禁用态）──
           - id: tool-ask-user
             name: '@deepseek-ai/dsh-tool-ask-user'
           - id: tool-todo

@@ -185,8 +185,8 @@ try {
       `save=${String(ours.saveButtons.length)} 其他=${ours.otherButtons.join('|')}`);
 
     // 度量参考表（官方 fields.module.css 的声明值；颜色走主题变量解析）。
-    // 圆角参照 --dsw-radius-md=12px（fields.module.css .input 用它；8px 是 --dsw-radius-sm，
-    // 用在帮助按钮上——历史版本把两者记反，把正确实现误判成偏离）。
+    // 值字段圆角 = --dsw-radius-md（12px，fields.module.css .input 用它）；
+    // --dsw-radius-sm（8px）用在帮助按钮上——两个变量名近邻，断言时勿混。
     const firstInput = ours.valueInputs[0];
     const REF = [
       ['值字段高度', firstInput.height, (v) => Math.abs(Number.parseFloat(v) - 34) <= 2, '34px'],
@@ -239,8 +239,9 @@ try {
     await page.send('Emulation.setEmulatedMedia', {
       features: [{ name: 'prefers-color-scheme', value: scheme }]
     });
-    // 宿主深色选择器是 body[data-ds-dark-theme]（boot CSS 与主题包样式表实读）；
-    // 设在 documentElement 上不会生效——历史轮次「深色截图」实为浅色渲染。
+    // 宿主深色选择器是 body[data-ds-dark-theme]（boot CSS 与主题包样式表实读）：
+    // 必须设在 body 上，设在 documentElement 不生效——否则「深色截图」实为浅色
+    // 渲染，两主题的对照没有意义。
     await evaluate(page, scheme === 'dark'
       ? 'document.body.setAttribute("data-ds-dark-theme", ""), true'
       : 'document.body.removeAttribute("data-ds-dark-theme"), true');
@@ -292,8 +293,8 @@ try {
     console.log(`  截图 ${scheme}-bottom：${String(shotBottom.bytes)} B`);
 
     // 整页图的可判性：页签 + 末字段标签 + 保存按钮都在 innerText 里。
-    // 末字段标签用真实值（「子代理创建后端」——历史 fixture 写的「子代理后端」
-    // 不是子串，恒假红）；布尔标签「命令静默失败提示」一并作证。
+    // 末字段标签必须抄**真实标签全文**（「子代理创建后端」；拿缩写当断言子串
+    // 会恒假红）；布尔标签「命令静默失败提示」一并作证。
     const view = await evaluate(page, `(() => {
       const text = document.body.innerText;
       return {

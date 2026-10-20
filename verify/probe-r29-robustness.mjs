@@ -12,7 +12,9 @@
  * 3. **提交层拒绝**（第二道防线）：绕过卡片直写（RPC mutate）越界 maxWaitMs →
  *    **网关按本包 schema 拒绝**（`settings/rejected` + schemastery 可读消息，含上界）
  *    + 回读值未变（未落盘）+ 工具描述不受影响。字段级越界由网关 schema 当场拒绝；
- *    跨字段违例（如 min > max）schema 表达不了，走落盘 + loader warn 承接。
+ *    跨字段违例由 settings 子树的 transform 回调在 resolve 处拒绝（回调三形，设计
+ *    §5.1：武装态在 edit 落盘前／loader 就地提交改 refs 前拒绝；降级态仅放行与
+ *    降级基线深度相等的重存，与基线不同的非法值照常拒绝）。
  * 4. **等待总耗时上界**：20 秒命令（提权档真跑）+ yield 后 async_wait_job
  *    (wait_ms=1500) → running 结局，渲染句 "Waited N ms; the job is still
  *    running" 在场且 N ∈ [0.9×wait_ms, wait_ms + 3×pollIntervalMs + 容差]
@@ -152,8 +154,8 @@ try {
   // ── 2 提交层拒绝（直写） ─────────────────────────────────────────────
   // 实测语义：RPC settings/update 网关按本包 schema 校验 patch，
   // 字段级越界在网关就被拒（settings/rejected + schemastery 可读消息），到不了落盘——
-  // 这比设计稿的"落盘 + errlog warn 承接"更强；跨字段违例 schema 表达不了，仍走
-  // 落盘 + loader warn（口径不变）。
+  // 这比设计稿的"落盘 + errlog warn 承接"更强；跨字段违例由 transform 回调在
+  // resolve 处拒绝（武装态落盘前／降级态仅放行基线等值重存），同样到不了落盘。
   console.log('· 3/4 真机 2：绕过卡片直写越界值（提交层网关拒绝）');
   const errBase = readFileSync(ERRLOG, 'utf8');
   let rejectText = '';

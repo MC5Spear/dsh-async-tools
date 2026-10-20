@@ -33,13 +33,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const MODULE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** 文档清单，与 `tools/check-docs.mjs` 的 `DOCUMENTS` 责任表同集（含档案 CHANGELOG——路径判据不分角色）。 */
+/** 文档清单，与 `tools/check-docs.mjs` 的 `DOCUMENTS` 责任表**现行子集**同集——
+ * 档案（CHANGELOG）零路径判据：历史档案记录当时的状态，指针本来就可能失效
+ * （口径 #3「只查现行文档」的唯一例外来源就是它，干脆不进清单）。 */
 const CURRENT = [
   'README.md',
   'docs/requirements.md',
   'docs/design.md',
   'verify/README.md',
-  'CHANGELOG.md',
   'CONTRIBUTING.md'
 ];
 

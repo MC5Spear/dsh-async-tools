@@ -156,6 +156,43 @@ test('yieldNote（设计 §2.5 证据分级）：复查快照缺席 → 未证�
   assert.match(verified, /The command is still running/);
 });
 
+test('yieldNote（设计 §2.5 称谓分档）：kind=workflow → 主体称谓为 workflow／工作流，不冒称 command／命令', () => {
+  const en = yieldNote({
+    jobId: 'wf-1', yieldMs: 20, maxWaitMs: 600000, defaultWaitMs: 30000,
+    elapsedMs: 25, mode: 'budget', kind: 'workflow'
+  });
+  assert.match(en, /The workflow is still running/);
+  assert.doesNotMatch(en, /\bcommand\b/, '编排不冒称 command');
+
+  const zh = yieldNote({
+    lang: 'zh', jobId: 'wf-1', yieldMs: 20, maxWaitMs: 600000, defaultWaitMs: 30000,
+    elapsedMs: 25, mode: 'budget', kind: 'workflow'
+  });
+  assert.match(zh, /工作流仍在运行/);
+  assert.doesNotMatch(zh, /命令/, 'zh 档同样不冒称命令');
+
+  // 缺省 kind 是命令路径（async_run），称谓不漂移。
+  const cmd = yieldNote({
+    jobId: 'j-1', yieldMs: 20, maxWaitMs: 600000, defaultWaitMs: 30000,
+    elapsedMs: 25, mode: 'budget'
+  });
+  assert.match(cmd, /The command is still running/);
+
+  const zhCmd = yieldNote({
+    lang: 'zh', jobId: 'j-1', yieldMs: 20, maxWaitMs: 600000, defaultWaitMs: 30000,
+    elapsedMs: 25, mode: 'budget'
+  });
+  assert.match(zhCmd, /命令仍在运行/);
+
+  // 未证实档同分档：workflow 的未证实变体不再提 command。
+  const unverifiedWf = yieldNote({
+    jobId: 'wf-1', yieldMs: 20, maxWaitMs: 600000, defaultWaitMs: 30000,
+    elapsedMs: 25, mode: 'budget', unverified: true, kind: 'workflow'
+  });
+  assert.match(unverifiedWf, /The workflow outlived/);
+  assert.doesNotMatch(unverifiedWf, /\bcommand\b/);
+});
+
 test('settledNote：必须说明最终回答不在返回值里（设计 §6.3）', () => {
   const note = settledNote({ agentId: 'child-9' });
   assert.match(note, /child-9/);

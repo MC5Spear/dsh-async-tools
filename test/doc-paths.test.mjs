@@ -49,8 +49,10 @@ test('文档路径：https URL 里的伪盘符不是绝对路径（badge 假阳�
     writeFileSync(join(dir, 'docs', 'real.md'), '# 真实文件\n', 'utf8');
     // 其余现行文档铺成空壳：检查器要求它们**存在**（缺了按红处理），
     // 但不能抄真件——真件里的几百条引用在沙箱里全是悬空指针，与本测试无关。
+    // CHANGELOG 不在清单里（档案零路径判据）——它的存在性既不被要求也不被消费，
+    // 由下方形态 3 的反例单独锁定。
     for (const stub of ['docs/requirements.md', 'docs/design.md', 'verify/README.md',
-      'CHANGELOG.md', 'CONTRIBUTING.md']) {
+      'CONTRIBUTING.md']) {
       writeFileSync(join(dir, ...stub.split('/')), '', 'utf8');
     }
 
@@ -70,6 +72,16 @@ test('文档路径：https URL 里的伪盘符不是绝对路径（badge 假阳�
     const dirty = checkDocPaths(dir, { quiet: true });
     assert.notEqual(dirty.code, 0, '真盘符绝对路径漏报——守卫把真阳性一起杀了');
     assert.ok(dirty.out.includes('绝对路径'), '应按"绝对路径不在本仓"口径报出');
+
+    // 形态 3：档案零路径判据——CHANGELOG（role='archive'）不在检查清单里，
+    // 它里面的悬空仓内引用**不得**被报。若有人把档案加回清单（或清单与
+    // DOCUMENTS 现行子集的同集关系被改坏），这里立刻红。
+    writeFileSync(join(dir, 'README.md'), '# synth\n\nSee `docs/real.md`.\n', 'utf8');
+    writeFileSync(join(dir, 'CHANGELOG.md'),
+      '# synth archive\n\nSee `verify/no-such-probe.mjs` and `D:\\archive\\dangling.yml`.\n', 'utf8');
+    const archive = checkDocPaths(dir, { quiet: true });
+    assert.equal(archive.code, 0, `档案（CHANGELOG）的引用被当成了现行文档判据（档案零路径判据破了）：\n${archive.out.trim()}`);
+    assert.ok(!archive.out.includes('no-such-probe'), '档案里的悬空仓内引用不得进退出码');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
