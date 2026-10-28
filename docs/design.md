@@ -2,7 +2,7 @@
 
 > 产品行为、默认值、合法范围和验收结果以[需求文档](<requirements.md>)为准。本文定义目标机制与验证方法，不以当前实现降低需求。
 > 两份文档允许互引；除此之外必要内容自包含。源码和测试定位用于核验，不承载缺失说明。本文不保存迁移窗口、修复过程、候选方案或完成记录。
-> 本文同步 dsh `0.2.1-rc.2` 的适配设计。第 1 至第 8 章描述机制与验证装置；实现现状按第 9 章单独陈述（待实现、现行已实现机制、待验证、未授权发布），机制描述不因已实现而免除真机验证与独立审查要求。过程性问题清单另行维护，短期设计增补使用第 10 章。
+> 本文同步 dsh `0.2.1-rc.3` 的适配设计。第 1 至第 8 章描述机制与验证装置；实现现状按第 9 章单独陈述（待实现、现行已实现机制、待验证、发布状态），机制描述不因已实现而免除真机验证与独立审查要求。过程性问题清单另行维护，短期设计增补使用第 10 章。
 
 ## 1. 总体架构与组合范围
 
@@ -46,7 +46,7 @@ bundle patch 是官方组合树 overlay，不修改宿主源码或随宿主发�
 
 工具行上下文覆盖组合内多个 Agent，不等于某个父子会话关系。消息监听必须按 `payload.agent.id === exec.agent.id` 过滤接收主体；状态信号按等待目标 id 匹配，作业事件按确切 owner 和目标 job id 匹配。
 
-待核验对象：目标版本 `0.2.1-rc.2` 的 `@deepseek-ai/dsh-scope`（作用域过滤）、`@deepseek-ai/dsh-agent-preset-registry`（组合版本绑定）、`@deepseek-ai/dsh-agent`（`AgentRegistry.get`）、`@deepseek-ai/dsh-agent-loop`（`status` 与 `agent/status`），以及本包入口和消息部件。这里按包和符号定位，不沿用未经重核的源码行号。版本权威由需求 7.3 定义。
+待核验对象：目标版本 `0.2.1-rc.3` 的 `@deepseek-ai/dsh-scope`（作用域过滤）、`@deepseek-ai/dsh-agent-preset-registry`（组合版本绑定）、`@deepseek-ai/dsh-agent`（`AgentRegistry.get`）、`@deepseek-ai/dsh-agent-loop`（`status` 与 `agent/status`），以及本包入口和消息部件。这里按包和符号定位，不沿用未经重核的源码行号。版本权威由需求 7.3 定义。
 
 ## 2. 共用预算、唤醒与结果机制
 
@@ -75,7 +75,7 @@ bundle patch 是官方组合树 overlay，不修改宿主源码或随宿主发�
 - 命令与编排的首次等待同口径：`yield_ms` 从等待段开始即武装，撤销后的完成优先复查在剩余时间外不再取得新预算；交回控制的原因按消息、取消、预算到期与终态分别说明，取消不并入预算到期；工具描述宣称的总时长与该口径一致。
 - 时间判据：全程上界按有效 `wait_ms`（请求值经需求 5.2 上下限夹紧后的值）计量——请求低于 `minWaitMs` 被抬到下限时，断言与上界都用夹紧后的值（请求 60 ms、下限 250 ms 时上界 550 ms），不按请求值断言。以任意有效 `wait_ms` 调用，两等待工具的全程上界均为 `有效 wait_ms + 300 ms` 固定调度容差，包括需要屏障重试的情形，不追加轮询间隔或重试时长。屏障重试至多三拍；每拍查询和睡眠只取总截止前的剩余预算，剩余不正即返回，不要求用完三拍。总截止不变以真时钟平上界断言（按真实时钟计量全程时长、断言不超过固定上界）与变异测试锚定（对轮询间隔、重试次数等参数做受控修改后断言仍成立）锁定：改变轮询间隔或实际重试次数不得延长总预算。300 ms 是现有等待计时单元装置的固定调度容差，不是可分配给查询、重试或等待的新预算。目录查询挂起专项采用更严格的 `有效 wait_ms + 200 ms` 上界，对应现有装置的 250 ms 预算、450 ms 上界。上述数值是测试判据，不表示目标宿主已通过验证；真机按 8.1 分层单独标定固定调度容差，不按轮询间隔或重试次数追加时长。
 
-待核验对象：目标版本 `0.2.1-rc.2` 的 `@deepseek-ai/dsh-subagent` 中 `listChildren(parentId, signal)` 与 `@deepseek-ai/dsh-jobs-local` 中 `wait` 的取消实现，以及本包两个等待模块。这里不指定未经重核的行号；目标宿主行为尚需回归。
+待核验对象：目标版本 `0.2.1-rc.3` 的 `@deepseek-ai/dsh-subagent` 中 `listChildren(parentId, signal)` 与 `@deepseek-ai/dsh-jobs-local` 中 `wait` 的取消实现，以及本包两个等待模块。这里不指定未经重核的行号；目标宿主行为尚需回归。
 
 ### 2.2 消息集合和入口扫描
 
@@ -95,7 +95,7 @@ bundle patch 是官方组合树 overlay，不修改宿主源码或随宿主发�
 
 通知只作为交回控制理由。目标结算单独按 sender／job id 或公开状态证据判断，不以其他子代理、其他命令的消息改变目标状态。消息唤醒胜出后复查目标当前状态（作业查快照、子代理查注册表现读），已停止运行按目标结果返回，不因消息先到诱导重复等待——该复查对 user 插话、notice、relay 与目标自身的结算通知一律适用；停止结果与并存消息说明并呈（3.4）。返回包含目标句柄和唤醒原因，不替宿主消费通知正文。唤醒原因中的摘要取消息自带的 `summary`：`relay`／`notice` 类消息可能不带，空档时给回退文案并优先点名来源（宿主契约：这两类 `source` 预期恒带 `senderSessionId`）；契约被破坏、`senderSessionId` 缺席的形态按无名占位回退，不留空置的摘要括号（需求 2.1.3）。`user` 插话不作回退，其摘要不进渲染模板。
 
-待核验对象：目标版本 `0.2.1-rc.2` 的 `@deepseek-ai/dsh-agent-loop` 中 inbox 插入与领取、`@deepseek-ai/dsh-llm` 的 `ContextForm`、`@deepseek-ai/dsh-subagent` 的 `createSettlementMessage` 与代理转达消息构造，以及 `@deepseek-ai/dsh-goal-round-driver` 的轮次投递。上述消息规则是目标约定；逐项静态核对与真实投递验证尚未完成，不沿用其他版本的行号作为证据。
+待核验对象：目标版本 `0.2.1-rc.3` 的 `@deepseek-ai/dsh-agent-loop` 中 inbox 插入与领取、`@deepseek-ai/dsh-llm` 的 `ContextForm`、`@deepseek-ai/dsh-subagent` 的 `createSettlementMessage` 与代理转达消息构造，以及 `@deepseek-ai/dsh-goal-round-driver` 的轮次投递。上述消息规则是目标约定；逐项静态核对与真实投递验证尚未完成，不沿用其他版本的行号作为证据。
 
 ### 2.3 取消、终态优先与通知
 
@@ -105,7 +105,7 @@ bundle patch 是官方组合树 overlay，不修改宿主源码或随宿主发�
 - 宿主完成补发还受 owner 存在、显式模型 kill、teardown 等条件影响。不另建重复通知系统，也不把宿主一般投递故障扩成产品补偿任务。
 - 普通 `relay`、结算 `notice`、状态 `idle` 和最终文本分开。可续子代理自动结算 `notice` 本身可含收尾文本；显式 `send_message` 是另一条 `relay`，不能保证每次都有两条或固定先后。
 
-待核验对象：目标版本 `0.2.1-rc.2` 的 `@deepseek-ai/dsh-tool-jobs` 作业通知与 `@deepseek-ai/dsh-subagent` 的 `notifySettlement`。须分别验证正常投递、父主体离开、显式停止与服务清理条件；不以接口在场或静态阅读代替投递验证。
+待核验对象：目标版本 `0.2.1-rc.3` 的 `@deepseek-ai/dsh-tool-jobs` 作业通知与 `@deepseek-ai/dsh-subagent` 的 `notifySettlement`。须分别验证正常投递、父主体离开、显式停止与服务清理条件；不以接口在场或静态阅读代替投递验证。
 
 ### 2.4 读取、合并和裁剪
 
@@ -147,7 +147,7 @@ output = 终态状态提示 + lossy 前缀 + spill 线索行（读取视图报�
 - 服务缺席按 1.3 的固定依赖等待处理；服务方法不可用、目录检查／恢复失败或调用取消时，在作业准入及进程启动前返回可读错误或取消说明。不回退到初始目录、服务进程目录或投影直读，不因显式 `workdir` 绕过失败。目录恢复及对应通知由宿主服务负责，本包不另建恢复逻辑。
 - 启动使用本次 `ensure` 和路径解析所得的目录快照。之后切换会话目录不改变已经启动的命令；调用等待结束也不再次解析目录或重启工作。
 
-静态依据为目标版本 `0.2.1-rc.2` 的 `@deepseek-ai/dsh-working-directory` 中 `ensure`／`set`／`serialize`，以及 `@deepseek-ai/dsh-tool-pwsh` 的 `resolveWorkdir` 和 execute。已核读接口与实现，不代表本包接线或运行行为已验证。
+静态依据为目标版本 `0.2.1-rc.3` 的 `@deepseek-ai/dsh-working-directory` 中 `ensure`／`set`／`serialize`，以及 `@deepseek-ai/dsh-tool-pwsh` 的 `resolveWorkdir` 和 execute。接口符号已按目标版本安装树核实在场，实现逐项核读按目标版本重新核验（待验证）；核读完成也不代表本包接线或运行行为已验证。
 
 - shell 请求显式 `onExpiry:'none'`，不让宿主默认寿命定时器杀长命令；环境直接使用 `shellEnv.collect(exec)`。
 - 作业有确切 owner，`label=command` 原文，description 进活动 progress，输出缓冲预算为 `maxResultChars × 3` 字节；`maxResultChars` 按正整数校验（5.4），三倍换算恒为宿主 `outputLimitBytes` 要求的正安全整数。注册拒绝按实际原因区分：并发触顶给上限、存活清单及出路，其余注册错误（含预算换算与宿主校验拒绝）原样可读上抛，不套用触顶文案。
@@ -194,7 +194,7 @@ activation = { childId, [messageId], result, dispose }
 
 `SubagentActivationSpec.request` 的目标类型为 `Omit<SubagentStartRequest, 'label' | 'signal'>`。`label`、创建 signal 和 `delivery` 均在 spec 顶层；`agentOptions` 的携带判据是任一层贡献任一键：显式请求的路由或推理强度字段、工具配置 `agentOptions` 的任意键（路由类与非路由类同样参与——如仅 `maxTokens` 的行配置携带 `{maxTokens}`），或预检触发形态下折入的后端 `agentRouteDefaults`；无任何层贡献时省略该键。预检触发与后端默认折并的判据与 `@deepseek-ai/dsh-tool-subagent` 的 `requiresRoutePreflight` 同形：显式请求了任一路由或推理强度字段（`provider`／`model`／`reasoning_effort`），或工具配置声明了路由类默认（`provider`／`model`／`reasoningEffort` 任一）——此时配置默认＝后端 `agentRouteDefaults` 与工具配置默认的合并，作为携带值并触发创建前预检；非路由类键参与携带但不构成触发，该形态下后端路由默认不折入，携带值即工具配置值。无携带时宿主派生侧不应用后端路由默认，省略时实际生效路由按需求 2.3.1 的顺序收敛为父继承，回执按 3.3 成功回执的实际有效路由口径标注。参与边界的静态核读依据为目标版本 `@deepseek-ai/dsh-subagent` 的 `resolveChildAgentOptions`（只做父值与请求覆盖的合并，不并入后端路由默认）与 `@deepseek-ai/dsh-tool-subagent` 的 `requestedAgentOptions`／`requiresRoutePreflight`，逐项核验随 8.2 子代理和路由行的回执核对执行。
 
-**公共参数兼容**（需求 2.3.1）。`async_agent` 的公开参数与目标版本 dsh 原生子代理创建工具保持名称、类型、必填条件、缺省及校验语义一致：`description`、`prompt` 必填字符串；`cwd` 可选，指定子代理初始目录，缺省继承调用主体当前有效目录，相对路径以该目录解析，后续目录变化互不影响；`provider`、`model` 可选且必须成对，值为准确 LLM 路由 ID，省略时按 dsh 配置默认、后端路由默认及父路由继承顺序解析（后端路由默认的参与边界按 3.3 携带规则：仅在预检触发形态——显式请求路由或推理强度字段，或路由类配置默认——下折进携带值，无携带时不应用）；`reasoning_effort` 可选非空字符串，可单独指定并校验最终有效路由，换路由时不沿用不兼容的旧值；`agent_preset` 仅在工具配置了可选预设且后端支持独立预设选择时暴露，按允许集合校验，不据此向原本无权选择的预设开放权限。可选预设集合与允许集合来自本包行配置根键——与宿主原生工具行同形的 `agentPreset`／`allowedAgentPresets`／`agentOptions`，与行身份字段同层、非 volatile、不进设置表单；本包两份预设的工具行不配置这些键，`agent_preset` 恒不暴露，验收只验不暴露与显式报错，自定义行可按原生同一语义配置（含 `allowedAgentPresets` 显式空数组的可读拒绝，5.1）。条件键的在场与缺省文案随 dsh 当前配置与后端能力取值（可选预设集合、后端 `agentRouteDefaults`、`capabilities.agentOptions`、`prepareContinuable`），与原生工具同一条件，不扩大也不缩小；静态依据为目标版本 `0.2.1-rc.2` 的 `@deepseek-ai/dsh-tool-subagent` 公开参数定义及其条件分支。未知参数显式报错并列出当前支持键；dsh 原生工具的内部配置不是调用参数，不开放任意透传；宿主 request 允许 `outputSchema` 等其他可选字段，本工具不因此扩大公开参数。
+**公共参数兼容**（需求 2.3.1）。`async_agent` 的公开参数与目标版本 dsh 原生子代理创建工具保持名称、类型、必填条件、缺省及校验语义一致：`description`、`prompt` 必填字符串；`cwd` 可选，指定子代理初始目录，缺省继承调用主体当前有效目录，相对路径以该目录解析，后续目录变化互不影响；`provider`、`model` 可选且必须成对，值为准确 LLM 路由 ID，省略时按 dsh 配置默认、后端路由默认及父路由继承顺序解析（后端路由默认的参与边界按 3.3 携带规则：仅在预检触发形态——显式请求路由或推理强度字段，或路由类配置默认——下折进携带值，无携带时不应用）；`reasoning_effort` 可选非空字符串，可单独指定并校验最终有效路由，换路由时不沿用不兼容的旧值；`agent_preset` 仅在工具配置了可选预设且后端支持独立预设选择时暴露，按允许集合校验，不据此向原本无权选择的预设开放权限。可选预设集合与允许集合来自本包行配置根键——与宿主原生工具行同形的 `agentPreset`／`allowedAgentPresets`／`agentOptions`，与行身份字段同层、非 volatile、不进设置表单；本包两份预设的工具行不配置这些键，`agent_preset` 恒不暴露，验收只验不暴露与显式报错，自定义行可按原生同一语义配置（含 `allowedAgentPresets` 显式空数组的可读拒绝，5.1）。条件键的在场与缺省文案随 dsh 当前配置与后端能力取值（可选预设集合、后端 `agentRouteDefaults`、`capabilities.agentOptions`、`prepareContinuable`），与原生工具同一条件，不扩大也不缩小；静态依据为目标版本 `0.2.1-rc.3` 的 `@deepseek-ai/dsh-tool-subagent` 公开参数定义及其条件分支。未知参数显式报错并列出当前支持键；dsh 原生工具的内部配置不是调用参数，不开放任意透传；宿主 request 允许 `outputSchema` 等其他可选字段，本工具不因此扩大公开参数。
 
 **路由合并与预检**。合并语义与目标原生工具一致，取值顺序为工具配置 `agentOptions` 覆盖后端 `agentRouteDefaults`，两者共同构成的配置默认再被显式请求覆盖，父路由兼容值只补缺项；后端无路由默认时按配置默认与显式请求合并、再继承父兼容值。推理强度的继承与清除同原生：有效路由未变且后端无路由默认时，缺省可继承兼容的父值；显式更换路由而未指定推理强度时不沿用旧路由的值，由所选模型默认值接管。成对与非空校验在合并前执行；显式指定路由或推理强度、或配置了子代理默认路由时，创建前经 `llm.resolveCallConfig` 预检有效路由与模型支持信息，推理强度校验和适配器默认由 LLM 运行时承担；预检通过后、启动前复查后端未变、调用未取消。
 
@@ -218,7 +218,7 @@ activation = { childId, [messageId], result, dispose }
 - 返回对象取得后立即为 `result` 注册成功与拒绝处理，不延长启动回执。`result` 在宿主结算清理及通知处理后落定，但 resolve 不证明父主体已收到消息，也不证明清理没有失败；宿主可以保留已捕获结果并另行报告清理错误。`result` 只是观察通道：正常结算不在工具结果里重复交付答案；非正常 `stopReason` 不冒称成功；捕获等基础设施故障导致的拒绝经生命周期诊断出口报告，附准确 child id，不伪装成创建失败、成功结算或已通知父会话。处理回调本身及其派生 Promise 的拒绝也必须承接；诊断不依赖工具行仍在场，不建立无限期结果缓存。
 - `dispose()` 是停止并释放这一次 activation 及所拥有后代的异步操作，不是“放下回执”。自然结算由宿主自动释放，本包不需要为了避免泄漏而立即调用它。显式停止仍走宿主管理入口；若后续正式设计确需直接调用 `dispose`，必须限定确切 activation、明确停止授权并 await 或承接释放失败，不能按 child id 缓存旧句柄去停止同 id 的后续恢复。
 
-静态依据为目标版本 `0.2.1-rc.2` 的 `@deepseek-ai/dsh-subagent` 中 `SubagentActivationSpec`、`SubagentActivation`、`startActivation`，以及管理器的 `startLocal`／`watchLocalSettlement`／`finishDisposal`／`receipt`。这些接口和自然释放路径已核读；立返时序、发布边界取消、拒绝诊断与实际父会话投递仍待验证。
+静态依据为目标版本 `0.2.1-rc.3` 的 `@deepseek-ai/dsh-subagent` 中 `SubagentActivationSpec`、`SubagentActivation`、`startActivation`，以及管理器的 `startLocal`／`watchLocalSettlement`／`finishDisposal`／`receipt`。这些接口符号已按目标版本安装树核实在场，自然释放路径的逐项核读按目标版本重新核验（待验证）；立返时序、发布边界取消、拒绝诊断与实际父会话投递仍待验证。
 
 [策略形状](<../lib/agent-policy.js>)的目标定位：派生路径不注册同键投影、不执行会话采样——不得以不同 fold、stateVersion 或 schema 重定义宿主 `subagentModelSelectionPolicy` 投影，也不得追加采样改变原生工具的会话策略。宿主策略定义的形状副本仅在 3.7 解读原生会话投影确需形状依据时保留为纯形状参考，不承担派生采样职责。现行[策略一致性检查](<../verify/check-agent-policy.mjs>)看守（看守＝以测试钉住判据的既定内部称谓，下文沿用）形状副本与宿主定义的同形，钉住「无投影注册、无采样」的现行事实。静态同形不代替实际指定路由验证，路由验证按第 8 章。
 
@@ -270,11 +270,11 @@ activation = { childId, [messageId], result, dispose }
 
 自定义组合装载 `async_workflow` 行时，delegation 隔离组内必须同时包含编排引擎提供行（目标基线为 `@deepseek-ai/dsh-workflow-ptc`）——仅含工具行的组合属引擎缺席形态；工具指引与公开组合示例（README 六工具组合）按该组合要求说明。引擎缺席时，`async_workflow` 在注册作业前明确拒绝；引擎运行阶段无法取得有效目录或执行当前沙箱策略时，保留实际失败并按真实结果结算。目标引擎在运行时不支持沙箱、会话策略又不是 `danger-full-access` 时拒绝执行。本包不为让编排启动而清掉策略、自动升权或改用无沙箱引擎；首次等待结束也不停止引擎。隔离范围、缺服务和受限策略的反例均须验证。
 
-宿主 PTC 编排引擎的核验基准：`maxConcurrentAgents=0` 时自动取 `min(16,max(1,availableParallelism()-2))`，`maxTotalAgents=1000`、`maxItemsPerCall=4096`、`syncTimeoutMs=5000` ms。这些是宿主引擎出厂配置，不是本包新增参数，部署可改。目标版本 `0.2.1-rc.2` 的 `@deepseek-ai/dsh-workflow-ptc` 中 `PtcWorkflowEngine` 注入、Config 和 start 已静态核读；钩子契约、隔离组内装载及运行行为仍待核验。`@deepseek-ai/dsh-jobs-local@0.2.1-rc.2` 的 `DEFAULT_MAX_CONCURRENT_JOBS_PER_OWNER` 已静态核读，出厂值为 10；触顶提示仍须反映宿主实际生效值。
+宿主 PTC 编排引擎的核验基准：`maxConcurrentAgents=0` 时自动取 `min(16,max(1,availableParallelism()-2))`，`maxTotalAgents=1000`、`maxItemsPerCall=4096`、`syncTimeoutMs=5000` ms。这些是宿主引擎出厂配置，不是本包新增参数，部署可改。目标版本 `0.2.1-rc.3` 的 `@deepseek-ai/dsh-workflow-ptc` 中 `PtcWorkflowEngine` 注入、Config 和 start 的符号与配置键已按目标版本安装树核实在场，逐项静态核读按目标版本重新核验（待验证）；钩子契约、隔离组内装载及运行行为仍待核验。`@deepseek-ai/dsh-jobs-local@0.2.1-rc.3` 的 `DEFAULT_MAX_CONCURRENT_JOBS_PER_OWNER` 出厂值为 10，已按目标版本安装树核实在场；触顶提示仍须反映宿主实际生效值。
 
 ### 3.6 两个预设的声明与隔离
 
-[异步模式补丁](<../presets/dsh-async.patch.yml>)和[异步创造补丁](<../presets/dsh-async-create.patch.yml>)各提供一条预设声明。目标 `config.plugins` 分别基于 `@deepseek-ai/dsh-web-app@0.2.1-rc.2` 随包的 standard 与 cordis 预设重建，不以当前插件补丁的行集合代替宿主基线。
+[异步模式补丁](<../presets/dsh-async.patch.yml>)和[异步创造补丁](<../presets/dsh-async-create.patch.yml>)各提供一条预设声明。目标 `config.plugins` 分别基于 `@deepseek-ai/dsh-web-app@0.2.1-rc.3` 随包的 standard 与 cordis 预设重建，不以当前插件补丁的行集合代替宿主基线。
 
 两者相对基线的共同差异保持产品入口规则：禁同步 shell，顶层五行异步工具（`async_run`、`async_wait_job`、`async_agent`、`async_wait_agent` 与路由查询 `async_list_subagent_models`），delegation 组内第六行 `async_workflow`，禁原生单发／fork／workflow 创建入口，保留编排引擎及非阻塞管理入口。创作 skill 及基线其余工具保持，不将已禁用基线行误当活工具。六个工具默认只挂本包两预设；使用者自建预设按工具选择挂载（查询工具与创建工具可分别使用）由用户自行组合，本包不替用户改预设，也不改变 `async_workflow` 内部 `agent()` 钩子或其他引擎的策略与参数契约（需求 3.2）。
 
@@ -285,7 +285,7 @@ activation = { childId, [messageId], result, dispose }
 - 计划模式说明按目标基线整段同步，再核对本产品入口纪律不存在冲突。目标基线不存在的行和配置键不补造回来；原生派生行的禁用仅作为入口控制，不用不存在的配置键表达后台行为。
 - delegation 组保留 `workflowEngine` 隔离，`workflow-ptc` 继续使用 `provider: spawn`；按 3.5 核对新依赖可见范围。目标 standard／cordis 基线未声明 `working_directory` 工具行，本次基线同步不另增该直接工具入口，也不以工具行是否在场代替目录服务验证。
 
-[预设校验器](<../tools/validate-preset.mjs>)按两个预设参数化比较顶层与嵌套行集合、顺序、禁止行、六工具各一（含路由查询行）、组内位置、禁用状态及 persona 形态——persona prefix 与基线身份句逐字一致（任何增改即判失败，宿主原生身份句不承载本包内容）；纪律锚句不挂在 persona prefix，改对两语表两档（en＋zh）×两变体（dsh-async／dsh-async-create）核验：委托纪律锚句（一律后台、`async_agent` 唯一委托入口、有界等待取回、不循环轮询）按变体各含其差异句——dsh-async 档含 `run_in_background: false` 禁句，create 档含「subagent／subagent_fork 已禁用、不要调用」；提问角色纪律四组锚词（人称代词禁用、明确角色名称、角色加动作、指向一致）按语言各自取等义锚句。四份文案逐份齐全，删任一锚句即判失败；插件管理两行的判据按上文基线形态锁死——`dsh-async` 两行布尔禁用、`dsh-async-create` 两行 `!!js "!ctx.get('profileContext')"` 表达式逐字（改布尔或改表达式即判失败）。现行校验器已覆盖六工具。基线版本来自需求 7.3，不硬编码本机路径。校验器和替身都须按目标基线重核；两份基线已静态核读，不代表补丁已重建或真机装载已通过。其他随宿主发布的预设以对照证明工具及提示不变。
+[预设校验器](<../tools/validate-preset.mjs>)按两个预设参数化比较顶层与嵌套行集合、顺序、禁止行、六工具各一（含路由查询行）、组内位置、禁用状态及 persona 形态——persona prefix 与基线身份句逐字一致（任何增改即判失败，宿主原生身份句不承载本包内容）；纪律锚句不挂在 persona prefix，改对两语表两档（en＋zh）×两变体（dsh-async／dsh-async-create）核验：委托纪律锚句（一律后台、`async_agent` 唯一委托入口、有界等待取回、不循环轮询）按变体各含其差异句——dsh-async 档含 `run_in_background: false` 禁句，create 档含「subagent／subagent_fork 已禁用、不要调用」；提问角色纪律四组锚词（人称代词禁用、明确角色名称、角色加动作、指向一致）按语言各自取等义锚句。四份文案逐份齐全，删任一锚句即判失败；插件管理两行的判据按上文基线形态锁死——`dsh-async` 两行布尔禁用、`dsh-async-create` 两行 `!!js "!ctx.get('profileContext')"` 表达式逐字（改布尔或改表达式即判失败）。现行校验器已覆盖六工具。基线版本来自需求 7.3，不硬编码本机路径。校验器和替身都须按目标基线重核；目标版本随包的 standard／cordis 基线文件已核实在场，逐字基线核读按目标版本重新核验（待验证），核读完成也不代表补丁已重建或真机装载已通过。其他随宿主发布的预设以对照证明工具及提示不变。
 
 ### 3.7 路由查询
 
@@ -293,19 +293,19 @@ activation = { childId, [messageId], result, dispose }
 
 **参数**：`provider`（可选）、`model`（可选，仅给 `model` 时提示必须同时给出 `provider`）、`query`（可选搜索词；空白搜索词等同未提供。非空 `query` 与 `provider`＋`model` 精确详情查询不可同时请求，冲突可读拒绝）、`target_tool`（可选目标创建工具名）、`page`（正整数，≥1，默认 1）、`page_size`（整数，默认 20，范围 1—100，非法值可读拒绝）、`version`（翻页续查用的版本令牌，`page` 大于 1 时必传，首轮省略）。
 
-**目录与详情**：目录来自 `llm` 公开接口 `listProviders`、`listModels`、`resolveModelInfo`。`provider`＋`model` 查询准确模型的名称与推理强度（ID、名称、默认项，元数据缺席如实说明，不编造、不替 Agent 选择）；允许名单中存在而目录未列出的模型按准确 ID 保留在结果中——`resolveModelInfo` 能解析则给出详情，解析失败时按失败原因区分：适配器报告模型不存在或不受支持是“不支持”，接口读取失败是“读取失败”，两者都与“目录未列出”分开表述，均不把该模型误报为有效可用。判别依据是失败的稳定公开 code——目标版本 `0.2.1-rc.2` 的 `@deepseek-ai/dsh-llm` 以 `HarnessError`／`LlmError` 携带，类契约自述按 code 路由、不解析 message 文本：`UNKNOWN_MODEL`（及后续同类表示模型不受支持的 `UNSUPPORTED_*` code）归“不支持”；其余 code（含网络类失败与 `INVALID_MODEL_INFO` 元数据契约违例）归“读取失败”并保留原始原因；无稳定 code 的失败一律归“读取失败”，不编造定性（需求 5.7：没有依据时不编造原因）。已确认允许集合（按本节下文的目标证据链确认后拿到的那份名单）中目录未列出的路由按准确 ID 并入所属供应商的浏览与搜索结果：条目标记来源为允许名单（区别于目录条目），名称与元数据不编造（无则不写键）；只出现在允许名单、目录完全未列的供应商同样以该标记成条目。未列路由与目录条目走同一条筛选流水线：先全部并入供应商候选集，再按同一搜索条件匹配（无显示名称，仅模型 ID 与供应商命中参与），后分页——供应商内搜索（`provider` 给定而目录未列该供应商）时派生条目同样逐条过 `query` 匹配；无匹配返回空结果页、匹配总数为零，不生成本页示例；目录正常列出的路由不受并入逻辑影响、照常列举。同名不同供应商或不同模型 ID 的条目不合并；不改写准确 ID；目录条目不等于已获策略允许、已通过凭据验证或远端服务保证可用。读取失败与无匹配分开；部分供应商查询失败时该供应商条目标记失败、不记为零模型，匹配总数为已取得数并明确不完整。结果按 `agentLang` 提供完整中英文，供应商／模型 ID 与原始元数据保持原样，不返回凭据、密钥或私有接口地址。
+**目录与详情**：目录来自 `llm` 公开接口 `listProviders`、`listModels`、`resolveModelInfo`。`provider`＋`model` 查询准确模型的名称与推理强度（ID、名称、默认项，元数据缺席如实说明，不编造、不替 Agent 选择）；允许名单中存在而目录未列出的模型按准确 ID 保留在结果中——`resolveModelInfo` 能解析则给出详情，解析失败时按失败原因区分：适配器报告模型不存在或不受支持是“不支持”，接口读取失败是“读取失败”，两者都与“目录未列出”分开表述，均不把该模型误报为有效可用。判别依据是失败的稳定公开 code——目标版本 `0.2.1-rc.3` 的 `@deepseek-ai/dsh-llm` 以 `HarnessError`／`LlmError` 携带，类契约自述按 code 路由、不解析 message 文本：`UNKNOWN_MODEL`（及后续同类表示模型不受支持的 `UNSUPPORTED_*` code）归“不支持”；其余 code（含网络类失败与 `INVALID_MODEL_INFO` 元数据契约违例）归“读取失败”并保留原始原因；无稳定 code 的失败一律归“读取失败”，不编造定性（需求 5.7：没有依据时不编造原因）。已确认允许集合（按本节下文的目标证据链确认后拿到的那份名单）中目录未列出的路由按准确 ID 并入所属供应商的浏览与搜索结果：条目标记来源为允许名单（区别于目录条目），名称与元数据不编造（无则不写键）；只出现在允许名单、目录完全未列的供应商同样以该标记成条目。未列路由与目录条目走同一条筛选流水线：先全部并入供应商候选集，再按同一搜索条件匹配（无显示名称，仅模型 ID 与供应商命中参与），后分页——供应商内搜索（`provider` 给定而目录未列该供应商）时派生条目同样逐条过 `query` 匹配；无匹配返回空结果页、匹配总数为零，不生成本页示例；目录正常列出的路由不受并入逻辑影响、照常列举。同名不同供应商或不同模型 ID 的条目不合并；不改写准确 ID；目录条目不等于已获策略允许、已通过凭据验证或远端服务保证可用。读取失败与无匹配分开；部分供应商查询失败时该供应商条目标记失败、不记为零模型，匹配总数为已取得数并明确不完整。结果按 `agentLang` 提供完整中英文，供应商／模型 ID 与原始元数据保持原样，不返回凭据、密钥或私有接口地址。
 
 **搜索**：`query` 去除首尾空白、忽略大小写，按供应商／模型的 ID 与显示名称作包含匹配，跨供应商与指定供应商内共用同一条规则；空白搜索词等同未提供，不默认正则。供应商命中＝该供应商的 ID 或显示名称包含搜索词，其模型条目整组随行（与浏览该供应商同语义）：跨供应商形态同时列该供应商条目，供应商内形态列该供应商全部模型；未列供应商没有显示名称，命中只按其准确 ID 判定，命中时其全部允许名单路由整组随行。指定 `provider` 不取消供应商字段匹配——同一搜索词在指定该供应商后命中的其模型集合，与跨供应商搜索中该供应商的命中集合一致。
 
 **目标解析与适用性**：当前核读的公开接口未提供按工具查询策略的已确认方法，不假定其不存在，目标解析保守进行。`target_tool` 按当前会话实际可见的工具名确认（经宿主公开工具投影按作用域枚举，与 6.2 同一接口），可为 `async_agent` 或 dsh 原生子代理创建工具，包括用户配置的工具名；目标只影响筛选、适用性与调用指引，不授予额外权限。可识别创建工具按可见工具的模型侧 schema 形状识别：参数表同时具备字符串型 `description` 与 `prompt` 的工具视为创建工具候选，再排除本包查询与等待工具自身；`async_agent` 与 dsh 原生创建工具（含用户配置名）都命中该形状。形状只把工具列为候选，不证明其身份与策略归属。省略目标且仅有一个可识别创建工具时采用该工具；存在多个或不能可靠识别时不默认为通用可用。仅挂查询工具时可查目录，须说明未确认可用创建入口。具名目标不可见或不可识别时，不作为查询错误终止：结果按“不允许选择”报告该限制并给原因，目录按已获依据照常返回，不生成适用于该目标的创建调用（需求 2.3.4）。
 
 - 面向 `async_agent` 时按身份、策略、后端三段判定：
-  - **身份段**——目标名只作候选筛选，不作身份证明。查询经公开工具投影 `tools.get(name, scope)` 取调用方作用域该名可见的工具定义，与[工具行登记簿](<../lib/tool-rows.js>)按对象同一性比对。登记簿是模块级 WeakMap（工具对象→该行配置视图），插件入口的行装载在每行 `ctx.tools.register(tool)` 成功后登记；行卸载后工具对象不可达，登记随之消失，无须显式清理。命中＝该作用域实际可见的定义正是本包创建行注册的那个，同时取得**创建行**的配置视图；未命中＝同名外来登记或被遮蔽（含原生行以 `toolName:'async_agent'` 配置注册的形态），按“适用性未确认”给原因，不读策略与后端、不生成示例，也不用本包默认配置冒充该工具。`get` 缺席、抛错，或与候选枚举矛盾（候选在册而 `get` 查无）同样按未确认处理。两个未确认档各配独立 basis 键（两语同义，随 `list.basis.*` 既有约定）：名下可见定义非本包注册用 `list.basis.asyncForeignName`，`get` 缺席／抛错／与枚举矛盾用 `list.basis.asyncIdentityUnreadable`。查询行与创建行不在同一模块实例（如重复安装）时登记簿必然查不到，按未确认报告，不用查询行自己的配置冒充创建行配置。静态依据：目标版本 `0.2.1-rc.2` 的 `@deepseek-ai/dsh-tools` 公开 `get(name, scope)`（返回该作用域解析到的定义对象）与 `@deepseek-ai/dsh-scope` 的按引用保存（"Values are borrowed"）——对象同一性判别是宿主惯用手法。
+  - **身份段**——目标名只作候选筛选，不作身份证明。查询经公开工具投影 `tools.get(name, scope)` 取调用方作用域该名可见的工具定义，与[工具行登记簿](<../lib/tool-rows.js>)按对象同一性比对。登记簿是模块级 WeakMap（工具对象→该行配置视图），插件入口的行装载在每行 `ctx.tools.register(tool)` 成功后登记；行卸载后工具对象不可达，登记随之消失，无须显式清理。命中＝该作用域实际可见的定义正是本包创建行注册的那个，同时取得**创建行**的配置视图；未命中＝同名外来登记或被遮蔽（含原生行以 `toolName:'async_agent'` 配置注册的形态），按“适用性未确认”给原因，不读策略与后端、不生成示例，也不用本包默认配置冒充该工具。`get` 缺席、抛错，或与候选枚举矛盾（候选在册而 `get` 查无）同样按未确认处理。两个未确认档各配独立 basis 键（两语同义，随 `list.basis.*` 既有约定）：名下可见定义非本包注册用 `list.basis.asyncForeignName`，`get` 缺席／抛错／与枚举矛盾用 `list.basis.asyncIdentityUnreadable`。查询行与创建行不在同一模块实例（如重复安装）时登记簿必然查不到，按未确认报告，不用查询行自己的配置冒充创建行配置。静态依据：目标版本 `0.2.1-rc.3` 的 `@deepseek-ai/dsh-tools` 公开 `get(name, scope)`（返回该作用域解析到的定义对象）与 `@deepseek-ai/dsh-scope` 的按引用保存（"Values are borrowed"）——对象同一性判别是宿主惯用手法。
   - **策略段**——现读 `subagentModelSelection`（与创建侧同一全局来源）：缺席或读取失败→未确认；关闭→“不允许选择”（已确认限制），口径同 3.3。
   - **后端段**——按**创建行**配置视图现读的 `subagentProvider` 经 `subagents.getProvider` 查注册表，与创建侧相同的前置条件逐项核对——后端未注册、不声明 `capabilities.agentOptions`、未提供可续支持（`prepareContinuable`），或创建行配置视图的默认预设（`agentPreset`）在场而后端不满足独立预设选择支持（无 `capabilities.agentPreset` 或 `inheritsParentContext`；宿主 `SubagentPresetSelection.assertProvider` 同判据，该形态创建在派生前拒绝，3.3）时，显式路由选择在执行期同样会被拒绝（3.3 的后端前置条件，同判），适用性按“不允许选择”报告该后端限制，不生成适用示例；注册表读取抛错按“适用性未确认”给原因。查询与创建共用同一组后端前置条件与同一创建行配置，两者对同一稳定组合不得给出“查询允许、创建拒绝”。
   - 三段齐备才有“允许选择”。身份段各判定档（外来登记、读取失败、登记簿查不到）属于影响结果的判定输入，随判定依据一并进入版本令牌，判定变化使令牌失效。
 - 面向原生工具时按三段证据链判断：
-  - **身份段**——目标名与参数形状只作候选筛选，不作注册来源证明：工具定义对象不携带来源标记，公开工具投影（`get`／`view`）只返回定义本身，且作用域内自有层登记可遮蔽继承层同名工具，名称加形状无法证明目标由原生插件提供（原生工具名本身可由行 `toolName` 配置）。身份证明取两条公开依据，齐备才成立：其一，所在会话的 `subagentModelSelectionPolicy` 投影在场——该投影仅由原生插件注册与写入，在场证明原生插件在该会话组合中活跃；其二，调用方作用域的组稿中 `tool:<目标名>` 段非空——原生插件按对象同一性渲染该段（宿主惯用判别 `tools.get(tool.name, scope) === tool`：该原生插件的定义恰为该作用域该名可见的那个才带文本），段缺失或为空即说明可见定义不是原生注册的那个（未装载、行配置了别名或被同名登记遮蔽）。第二条经 `systemPrompt.assemble` 按调用方作用域现读——公开接口无单段按作用域读取的通道，整稿组稿是唯一公开读法，每次目标判定至多一次、不跨调用缓存；`systemPrompt` 服务缺席或组稿抛错按读取失败处理。任一依据缺席即身份段不可证：按“适用性未确认”给原因，不生成宣称适用的示例。残余信任边界如实登记：其他插件注册同键会话投影可仿冒第一条依据、注册同名组稿段可仿冒第二条依据，公开接口均无法判别；查询结论不授予任何权限，实际调用仍由目标工具与宿主校验执行。两条宿主行为断言的静态核读依据为目标版本 `0.2.1-rc.2` 的 `@deepseek-ai/dsh-tool-subagent`（段渲染与投影注册写入）与 `@deepseek-ai/dsh-system-prompt`（公开类无单段读取通道），逐项核验随 8.2 目标适用性行的功能性核对执行，未随真机验证前按静态核读口径对待。
+  - **身份段**——目标名与参数形状只作候选筛选，不作注册来源证明：工具定义对象不携带来源标记，公开工具投影（`get`／`view`）只返回定义本身，且作用域内自有层登记可遮蔽继承层同名工具，名称加形状无法证明目标由原生插件提供（原生工具名本身可由行 `toolName` 配置）。身份证明取两条公开依据，齐备才成立：其一，所在会话的 `subagentModelSelectionPolicy` 投影在场——该投影仅由原生插件注册与写入，在场证明原生插件在该会话组合中活跃；其二，调用方作用域的组稿中 `tool:<目标名>` 段非空——原生插件按对象同一性渲染该段（宿主惯用判别 `tools.get(tool.name, scope) === tool`：该原生插件的定义恰为该作用域该名可见的那个才带文本），段缺失或为空即说明可见定义不是原生注册的那个（未装载、行配置了别名或被同名登记遮蔽）。第二条经 `systemPrompt.assemble` 按调用方作用域现读——公开接口无单段按作用域读取的通道，整稿组稿是唯一公开读法，每次目标判定至多一次、不跨调用缓存；`systemPrompt` 服务缺席或组稿抛错按读取失败处理。任一依据缺席即身份段不可证：按“适用性未确认”给原因，不生成宣称适用的示例。残余信任边界如实登记：其他插件注册同键会话投影可仿冒第一条依据、注册同名组稿段可仿冒第二条依据，公开接口均无法判别；查询结论不授予任何权限，实际调用仍由目标工具与宿主校验执行。两条宿主行为断言的静态核读依据为目标版本 `0.2.1-rc.3` 的 `@deepseek-ai/dsh-tool-subagent`（段渲染与投影注册写入）与 `@deepseek-ai/dsh-system-prompt`（公开类无单段读取通道），逐项核验随 8.2 目标适用性行的功能性核对执行，未随真机验证前按静态核读口径对待。
   - **参数段**——可见参数形状含 `provider`／`model`（原生工具是否暴露路由参数由其行 `modelSelectionSettings` 控制，形状兼作该配置启用的可见证据）；不含则“不允许选择”并说明目标不接受显式路由。
   - **策略段**——所在会话的 `subagentModelSelectionPolicy` 投影（宿主投影键；事件类型 `subagent/model-selection-policy`）读取成功且状态非空；读取抛错按未确认给原因；状态为空说明该会话未启用原生模型选择，按“不允许选择”报告。
   - 三段齐备才有“允许选择”，逐路由按投影路由表判定；任一段不可证即“适用性未确认”，给缺失段与原因，不用形状加投影的组合冒充确认，也不把 `modelSelectionSettings` 关闭但会话内有其他来源策略的工具误报为可选。dsh 原生旧会话策略不是实时配置：全局名单新增的路由可能已适用本包工具、尚不适用旧会话的原生工具，反向（旧会话仍允许、全局已撤销）同样存在，两个方向都如实区分，不用任一侧冒充另一侧。
@@ -379,9 +379,9 @@ AskItem 以 batchId/questionId 关联题目，分别维护预设选择、自定�
 
 schema 默认值和范围唯一引用需求 5.2。[配置模块](<../lib/config.js>)持有单一 Config，根为普通对象，只挂三类成员：行身份字段 `toolName`、`owningPreset`（预设归属声明，仅两份预设补丁设置，用途见 6.2）；行级委托配置键 `agentOptions`、`agentPreset`、`allowedAgentPresets`（3.3 的路由默认与可选预设来源，与宿主原生工具行同名同形，同样固定在根的非 volatile 路径并受下文行身份字段保护的同一写入拒绝）；以及 `settings` 子树。17 个可编辑字段全部住在 `settings` 子树里：字段对象包进 `transform`，子树上 `.volatile().default({})`，字段自身不逐个 `.volatile()`——schemastery 禁止 volatile 嵌套，volatile 节点之内的字段再挂 volatile 会在 resolve 期抛错（进程内探针实证）；resolve 输出只在 `settings` 固定路径产生一个 Ref，快照解包取该 Ref 再逐字段。身份字段与委托配置键留在根对象的非 volatile 固定路径上，不进 volatile 子树。
 
-**行身份字段保护**。身份字段一旦进入 volatile 子树，RPC 就能改写行身份：设置网关把 volatile 节点之下的一切路径视为可就地编辑（`isVolatilePath` 对 volatile 子树内任意路径返回真），`settings/update` 携带 `toolName` 即通过写入检查并持久化，loader 随后按普通值变更重挂本行——宿主行变成工具行、工具进全局工具层，正是需求 3.2 禁止并由 [bundle 声明](<../cordis.patch.yml>) 从文件层锁死的形态。身份字段因此固定在根对象的非 volatile 路径：`mutate` 的逐路径预检与 `update`／`replace` 合并结果的逐字段校验都对身份字段抛出可读拒绝，拒绝发生在候选进入持久化之前，RPC 路径写不进身份字段。行身份只能经 profile／补丁文件层变更：那是普通（非 volatile）值变更，loader 的变更比较将其判为普通差异并走重挂，fiber 以新身份重新装配。该保护由设置网关的路径检查承担，不依赖回调形态，降级态与初始态同样生效。静态依据：目标版本 `0.2.1-rc.2` 的 `@deepseek-ai/dsh-settings` 中 `isVolatilePath`／`volatileForm`／`write`、`@deepseek-ai/dsh-config-editor` 中 `edit`（落盘前 resolve 完整下一值）、`@deepseek-ai/cordis-plugin-loader` 中 `equalExceptVolatile` 与 volatile 提交路径；静态核读之外，该放置形态的身份保护链已经进程内探针实证——隔离替身插件加真实宿主设置链的装置：RPC 携带身份字段在写入路径检查处被拒（`Config field "toolName" is not volatile`，patch 文件不动、不触发重挂），文件层增删身份字段走普通重挂并以新身份重新装配；真机表单按 8.2 配置页面行验证。
+**行身份字段保护**。身份字段一旦进入 volatile 子树，RPC 就能改写行身份：设置网关把 volatile 节点之下的一切路径视为可就地编辑（`isVolatilePath` 对 volatile 子树内任意路径返回真），`settings/update` 携带 `toolName` 即通过写入检查并持久化，loader 随后按普通值变更重挂本行——宿主行变成工具行、工具进全局工具层，正是需求 3.2 禁止并由 [bundle 声明](<../cordis.patch.yml>) 从文件层锁死的形态。身份字段因此固定在根对象的非 volatile 路径：`mutate` 的逐路径预检与 `update`／`replace` 合并结果的逐字段校验都对身份字段抛出可读拒绝，拒绝发生在候选进入持久化之前，RPC 路径写不进身份字段。行身份只能经 profile／补丁文件层变更：那是普通（非 volatile）值变更，loader 的变更比较将其判为普通差异并走重挂，fiber 以新身份重新装配。该保护由设置网关的路径检查承担，不依赖回调形态，降级态与初始态同样生效。静态依据：目标版本 `0.2.1-rc.3` 的 `@deepseek-ai/dsh-settings` 中 `isVolatilePath`／`volatileForm`／`write`、`@deepseek-ai/dsh-config-editor` 中 `edit`（落盘前 resolve 完整下一值）、`@deepseek-ai/cordis-plugin-loader` 中 `equalExceptVolatile` 与 volatile 提交路径；静态核读之外，该放置形态的身份保护链经进程内探针装置验证——隔离替身插件加真实宿主设置链的装置：RPC 携带身份字段在写入路径检查处被拒（`Config field "toolName" is not volatile`，patch 文件不动、不触发重挂），文件层增删身份字段走普通重挂并以新身份重新装配——该装置按目标版本重跑（待验证）；被引符号与拒绝文案锚（`is not volatile`）已按目标版本安装树核实在场；真机表单按 8.2 配置页面行验证。
 
-**委托行级键的写入拒绝**。`allowedAgentPresets` 是非空 preset-id 白名单（宿主同款：目标版本 `0.2.1-rc.2` 的 `@deepseek-ai/dsh-tool-subagent` 以 `z.array(z.string().min(1)).min(1)` 在行配置解析层拒绝空数组）：键缺席＝未配置（`agent_preset` 不暴露）；键在场且为空数组＝非法，给可读拒绝（至少一项）。「空数组＋默认预设并存」整体按空数组拒绝，包含校验（`agentPreset` ∈ 允许集合）只对合法白名单执行，不存在白名单折叠为未配置后单独接受默认预设的形态。拒绝为两层、判据同源（在场空数组＝非法）：
+**委托行级键的写入拒绝**。`allowedAgentPresets` 是非空 preset-id 白名单（宿主同款：目标版本 `0.2.1-rc.3` 的 `@deepseek-ai/dsh-tool-subagent` 以 `z.array(z.string().min(1)).min(1)` 在行配置解析层拒绝空数组）：键缺席＝未配置（`agent_preset` 不暴露）；键在场且为空数组＝非法，给可读拒绝（至少一项）。「空数组＋默认预设并存」整体按空数组拒绝，包含校验（`agentPreset` ∈ 允许集合）只对合法白名单执行，不存在白名单折叠为未配置后单独接受默认预设的形态。拒绝为两层、判据同源（在场空数组＝非法）：
 
 - **原料层**——cordis 每次 resolve（装载、重挂、volatile 就地提交）都先让原始候选（物化之前的用户原文）流经 `internal/config` waterfall 再做 schema 解析（`Fiber._resolveConfig` 是统一配置解析入口；loader 的 `_commitVolatile` 是 volatile 路径的第二入口）。本包候选（归属甄别先行，外来候选直接续链）带该键且为空数组时在 waterfall 抛词典文案（`error.config.allowedPresetsEmpty`，两语成对；抛错通道无语言上下文，线上形态取英文档，与自检诊断原文按数据不翻译的通道纪律一致）中断本次 resolve：装载／重挂 fiber 置 inactive、行不激活；volatile 提交 loader 捕获记 warn、refs 不动、不重装载。
 - **schema 层**——声明为原生同形 `z.array(z.string().min(1)).min(1).default(void 0)`。`.default(void 0)` 用于保留缺席语义：缺席键解析为 undefined，不携带自有键；若省略该默认声明，缺席键会物化成 `[]`，随后被 `.min(1)` 拒绝，导致未配置该键的行装配解析失败、行不激活。显式空数组与空串元素在 schema 层即抛错。装载、重挂、volatile 就地提交均执行 schema 校验；config-editor 落盘前的 resolve 与客户端草稿校验虽不经过 fiber 的统一配置解析入口，也由 schema 层执行同一空数组拒绝判据。`resolveConfig` 只搬运缺席（undefined）或非空名单两种合法解析结果。
@@ -427,7 +427,7 @@ loader 给 apply 第二参的 `settings` 子树 Ref 在输入与 schema resolve 
 
 表单框架与模型用官方件：`SettingsForm`（只读／不可用通告、页脚保存与卸载丢弃）、`SettingsFormModel`（暂存、差集与保存）、`settingsNumberField`／`settingsTextField` spec；布尔控件本体用官方 `P.Switch`，徽标用官方 `P.Tag`（`P.`＝宿主 primitives 命名空间，即 `@deepseek-ai/dsh-client-ui-primitives` 的导入句柄，全文 `P.` 前缀同指）。字段壳统一自绘，取舍依据与度量口径见设计 5.5；主题仅用定义存在的别名 token。
 
-`@deepseek-ai/dsh-client-ui-primitives` 包实体未随目标宿主 `0.2.1-rc.2` 安装树单独分发：`node_modules\@deepseek-ai\` 下无该目录，client-ui 拆分为按域包。web 外壳建资产（`dsh-web-frontend/dist/assets/index-*.js`）的冻结平台模块表仍含键 `"@deepseek-ai/dsh-client-ui-primitives"`（指向内联打包块），client.js 消费的七个成员 `SettingsForm`、`SettingsFormModel`、`settingsNumberField`、`settingsTextField`、`IconQuestionOutlineRegular`、`Switch`、`Tag` 在该建资产中全部在场——公开导出可用已按 `0.2.1-rc.2` 建资产冻结平台模块表静态实证（直接检索建资产文本），`require("@deepseek-ai/dsh-client-ui-primitives")` 在目标宿主运行时有效。细节断言的核验状态：`SettingsValueField` 内建帮助形状、字段 CSS 与 `bg-layer-4` 在主题定义表中未定义，已按目标 `0.2.1-rc.2` 建资产亲读核对；图标归属分别核验：本包页面 DOM 为问号，官方 `SettingsValueField` 为 Info 图标（`IconInfoOutlineRegular`），两者的帮助按钮均为原生 button；`bg-layer-4` 官方组件同样引用，本包不采用不构成偏离。字段壳与输入件的逐项度量数字未按目标建资产逐项对表核对；主题别名 token 的实际取值未逐项核实——别名名称在白名单内不证明 CSS 变量有有效取值。核验动作见 8.2“按目标 primitives 重核表单替身”，实施与验证分档见第 9 章。
+`@deepseek-ai/dsh-client-ui-primitives` 包实体未随目标宿主 `0.2.1-rc.3` 安装树单独分发：`node_modules\@deepseek-ai\` 下无该目录，client-ui 拆分为按域包。web 外壳建资产（`dsh-web-frontend/dist/assets/index-*.js`）的冻结平台模块表仍含键 `"@deepseek-ai/dsh-client-ui-primitives"`（指向内联打包块），client.js 消费的七个成员 `SettingsForm`、`SettingsFormModel`、`settingsNumberField`、`settingsTextField`、`IconQuestionOutlineRegular`、`Switch`、`Tag` 在该建资产中全部在场——公开导出可用已按 `0.2.1-rc.3` 建资产冻结平台模块表静态实证（直接检索目标版本安装树建资产文本：模块表键与七个成员全部在场；`node_modules\@deepseek-ai\` 下无该包目录同样按目标版本安装树核实），`require("@deepseek-ai/dsh-client-ui-primitives")` 在目标宿主运行时有效。细节断言的核验状态：`SettingsValueField` 与 `IconInfoOutlineRegular` 在目标建资产在场，本包页面 DOM 为问号；`SettingsValueField` 内建帮助形状、字段 CSS 与 `bg-layer-4` 在主题定义表中的比对、官方 `SettingsValueField` 的图标归属与帮助按钮原生 button 形态、`bg-layer-4` 的主题定义与官方引用形态按目标版本重新核验（待验证），比对完成前不据 `bg-layer-4` 引用形态得出偏离或一致结论。字段壳与输入件的逐项度量数字未按目标建资产逐项对表核对；主题别名 token 的实际取值未逐项核实——别名名称在白名单内不证明 CSS 变量有有效取值。核验动作见 8.2“按目标 primitives 重核表单替身”，实施与验证分档见第 9 章。
 
 ### 5.4 草稿、提交与恢复
 
@@ -583,7 +583,7 @@ div.ats-enum-field（字段列；上下 12 px，相邻字段 0.5 px border-l2 �
 
 jobs 注册越过生产者／控制器 fiber，owner ctx 处置或作业服务 teardown 才取消并等待结算。只卸载工具行不取消已启动工作；非合规 producer cancel 不结算会影响清理，不能宣称 OS 级无孤儿保证。
 
-待核验对象：目标版本 `0.2.1-rc.2` 的 `@deepseek-ai/dsh-agent-preset-registry` 中 generation 退役与释放、`@deepseek-ai/dsh-jobs-local` 中 owner 释放与服务 teardown，以及 `@deepseek-ai/dsh-subagent` 中 activation 所有权清理。三类生命周期分别验证，不沿用其他版本行号或验收结论。
+待核验对象：目标版本 `0.2.1-rc.3` 的 `@deepseek-ai/dsh-agent-preset-registry` 中 generation 退役与释放、`@deepseek-ai/dsh-jobs-local` 中 owner 释放与服务 teardown，以及 `@deepseek-ai/dsh-subagent` 中 activation 所有权清理。三类生命周期分别验证，不沿用其他版本行号或验收结论。
 
 ### 7.2 默认选择与有限补救
 
@@ -595,7 +595,7 @@ jobs 注册越过生产者／控制器 fiber，owner ctx 处置或作业服务 t
 
 ### 7.3 版本和宿主依据
 
-本分支的适配目标为插件 `0.2.5+dsh.0.2.1-rc.2` 与宿主 dsh `0.2.1-rc.2`；[包清单](<../package.json>)已按该目标声明（版本与全部 `@deepseek-ai/dsh*` peer 精确 `0.2.1-rc.2`），但目标达成不等于可用安装件或验收结果的声明，也不构成发布授权。兼容基准与版本格式以需求 7.3 为权威。配套基准为 `@deepseek-ai/cordis` `4.0.5`、`@deepseek-ai/cordis-plugin-timer` `1.1.7`、`@deepseek-ai/schemastery` `3.18.5`、zod `4.6.7`，具体依赖范围按需求维护，并检查实际解析没有混入另一代实现。旧宿主的同包支持不在本次保证范围内。
+本分支的适配目标为插件 `0.2.6+dsh.0.2.1-rc.3` 与宿主 dsh `0.2.1-rc.3`；[包清单](<../package.json>)已按该目标声明（版本与全部 `@deepseek-ai/dsh*` peer 精确 `0.2.1-rc.3`），但目标达成不等于可用安装件或验收结果的声明，也不构成发布授权。兼容基准与版本格式以需求 7.3 为权威。配套基准为 `@deepseek-ai/cordis` `4.0.5`、`@deepseek-ai/cordis-plugin-timer` `1.1.7`、`@deepseek-ai/schemastery` `3.18.5`、zod `4.6.7`，具体依赖范围按需求维护，并检查实际解析没有混入另一代实现。旧宿主的同包支持不在本次保证范围内。
 
 发布标识从同一包版本取得插件核心与宿主构建元数据，生成完整 Git 标签及宿主在前的 Release 标题。版本目标不构成发布授权；本次准备不创建标签、Release 或推送。
 
@@ -668,19 +668,19 @@ dsh peers 覆盖 import 和服务契约（清单见需求 7.3）；叶子 schema
 - 形状转换集中在共享设置助手中：读取助手严格检查命名空间、`value.settings` 与所需字段后，向调用者返回字段对象及 revision；更新／替换助手分别把字段对象包装成 `patch.settings`／`section.settings`。调用者只处理字段对象，不重复包装或解包。现有 `readNs`／`patchNs` 及其调用者、独立设置行为探针、使用 `replace` 的端到端和队列探针须统一经这一入口完成读写与恢复，不自带包装或解包。命名空间缺席或形状不符须使探针失败，不返回空对象继续运行。
 - 设置行为探针内置可失败的形状验证：先保存原状态；显式绕过助手发送平铺 patch 作负向对照，断言 `settings/rejected` 且生效值不变；再发送嵌套合法更新并逐字段读回，另核对嵌套完整 `replace` 的语义。拒绝缺失、错误类别不符或读回不符均判失败。收尾在 `finally` 中恢复原状态并再次读取核对，恢复失败单独报错，不能被主断言掩盖。保存与恢复须同时核对用户覆盖层（`user.settings`）和生效值：存在的覆盖按原值恢复，原先缺席的覆盖用 `settings/mutate` 的 `['settings', 字段名]` 路径 unset，避免把原生效值写成新的用户覆盖。恢复后两层均与原状态一致才算收尾成功。
 
-这些是探针维护与验收判据，不表示全部相关脚本已经执行。宿主设置服务的投影、合并、复位与路径检查按目标版本 `0.2.1-rc.2` 的 `@deepseek-ai/dsh-settings` 中 `volatileForm`／`projectForm`／`describe`／`update`／`replace`／`isVolatilePath` 静态核对，运行结果须按 8.1 分层记账。
+这些是探针维护与验收判据，不表示全部相关脚本已经执行。宿主设置服务的投影、合并、复位与路径检查按目标版本 `0.2.1-rc.3` 的 `@deepseek-ai/dsh-settings` 中 `volatileForm`／`projectForm`／`describe`／`update`／`replace`／`isVolatilePath` 静态核对，运行结果须按 8.1 分层记账。
 
 探针脚本与静态字符串锚的文件名含历史轮次编号时，编号不构成当前产品权威。改模型描述、入口状态和加时字段时同步修测试；不能因为旧断言要求旧文案就降低新需求。测试数量不固定，要求有效覆盖，不把超时终止、加载失败或未运行误记为变异捕获。
 
 ## 9. 当前实施与验证状态
 
-本分支的 dsh `0.2.1-rc.2` 适配分档陈述现状，不合并口径。
+本分支的 dsh `0.2.1-rc.3` 适配分档陈述现状，不合并口径。
 
-**已实现（现行代码）**：第 1 至 7 章所述目标机制按现行代码核验；依赖声明按 7.3 写入包清单。机制范围以所引章节为准，本章不重复正文。配套的离线测试与静态检查入口按 8.3 与[验证说明](<../verify/README.md>)登记在场并现行通过：全套离线测试 586/586（其中 8.3 锚形状契约的[锚回归](<../test/message-markers.test.mjs>)四用例：词典锚反漂移一、宿主锚正反例二、导出键集对账一），check:model-text、check:docs、check:preset 与 check:agent-policy 通过。4.3 待答状态读取代际的测试证据：[ask-takeover 测试](<../test/ask-takeover.test.mjs>) J40 断言同代乱序中后发先回的新状态先应用、较旧回执不回退题目与期限，J41 断言关闭／重新开启／卸载后迟到的成功与失败回执零写入、失败旗标不跨代；受控客户端按冻结竞态时序重放，旧响应覆盖新状态、关闭后回填写回两个反例全部失败。3.1 显式 `workdir` 准备失败诊断的测试证据：[jobs 测试](<../test/jobs.test.mjs>) prep 诊断用例组七个用例——目录不存在与目录存在两档断言诊断五要素（请求原值、解析路径、会话当前目录、核实结论、修正重试出路）齐备、真实原错独立拼接、首次等待重抛与作业失败详情两条出口同一文本；不是目录档断言明示「路径已存在但不是目录」、不误导查别处；未上报结局档断言 killed＋宿主注记＋显式 workdir 时附 stat 核实诊断、保留 killed 状态与原错原文、两出口同一文本，排除档断言缺省 workdir 与带信号的真实 kill 不套诊断；prep 窗口被中止的 killed 形态不套诊断；未上报结局·不是目录档断言 killed 形态与拒绝形态给出同一四分结论。3.1 首次等待描述区分消息唤醒与调用取消的静态核读：`tool.run.p2`／`tool.workflow.p2` 双语四句——消息唤醒只结束等待、立刻拿回同一作业编号；调用取消的可见结果可能被宿主改写为取消错误、编号未必到达模型，经 job_list 或完成通知找回后用 async_wait_job 读取。3.3 启动前策略重读三分诊断的测试证据：[agent 测试](<../test/agent.test.mjs>) 三用例——重读读取失败按 `routeRecheckReadFailed` 携带真实原错拒绝且零派生、开关关闭复用 `selectionDisabled`、名单撤销按 `routeRecheckFailed` 撤销口径拒绝，三用例的策略脚本支持逐项抛错；[agent-judgements 测试](<../test/agent-judgements.test.mjs>) 六族可读拒绝夹具（开关关闭、名单外、服务缺席、读取失败、重读读取失败、名单撤销）两语逐族命中，并集判据覆盖六族，重读读取失败与名单撤销两锚互斥不粘连。3.6 执行纪律段的测试证据：[silent-failure 测试](<../test/silent-failure.test.mjs>) 三用例断言段与静默失败纪律 context 同一 systemPrompt 子 scope 注册（段名、段序 500、函数文本，sessions／sessionProjections 只经 ctx.get 现读、不进等待名单）、行为矩阵（语言档现读 `agentLang`、变体按目标预设、不受 `silentFailureGuard` 开关控制、非目标预设与读取失败失效安全空串）与真实层端到端（注册落在宿主组稿会收集的 global 层、assemble 收集到段、sections 进系统提示正文而 contexts 快照线不含）；[preset 测试](<../test/preset.test.mjs>) 断言 persona prefix 增改即红（⑤），两语表两档×两变体的纪律锚句删除变异逐句必红——提问角色纪律四组锚词、有界等待取回锚与 create 变体差异句各自有删锚反例，锚句表逐锚参数化删除变异对全表成立（⑤b），活 subagent 翻活而词典缺锚时互斥判据按句点名（⑦）。3.7 版本令牌的测试证据：[list-models 测试](<../test/list-models.test.mjs>) 断言仅条目说明（description）变化也使旧令牌失效。4.1 客户端帮助惰性清扫口径的静态核读与锚句证据：`help.askTakeover`／`help.askTimeoutMs` 双语四句说明 24 小时仅为新批接管时的惰性清扫阈值——无新批接管时记录可存活更久并仍可迟到作答，迟到作答对已结束会话直接回复；[two-planes 测试](<../test/two-planes.test.mjs>) 的 T18c 帮助锚两语保留。已实现不等于已验收，真机验证与独立审查要求见待验证档。
+**已实现（现行代码）**：第 1 至 7 章所述目标机制按现行代码核验；依赖声明按 7.3 写入包清单。机制范围以所引章节为准，本章不重复正文。配套的离线测试与静态检查入口按 8.3 与[验证说明](<../verify/README.md>)登记在场；实际通过读数须按目标宿主版本本次执行取得，本轮未执行结算，不填历史读数。8.3 锚形状契约的[锚回归](<../test/message-markers.test.mjs>)四用例（词典锚反漂移一、宿主锚正反例二、导出键集对账一）与 check:model-text、check:docs、check:preset、check:agent-policy 是登记在场的判据入口。以下具名测试覆盖按判据与实现陈述，不构成新目标的通过结论。4.3 待答状态读取代际的测试证据：[ask-takeover 测试](<../test/ask-takeover.test.mjs>) J40 断言同代乱序中后发先回的新状态先应用、较旧回执不回退题目与期限，J41 断言关闭／重新开启／卸载后迟到的成功与失败回执零写入、失败旗标不跨代；受控客户端按冻结竞态时序重放，旧响应覆盖新状态、关闭后回填写回两个反例全部失败。3.1 显式 `workdir` 准备失败诊断的测试证据：[jobs 测试](<../test/jobs.test.mjs>) prep 诊断用例组七个用例——目录不存在与目录存在两档断言诊断五要素（请求原值、解析路径、会话当前目录、核实结论、修正重试出路）齐备、真实原错独立拼接、首次等待重抛与作业失败详情两条出口同一文本；不是目录档断言明示「路径已存在但不是目录」、不误导查别处；未上报结局档断言 killed＋宿主注记＋显式 workdir 时附 stat 核实诊断、保留 killed 状态与原错原文、两出口同一文本，排除档断言缺省 workdir 与带信号的真实 kill 不套诊断；prep 窗口被中止的 killed 形态不套诊断；未上报结局·不是目录档断言 killed 形态与拒绝形态给出同一四分结论。3.1 首次等待描述区分消息唤醒与调用取消的静态核读：`tool.run.p2`／`tool.workflow.p2` 双语四句——消息唤醒只结束等待、立刻拿回同一作业编号；调用取消的可见结果可能被宿主改写为取消错误、编号未必到达模型，经 job_list 或完成通知找回后用 async_wait_job 读取。3.3 启动前策略重读三分诊断的测试证据：[agent 测试](<../test/agent.test.mjs>) 三用例——重读读取失败按 `routeRecheckReadFailed` 携带真实原错拒绝且零派生、开关关闭复用 `selectionDisabled`、名单撤销按 `routeRecheckFailed` 撤销口径拒绝，三用例的策略脚本支持逐项抛错；[agent-judgements 测试](<../test/agent-judgements.test.mjs>) 六族可读拒绝夹具（开关关闭、名单外、服务缺席、读取失败、重读读取失败、名单撤销）两语逐族命中，并集判据覆盖六族，重读读取失败与名单撤销两锚互斥不粘连。3.6 执行纪律段的测试证据：[silent-failure 测试](<../test/silent-failure.test.mjs>) 三用例断言段与静默失败纪律 context 同一 systemPrompt 子 scope 注册（段名、段序 500、函数文本，sessions／sessionProjections 只经 ctx.get 现读、不进等待名单）、行为矩阵（语言档现读 `agentLang`、变体按目标预设、不受 `silentFailureGuard` 开关控制、非目标预设与读取失败失效安全空串）与真实层端到端（注册落在宿主组稿会收集的 global 层、assemble 收集到段、sections 进系统提示正文而 contexts 快照线不含）；[preset 测试](<../test/preset.test.mjs>) 断言 persona prefix 增改即红（⑤），两语表两档×两变体的纪律锚句删除变异逐句必红——提问角色纪律四组锚词、有界等待取回锚与 create 变体差异句各自有删锚反例，锚句表逐锚参数化删除变异对全表成立（⑤b），活 subagent 翻活而词典缺锚时互斥判据按句点名（⑦）。3.7 版本令牌的测试证据：[list-models 测试](<../test/list-models.test.mjs>) 断言仅条目说明（description）变化也使旧令牌失效。4.1 客户端帮助惰性清扫口径的静态核读与锚句证据：`help.askTakeover`／`help.askTimeoutMs` 双语四句说明 24 小时仅为新批接管时的惰性清扫阈值——无新批接管时记录可存活更久并仍可迟到作答，迟到作答对已结束会话直接回复；[two-planes 测试](<../test/two-planes.test.mjs>) 的 T18c 帮助锚两语保留。已实现不等于已验收，真机验证与独立审查要求见待验证档。
 
-**待验证**：未执行、跳过、环境不满足或没有核验的项目明确为未验证，不算通过；既有证据按其取得时的成果与覆盖范围计入，不外推、不改判通过。证据按成果身份关联：历史取证时点保存的发布件与当前产品按包清单声明的发布文件逐文件比对，比对结果分别记账——同哈希者其真机成果按该身份计入当前产品，存在修改的文件不继承旧成果、按当轮对受影响条件的重验计入；产品修改后先核对受影响范围，未受影响的证据按原范围复用，受影响的条件重验。全部发布文件逐文件同哈希的整体同一表述只在逐文件比对确实全同时成立，部分同哈希按逐文件口径分别计入，不写成整体同一身份。
+**待验证**：未执行、跳过、环境不满足或没有核验的项目明确为未验证，不算通过；既有证据按其取得时的成果、宿主版本与覆盖范围计入，不外推、不改判通过。证据按成果身份关联：真机成果继承要求同产品文件、同宿主版本、同配置与相应取证条件，包文件哈希相同不能跨宿主版本推论。历史取证时点保存的发布件与当前产品按包清单声明的发布文件逐文件比对，比对结果分别记账——逐文件同哈希且宿主版本与取证条件一致者其真机成果按该身份计入当前产品，存在修改或宿主版本／条件不同者不继承旧成果、按当轮对受影响条件的重验计入；产品修改后先核对受影响范围，未受影响的证据按原范围复用，受影响的条件重验。全部发布文件逐文件同哈希的整体同一表述只在逐文件比对确实全同时成立，部分同哈希按逐文件口径分别计入，不写成整体同一身份。
 
-已验范围（真实宿主与真实实例；受控等级的条件按其装置等级如实计入，不冒称实例级）：
+验证范围（下列条目陈述各装置的判据与覆盖；在目标宿主 `0.2.1-rc.3` 重验前均属待验证，其他宿主上取得的结果只按其原范围参考，不计入本分支通过。受控等级的条件按其装置等级如实计入，不冒称实例级）：
 
 - 安装与生命周期：官方通道 tgz 安装（非开发链接）、热停用退出新预设与设置、真实包管理卸载与重装按官方提示重启后可用；默认预设风险真实复现且按宿主切换恢复；长命令作业在停用与卸载后继续运行并自然完成，编排子会话处置时其作业真实终止、进程消失——两个生命周期分开证明。
 - 单次审批：同一命令基线拒绝写入、批准一次真实写入、下一次未提权再拒；拒绝与取消零注册零标记；真实批准请求挂起后在取消结局原样回送、服务端确认成功仍零副作用；会话受限策略不变（官方审批卡不显示工作目录属宿主呈现边界）。
@@ -689,13 +689,13 @@ dsh peers 覆盖 import 和服务契约（清单见需求 7.3）；叶子 schema
 - 命令、等待与结果：真实父子进程终止、目录切换与恢复、目录失效时宿主目录服务的回落恢复与继续执行（该路径不用于推断零启动）、并发容量满时第二命令零注册、四个等待入口的插话与取消且目标存活、真实三十万字节级溢出文件找回与再次读取不重复、等待调用后的有效取消；请求目录与原会话目录均失效时的零启动零注册以确定性受控用例验证，按受控等级计入、不冒称实机；精确同刻竞争与慢查询、读取失败以确定性受控用例验证，不冒称真实网络时序证明调度同刻。
 - 编排：真实引擎的并发、总量与单次条目限制，schema 成功、局部失败与致命误用，显式终止与运行结束；回放卡片、组与成员同屏并经独立视觉核对；记录追加失败以受控注入验证，不损坏会话库制造故障。
 - 提问与静默失败：真实加时只作用点击时在窗的组、新批用新窗口、已到期不再延长；普通预设、非根主体与计划评审不接管，根取消清理；命令就绪后的迟到提交及时交回且后台继续；末步精确竞争受控验证；静默失败三处内容与完整基线组的反向隔离取证，两语结果分别核对。
-- 页面、语言与可访问性（页面、视觉与可访问性树范围）：真实设置写入失败保草稿、生效值与错误下一步可读；帮助展开不提交，帮助按钮 Space 键在真实页面触发原生 click 并展开；界面与 Agent 文案独立双语并反向核对；触屏选择与自定义作答、键盘焦点与可访问性树关系实际验证，独立视觉读图核对截图；只读与保存中三态的帮助以受控反例看守；目标 `0.2.1-rc.2` 建资产中的表单与控件资产（`SettingsFormModel`、`SettingsForm`、数字与文本字段 spec、`SettingsValueField`、`P.Switch`、`P.Tag` 及字段 CSS）亲读核对，表单模型的保存、基线、差分与解析语义与替身一致。
+- 页面、语言与可访问性（页面、视觉与可访问性树范围）：真实设置写入失败保草稿、生效值与错误下一步可读；帮助展开不提交，帮助按钮 Space 键在真实页面触发原生 click 并展开；界面与 Agent 文案独立双语并反向核对；触屏选择与自定义作答、键盘焦点与可访问性树关系实际验证，独立视觉读图核对截图；只读与保存中三态的帮助以受控反例看守；目标 `0.2.1-rc.3` 建资产中的表单与控件资产符号（`SettingsFormModel`、`SettingsValueField` 等）已核实在场；逐项亲读核对（含 `SettingsForm`、数字与文本字段 spec、`P.Switch`、`P.Tag` 及字段 CSS）与表单模型的保存、基线、差分、解析语义和替身的一致性比对按目标版本重新核验（待验证）。
 
 上列条目中，凡依赖本包设置写入的真机成果——「自有设置真实保存生效」与一切经 `patchNs`／`replace` 写开关或预算的取证——取证均建立在平铺写入上；现行宿主行按 `settings` 子树嵌套形状读写，平铺写入在宿主路径检查下被拒。设置行为探针已按 8.3 完成嵌套适配并在隔离实例重验通过；其余仍以旧平铺形状取证的真机成果（r28／r30／lang／queue／e2e 等脚本的历史回执）在各自脚本嵌套适配重验通过前，不计为现行形状下的继承证据。
 
-未验证（具备条件后执行，不算通过也不算产品失败）：Linux 命令执行与单次提权（本机无可用发行版）；远端 CI、完整标签安装与 Release（需发布实体与授权）；真实读屏软件与触屏软键盘交互（无交互桌面观察通道，不从截图与可访问性树外推）；审批三结局的界面实点（请求层已验，界面点选未执行）；字段壳与输入件的逐项度量数字未按目标建资产逐项对表核对（字段 CSS 已亲读，逐项数字比对未做）；主题别名 token 的实际取值未逐项核实——`bg-layer-4` 已核实在主题定义中未定义且官方组件同样引用（本包不采用不构成偏离），别名名称在白名单内不证明 CSS 变量有有效取值。
+未验证（具备条件后执行，不算通过也不算产品失败）：Linux 命令执行与单次提权（本机无可用发行版）；远端 CI、完整标签安装与 Release（需发布实体与授权）；真实读屏软件与触屏软键盘交互（无交互桌面观察通道，不从截图与可访问性树外推）；审批三结局的界面实点（请求层已验，界面点选未执行）；字段壳与输入件的逐项度量数字未按目标建资产逐项对表核对（字段 CSS 亲读按目标版本重新核验，逐项数字比对未做）；主题别名 token 的实际取值未逐项核实——`bg-layer-4` 的主题定义与官方引用形态按目标版本重新核验（待验证），别名名称在白名单内不证明 CSS 变量有有效取值。
 
-**未授权发布**：未创建标签、Release 或推送；发布前按需求 7.3.1 与贡献说明的发布核对执行，文档目标未实施时不能宣称功能已发布。
+**发布状态**：未创建标签与 Release；分支推送不等于发布完成，标签／Release 发布另行授权，发布前按需求 7.3.1 与贡献说明的发布核对执行，文档目标未实施时不能宣称功能已发布。
 
 过程性问题另行维护，不在本文保存逐项修正记录，也不要求公开使用者读取维护者内部材料。
 

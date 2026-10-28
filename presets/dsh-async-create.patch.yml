@@ -5,7 +5,7 @@
 # （`@deepseek-ai/dsh-agent-preset`），config.plugins 是完整子清单。预设生命周期由
 # loader 拥有：本包从 bundles 移除即预设消失，无清理代码（设计 §7.1）。
 #
-# 基线 = 随宿主 0.2.1-rc.2 发布的 shipped 创造模式（cordis）预设补丁（需求 §7.3；
+# 基线 = 随宿主 0.2.1-rc.3 发布的 shipped 创造模式（cordis）预设补丁（需求 §7.3；
 # 基线位置由 tools/validate-preset.mjs 按需求读取）。相对基线的改动（设计 §3.6
 # "两者相对基线的共同差异"，逐条给依据）：
 #   1. tool-bash 无条件 disabled: true——禁同步 shell（需求 §3.1），两平台工具清单

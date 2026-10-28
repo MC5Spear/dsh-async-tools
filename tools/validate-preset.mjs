@@ -74,7 +74,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
  *
  * 每个基目录下认**两种布局**：
  *   - **提升形** `<base>/js-yaml/index.js`——npm 装 `@deepseek-ai/dsh` 时把依赖提升到
- *     node_modules 根；CI 的 `npm install @deepseek-ai/dsh@0.2.1-rc.2` 就是这一种；
+ *     node_modules 根；CI 的 `npm install @deepseek-ai/dsh@0.2.1-rc.3` 就是这一种；
  *   - **嵌套形** `<base>/@deepseek-ai/dsh/node_modules/js-yaml/index.js`——全局安装树
  *     与运行树的形状（自带一份嵌套副本）。
  * 只认嵌套形会让「干净环境 + npm 锚」的预设用例整片全红（实测 35 条失红），
