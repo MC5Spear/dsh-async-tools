@@ -18,14 +18,18 @@
 # 在启动时构建一次）。默认留空。
 #
 # 宿主行的**快照链零服务依赖**（`'loader/volatile-update'` 是 loader 派发给本
-# fiber 的事件，监听挂在宿主行自己的 ctx 上即可）。宿主半边另有两组**可选的
-# 运行时 inject**（`lib/host.js` 的 `applyHostHalf`：纪律段
-# systemPrompt/sessions/sessionProjections 与提问接管 sessions/
-# sessionProjections/agents——服务缺席时子 scope 不激活、插件照常装载，失效
-# 安全方向 = 关）。静态 inject 的八个服务（tools / jobs / shell 执行器 /
-# shellEnv / subagents / timer / sessionProjections / agents——设计 §1.3；
-# `agents` 供可续派生与注册表状态读取，`sessionProjections` 供模型选择路由
-# 校验）是**工具角色**的依赖，宿主行只是与工具行共用同一个 `lib/index.js` 入口。
+# fiber 的事件，监听挂在宿主行自己的 ctx 上即可），但 `lib/index.js` 的静态
+# `inject` 是**模块级**的：九项服务（tools / jobs / shell 执行器 / shellEnv /
+# subagents / timer / sessionProjections / agents / workingDirectory——设计 §1.3；
+# `agents` 供可续派生与注册表状态读取，`sessionProjections` 供模型选择路由校验，
+# `workingDirectory` 供 `async_run` 取会话当前有效目录）同时约束宿主行与工具行
+# ——两角色共用同一个入口，快照链本身不消费这些服务不代表宿主行不受静态依赖；
+# 任一缺席时本行进入等待而不是启动。宿主半边另有**可选的运行时 inject**
+# （`lib/host.js` 的 `applyHostHalf`：纪律段（c 防线 context 与预设执行纪律
+# section）的 `systemPrompt`，提问接管的 `sessions` / `sessionProjections` /
+# `agents`——运行时接线条件不满足时仅该子 scope 不激活，插件入口仍须先满足上面
+# 九项固定依赖，失效安全方向 = 关；预设过滤两服务经 `ctx.get` 在段文本内现读，
+# 不进等待名单）。
 - insert:
     - id: async-tools-host
       name: dsh-async-tools

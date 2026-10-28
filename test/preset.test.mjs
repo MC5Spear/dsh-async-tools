@@ -1,7 +1,7 @@
 /**
  * 预设补丁校验器的变异测试（对象 `tools/validate-preset.mjs`，判据清单以
- * `tools/validate-preset.mjs` 文件头为准（现行十二条，③b 独立计一条）；
- * 变异验收参数化覆盖两份补丁）。
+ * `tools/validate-preset.mjs` 文件头为准（现行十四条，③b、⑤b、⑧b 各独立计
+ * 一条）；变异验收参数化覆盖两份补丁）。
  *
  * 为什么必须做变异测试而不是只看校验报告：绿读数证明不了校验器拦得住改错。
  * 下面的用例逐类锁死：补丁被改坏时 `validate-preset.mjs` 必须红，报错必须点名
@@ -10,15 +10,25 @@
  * 形态：对象是 `presets/dsh-async.patch.yml`（基线 = shipped standard）与
  * `presets/dsh-async-create.patch.yml`（基线 = shipped cordis）；校验器以
  * **模块导入**方式在进程内调用（子进程 spawn 在沙箱里 EPERM，且进程内调用让
- * "变异 → 断言"同轮完成）。变异副本写在系统临时目录，用完即删。
+ * "变异 → 断言"同轮完成）。变异副本写在系统临时目录，用完即删。涉及词典锚句
+ * （⑤b/⑦/⑪）的用例把「校验器 + 文案表」成对复制到临时目录再动态导入（保留
+ * 相对布局），对 `lib/text.js` 副本做变异。
  *
  * dsh-async-create 专属用例：P1 基线绿、P2/P3 基线行缺/多、P4 派生入口翻活、
- * P5 plugin-manager 表达式、P6 persona 锚句、P7 pwsh 挂回、P8 tool-bash 表达式、
- * P9 未知 config.id、P10 护栏、P11 互斥判据复合、P12 嵌套行缺失、P13 toolName、
- * P14 期望集与 0.2.1-rc.2 证据树对账、P15 provider 形态、P16 公共异步纪律段同源。
+ * P5 plugin-manager 回归布尔禁用（⑧b）、P6 词典纪律锚句（⑤b）、P7 pwsh 挂回、
+ * P8 tool-bash 表达式、P9 未知 config.id、P10 护栏、P11 互斥判据复合、
+ * P12 嵌套行缺失、P13 toolName、P14 期望集与 0.2.1-rc.2 证据树对账、
+ * P15 provider 形态、P16 词典公共纪律段同源。
  * 第五行工具与禁用改动专属用例：P17 tool-workflow 翻活、P18 dsh-async 的
  * tool-subagent 翻活、P19 删 async-workflow 行、P20 async-workflow 挪出
  * delegation 组（设计 §3.6 行位）、P21 删 workflow-ptc（create 侧）、P22 门槛锚句。
+ * 提问角色纪律（ASK-01，需求 §9.1）用例：P23 词典四组锚词缺一必红
+ * （en/zh 两档 × 两份补丁同守）。
+ * 锚句表逐句齐套用例：P24 dsh-async 有界等待取回锚（⑤b）、P25 create
+ * 变体差异句锚（⑤b）、P26 两期望表×两语言档逐锚参数化删除变异（⑤b）、
+ * P27 锚句表快照锁（⑤b）——文案侧删句由 P26 全表逐锚击杀看守（表内每条
+ * 锚被删必红）；表侧弱化（删行、改锚、加锚）由 P27 的独立期望清单看守，
+ * 两方向都要显式改测试才会动。
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
@@ -27,6 +37,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { validatePatch, EXPECTATIONS, expectedTopFromBaseline, loadYaml } from '../tools/validate-preset.mjs';
 import { candidateModules } from '../tools/_host-resolve.mjs';
+import { t } from '../lib/text.js';
 import { hostTestByProbe } from './_host-gate.mjs';
 
 // 宿主锚探测（文件级）：validate-preset 的 YAML 解析依赖宿主树自带的 js-yaml
@@ -82,13 +93,39 @@ async function validateMutation(mutation, patchPath = PATCH, baselineText = base
   }
 }
 
-/** 从 persona prefix 里抽出公共异步纪律段（设计 §3.6：This deployment…failure. 整段）。 */
-function commonIntro(prefix) {
-  const start = prefix.indexOf('This deployment runs commands ASYNCHRONOUSLY.');
+/** 从词典纪律文本里抽出公共异步纪律段（设计 §3.6：This deployment…failure. 整段，
+ *  两变体逐字同源、分叉只许发生在委托规则第 1 条）。 */
+function commonIntro(text) {
+  const start = text.indexOf('This deployment runs commands ASYNCHRONOUSLY.');
   const endMarker = 'Never treat a returned job_id as a failure.';
-  const end = prefix.indexOf(endMarker);
+  const end = text.indexOf(endMarker);
   assert.ok(start !== -1 && end !== -1, `公共段边界句必须在场（start=${String(start)} end=${String(end)}）`);
-  return prefix.slice(start, end + endMarker.length);
+  return text.slice(start, end + endMarker.length);
+}
+
+/** 把「校验器 + 变异文案表」成对复制到临时目录再动态导入（保留相对布局
+ *  tmp/tools/validate-preset.mjs + tmp/lib/text.js + tmp/tools/_host-resolve.mjs），
+ *  返回该副本的 validatePatch——词典锚句判据（⑤b/⑦/⑪）的变异通道：锚句住在
+ *  `lib/text.js`，不复制成对副本就变异不到校验器实际读取的文案表。 */
+async function validatorWithText(mutateText) {
+  const dir = mkdtempSync(join(tmpdir(), 'async-dict-'));
+  try {
+    mkdirSync(join(dir, 'tools'), { recursive: true });
+    mkdirSync(join(dir, 'lib'), { recursive: true });
+    const root = join(import.meta.dirname, '..');
+    writeFileSync(join(dir, 'tools', 'validate-preset.mjs'),
+      readFileSync(join(root, 'tools', 'validate-preset.mjs'), 'utf8'), 'utf8');
+    writeFileSync(join(dir, 'tools', '_host-resolve.mjs'),
+      readFileSync(join(root, 'tools', '_host-resolve.mjs'), 'utf8'), 'utf8');
+    const mutated = mutateText(readFileSync(join(root, 'lib', 'text.js'), 'utf8'));
+    writeFileSync(join(dir, 'lib', 'text.js'), mutated, 'utf8');
+    return {
+      dir,
+      validate: (await import(pathToFileURL(join(dir, 'tools', 'validate-preset.mjs')).href)).validatePatch
+    };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 hostTest('validate-preset：合法补丁必须通过（基线，防止断言恒真）', async () => {
@@ -99,7 +136,7 @@ hostTest('validate-preset：合法补丁必须通过（基线，防止断言恒�
 hostTest('validate-preset：dsh-async-create 基线必须通过（P1，R26）', async () => {
   const result = await validatePatch(PATCH_CREATE, { quiet: true });
   assert.equal(result.ok, true, `创造补丁基线应当通过，失败行：\n${result.lines.filter((l) => l.includes('FAIL')).join('\n')}`);
-  assert.ok(result.lines.some((l) => l.includes('顶层 26 行 + 嵌套 11 行')), '③ 的对账读数必须是 26+11（0.2.1 基线 delegation 组 6 行 + async-workflow）');
+  assert.ok(result.lines.some((l) => l.includes('顶层 27 行 + 嵌套 11 行')), '③ 的对账读数必须是 27+11（0.2.1 基线 + 五行顶层 async 工具行；delegation 组 6 行 + async-workflow）');
 });
 
 hostTest('validate-preset：tool-bash 被改成平台表达式必须拦住（需求 §3.3：Linux 也要无条件禁用）', async () => {
@@ -131,7 +168,7 @@ hostTest('validate-preset：toolName 写成不存在的值必须拦住', async (
   const result = await validateMutation((text) => text
     .replace('toolName: async_agent', 'toolName: async_frobnicate'));
   assert.equal(result.ok, false);
-  assert.ok(result.lines.some((l) => l.includes('toolName 五值缺')));
+  assert.ok(result.lines.some((l) => l.includes('toolName 六值缺')));
 });
 
 hostTest('validate-preset：tool-pwsh 挂回来必须拦住（R6）', async () => {
@@ -165,23 +202,46 @@ hostTest('validate-preset：挂回已从基线消失的 tool-ralph 行必须拦�
     '报错必须指向③的嵌套多行判据');
 });
 
-hostTest('validate-preset：tool-plugin-manager 行被删必须拦住（定向修改 6 存在性）', async () => {
+hostTest('validate-preset：tool-plugin-manager 行被删必须拦住（③/⑧b 基线行存在性）', async () => {
   const result = await validateMutation((text) => text.replace(
     / {10}- id: tool-plugin-manager\n(?: {12}.*\n)*/,
     ''));
   assert.equal(result.ok, false, '删 tool-plugin-manager 行必须被拦');
   assert.ok(result.lines.some((l) => l.includes('tool-plugin-manager')),
-    '报错必须点名改动项 6 的存在性');
+    '报错必须点名基线行的存在性');
 });
 
-hostTest('validate-preset：persona 锚句被删必须拦住（含反恒真句）', async () => {
-  // persona 的该句跨两行（never pass / run_in_background: false.），变异按
-  // 折叠后仍存在的子串删——锚句 'never pass run_in_background: false' 随之消失。
+hostTest('validate-preset：persona prefix 增改必须拦住（⑤ 含反恒真对照）', async () => {
+  // 身份句不承载本包内容（纪律走运行时 section，设计 §3.6）：prefix 与宿主基线
+  // 身份句逐字一致，加一个词也必须红——判据是相等，不是包含。
   const result = await validateMutation((text) => text
-    .replace('run_in_background: false.', ''));
-  assert.equal(result.ok, false, '删锚句必须被拦');
-  assert.ok(result.lines.some((l) => l.includes('never pass run_in_background: false')),
-    '报错必须点名缺的那条锚句');
+    .replace('prefix: You are a coding agent powered by the {{model}} model.',
+      'prefix: You are a coding agent powered by the {{model}} model. Be disciplined.'));
+  assert.equal(result.ok, false, 'prefix 增改必须被拦');
+  assert.ok(result.lines.some((l) => l.includes('基线身份句逐字一致')),
+    `报错必须指向判据⑤的逐字一致，实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
+  // 反恒真：删掉整句同样红（空 prefix 不是基线句）。
+  const emptied = await validateMutation((text) => text
+    .replace('prefix: You are a coding agent powered by the {{model}} model.', 'prefix:'));
+  assert.equal(emptied.ok, false, '清空 prefix 同样必须被拦');
+});
+
+hostTest('validate-preset：词典纪律锚句被删必须拦住（⑤b；含反恒真对照）', async () => {
+  // 锚句住在 lib/text.js 的 discipline.preset.<id>（宿主半边运行时注入，设计
+  // §3.6）——变异经成对副本通道（validatorWithText）。en 档杀「前台委托禁句」，
+  // zh 档杀对应译文锚。
+  const enKill = await validatorWithText((src) => src
+    .replace('never pass run_in_background: false.', ''));
+  const enResult = await enKill.validate(PATCH, { quiet: true });
+  assert.equal(enResult.ok, false, 'en 档删锚句必须被拦');
+  assert.ok(enResult.lines.some((l) => l.includes('never pass run_in_background: false') && l.includes('en 档')),
+    `报错必须点名 en 档缺的那条锚句，实得：${enResult.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
+  const zhKill = await validatorWithText((src) => src
+    .replace('绝不要传 run_in_background: false。', ''));
+  const zhResult = await zhKill.validate(PATCH, { quiet: true });
+  assert.equal(zhResult.ok, false, 'zh 档删锚句必须被拦');
+  assert.ok(zhResult.lines.some((l) => l.includes('run_in_background: false') && l.includes('zh 档')),
+    '报错必须点名 zh 档缺的那条锚句');
 });
 
 hostTest('validate-preset：预设行重新带上 disabled 护栏必须拦住', async () => {
@@ -228,7 +288,7 @@ hostTest('validate-preset：多出基线期望之外的行必须拦住（P3，�
     .replace("          - id: tool-cordis\n",
       "          - id: tool-web-extra\n            name: '@deepseek-ai/dsh-tool-web'\n          - id: tool-cordis\n"),
     PATCH_CREATE, baselineCreate);
-  assert.equal(result.ok, false, '未经设计裁决的加行必须被拦');
+  assert.equal(result.ok, false, '未经设计裁定的加行必须被拦');
   assert.ok(result.lines.some((l) => l.includes('tool-web-extra') && l.includes('多出')),
     '报错必须点名多出的行');
 });
@@ -243,23 +303,40 @@ hostTest('validate-preset：tool-subagent 翻回启用必须拦住（P4，⑧ �
     '报错必须指向 ⑧ 的 disabled 项');
 });
 
-hostTest('validate-preset：tool-plugin-manager 写回表达式必须拦住（P5，⑧ 布尔差异）', async () => {
-  const result = await validateMutation((text) => text
-    .replace("          - id: tool-plugin-manager\n            name: '@deepseek-ai/dsh-plugin-manager/tools'\n            disabled: true",
-      "          - id: tool-plugin-manager\n            name: '@deepseek-ai/dsh-plugin-manager/tools'\n            disabled: !!js \"!ctx.get('profileContext')\""),
+hostTest('validate-preset：tool-plugin-manager 回归布尔禁用必须拦住（P5，⑧b 基线同形）', async () => {
+  const block = (disabled) => `          - id: tool-plugin-manager\n            name: '@deepseek-ai/dsh-plugin-manager/tools'\n            disabled: ${disabled}\n`;
+  const expr = '!!js "!ctx.get(\'profileContext\')"';
+  // 反例方向一（create）：基线条件表达式被换回布尔 true——创造上下文中插件
+  // 管理入口整个锁死（需求 §7.3.2：保留基线启用条件）。
+  const toBoolean = await validateMutation((text) => text
+    .replace(block(expr), block('true')),
     PATCH_CREATE, baselineCreate);
-  assert.equal(result.ok, false, 'R26 明文要求布尔 true（与 dsh-async 补丁一致的改动项）');
-  assert.ok(result.lines.some((l) => l.includes('tool-plugin-manager.disabled') && l.includes('布尔 true')),
-    '报错必须指向布尔差异并区分表达式');
+  assert.equal(toBoolean.ok, false, '回归布尔禁用必须被拦');
+  assert.ok(toBoolean.lines.some((l) => l.includes('tool-plugin-manager.disabled') && l.includes('基线禁用形态逐字同形')),
+    `报错必须指向 ⑧b 的基线同形判据，实得：${toBoolean.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
+  // 反例方向二（create）：表达式本身被改——判据逐字，不是「是表达式即可」。
+  const exprDrift = await validateMutation((text) => text
+    .replace(block(expr), block('!!js "!ctx.get(\'pluginContext\')"')),
+    PATCH_CREATE, baselineCreate);
+  assert.equal(exprDrift.ok, false, '表达式漂移必须被拦（逐字判据）');
+  assert.ok(exprDrift.lines.some((l) => l.includes('tool-plugin-manager.disabled') && l.includes('基线禁用形态逐字同形')));
+  // 反例方向三（dsh-async 侧）：布尔禁用被换成条件表达式——standard 基线两行布尔。
+  const toExpr = await validateMutation((text) => text
+    .replace(block('true'), block(expr)));
+  assert.equal(toExpr.ok, false, 'dsh-async 的插件管理行必须保持 standard 基线布尔禁用');
+  assert.ok(toExpr.lines.some((l) => l.includes('tool-plugin-manager.disabled') && l.includes('基线禁用形态逐字同形')));
 });
 
-hostTest('validate-preset：persona 唯一入口锚句被删必须拦住（P6，⑤）', async () => {
-  const result = await validateMutation((text) => text
-    .replace('async_agent is the ONLY delegation\n                entry in this preset', 'the delegation\n                entry in this preset'),
-    PATCH_CREATE, baselineCreate);
+hostTest('validate-preset：词典唯一入口锚句被删必须拦住（P6，⑤b，create 变体）', async () => {
+  // create 变体的锚句集第五句才是差异句「已禁用、不要调用」；本用例
+  // 杀掉 create 键 en 档的入口锚，⑤b 必须按句点名。
+  const kill = await validatorWithText((src) => src
+    .replace('async_agent is the ONLY delegation entry in this preset — it has no foreground mode.',
+      'async_agent delegates in this preset — it has no foreground mode.'));
+  const result = await kill.validate(PATCH_CREATE, { quiet: true });
   assert.equal(result.ok, false, '删锚句必须被拦');
   assert.ok(result.lines.some((l) => l.includes('ONLY delegation entry')),
-    '报错必须点名缺的那条锚句');
+    `报错必须点名缺的那条锚句，实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
 });
 
 hostTest('validate-preset：tool-pwsh 挂回创造补丁必须拦住（P7，③b）', async () => {
@@ -297,24 +374,33 @@ hostTest('validate-preset：创造补丁预设行加护栏必须拦住（P10，�
   assert.ok(result.lines.some((l) => l.includes('不得带 disabled 护栏')));
 });
 
-hostTest('validate-preset：活 subagent × async_agent 且缺锚句必须触发互斥判据（P11，⑦）', async () => {
-  // 复合变异：subagent 翻活（⑧ 红）+ 删一句锚——⑦ 按句独立开火，两个分支各验一次，
-  // 证明可验证段④的条件式守卫真的会开火（不是只有 ⑤⑧ 在兜）。
-  const enableSubagent = (text) => text
-    .replace("              - id: tool-subagent\n                name: '@deepseek-ai/dsh-tool-subagent'\n                disabled: true\n",
-      "              - id: tool-subagent\n                name: '@deepseek-ai/dsh-tool-subagent'\n");
-  const entryRemoved = await validateMutation((text) => enableSubagent(text)
-    .replace('async_agent is the ONLY delegation\n                entry in this preset', 'the delegation\n                entry in this preset'),
-    PATCH_CREATE, baselineCreate);
-  assert.equal(entryRemoved.ok, false);
-  assert.ok(entryRemoved.lines.some((l) => l.includes('唯一派生入口') && l.includes('需求 §3.1 可验证口径')),
-    '⑦ 的入口专报必须在场');
-  const retrievalRemoved = await validateMutation((text) => enableSubagent(text)
-    .replace('wait with async_wait_agent', 'get results via async_wait_agent'),
-    PATCH_CREATE, baselineCreate);
-  assert.equal(retrievalRemoved.ok, false);
-  assert.ok(retrievalRemoved.lines.some((l) => l.includes('取回通道') && l.includes('需求 §3.1 可验证口径')),
-    '⑦ 的取回专报必须在场');
+hostTest('validate-preset：活 subagent × async_agent 且词典缺锚句必须触发互斥判据（P11，⑦）', async () => {
+  // 复合变异：补丁侧 subagent 翻活（⑧ 红）+ 词典侧删锚——⑦ 读 en 档词典文本，
+  // 两个分支各验一次，证明可验证段④的条件式守卫真的会开火（不是只有 ⑤⑧ 在兜）。
+  // 补丁变异先落临时文件（⑦ 只对翻活后的补丁开火），词典变异走成对副本通道。
+  const patchDir = mkdtempSync(join(tmpdir(), 'async-preset-11-'));
+  try {
+    const enableSubagent = (text) => text
+      .replace("              - id: tool-subagent\n                name: '@deepseek-ai/dsh-tool-subagent'\n                disabled: true\n",
+        "              - id: tool-subagent\n                name: '@deepseek-ai/dsh-tool-subagent'\n");
+    const mutatedPatchPath = join(patchDir, 'patch.yml');
+    writeFileSync(mutatedPatchPath, enableSubagent(baselineCreate), 'utf8');
+    const entryKill = await validatorWithText((src) => src
+      .replace('async_agent is the ONLY delegation entry in this preset — it has no foreground mode.',
+        'async_agent delegates in this preset — it has no foreground mode.'));
+    const entryRemoved = await entryKill.validate(mutatedPatchPath, { quiet: true });
+    assert.equal(entryRemoved.ok, false);
+    assert.ok(entryRemoved.lines.some((l) => l.includes('唯一派生入口') && l.includes('需求 §3.1 可验证口径')),
+      `⑦ 的入口专报必须在场，实得：${entryRemoved.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
+    const retrievalKill = await validatorWithText((src) => src
+      .split('wait with async_wait_agent (bounded').join('get results via async_wait_agent (bounded'));
+    const retrievalRemoved = await retrievalKill.validate(mutatedPatchPath, { quiet: true });
+    assert.equal(retrievalRemoved.ok, false);
+    assert.ok(retrievalRemoved.lines.some((l) => l.includes('取回通道') && l.includes('需求 §3.1 可验证口径')),
+      `⑦ 的取回专报必须在场，实得：${retrievalRemoved.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
+  } finally {
+    rmSync(patchDir, { recursive: true, force: true });
+  }
 });
 
 hostTest('validate-preset：删嵌套行 plan-mode 必须拦住（P12，③ 嵌套缺行）', async () => {
@@ -335,7 +421,7 @@ hostTest('validate-preset：创造补丁 toolName 写错必须拦住（P13，④
     .replace('toolName: async_agent', 'toolName: async_frobnicate'),
     PATCH_CREATE, baselineCreate);
   assert.equal(result.ok, false);
-  assert.ok(result.lines.some((l) => l.includes('toolName 五值缺')));
+  assert.ok(result.lines.some((l) => l.includes('toolName 六值缺')));
 });
 
 hostTest('validate-preset：期望集必须与 shipped 基线的真实行集合逐条比对（P14，防快照漂移）', async () => {
@@ -347,7 +433,7 @@ hostTest('validate-preset：期望集必须与 shipped 基线的真实行集合�
     const doc = load(readFileSync(baselineFile, 'utf8'));
     const exp = EXPECTATIONS[configId];
     assert.deepEqual(exp.baselineTop, expectedTopFromBaseline(doc),
-      `${configId} 的 baselineTop 必须等于「真实基线 − tool-pwsh + 四行 async（插在 tool-bash 后）」；上游改动基线时这里先红，强迫重建期望集（更新入口）`);
+      `${configId} 的 baselineTop 必须等于「真实基线 − tool-pwsh + 五行 async（插在 tool-bash 后）」；上游改动基线时这里先红，强迫重建期望集（更新入口）`);
     const nestedFromBaseline = doc[0].insert[0].config.plugins
       .filter((child) => Array.isArray(child?.config))
       .flatMap((child) => child.config)
@@ -361,8 +447,11 @@ hostTest('validate-preset：期望集必须与 shipped 基线的真实行集合�
     // **config 正文**逐行对账——改动集之外的每个叶子行与组行必须与真实基线
     // 深度一致（递归键序规范化后比对；disabled 单列在改动范围外剔除）。改动清单外改一个字
     // 必须红：只有行 id 比对的判据拦不住 plan-mode 段的措辞漂移。
-    const surgery = new Set(exp.disabledBoolean); // 改动范围 = 结构性禁用行 + persona（前缀重写）；
-    surgery.add('persona');
+    // 改动范围 = 结构性禁用行。persona **不在改动集**——prefix 与基线身份句
+    // 逐字一致（⑤ 锁死），行体比对连 persona 的 config 一并锁成与基线逐字。
+    // 插件管理两行不在改动集——与基线禁用形态逐字同形（⑧b），行体比对连
+    // disabled 面一并锁它们。
+    const surgery = new Set(exp.disabledBoolean);
     const patchDoc = load(readFileSync(join(import.meta.dirname, '..', exp.patchRel), 'utf8'));
     const collect = (insertRow) => {
       const leaf = new Map(), group = new Map();
@@ -457,19 +546,34 @@ hostTest('validate-preset：workflow-ptc 的 provider 改掉必须拦住（P15�
   }
 });
 
-hostTest('validate-preset：两份补丁的公共异步纪律段必须逐字同源（P16，设计 §3.6）', async () => {
+hostTest('validate-preset：两份补丁的词典公共纪律段必须逐字同源（P16，设计 §3.6）', async () => {
+  // persona prefix 与宿主基线身份句逐字一致（宿主原生身份句不承载本包内容），
+  // 公共异步纪律段住在两语表的两个词典键里，分叉只许发生在委托规则第 1 条。
   const { load } = await loadYaml();
   const readPrefix = async (path) => {
     const doc = load(readFileSync(path, 'utf8'));
     return doc[0].insert[0].config.plugins.find((child) => child?.id === 'persona').config.prefix;
   };
-  const introAsync = commonIntro(await readPrefix(PATCH));
-  const introCreate = commonIntro(await readPrefix(PATCH_CREATE));
+  const BASELINE_IDENTITY = 'You are a coding agent powered by the {{model}} model.';
+  assert.equal(await readPrefix(PATCH), BASELINE_IDENTITY, 'dsh-async 的 prefix 与基线身份句逐字一致');
+  assert.equal(await readPrefix(PATCH_CREATE), BASELINE_IDENTITY, 'dsh-async-create 的 prefix 与基线身份句逐字一致');
+  const introAsync = commonIntro(t('en', 'discipline.preset.dsh-async'));
+  const introCreate = commonIntro(t('en', 'discipline.preset.dsh-async-create'));
   assert.equal(introAsync, introCreate,
     '公共段（This deployment…failure. 整段）必须逐字相同——分叉只许发生在 DELEGATION RULES 段');
   // 反向对照：改掉一份的公共段，比较器必须真的能发现（否则上面的相等断言是恒真的）。
   const mutatedIntro = introCreate.replace('ASYNCHRONOUSLY', 'ASYNCHRONOUSLY.');
   assert.notEqual(mutatedIntro, introAsync, '比较器必须能检出公共段漂移');
+  // zh 档同守：两变体的公共段（本部署异步执行命令……当作失败。）逐字同源。
+  const zhIntro = (text) => {
+    const start = text.indexOf('本部署异步执行命令。');
+    const endMarker = '绝不能把返回的 job_id 当作失败。';
+    const end = text.indexOf(endMarker);
+    assert.ok(start !== -1 && end !== -1, 'zh 公共段边界句必须在场');
+    return text.slice(start, end + endMarker.length);
+  };
+  assert.equal(zhIntro(t('zh', 'discipline.preset.dsh-async')), zhIntro(t('zh', 'discipline.preset.dsh-async-create')),
+    'zh 档公共段必须逐字相同（语言档语义同源，需求 §5.3）');
 });
 
 // ══════════════════ 第五行工具与禁用改动的判据（P17–P21）════════════════════════
@@ -501,8 +605,8 @@ hostTest('validate-preset：删 async-workflow 行必须拦住（P19，③/④�
   for (const [path, text] of [[PATCH, baseline], [PATCH_CREATE, baselineCreate]]) {
     const result = await validateMutation((t) => t
       .replace(/ {14}- id: async-workflow\n(?: {16}.*\n)*/, ''), path, text);
-    assert.equal(result.ok, false, `删第五行必须被拦（${path}）`);
-    assert.ok(result.lines.some((l) => (l.includes('async-workflow') && l.includes('缺行')) || l.includes('toolName 五值缺')),
+    assert.equal(result.ok, false, `删 delegation 组内行必须被拦（${path}）`);
+    assert.ok(result.lines.some((l) => (l.includes('async-workflow') && l.includes('缺行')) || l.includes('toolName 六值缺')),
       `报错必须点名 ③ 嵌套缺行或 ④ 缺值，实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
   }
 });
@@ -559,5 +663,150 @@ hostTest('validate-preset：async_workflow 门槛锚句被删必须拦住（P22�
       `报错必须指向 ⑪ 的门槛判据，实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ══════════════════ 提问角色纪律锚句的判据（P23，ASK-01）═══════════════════════
+
+hostTest('validate-preset：提问角色纪律锚词缺任一组必须拦住（P23，⑤b；en/zh 两档×两份补丁同守）', async () => {
+  // ASK-01 四组锚词住在两语表的两个词典键里（en＋zh 两档，语言档由 agentLang
+  // 管理，需求 §5.3）。各杀一句 en 锚与一句 zh 锚——⑤b 按档独立开火，两份
+  // 补丁的该段逐字同文，共用同一张变异表（变异走成对副本通道）。
+  const KILLS_EN = [
+    ['no personal pronouns for the actor, authorizer, or owner', 'clear role names for the actor, authorizer, owner'],
+    ['explicit, distinguishable role names', 'distinguishable role names'],
+    ['role plus the action', 'role and action'],
+    ['keep role references consistent', 'keep roles consistent']
+  ];
+  const KILLS_ZH = [
+    ['不使用指代执行者、授权者或归属对象的人称代词', '不用人称代词指代执行者、授权者或归属对象'],
+    ['明确、可区分的角色名称', '明确的角色名称'],
+    ['写清角色与动作', '写明角色和动作'],
+    ['与所选角色名称保持一致', '与所选角色一致']
+  ];
+  for (const [anchor, replacement] of [...KILLS_EN, ...KILLS_ZH]) {
+    for (const path of [PATCH, PATCH_CREATE]) {
+      const killed = await validatorWithText((src) => src.split(anchor).join(replacement));
+      const result = await killed.validate(path, { quiet: true });
+      assert.equal(result.ok, false, `删锚词必须被拦（${anchor}；${path}）`);
+      assert.ok(result.lines.some((l) => l.includes(anchor)),
+        `报错必须点名缺失的锚词，实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
+    }
+  }
+});
+
+// ══════════════════ 锚句表逐句齐套（P24/P25，⑤b；删任一句必红）═══════════════════════
+
+hostTest('validate-preset：dsh-async 有界等待取回锚句被删必须拦住（P24，⑤b，en/zh 两档）', async () => {
+  // 「需要结果时有界等待取回」是委托纪律五句之一：从 dsh-async 文案删掉
+  // 该句（保留同条的「不要循环轮询」半句）而锚句表仍在，⑤b 必须按档点名。
+  const killed = await validatorWithText((src) => src
+    .replace('wait with async_wait_agent (bounded wait_ms)',
+      'call async_wait_agent (bounded wait_ms)')
+    .replace('用 async_wait_agent 有界等待', '以 async_wait_agent 有界等待'));
+  const result = await killed.validate(PATCH, { quiet: true });
+  assert.equal(result.ok, false, '删有界等待取回句必须被拦');
+  assert.ok(result.lines.some((l) => l.includes('wait with async_wait_agent') && l.includes('en 档')),
+    `报错必须点名 en 档缺失锚句，实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
+  assert.ok(result.lines.some((l) => l.includes('用 async_wait_agent 有界等待') && l.includes('zh 档')),
+    '报错必须点名 zh 档缺失锚句');
+});
+
+hostTest('validate-preset：create 变体差异句被删必须拦住（P25，⑤b，en/zh 两档）', async () => {
+  // 「宿主 subagent／subagent_fork 已禁用、不要调用」是 create 变体的差异句：
+  // 删掉它而锚句表仍在，⑤b 必须按档点名（该句是两变体分工的关键差异）。
+  const killed = await validatorWithText((src) => src
+    .replace('subagent / subagent_fork are disabled here; do not call them.',
+      'subagent / subagent_fork are not used here.')
+    .replace('subagent / subagent_fork 在本预设已禁用，不要调用。',
+      'subagent / subagent_fork 在本预设不使用。'));
+  const result = await killed.validate(PATCH_CREATE, { quiet: true });
+  assert.equal(result.ok, false, '删变体差异句必须被拦');
+  assert.ok(result.lines.some((l) => l.includes('disabled here; do not call them') && l.includes('en 档')),
+    `报错必须点名 en 档缺失锚句，实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
+  assert.ok(result.lines.some((l) => l.includes('已禁用，不要调用') && l.includes('zh 档')),
+    '报错必须点名 zh 档缺失锚句');
+});
+
+hostTest('validate-preset：锚句表逐锚删除变异——表内任一锚被删必红（P26，⑤b，两变体×两档全表）', async () => {
+  // 守卫网的守卫网：锚句表本身也可能被静默弱化——删掉某条锚后，对应文案
+  // 逃出看守而既有测试全绿。对两张期望表的每个语言档、每条锚做参数化删除
+  // 变异，⑤b 必须按档点名；这让「表内每条锚都有删除变异」成为机器核实的
+  // 事实，而不是头注的声明。表收缩方向的看守见下一条快照锁（P26 的击杀
+  // 清单派生自锚句表本身，表缩小时循环同步缩小——两方向各需一条用例）。
+  for (const [configId, expectation] of Object.entries(EXPECTATIONS)) {
+    const patchPath = configId === 'dsh-async' ? PATCH : PATCH_CREATE;
+    for (const lang of ['en', 'zh']) {
+      for (const anchor of expectation.disciplineAnchors[lang]) {
+        const killed = await validatorWithText((src) => src.split(anchor).join(''));
+        const result = await killed.validate(patchPath, { quiet: true });
+        assert.equal(result.ok, false, `删锚句必须被拦（${configId} ${lang} 档：${anchor}）`);
+        assert.ok(result.lines.some((l) => l.includes(anchor) && l.includes(`${lang} 档`)),
+          `报错必须点名缺失锚句（${configId} ${lang} 档），实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
+      }
+    }
+  }
+});
+
+hostTest('validate-preset：锚句表快照锁——表删行、改锚或加锚必红（P27，⑤b，两变体×两档）', () => {
+  // P26 的击杀清单派生自锚句表本身，测不出表自身被静默弱化（删行后循环
+  // 同步缩小、基线照常绿）。这里用测试内独立持份的期望清单逐项 deepEqual
+  // 锚句表：删行、改锚、加锚都必须先改这份锁才过得去——两处同改在 diff
+  // 评审里可见，静默弱化不再有零红通道。
+  const LOCKED = {
+    'dsh-async': {
+      en: [
+        'ALWAYS',
+        'async_agent is the ONLY delegation entry',
+        'wait with async_wait_agent',
+        'never pass run_in_background: false',
+        'Do not poll in a loop',
+        'no personal pronouns for the actor, authorizer, or owner',
+        'explicit, distinguishable role names',
+        'role plus the action',
+        'keep role references consistent'
+      ],
+      zh: [
+        '一律在后台',
+        '唯一的委托入口',
+        '用 async_wait_agent 有界等待',
+        '绝不要传 run_in_background: false',
+        '不要循环轮询',
+        '不使用指代执行者、授权者或归属对象的人称代词',
+        '明确、可区分的角色名称',
+        '写清角色与动作',
+        '与所选角色名称保持一致'
+      ]
+    },
+    'dsh-async-create': {
+      en: [
+        'ALWAYS',
+        'async_agent is the ONLY delegation entry',
+        'wait with async_wait_agent',
+        'disabled here; do not call them',
+        'Do not poll in a loop',
+        'no personal pronouns for the actor, authorizer, or owner',
+        'explicit, distinguishable role names',
+        'role plus the action',
+        'keep role references consistent'
+      ],
+      zh: [
+        '一律在后台',
+        '唯一的委托入口',
+        '用 async_wait_agent 有界等待',
+        '已禁用，不要调用',
+        '不要循环轮询',
+        '不使用指代执行者、授权者或归属对象的人称代词',
+        '明确、可区分的角色名称',
+        '写清角色与动作',
+        '与所选角色名称保持一致'
+      ]
+    }
+  };
+  for (const [configId, expected] of Object.entries(LOCKED)) {
+    for (const lang of ['en', 'zh']) {
+      assert.deepEqual(EXPECTATIONS[configId].disciplineAnchors[lang], expected[lang],
+        `锚句表与独立期望清单不一致（${configId} ${lang} 档）——表被弱化或锁未同步，两处需同改并过评审`);
+    }
   }
 });

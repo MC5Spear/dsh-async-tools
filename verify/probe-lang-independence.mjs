@@ -21,7 +21,7 @@ import { launch, openPage, evaluate, findBrowser, waitFor, screenshot } from './
 import { rpc, transcriptOf, localConfig } from './_rpc.mjs';
 import { instanceCredentials } from '../tools/_local-config.mjs';
 import { judgeLangIndependence, judgeLangRestored } from './lang-judgements.mjs';
-import { NS } from './_r28-helpers.mjs';
+import { readNs, patchNs } from './_r28-helpers.mjs';
 import { BUDGET_FIELD_KEYS, LANG_FIELD_KEYS, FLAG_FIELD_KEYS, ASK_FIELD_KEYS } from '../lib/config.js';
 
 const { base: BASE, token } = instanceCredentials(localConfig);
@@ -45,18 +45,7 @@ function check(name, ok, detail = '') {
   console.log(`  ${ok ? 'OK    ' : 'WRONG '} ${name}${detail === '' ? '' : `\n          ${detail}`}`);
 }
 
-/** 读宿主行的现行设置值。 */
-async function readNs() {
-  const described = await rpc('settings/describe', {});
-  const found = described.namespaces.find((n) => (n.ns ?? n.namespace ?? n.id) === NS);
-  if (found === undefined) throw new Error(`${NS} 命名空间不在 describe 里（宿主行没激活？）`);
-  return { value: found.value ?? {}, revision: found.revision ?? null };
-}
-
-/** 写一个设置补丁（与页面保存同一条链：settings/update）。 */
-async function patchNs(patch) {
-  await rpc('settings/update', { ns: NS, patch });
-}
+// 设置读写经共享助手（嵌套 settings 形状；本文件不再自带一套平铺读写）。
 
 /** 起一个会话（核对预设没被静默回退）。 */
 async function newSession() {
@@ -167,7 +156,7 @@ try {
     `读数=${JSON.stringify(form0.selectValues)}`);
   const desc0 = await runDescription();
   log = { form0, desc0: desc0.description.slice(0, 300) };
-  await screenshot(page, `${SHOTS}\\lang-01-baseline.png`);
+  await screenshot(page, join(SHOTS, 'lang-01-baseline.png'));
 
   console.log('· 2/4 只改 agentLang → zh');
   await patchNs({ agentLang: 'zh' });
@@ -180,7 +169,7 @@ try {
   const desc1 = await runDescription();
   log.form1 = form1;
   log.desc1 = desc1.description.slice(0, 300);
-  await screenshot(page, `${SHOTS}\\lang-02-agentlang-zh.png`);
+  await screenshot(page, join(SHOTS, 'lang-02-agentlang-zh.png'));
 
   console.log('· 3/4 只改 uiLang → en（走页面下拉 + 保存，证明控件可用）');
   const switched = await evaluate(page, `(() => {
@@ -202,7 +191,7 @@ try {
   const desc2 = await runDescription();
   log.form2 = form2;
   log.desc2 = desc2.description.slice(0, 300);
-  await screenshot(page, `${SHOTS}\\lang-03-uilang-en.png`);
+  await screenshot(page, join(SHOTS, 'lang-03-uilang-en.png'));
 
   console.log('· 4/4 判据 + 复原');
   // 四组全取：这条判据要证的正是"换语言**不动**字段集合"，

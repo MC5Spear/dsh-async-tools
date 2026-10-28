@@ -42,17 +42,56 @@ export const EMPTY_DIR = join(localConfig.tmpDir, 'verify', 'tmp-empty-r28');
 
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
-/** 读宿主行的现行设置值。 */
+/**
+ * 读宿主行现行设置（嵌套契约，设计 §8.3）。
+ *
+ * `settings/describe` 的 value 投影是 `{ settings: { …字段… } }`——**settings
+ * 子树的形状**严格检查、漂移直接失败，不用多形状回退掩盖契约变化（行定位的
+ * 键名兼容 `ns ?? namespace ?? id` 是另一回事：只容旧键名，不涉值形状）。
+ * 除生效值外一并返回 `user`（用户覆盖层）与 `base`（继承层）的字段对象，
+ * 供探针保存/恢复原状。
+ *
+ * @returns {Promise<{value: object, user: object, base: object, revision: number|null}>}
+ *     三层字段对象及 revision。
+ */
 export async function readNs() {
   const described = await rpc('settings/describe', {});
   const found = described.namespaces.find((n) => (n.ns ?? n.namespace ?? n.id) === NS);
   if (found === undefined) throw new Error(`${NS} 命名空间不在 describe 里（宿主行没激活？）`);
-  return { value: found.value ?? {}, revision: found.revision ?? null };
+  const subtree = found.value?.settings;
+  if (subtree === undefined || typeof subtree !== 'object') {
+    throw new Error(
+      `${NS} 的 value 投影缺少 settings 子树（宿主契约漂移？）：${JSON.stringify(found.value ?? null).slice(0, 200)}`
+    );
+  }
+  return {
+    value: subtree,
+    user: found.user?.settings ?? {},
+    base: found.base?.settings ?? subtree,
+    revision: found.revision ?? null
+  };
 }
 
-/** 写一个设置补丁（与页面保存同一条链：settings/update）。 */
-export async function patchNs(patch) {
-  await rpc('settings/update', { ns: NS, patch });
+/** 写一个设置补丁（与页面保存同一条链：settings/update；字段对象包成 patch.settings）。 */
+export async function patchNs(fields) {
+  await rpc('settings/update', { ns: NS, patch: { settings: fields } });
+}
+
+/**
+ * 复位 volatile 字段再设置（settings/replace；字段对象包成 section.settings）。
+ * replace 先复位全部 volatile 字段再合并入参——不能当作稀疏更新使用。
+ */
+export async function replaceNs(fields) {
+  await rpc('settings/replace', { ns: NS, section: { settings: fields } });
+}
+
+/**
+ * 按路径恢复用户覆盖层（settings/mutate）。unset 路径回到继承值（继承层无该键则
+ * 移除覆盖），避免把生效值写成新的用户覆盖；ops 形如
+ * `{ op: 'set', path: ['settings', 键], value }` 或 `{ op: 'unset', path: ['settings', 键] }`。
+ */
+export async function mutateNs(ops) {
+  await rpc('settings/mutate', { ns: NS, ops });
 }
 
 /**

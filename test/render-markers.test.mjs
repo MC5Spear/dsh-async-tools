@@ -61,7 +61,7 @@ hostTest('R11：干净退出（0、无信号）**不产生**退出码标记（�
 hostTest('R11：信号杀死必须给出 `[killed by signal: X]`', async () => {
   const { rendered } = await runAndRender({ exitCode: 1, signal: 'SIGTERM' });
   assert.match(rendered, /\[killed by signal: SIGTERM\]/,
-    '被信号杀死与"自己返回非零"是两回事，模型要分得清');
+    '被信号终止与"自己返回非零"是两回事，模型要分得清');
 });
 
 hostTest('R11：退出码标记与沙箱标记**同时**出现时各占一行、都不丢', async () => {

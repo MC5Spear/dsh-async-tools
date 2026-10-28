@@ -11,28 +11,31 @@
 #   1. tool-bash 无条件 disabled: true——禁同步 shell（需求 §3.1），两平台工具清单
 #      一致（需求 §3.3）；
 #   2. 不挂 tool-pwsh 行——前台同步 shell 到期杀进程树，与异步语义冲突（需求 §3.1）；
-#   3. tool-bash 之后连续成组新增四行 dsh-async-tools（toolName 分派，各行携带
+#   3. tool-bash 之后连续成组新增五行 dsh-async-tools（toolName 分派；第五行
+#      async_list_subagent_models 是顶层只读行，需求 §2.3.4；各行携带
 #      owningPreset 归属声明——设计 §6.2 描述警示按行归属判定，非 volatile）；
 #   4. tool-subagent 系委托入口（单发 / fork）置 disabled: true、config 逐字保留
 #      （需求 §3.1：派生入口唯一 = async_agent，结构性禁用强于提示词约束）；管理侧
 #      tool-subagent-control / -list-agents 与引擎服务 workflow-ptc 保持在场；
-#   4b. tool-workflow 置 disabled: true（需求 §3.1：编排只走 async_workflow）；第五行
+#   4b. tool-workflow 置 disabled: true（需求 §3.1：编排只走 async_workflow）；第六行
 #      async_workflow 插 delegation 组内 tool-workflow 行后——编排引擎是组内隔离服务，
 #      组外行取不到（需求 §3.2 末条、设计 §3.5）；workflow-ptc（引擎服务，提供编排引擎）
 #      保留。失去宿主 workflow 工具的脚本编排参数集合——出路 = async_workflow（同引擎、
 #      异步语义），或按宿主规则换预设开新会话（需求 §3.1 末条）；
-#   5. tool-plugin-manager 的 disabled 从基线的 !!js 表达式换成布尔 true
-#      （与 dsh-async 补丁一致的改动项）；tool-plugin-market 保持基线条件表达式
-#      （随 profileContext 的基线启用态，非本包改动项）；
-#   6. persona 只改 prefix：基线身份句之上加异步纪律（与 dsh-async 预设逐字同源）+
-#      后台委托强制规则；锚句同样被 tools/validate-preset.mjs 锁死（锚句集与
-#      dsh-async 略异：第三句为 wait with `async_wait_agent`）。基线 persona 无
-#      `{{cwd}}` suffix——工作目录由 working-directory 服务经系统提示提供，
-#      本预设不复活失效模板变量；
-#   7. 预设行不带 disabled 护栏（与 dsh-async 补丁同款，理由见该文件头注）；
-#   8. 其余行与基线逐字一致（含组内整段 config、plan-mode 文案、tool-cordis 行、
+#   5. persona 与基线逐字一致：prefix 保留基线身份句、不增不改（宿主原生身份句
+#      不承载本包内容）；异步纪律、后台委托强制规则与提问角色纪律（ASK-01）由
+#      宿主半边注册的 systemPrompt section 运行时注入——语言档随设置 agentLang
+#      （需求 §5.3），变体按本预设选择（委托纪律差异句：宿主创建入口已禁用、
+#      不要调用），锚句同样被 tools/validate-preset.mjs 锁死在两语表（en＋zh）×
+#      两变体的词典键里。基线 persona 无 `{{cwd}}` suffix——工作目录由
+#      working-directory 服务经系统提示提供，本预设不复活失效模板变量；
+#   6. 预设行不带 disabled 护栏（与 dsh-async 补丁同款，理由见该文件头注）；
+#   7. 其余行与基线逐字一致（含组内整段 config、plan-mode 文案、tool-cordis 行、
 #      skill-filesystem 的 customSkillDirs 表达式与行序——cordis 的 skill 系行在尾部，
-#      不在 tool-jobs 之后）。
+#      不在 tool-jobs 之后）。插件管理两行（tool-plugin-manager /
+#      tool-plugin-market）保持 cordis 基线的 profileContext 条件表达式逐字——
+#      创造上下文中插件管理与市场入口按基线启用（需求 §3.1、§7.3.2）；与
+#      dsh-async 的布尔禁用形态差异源于两份基线自身不同。
 # 创作指导不写回 persona：基线把它交给 skill 系行承载（需求 §3.1"保留插件和预设
 # 创作功能及对应 skill 工具"）。
 - insert:
@@ -41,28 +44,15 @@
       config:
         id: dsh-async-create
         name: 异步创造模式
-        description: 在创造模式基础上改用异步 shell 与后台委托的插件/预设创作 Agent：async_run 的命令超出首次等待不会被杀掉，而是转后台并返回作业编号（job_id）；子代理一律经 async_agent 后台派生，用 async_wait_agent 有界等待读取；用户插话时等待立即返回且后台工作不受影响。
+        description: 在创造模式基础上改用异步命令执行与后台委托的插件/预设创作 Agent：async_run 的命令超出首次等待时转入后台并返回作业编号（job_id），稍后用 async_wait_job 取回结果；子代理经 async_agent 后台派生并支持按 dsh 模型选择设置指定路由，async_list_subagent_models 只读查询可用路由，用 async_wait_agent 有界等待。用户插话时等待立即结束，后台工作继续运行。
         order: 6
         plugins:
-          # ── 身份（改动项 6：persona prefix）──
+          # ── 身份（改动项 5：persona prefix 与基线身份句逐字一致，纪律走运行时
+          #    section——见本文件头改动项 5）──
           - id: persona
             name: '@deepseek-ai/dsh-persona'
             config:
-              prefix: >-
-                You are a coding agent powered by the {{model}} model.
-                This deployment runs commands ASYNCHRONOUSLY. `async_run` returns a job_id
-                instead of blocking when a command outlives its yield budget: when that
-                happens, keep working on other things and call `async_wait_job` later instead
-                of waiting idly or re-running the command. Use `async_wait_agent` (bounded,
-                interruptible) rather than polling when you need a background subagent's
-                outcome. Never treat a returned job_id as a failure.
-                DELEGATION RULES (hard rules, not advice):
-                1) Delegations are ALWAYS background. async_agent is the ONLY delegation
-                entry in this preset — it has no foreground mode. subagent / subagent_fork
-                are disabled here; do not call them.
-                2) When you need a subagent's result, wait with async_wait_agent (bounded
-                wait_ms). Do not poll in a loop; do not re-delegate just to check progress;
-                the final answer arrives as its own message.
+              prefix: You are a coding agent powered by the {{model}} model.
           - id: agent-instructions
             name: '@deepseek-ai/dsh-agent-instructions'
             config:
@@ -92,6 +82,13 @@
             name: dsh-async-tools
             config:
               toolName: async_agent
+              owningPreset: dsh-async-create
+          # 顶层只读行：路由查询工具（需求 §2.3.4；只消费宿主全局服务，不进
+          # delegation 组，理由同 dsh-async 补丁）。
+          - id: async-list-models
+            name: dsh-async-tools
+            config:
+              toolName: async_list_subagent_models
               owningPreset: dsh-async-create
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
@@ -180,14 +177,14 @@
               - id: tool-workflow
                 name: '@deepseek-ai/dsh-tool-workflow'
                 disabled: true
-              # 第五行 async_workflow 插在 delegation 组内（tool-workflow 行后）——
+              # 第六行 async_workflow 插在 delegation 组内（tool-workflow 行后）——
               # 编排引擎是组内隔离服务，组外行取不到（需求 §3.2 末条、设计 §3.5/§3.6）。
               - id: async-workflow
                 name: dsh-async-tools
                 config:
                   toolName: async_workflow
                   owningPreset: dsh-async-create
-          # ── 其余面向模型的行（改动项 5：plugin-manager 布尔禁用；market 保持基线态）──
+          # ── 其余面向模型的行（与基线逐字一致）──
           - id: tool-ask-user
             name: '@deepseek-ai/dsh-tool-ask-user'
           - id: tool-todo
@@ -210,10 +207,11 @@
             name: '@deepseek-ai/dsh-tool-skill'
           - id: present
             name: '@deepseek-ai/dsh-tool-present'
-          # ── 改动项 5：plugin-manager 布尔禁用 ──
+          # ── 插件管理两行：cordis 基线条件表达式逐字（profileContext 在场即启用，
+          #    需求 §3.1、§7.3.2）──
           - id: tool-plugin-manager
             name: '@deepseek-ai/dsh-plugin-manager/tools'
-            disabled: true
+            disabled: !!js "!ctx.get('profileContext')"
           - id: tool-plugin-market
             name: '@deepseek-ai/dsh-plugin-market/tools'
             disabled: !!js "!ctx.get('profileContext')"

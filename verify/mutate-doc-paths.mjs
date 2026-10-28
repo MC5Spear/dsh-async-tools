@@ -24,7 +24,7 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 /** M1 改它（一条本仓相对路径的指针）。
  *
  * 选 `CONTRIBUTING.md` 的理由：现行文档之一、受同一条检查器管辖、
- * `## 二、跑起来` 标题小而稳定。
+ * `## 3. 文档维护` 标题小而稳定（注入点随现行章节走，见 ANCHOR）。
  */
 const TARGET = join(ROOT, 'CONTRIBUTING.md');
 /** M2 改它（一条 `npm run <脚本>` 的引用）。 */
@@ -45,6 +45,14 @@ function run() {
 const ANCHOR = '## 3. 文档维护';
 /** 注入的指针：本仓相对路径且**一定不存在**。 */
 const DEAD = '\n（变异注入：`verify/this-file-does-not-exist-mutation-probe.mjs`）\n';
+/** M3 改它（一条 markdown 尖括号链接）。`docs/design.md` 的文件链接全部是
+ * `(<../…>)` 形态——这一趟专守「链接形态的引用也会被核对」。 */
+const DESIGN = join(ROOT, 'docs', 'design.md');
+/** M3 注入点：design.md 的二级标题锚（章号会重排，标题文字稳定）。 */
+const DESIGN_ANCHOR = '## 8. 验证设计';
+/** M3 注入的链接：相对文档目录解析、目标**一定不存在**（`../lib/` 真实存在，
+ * 挂掉的是文件名本身——正则若只查目录存在性会被这条抓住）。 */
+const DEAD_LINK = `${DESIGN_ANCHOR}\n\n[变异注入](<../lib/no-such-file-mutation-probe.js>)\n`;
 
 /**
  * M2 用的替换：把 README 里一个**真实存在**的 npm 脚本名改成不存在的。
@@ -63,7 +71,7 @@ if (baseline.red) {
 console.log(`基线：未变异时检查器通过（${baseline.tail}）。`);
 console.log('');
 
-/** 两条变异：一条验路径引用，一条验 npm 脚本引用。 */
+/** 三条变异：路径引用、npm 脚本引用、markdown 链接引用。 */
 const MUTATIONS = [
   {
     name: 'M1 现行文档里塞一条指向不存在文件的指针',
@@ -76,6 +84,12 @@ const MUTATIONS = [
     target: README,
     from: SCRIPT_FROM,
     to: SCRIPT_TO
+  },
+  {
+    name: 'M3 现行文档里塞一条指向不存在文件的尖括号链接',
+    target: DESIGN,
+    from: DESIGN_ANCHOR,
+    to: DEAD_LINK
   }
 ];
 
@@ -101,6 +115,6 @@ for (const m of MUTATIONS) {
   }
 }
 console.log('');
-console.log(ok ? '两条变异都被抓住：路径引用与 npm 脚本引用两头都能失败。' : '**有变异逃逸**——检查器区分力不足。');
+console.log(ok ? '三条变异都被抓住：路径引用、npm 脚本引用与链接引用三头都能失败。' : '**有变异逃逸**——检查器区分力不足。');
 console.log('还原完成，摘要一致。');
 process.exitCode = ok ? 0 : 1;

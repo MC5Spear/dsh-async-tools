@@ -128,7 +128,7 @@ try {
     `form=${JSON.stringify(form.hints?.find((h) => h.key === 'maxWaitMs'))}`);
   check('1a-2 保存按钮禁用', form.saveDisabled === 'true', `saveDisabled=${String(form.saveDisabled)} saveText=${form.saveText}`);
   check('1a-3 原因文案带上界数字（≤ 2147483647）', /2147483647/.test(text), text.slice(0, 400));
-  await screenshot(page, `${SHOTS}\\r29-1a-field-bound.png`);
+  await screenshot(page, join(SHOTS, 'r29-1a-field-bound.png'));
 
   // ── 1b 卡片层·配对 ───────────────────────────────────────────────────
   console.log('· 2/4 真机 1b：卡片层配对（poll 700000 > max 600000 → 保存禁用 + 配对文案）');
@@ -140,7 +140,7 @@ try {
   text = await sectionText();
   check('1b-1 保存按钮禁用', form.saveDisabled === 'true', `saveDisabled=${String(form.saveDisabled)}`);
   check('1b-2 配对原因文案在场（提到 maxWaitMs）', /maxWaitMs/.test(text) && /poll|轮询/.test(text), text.slice(0, 400));
-  await screenshot(page, `${SHOTS}\\r29-1b-pair.png`);
+  await screenshot(page, join(SHOTS, 'r29-1b-pair.png'));
 
   // 草稿清场：整页刷新（discard 不保证触发，刷新最干净——cdp 句柄没有 reload 方法，
   // 用 location.reload() 后等插件页重新就位）。
@@ -231,7 +231,7 @@ try {
   await sleep(1500);
   const restored = await readNs();
   check('④ 复原：maxWaitMs 回 600000', restored.value.maxWaitMs === 600000, `读数=${String(restored.value.maxWaitMs)}`);
-  await screenshot(page, `${SHOTS}\\r29-4-restored.png`);
+  await screenshot(page, join(SHOTS, 'r29-4-restored.png'));
 
   log.errlogDeltaChars = errNew.length;
   log.turnMs = turnMs;
@@ -239,7 +239,7 @@ try {
   log.error = String(error instanceof Error ? error.stack : error);
   console.error(log.error);
 } finally {
-  writeFileSync(`${LOGS}\\r29-robustness.json`, JSON.stringify({ results, log }, null, 2));
+  writeFileSync(join(LOGS, 'r29-robustness.json'), JSON.stringify({ results, log }, null, 2));
   const wrong = results.filter((entry) => !entry.ok).length;
   console.log(`\nR29 真机判据：${String(results.length - wrong)}/${String(results.length)} 通过`);
   await close();

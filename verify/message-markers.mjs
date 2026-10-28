@@ -59,12 +59,14 @@ export const CHILD_SETTLED = [
 /**
  * `async_wait_job` 的**结局**标记：取回的是终态输出。
  *
- * 出处 `lib/wait-job.js` 的 `settledResult`——终态时返回 `status` + `output`；
- * 端到端里可观察的稳定特征是输出末尾的退出码那行（`lib/jobs.js` 的
- * `exitStatusMarker`/`exitLine` 拼的；文案键 `render.exitCode`/`detail.exitCode`
- * 在 `lib/text.js`，两语都有）。
+ * 出处 `lib/wait-job.js` 的 `settledResult`——终态时在输出正文前拼一行终态状态行
+ * （文案键 `render.jobStatus.<completed|failed|killed>` 在 `lib/text.js`，两语都有），
+ * 这是三种终态**都出现**的稳定特征。输出末尾的退出码行（`lib/jobs.js` 的
+ * `exitStatusMarker`/`exitLine`，文案键 `render.exitCode`/`detail.exitCode`）只标记
+ * 非零退出的完成——成功零退出不带该行（与内置 pwsh 同口径），killed／failed 也
+ * 不要求它；不能把退出码行当通用终态判据。
  */
-export const JOB_SETTLED = /exit code: \d+|退出码[:：]\s*\d+/;
+export const JOB_SETTLED = /\[job (?:completed|failed|killed)\]|\[作业(?:已完成|失败|已终止)\]/;
 
 /** 等待预算到期（非终态）的文案。出处 `lib/text.js` 的 `note.waitAgain`（两语逐字；键名即锚）。 */
 export const WAIT_AGAIN = /仍在运行（不受影响）|is still running \(unaffected\)/;
@@ -74,3 +76,81 @@ export const WAIT_AGAIN = /仍在运行（不受影响）|is still running \(una
  * （两语逐字；键名即锚）。判据要认的半句：「命令/The command 仍在运行」。
  */
 export const YIELD_RUNNING = /命令仍在运行|command is still running/;
+
+/**
+ * 让出句柄句尾「没有被终止」半句。出处同上键（两语逐字；grep 全词典核实该短语
+ * 仅此一键）——`lib/final-acceptance` 的句尾联用判据从这里取。
+ */
+export const NOT_TERMINATED = /没有被终止|was NOT terminated/;
+
+/**
+ * 首次等待被用户消息**提前结束**的注记。出处 `lib/text.js` 的
+ * `note.yield.earlyByUser`／`note.yield.userUnverified`（两键共享首句，两语逐字）：
+ * `The first wait ended early: a user message arrived…`／
+ * `首次等待提前结束：有用户消息到达…`。探针 handle 形状判据用它。
+ */
+export const YIELD_EARLY_BY_USER = /The first wait ended early: a user message arrived|首次等待提前结束：有用户消息到达/;
+
+/**
+ * `async_workflow` 预算内结算的渲染头两半。出处 `lib/text.js` 的
+ * `render.workflowCompleted`（两语逐字；en 复数占位 `{plural}` 渲染后由
+ * `agents?` 双形态覆盖）：`workflow "…" completed (N agents).`／
+ * `workflow「…」已完成（N 个子代理）。`＋`Return value:`／`返回值：`。
+ */
+export const WORKFLOW_COMPLETED = /workflow "[^"]+" completed \(\d+ agents?\)|workflow「[^」]+」已完成（\d+ 个子代理）/;
+export const WORKFLOW_RETURN = /Return value:|返回值：/;
+
+/**
+ * 触顶准入拒绝的锚短语。出处 `lib/text.js` 的 `error.startRefused`／
+ * `error.startRefusedPlain`（两键共含该短语，两语逐字；锚不含占位）。
+ */
+export const START_REFUSED = /refused before the process launched|进程启动前被拒绝/;
+
+/**
+ * `async_workflow` 使用条件的门槛短语。出处 `lib/text.js` 的
+ * `tool.workflow.p2`（两语逐字；锚不含 `{defaultYieldMs}` 占位）。
+ */
+export const WORKFLOW_P2_PHRASE = /large multi-agent orchestration|大规模多代理编排/;
+
+/**
+ * `async_wait_agent` 被**用户消息唤醒**的文案。出处 `lib/text.js` 的
+ * `wait.wokeByMessage`（两语逐字）。
+ */
+export const WAIT_WOKE_BY_MESSAGE = /A processable message arrived|一条可处理消息已到/;
+
+/**
+ * 迟到作答到达的句首子句。出处 `lib/text.js` 的 `wait.lateArrived`（两语逐字，
+ * 单键）；迟到注入摘要取 `ask.lateSummary`（两语逐字，单键——锚取其共现短语）。
+ */
+export const LATE_ANSWER_ARRIVED = /A late answer has arrived|迟到作答已到/;
+export const LATE_ANSWER_SUMMARY = /Late answer for|的迟到作答/;
+
+/**
+ * 信号终止终态的句干。出处 `lib/text.js` 的 `render.killedBySignal`
+ * （两语逐字；方括号与 `{signal}` 占位在锚外）。
+ */
+export const KILLED_BY_SIGNAL = /killed by signal|被信号终止/;
+
+// ── 宿主渲染锚（宿主文本，不随本包语言开关本地化）──────────────────────────
+
+/**
+ * `job_list` 工具结果里**目标作业仍在运行**的渲染行。宿主出处：列表 formatter
+ * `` `${id} [${kind}] ${status} — ${label}` ``（dsh-tool-jobs）；作业编号由
+ * dsh-jobs-local 生成（`${kind}-`＋16 位十六进制 UUID 片段，**不透明字符串**，
+ * 锚不得假定数字编号）。行首锚＋渲染列分隔符 ` — ` 双边界：`label` 巧含
+ * ` [async-command] running — ` 子串的非 running 行不会命中；`m` 标志支持多行
+ * 工具结果文本中段匹配。`[async-command]` 类型标识的前提＝探针起跑把设置写回
+ * 出厂默认（`jobKind: 'async-command'`）。
+ */
+export const JOB_LIST_RUNNING = /^\S+ \[async-command\] running — /m;
+
+/**
+ * 宿主**完成通知**的两半（恒英文，agentLang 不影响宿主文本）。宿主出处
+ * dsh-tool-jobs：`` `background job ${job.id} (${job.kind}: ${label}) finished [status: …]` ``。
+ * `HOST_JOB_FINISHED` 匹配**未截断**形态的宿主通知：`finished` 在宿主模板中
+ * 对一切状态都在场（状态差异在 `[status: …]` 内）；compact/recovery 截断形态
+ * 不含该词，omitted 形态只保留 detail 头部（`finished` 可能已被截去）。该锚
+ * 不区分作业结局状态，按状态细分判据属独立评估。
+ */
+export const HOST_JOB_NOTICE = /\bbackground job \S+/;
+export const HOST_JOB_FINISHED = /finished/;

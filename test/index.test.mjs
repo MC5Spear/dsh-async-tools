@@ -3,9 +3,10 @@
  *
  * 为什么必须有这个文件：其余测试文件的 `ctx` 都是 `test/_helpers.mjs` 自己捏的替身，
  * **替身要什么有什么**，所以"`inject` 漏声明某个服务"这类缺陷在假件测试里永远绿。
- * 真机上的形态：`async_run` 在真实 cordis 上下文里直接抛
- * `cannot get property "timer" without inject`——三个工具都在用 `ctx.timer`，
- * 而 `inject` 里从来没有 `'timer'`。
+ * 真实 cordis 上下文上，漏声明的服务访问会以 `cannot get property "<svc>"
+ * without inject` 在插件树加载期暴露——例如 `timer` 只被 `async_wait_job` 与
+ * `async_wait_agent` 消费（`async_run` 的让出走宿主 `jobs.wait`、请求显式
+ * `onExpiry: 'none'`，不经 `ctx.timer`），漏声明它时红的正是那两个等待工具。
  *
  * 本文件做两件事，缺一不可：
  * 1. **静态扫描** `lib/` 下所有 `.js` 里的 `ctx.<服务>` 访问，断言它们是 `inject` 的子集
@@ -188,7 +189,7 @@ function stripComments(text) {
  * 为什么必须单独抓：只扫 `ctx.<name>` 会漏掉 `ctx.get('x')`。
  * 本包已经同时用了两种写法——`lib/jobs.js` 用 `ctx.get('sandboxPolicy')`（可选服务、
  * 允许缺席），其余服务用 `ctx.<name>`（固定依赖、写进 `inject`）。实测：往
- * `lib/jobs.js` 注入 `ctx.get('someHelper')` 后，只扫 `ctx.<name>` 的版本**输出
+ * `lib/jobs.js` 注入 `ctx.get('someHelper')` 后，只扫 `ctx.<name>` 的版本**给出
  * `missing=[]`**——"新增一个漏声明的服务访问"这条路径是敞开的。
  *
  * 只认**字符串字面量**参数：`ctx.get(variable)` 无法静态判定，不猜（扫描器对不确定的
@@ -225,21 +226,28 @@ function ctxGetLiterals(text) {
  *   （宿主行/无引擎部署）→ `error.workflowEngineMissing` 可读拒绝，工具仍注册。
  *
  * - `subagentModelSelection`：会话模型选择策略的 Host 单例设置服务
- *   （`@deepseek-ai/dsh-tool-subagent/model-selection-settings`，设计 §3.3 可续子代理与模型策略）。
- *   宿主 standing 行对它的缺席是装载期 throw；本包是**预设行**——写进
- *   `inject` 会让"宿主组合未挂 model-selection-settings 的部署"整行不激活
- *   （四行工具陪葬）。可选读取的正确行为：缺席 → stderr 通告一次 + 不接线
- *   采样（对宿主装载 throw 的**有意偏差**）。
+ *   （`@deepseek-ai/dsh-tool-subagent/model-selection-settings`，设计 §3.3）。
+ *   实时口径（需求 §2.3.2）：`async_agent` 每次执行经 `current()` 现读
+ *   `{enabled, allowedModels}`（启动前重读防撤回），`async_list_subagent_models`
+ *   的目标适用性判断同读。缺席或读取失败只影响这两条路径（可读拒绝／未确认），
+ *   工具照常注册——写进 `inject` 会让未挂 model-selection-settings 的部署
+ *   整行不激活（六个工具陪葬）。
  *
- * - `sessions`：Session 注册表（父继承分支专用，惰性现读——宿主
- *   `selectForSession` 同款）。缺席只影响子会话策略继承（跳过 + 通告），顶层
- *   fresh 采样不读它、照常工作——写进 inject 同样会把缺席升级成整行不激活。
+ * - `llm`：LLM 目录与调用配置服务（预检 `resolveCallConfig`；查询工具的
+ *   `listProviders`／`listModels`／`resolveModelInfo`，需求 §2.3.1/§2.3.4）。
+ *   与上面的策略服务同理可选：缺席时显式路由请求以可读错误拒绝、查询工具
+ *   以可读错误失败，纯继承委托与其余四个工具完全不受影响——写进 inject
+ *   会把「没接 LLM 目录的组合」升级成整行不激活。
+ *
+ * - `sessions`：Session 注册表（ask-takeover 的预设归属判定惰性现读）。
+ *   缺席只影响归属判定（按非本包预设处理），工具行为其余部分照常——
+ *   写进 inject 同样会把缺席升级成整行不激活。
  *
  * （`settings` 与 `agentPresets` 不在此列：`lib/` 已无调用点。）
  *
  * 除这些以外的任何名字都说明作者要么该写进 `inject`、要么该解释为什么可选——两种情况都要求人来看一眼。
  */
-const OPTIONAL_SERVICE_READS = new Set(['approval', 'sandboxPolicy', 'workflowEngine', 'subagentModelSelection', 'sessions']);
+const OPTIONAL_SERVICE_READS = new Set(['approval', 'sandboxPolicy', 'workflowEngine', 'subagentModelSelection', 'llm', 'sessions', 'systemPrompt']);
 
 /** cordis 自带的上下文成员：不是服务，不需要（也不能）写进 `inject`。 */
 const BUILTIN_CTX_MEMBERS = new Set(['effect', 'on', 'emit', 'get', 'logger', 'inject']);
@@ -273,12 +281,12 @@ function makeContext(Context) {
     start: () => { throw new Error('接线测试不该启动进程'); }
   });
   ctx.provide('shellEnv', { collect: () => Object.freeze({ DSH_HOME: 'x' }) });
-  ctx.provide('subagents', { listChildren: async () => [], interrupt: () => {} });
+  ctx.provide('subagents', { listChildren: async () => [], interrupt: () => {}, getProvider: () => undefined });
   ctx.provide('timer', { timeout: () => () => {}, interval: () => () => {} });
-  // 模型选择的第七服务：挂载级假件只需"无 policy"初值形态。
-  // `register` 是 agent-policy 折叠的注册范围（async_agent 行装载期调用；
-  // 假件收下即扔——投影行为由 test/agent-policy.test.mjs 专测）。
-  ctx.provide('sessionProjections', { stateOf: () => null, register: () => () => {} });
+  // 模型选择的第七服务：挂载级假件只需"无记录"初值形态（list-models 的原生
+  // 目标口径读取它；async_agent 行不再注册投影——实时口径，设计 §3.3）。
+  // 投影 fold 行为由 test/agent-policy.test.mjs 专测。
+  ctx.provide('sessionProjections', { stateOf: () => null });
   // 第八服务：公开 Agent 注册表（wait-agent 三态判定消费；挂载级假件
   // 只需"查无驻留"形态）。
   ctx.provide('agents', { get: () => undefined });
@@ -310,7 +318,7 @@ test('T6：lib/ 里访问的每个 ctx.<服务> 都必须在 inject 里声明', 
   }
 
   const declared = new Set(host.inject);
-  // 单包两角色：`lib/index.js` 是**唯一入口**（inject 声明八个固定依赖），宿主角色由
+  // 单包两角色：`lib/index.js` 是**唯一入口**（inject 声明九个固定依赖），宿主角色由
   // 同一入口按"行配置有无 `toolName`"分派到 `lib/host.js`——不再存在"宿主入口
   // 声明为空数组"的旧形态。所以这里核对的就是这一个入口的声明，
   // "宿主角色不许把 settings 写成固定依赖"由 test/two-planes.test.mjs 的 T4 守。
@@ -405,10 +413,10 @@ test('T3：inject 恰为九项服务；apply 按 config.toolName 注册工具；
     'inject 是与宿主组合的唯一契约，多一个少一个都是加载期错误'
   );
 
-  // 第四名 async_agent：接线级判据——真 cordis 上下文里按名注册成功、
-  // 卸载后注销。构造时不查 provider 注册表（描述里的名字取自配置），所以
-  // makeContext 的假 subagents 不需要 getProvider。
-  for (const toolName of ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent']) {
+  // 工具行分派判据——真 cordis 上下文里按名注册成功、卸载后注销。构造时不查
+  // provider 注册表（描述里的名字取自配置），所以 makeContext 的假 subagents
+  // 不需要 getProvider；查询行也不查 llm（按调用可选读取）。
+  for (const toolName of ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent', 'async_list_subagent_models']) {
     const { ctx, registered } = makeContext(Context);
     const fork = ctx.plugin(
       { name: host.name, inject: host.inject, Config: host.Config, apply: host.apply },
@@ -426,6 +434,45 @@ test('T3：inject 恰为九项服务；apply 按 config.toolName 注册工具；
 
     await fork.dispose();
     assert.deepEqual(registered, [], 'ctx.effect 的 disposer 必须在 fiber 卸载时注销工具（R4 可逆性）');
+  }
+});
+
+test('T3c：快照在场时行级委托键不丢——agent_preset 照常暴露（§2.3.1，P1 回归锁）', async (t) => {
+  const host = await loadHost();
+  const Context = await loadCordis();
+  if (host === undefined || Context === undefined) {
+    t.skip(HOST_SKIP_REASON);
+    return;
+  }
+  const { attachSnapshotSource, readSnapshot, clearSnapshot } = await import('../lib/settings.js');
+  clearSnapshot();
+
+  // 宿主行在场的正常部署形态：先有快照（宿主行首播），再挂自定义 async_agent 行
+  // （带行级委托键）。快照来自宿主行——合法地不含委托键；工具行取值入口必须
+  // 从本行装载期值回填它们，否则 agent_preset 不暴露、委托配置整组失效。
+  const hostCtx = { on: () => () => {}, logger: { warn: () => {} } };
+  const wiring = attachSnapshotSource(hostCtx, { minWaitMs: 250, maxWaitMs: 600000, maxResultChars: 30000 });
+  try {
+    assert.notEqual(readSnapshot(), undefined, '前置：宿主行快照在场');
+    const { ctx, registered } = makeContext(Context);
+    const fork = ctx.plugin(
+      { name: host.name, inject: host.inject, Config: host.Config, apply: host.apply },
+      { toolName: 'async_agent', allowedAgentPresets: ['reviewer', 'writer'], agentPreset: 'writer' }
+    );
+    await activate(fork);
+
+    // 可失败判据：快照分支若丢行级委托键，rowPresetChoices 为 undefined →
+    // agent_preset 不进参数表（构造期 readCurrentPolicy 不涉——这由纯配置决定）。
+    assert.ok('agent_preset' in registered[0].parameters.properties,
+      '快照在场时配置了 allowedAgentPresets 的行仍必须暴露 agent_preset（行级委托键非 volatile，不跟随宿主行快照）');
+    assert.match(registered[0].parameters.properties.agent_preset.description, /reviewer, writer/,
+      '可选值列表取自行配置（不是快照、也不是默认值）');
+
+    await fork.dispose();
+    assert.deepEqual(registered, []);
+  } finally {
+    wiring.dispose();
+    clearSnapshot();
   }
 });
 
@@ -558,13 +605,20 @@ test('T12b：降级登记的模型可见侧——seedDegraded/readDegraded/clear
     const enDesc = buildToolText('async_run', cleanConfig).description;
     assert.ok(enDesc.includes('Live config self-check failed') && enDesc.includes('minYieldMs > maxYieldMs'),
       '降级时 en 描述尾部必须带警示段与违例明细');
-    for (const name of ['async_wait_job', 'async_wait_agent', 'async_agent', 'async_workflow']) {
+    // 回退来源两态并列（启动失败＝出厂默认值，运行中失败＝上一合法值）——
+    // 缺任一半边即红，钉住警示段不回退为单一来源断言。
+    assert.ok(enDesc.includes('factory defaults') && enDesc.includes('the last valid values'),
+      'en 警示段两态来源并列：factory defaults ＋ the last valid values');
+    for (const name of ['async_wait_job', 'async_wait_agent', 'async_agent', 'async_workflow', 'async_list_subagent_models']) {
       assert.ok(buildToolText(name, resolveConfig({ toolName: name })).description.includes('Live config self-check failed'),
-        `${name} 的描述同样拼警示段（五个工具一律）`);
+        `${name} 的描述同样拼警示段（六个工具一律）`);
     }
     const zhConfig = resolveConfig({ toolName: 'async_run', agentLang: 'zh' });
-    assert.ok(buildToolText('async_run', zhConfig).description.includes('生效配置自检失败'),
+    const zhDesc = buildToolText('async_run', zhConfig).description;
+    assert.ok(zhDesc.includes('生效配置自检失败'),
       'zh 档警示段为中文');
+    assert.ok(zhDesc.includes('出厂默认值') && zhDesc.includes('上一合法值'),
+      'zh 警示段两态来源并列：出厂默认值 ＋ 上一合法值');
 
     clearDegraded();
     assert.ok(!buildToolText('async_run', cleanConfig).description.includes('Live config self-check failed'),

@@ -449,6 +449,8 @@ hostTest('J7：超时 → 合成 answers 逐字段（en/zh 两档；不代答）
     assert.equal(byId.q2.id, 'q2', 'id 一一对应');
     assert.equal(byId.q2.custom, t(agentLang, 'ask.timeoutCustom', { seconds: 5 }),
       `${agentLang}：custom = 超时语义句（窗口 5000 ms → seconds=5，词典逐字）`);
+    assert.ok(t(agentLang, 'ask.timeoutCustom', { seconds: 5 }).includes(agentLang === 'zh' ? '超过 24 小时' : 'more than 24 hours'),
+      `${agentLang}：超时合成答案写明只清超时超过 24 小时的记录（惰性清扫条件，防再省略）`);
   }
 });
 
@@ -518,12 +520,16 @@ hostTest('J11-a：运行中投递 → inject 恰一次、通知形（自声明 k
   assert.notEqual(message.source.kind, USER_MESSAGE_SOURCE, '与用户插话判定字面互斥（R12 不命中）');
   assert.equal(message.source.form, 'notice', 'form=notice（通知形）');
   assert.equal(message.source.questionId, 'q1', 'questionId 进 source（待读登记配对与唤醒题号）');
-  const expectedSummary = t('zh', 'ask.lateSummary', { qid: 'q1', answer: '选项一、选项二' });
-  assert.equal(message.source.summary, expectedSummary, 'summary = 一句话作答摘要（词典模板，含题号）');
+  const expectedSummary = t('zh', 'ask.lateSummary', {
+    qid: 'q1',
+    answer: '选项一、选项二；自定义回答：注意顺序'
+  });
+  assert.equal(message.source.summary, expectedSummary, 'summary = 一句话作答摘要（词典模板，含题号；与正文同一组实际答案）');
   assert.equal(message.content[0].type, 'text');
   // 正文自含完整题目内容（用户裁定）：稳定 id / 题干全文 / 选项标签全集 /
-  // multiSelect / 作答（标签 + custom）/ 时延——逐字段断言，删任一字段必红。
-  const expectedAnswer = '选项一、选项二' + t('zh', 'ask.lateCustomSuffix', { custom: '注意顺序' });
+  // multiSelect / 作答（已选预设项 + 自定义回答**并列**）/ 时延——逐字段断言，
+  // 删任一字段必红；自定义是独立答案条目，不是预设答案的附加说明。
+  const expectedAnswer = '选项一、选项二；' + t('zh', 'ask.lateCustomAnswer', { custom: '注意顺序' });
   const expectedText = t('zh', 'ask.lateAnswer', {
     qid: 'q1',
     question: '问题文本 q1',
@@ -535,12 +541,13 @@ hostTest('J11-a：运行中投递 → inject 恰一次、通知形（自声明 k
   });
   assert.equal(message.content[0].text, expectedText, '正文 = 词典模板逐字（自含题目内容全字段）');
   const text = message.content[0].text;
-  assert.match(text, /\[迟到应答\]/, '锚句在场');
+  assert.match(text, /\[迟到作答\]/, '锚句在场');
   for (const field of ['q1', '问题文本 q1', '选项一', '选项二', 'multiSelect=true', '注意顺序']) {
     assert.ok(text.includes(field), `自含字段在场：${field}`);
   }
   assert.match(text, /时延/, '时延字段在场（提问时间或时延——需求 §4.4 的时间信息）');
-  // 唤醒事件已发（需求 §4.4 到达即刻，先于投递；载荷细节 J22 专项）。
+  // 唤醒事件已发（投递被宿主接受之后才发——设计 §4.4 投递次序先于唤醒判定；
+  // 载荷细节 J22 专项）。
   assert.equal(emitted.length, 1, '事件恰一次');
   // 同一题二次提交 → gone，不重复注入：
   assert.equal(
@@ -736,7 +743,7 @@ hostTest('注入时刻活读 agentLang + 时延非零（假钟前进 37 s）', a
   });
   assert.equal(outcome, 'late');
   const message = agent.injectCalls[0];
-  assert.match(message.content[0].text, /\[迟到应答\]/, '注入语言跟随注入时刻活读（en 批 → zh 注入）');
+  assert.match(message.content[0].text, /\[迟到作答\]/, '注入语言跟随注入时刻活读（en 批 → zh 注入）');
   assert.match(message.content[0].text, /选项一、选项二/, 'zh 档分隔符（顿号）');
   assert.match(message.content[0].text, /时延：提问后 42 秒/, '时延 = 注入时刻 − receivedAt（窗口 5 s + 迟到 37 s）');
   assert.match(message.source.summary, /问题 q1 的迟到作答/, 'summary 同档（活读语言）');
@@ -764,7 +771,7 @@ hostTest('注入时刻活读 agentLang + 时延非零（假钟前进 37 s）', a
     registryFb.submitLate({ batchId: fbItem.batchId, questionId: 'q7', kind: 'answer', selected: ['选项一'] }),
     'late', '活读抛错不丢注入（outcome=late）'
   );
-  assert.match(agentFb.injectCalls[0].content[0].text, /\[迟到应答\]/,
+  assert.match(agentFb.injectCalls[0].content[0].text, /\[迟到作答\]/,
     '回退批次档（zh）注入——配置侧故障不改变注入语言');
 });
 
@@ -834,7 +841,8 @@ hostTest('J15：wire 核对——参数名/描述符/单层包裹三项', async 
   const answers = await pending;
   assert.deepEqual(answers.answers[0].selected, ['选项一'], '服务接口进本批记录');
   const lateResult = await service.answer({ batchId: items[0].batchId, questionId: 'q1', selected: ['x'] });
-  assert.deepEqual(lateResult, { outcome: 'gone' }, '批次已结 → gone（无迟到通道可走）');
+  assert.deepEqual(lateResult, { outcome: 'gone', undelivered: true },
+    '批次已结清出列 → gone＋undelivered（记录缺席口径，界面显示未送达）');
   // 迟到通道经 ignore 走一遍：
   const pending2 = registry.take(makeRequest(agent, [Q('q5')]), agent);
   const items2 = registry.stateItems().items;
@@ -845,6 +853,74 @@ hostTest('J15：wire 核对——参数名/描述符/单层包裹三项', async 
   assert.equal(agent.injectCalls.length, 1, '迟到忽略恰一次 inject（运行中默认档）');
   const state = await service.state();
   assert.equal(state.items.length, 0, '清零出列（迟到注入后批次删尽）');
+});
+
+// ── 作答有效性校验（需求 §4.2.4：服务端按原题拒绝非法作答）──────────────────
+
+hostTest('作答有效性校验——非法作答可见拒绝、不记已答、不投递；迟到路径同判', async () => {
+  const fakeReflectCtx = { reflect: { provide() {} } };
+  const agent = fakeAgent();
+  const { registry, timer } = makeRegistry({ agentLang: 'zh' });
+  const service = new AskTakeoverService(fakeReflectCtx, registry);
+  const pending = registry.take(makeRequest(agent, [Q('q1', { multiSelect: true }), Q('q2')]), agent);
+  const batchId = registry.stateItems().items[0].batchId;
+  const openOf = () => registry.stateItems().items
+    .filter((entry) => entry.batchId === batchId).map((entry) => entry.questionId).sort();
+
+  // 窗口内五类非法形态：未作答 / 空白自定义 / 未知选项 / 单选多项 / 单选预设+自定义。
+  const bad = [
+    { questionId: 'q2', selected: [], custom: undefined },
+    { questionId: 'q2', selected: [], custom: '   ' },
+    { questionId: 'q2', selected: ['不在选项里'], custom: undefined },
+    { questionId: 'q2', selected: ['选项一', '选项二'], custom: undefined },
+    { questionId: 'q2', selected: ['选项一'], custom: '还要补充' }
+  ];
+  for (const submission of bad) {
+    await assert.rejects(
+      () => service.answer({ batchId, ...submission }),
+      (error) => error.message.startsWith(t('zh', 'ask.answerRejectedError', { reason: '' })),
+      `非法作答可见拒绝：${JSON.stringify(submission)}`);
+  }
+  assert.deepEqual(openOf(), ['q1', 'q2'], '五次拒绝全部不记已答（两题仍开放）');
+  assert.equal(agent.injectCalls.length + agent.followupCalls.length, 0, '拒绝路径零投递');
+
+  // 合法多选组合放行：已选预设与自定义并列。
+  const ok = await service.answer({ batchId, questionId: 'q1', selected: ['选项一', '选项二'], custom: '注意顺序' });
+  assert.deepEqual(ok, { outcome: 'delivered' }, '合法组合：窗口内 delivered');
+  assert.deepEqual(openOf(), ['q2'], 'q1 落定、q2 仍开放（批次未结清）');
+
+  // gone 两口径（需求 §4.4）：q1 已落定而批次仍在 → 普通 gone（不带 undelivered，
+  // 题目已有答案，界面交轮询收敛）。
+  const decided = await service.answer({ batchId, questionId: 'q1', selected: ['选项一'] });
+  assert.deepEqual(decided, { outcome: 'gone' }, '已落定题：普通 gone，不报未送达');
+
+  // 迟到路径同样校验（§4.2.4 不因迟到放松）：到期后空白自定义 → 拒绝、不投递。
+  timer.fire(0);
+  await pending;
+  await assert.rejects(
+    () => service.answer({ batchId, questionId: 'q2', selected: [], custom: '  ' }),
+    (error) => error.message.includes(t('zh', 'ask.rejectBlankCustom')),
+    '迟到路径：空白自定义可见拒绝（原因可读、随 agentLang 两语）');
+  assert.equal(agent.injectCalls.length, 0, '非法迟到作答零投递');
+  assert.deepEqual(openOf(), ['q2'], '非法迟到作答不记已答（条目仍开放）');
+
+  // 合法迟到单选（仅自定义）：late 投递，自定义是独立答案条目、无预设标签冒充。
+  const late = await service.answer({ batchId, questionId: 'q2', selected: [], custom: '改主意了' });
+  assert.deepEqual(late, { outcome: 'late' }, '合法迟到作答：late');
+  assert.equal(agent.injectCalls.length, 1, '恰一次投递');
+  const text = agent.injectCalls[0].content[0].text;
+  assert.ok(text.includes('自定义回答：改主意了'), '迟到正文：自定义作独立答案条目');
+  assert.ok(!text.includes('选项一；自定义回答'), '无已选预设时不出现预设标签');
+  assert.ok(agent.injectCalls[0].source.summary.includes('自定义回答：改主意了'),
+    'summary 与正文表达同一组实际答案');
+
+  // 记录缺席（需求 §4.4）：两题落定、批次结清出列后再提交 → gone＋undelivered
+  // （区分字段，outcome 枚举不变；界面据此显示未送达）。
+  const missing = await service.answer({ batchId, questionId: 'q2', selected: ['选项一'] });
+  assert.deepEqual(missing, { outcome: 'gone', undelivered: true }, '记录缺席：undelivered 区分字段');
+  // 忽略提交同口径（需求 §4.4）：命中缺席批次 → 同 undelivered 区分。
+  const missingIgnore = await service.ignore({ batchId, questionId: 'q2' });
+  assert.deepEqual(missingIgnore, { outcome: 'gone', undelivered: true }, '忽略命中记录缺席：同口径 undelivered');
 });
 
 // ── 座位与快照活性（J16 + 变异：开关活读）─────────────────────────────────
@@ -1137,8 +1213,8 @@ test('J18：客户端模型行为——准入控制/轮询/裸传/失败路径�
     await Promise.resolve();
     assert.equal(doneFlag2, false, 'failed → onDone(false)（不冒充成功）');
     assert.deepEqual(model.store.getSnapshot().lostAnswers,
-      [{ batchId: 'ask-1-x', questionId: 'q1', question: '题目' }],
-      '没送达的迟到答案记名进 lostAnswers（面板报错名单）');
+      [{ batchId: 'ask-1-x', questionId: 'q1', question: '题目', sessionId: 's1' }],
+      '没送达的迟到答案记名进 lostAnswers（面板报错名单；携带所属会话 id 供「打开会话直接回复」的恢复入口）');
     // 复合键去重——同 questionId 不同批次的两条丢失**都**要记（单 questionId
     // 键会吞第二条）。
     const item2 = { ...item, batchId: 'ask-2-y' };
@@ -1154,7 +1230,7 @@ test('J18：客户端模型行为——准入控制/轮询/裸传/失败路径�
     // 消除动作：dismissLost 逐条收走（「知道了」）。
     model.actions.dismissLost('ask-1-x', 'q1');
     assert.deepEqual(model.store.getSnapshot().lostAnswers,
-      [{ batchId: 'ask-2-y', questionId: 'q1', question: '题目' }], '消除指定条');
+      [{ batchId: 'ask-2-y', questionId: 'q1', question: '题目', sessionId: 's1' }], '消除指定条');
     model.actions.dismissLost('ask-2-y', 'q1');
     assert.equal(model.store.getSnapshot().lostAnswers.length, 0, '消除后面板回到消隐口径');
     // RPC ok:false → onDone(false)，不进 lostAnswers（传输失败可重试）。
@@ -1204,13 +1280,22 @@ test('J23（失败三分）：明确拒绝 ≠ 未收到确认；延长失败先
   let stateResult = { ok: true, value: { serverNow: 10_000, items: [] } };
   let stateCalls = 0;
   let answerMode = 'ok';
+  let ignoreMode = 'ok';
   let extendMode = 'ok';
   const remoteNs = {
     state: () => { stateCalls += 1; return Promise.resolve(stateResult); },
     answer: () => answerMode === 'reject'
       ? Promise.reject(new Error('response lost'))
-      : Promise.resolve(answerMode === 'refuse' ? { ok: false } : { ok: true, value: { outcome: 'delivered' } }),
-    ignore: () => Promise.resolve({ ok: true, value: { outcome: 'delivered' } }),
+      : answerMode === 'refuse' ? Promise.resolve({ ok: false })
+      : answerMode === 'refuseReason' ? Promise.resolve({
+        ok: false, error: { code: 'gateway/internal', message: '[async-tools] 作答被拒：未作答', details: {} }
+      })
+      : answerMode === 'goneMissing' ? Promise.resolve({ ok: true, value: { outcome: 'gone', undelivered: true } })
+      : answerMode === 'goneDecided' ? Promise.resolve({ ok: true, value: { outcome: 'gone' } })
+      : Promise.resolve({ ok: true, value: { outcome: 'delivered' } }),
+    ignore: () => Promise.resolve(ignoreMode === 'goneMissing'
+      ? { ok: true, value: { outcome: 'gone', undelivered: true } }
+      : { ok: true, value: { outcome: 'delivered' } }),
     extend: () => extendMode === 'reject'
       ? Promise.reject(new Error('response lost'))
       : Promise.resolve(extendMode === 'refuse' ? { ok: false } : { ok: true, value: { extended: 1 } })
@@ -1242,6 +1327,7 @@ test('J23（失败三分）：明确拒绝 ≠ 未收到确认；延长失败先
   await Promise.resolve();
   assert.equal(done, false);
   assert.equal(model.store.getSnapshot().callFailed, 'answerRejected', '明确拒绝有专属旗标');
+  assert.equal(model.store.getSnapshot().answerRejectReason, null, '回执无 error 字段 → 不猜因（null）');
 
   // ③ 读取恢复：成功轮询刷新面板（真实状态收敛不确定态），动作旗标不闪没；
   //    下一次同动作成功才清除。
@@ -1257,7 +1343,7 @@ test('J23（失败三分）：明确拒绝 ≠ 未收到确认；延长失败先
   assert.equal(model.store.getSnapshot().callFailed, null, '同动作成功后清除失败旗标');
 
   // ③b 跨动作不牵连：提交被明确拒绝（answerRejected 挂起）→ 无关的延长成功
-  //     不得抹掉提交族报错；随后同动作成功才清除（B1 审查发现的分歧回归锚）。
+  //     不得抹掉提交族报错；随后同动作成功才清除（旗标族分歧的回归锚）。
   answerMode = 'refuse';
   model.actions.answer(item, ['a'], undefined, (ok) => { done = ok; });
   await Promise.resolve();
@@ -1275,6 +1361,79 @@ test('J23（失败三分）：明确拒绝 ≠ 未收到确认；延长失败先
   await Promise.resolve();
   assert.equal(done, true);
   assert.equal(model.store.getSnapshot().callFailed, null, '同动作（提交族）成功后清除');
+
+  // ③c gone 两口径（需求 §4.4）：他处已落定的普通 gone 不记名（题目已有答案，
+  //     交轮询收敛）；记录缺席（undelivered:true）→ 未送达名单——可消除、轮询
+  //     不清、成功不清（逐条事实，与 lostAnswers 同款）。
+  answerMode = 'goneDecided';
+  model.actions.answer(item, ['a'], undefined, (ok) => { done = ok; });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(done, false);
+  assert.equal(model.store.getSnapshot().undelivered.length, 0,
+    '他处已落定的普通 gone 不报未送达（收敛交轮询，不记名）');
+  answerMode = 'goneMissing';
+  model.actions.answer(item, ['a'], undefined, (ok) => { done = ok; });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(done, false);
+  assert.deepEqual(model.store.getSnapshot().undelivered,
+    [{ batchId: 'ask-3-a', questionId: 'q3', question: '题目' }],
+    '记录缺席的 gone：未送达名单逐字记入（复合键）');
+  // 轮询清空 items（记录不在，state() 不再列出）——未送达名单必须保留：
+  // 座位渲染条件（askHasFace）计名单，报错不能随条目清空闪没（需求 §4.4 判据）。
+  stateResult = { ok: true, value: { serverNow: 12_000, items: [], lost: [] } };
+  await intervals[0].fn();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(model.store.getSnapshot().items.length, 0, '前置：轮询已清空条目');
+  assert.equal(model.store.getSnapshot().undelivered.length, 1, '轮询不清未送达名单');
+  // 成功不清名单（未读失败不算处理完）——只有「知道了」手动消除。
+  answerMode = 'ok';
+  model.actions.answer(item, ['a'], undefined, (ok) => { done = ok; });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(done, true);
+  assert.equal(model.store.getSnapshot().undelivered.length, 1, '提交成功不清未送达名单');
+  model.actions.dismissUndelivered('ask-3-a', 'q3');
+  assert.equal(model.store.getSnapshot().undelivered.length, 0, '「知道了」消除收走该条');
+
+  // ③d 忽略提交同口径（需求 §4.4）：记录缺席的忽略 → 同一未送达名单；
+  //     消除后再提交同题会重新记入（新尝试、新的未送达事实）。
+  ignoreMode = 'goneMissing';
+  model.actions.ignore(item, (ok) => { done = ok; });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(done, false);
+  assert.equal(model.store.getSnapshot().undelivered.length, 1, '忽略命中记录缺席：未送达名单（与作答同口径）');
+  ignoreMode = 'ok';
+  model.actions.ignore(item, (ok) => { done = ok; });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(done, true);
+  assert.equal(model.store.getSnapshot().undelivered.length, 1, '忽略成功同样不清名单');
+  model.actions.dismissUndelivered('ask-3-a', 'q3');
+  assert.equal(model.store.getSnapshot().undelivered.length, 0, '手动消除后归零');
+
+  // ③e 拒绝原因透传：回执 error 是 gateway rpcFailure 对象（{code,message,
+  //     details}，voice-input 同款读法）——message 携带服务端拒绝原因（随
+  //     agentLang）→ answerRejectReason 原样展示；message 缺席 → null（不猜因）；
+  //     成功清除。
+  answerMode = 'refuseReason';
+  model.actions.answer(item, ['a'], undefined, (ok) => { done = ok; });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(done, false);
+  assert.equal(model.store.getSnapshot().callFailed, 'answerRejected', '明确拒绝档旗标');
+  assert.equal(model.store.getSnapshot().answerRejectReason, '[async-tools] 作答被拒：未作答',
+    '回执 error 原因串透传（不预判原因）');
+  answerMode = 'ok';
+  model.actions.answer(item, ['a'], undefined, (ok) => { done = ok; });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(done, true);
+  assert.equal(model.store.getSnapshot().answerRejectReason, null, '成功清除拒绝原因串');
+  assert.equal(model.store.getSnapshot().callFailed, null, '成功清除拒绝旗标');
 
   // ④ 延长三分：RPC 拒绝 → 'extend' 且立即 poll() 复查真期限（state 再被调）。
   const stateCallsBefore = stateCalls;
@@ -1313,11 +1472,19 @@ test('J23（失败三分）：明确拒绝 ≠ 未收到确认；延长失败先
   assert.doesNotMatch(zh['ask.callFailed'], /没有送达/, 'zh 未确认档不得断定未送达');
   assert.match(zh['ask.answerRejected'], /明确拒绝[\s\S]*没有生效/, 'zh 明确拒绝档：可断定未执行');
   assert.match(en['ask.answerRejected'], /explicitly refused[\s\S]*did not take effect/, 'en 明确拒绝档同');
+  assert.doesNotMatch(zh['ask.answerRejected'], /内容无效|状态已变/, 'zh 明确拒绝档：静态文案不预判原因（原因由回执 error 透传）');
+  assert.doesNotMatch(en['ask.answerRejected'], /invalid|state changed/, 'en 明确拒绝档同');
+  assert.match(zh['ask.undelivered'], /未送达[\s\S]*未被接受/, 'zh 未送达档：直说未送达且不称已接受');
+  assert.match(zh['ask.undelivered'], /在所属会话中直接回复/, 'zh 未送达档：带可行的下一步（需求 §5.7.2）');
+  assert.match(en['ask.undelivered'], /Not delivered[\s\S]*not accepted/, 'en 未送达档同');
+  assert.match(en['ask.undelivered'], /reply directly in the session/, 'en 未送达档：下一步同');
   assert.match(zh['ask.extendFailed'], /可能已生效，也可能没有/, 'zh 延长未确认：不确定执行与否');
   assert.match(zh['ask.extendFailed'], /每次点击都会累加/, 'zh 延长未确认：累加语义诚实（不伪幂等）');
   assert.match(en['ask.extendFailed'], /each click adds up/, 'en 同');
   assert.match(zh['ask.extendRejected'], /明确拒绝[\s\S]*没有生效/, 'zh 延长明确拒绝档');
   assert.match(en['ask.extendRejected'], /explicitly refused[\s\S]*did not take effect/, 'en 延长明确拒绝档');
+  assert.match(zh['ask.extendRejected'], /面板自动刷新/, 'zh 延长明确拒绝档：带面板自刷新出路（三要素齐全）');
+  assert.match(en['ask.extendRejected'], /refreshes automatically/, 'en 延长明确拒绝档：自刷新出路同');
   model.dispose();
 });
 
@@ -1334,7 +1501,9 @@ test('J19：座位渲染门——关/计数 0/座位不匹配三态渲染 null�
     mutate: async () => true
   };
   const ctx = { configForms: { get: () => scope }, remote: {}, uiWorkspace: { openSession() {} } };
-  const model = product.createAskModel(ctx, {});
+  // （重新）开启即发起首查：remote 按 L1543 同款回 {ok:false}——callFailed
+  // 不影响座位准入，也不覆盖手工塞的 items。
+  const model = product.createAskModel(ctx, { state: async () => ({ ok: false }) });
   const seatProps = { ask: model, ctx };
   const renderComp = (fn) => react.render(fn);
 
@@ -1391,12 +1560,17 @@ test('J19：座位渲染门——关/计数 0/座位不匹配三态渲染 null�
   scopeListener();
   const live = model.store.getSnapshot();
   live.items = [];
-  live.lostAnswers = [{ batchId: 'b', questionId: 'q1', question: 'q' }];
+  live.lostAnswers = [{ batchId: 'b', questionId: 'q1', question: 'q', sessionId: 's-lost' }];
   const lostOnly = renderComp(() => product.AskOverlaySeat(seatProps));
   assert.ok(lostOnly !== null, '只剩 lostAnswers 时 overlay 座位不消隐');
   const lostPanel = renderComp(() => product.AskList({ ask: model }));
   const lostLine = lostPanel.children.find((child) => child?.props?.className === 'ats-ask-failed');
   assert.ok(lostLine !== undefined, '报错名单渲染在面板顶');
+  // 恢复入口（需求 §4.4 失败提示的可行下一步）：所属会话 id 在场时报错行带
+  // 「打开会话」按钮（题已出列，出路＝去所属会话直接回复）；缺席时不带。
+  const jumpBtn = lostLine.children.find((child) => child?.props?.className === 'ats-ask-jump');
+  assert.ok(jumpBtn !== undefined, '会话 id 在场的丢失条目带「打开会话」恢复按钮');
+  assert.ok(typeof jumpBtn.props.onClick === 'function', 'jump 按钮 onClick 是函数');
   const dismissBtn = lostLine.children.find((child) => child?.props?.className === 'ats-ask-dismiss');
   assert.ok(dismissBtn !== undefined, '每条报错带「知道了」消除按钮');
   dismissBtn.props.onClick();
@@ -1407,38 +1581,142 @@ test('J19：座位渲染门——关/计数 0/座位不匹配三态渲染 null�
   scopeListener();
   model.store.getSnapshot().lostAnswers = [{ batchId: 'b', questionId: 'q2', question: 'q' }];
   assert.ok(renderComp(() => product.AskSidebarSeat(seatProps)) !== null, 'sidebar 座位同门（lostAnswers 计入）');
+  const noJumpPanel = renderComp(() => product.AskList({ ask: model }));
+  const noJumpLine = noJumpPanel.children.find((child) => child?.props?.className === 'ats-ask-failed');
+  assert.ok(noJumpLine.children.find((child) => child?.props?.className === 'ats-ask-jump') === undefined,
+    '会话 id 缺席的丢失条目不带跳转按钮（无从跳转，不摆空入口）');
+  // ⑤b 未送达名单计入同一渲染条件（需求 §4.4 判据）：记录缺席的提交后条目随
+  //     轮询清空，只剩 undelivered 名单 → 座位仍渲染、条目在场、可消除、消除完消隐。
+  //     （回归锚：纯旗标方案在此形态闪现即逝——变异 askHasFace 不计名单、或
+  //     未送达渲染行丢失，此处必红。）
+  snap = { status: 'ready', value: { askTakeover: true, askUiSeat: 'overlay' }, user: {} };
+  scopeListener();
+  const liveUnd = model.store.getSnapshot();
+  liveUnd.items = [];
+  liveUnd.lostAnswers = [];
+  liveUnd.undelivered = [{ batchId: 'b', questionId: 'q9', question: 'q' }];
+  assert.ok(renderComp(() => product.AskOverlaySeat(seatProps)) !== null,
+    '只剩未送达名单时 overlay 座位不消隐（记录缺席后条目已清空的最常见形态）');
+  const undPanel = renderComp(() => product.AskList({ ask: model }));
+  const undLine = undPanel.children.find((child) => child?.props?.className === 'ats-ask-failed');
+  assert.ok(undLine !== undefined, '未送达条渲染在面板顶（带题目标识）');
+  const undDismiss = undLine.children.find((child) => child?.props?.className === 'ats-ask-dismiss');
+  assert.ok(undDismiss !== undefined, '未送达条带「知道了」消除按钮（与报错名单同款）');
+  undDismiss.props.onClick();
+  assert.equal(model.store.getSnapshot().undelivered.length, 0, '点击消除收走该条');
+  assert.equal(renderComp(() => product.AskOverlaySeat(seatProps)), null, '消除完 → 座位回到消隐口径');
   model.dispose();
 });
 
-test('AskItem 单选替换语义——multiSelect=false 点第二个 chip 是替换不是叠加', async () => {
+test('AskItem 作答选择与提交（需求 §4.2.1–§4.2.4）——单选互斥、多选组合、草稿排除与两侧有效性', async () => {
   const react = makeMiniReact();
   const product = await loadClientProduct(react, { setInterval: () => 0, clearInterval: () => {} });
   const t = (key) => key;
-  const ask = { actions: { answer() {}, ignore() {}, jump() {}, dismissLost() {} }, store: null };
-  const pressed = () => react.__lastTree.children[1].children
-    .map((chip) => chip.props['aria-pressed'] === 'true');
+  const submitted = [];
+  const ask = {
+    actions: {
+      answer(item, selected, custom, onDone) {
+        submitted.push({ selected, custom });
+        if (typeof onDone === 'function') onDone();
+      },
+      ignore() {}, jump() {}, dismissLost() {}
+    },
+    store: null
+  };
+  const base = { batchId: 'b', sessionId: 's', question: 'q', receivedAt: 0,
+    expiresAt: Date.now() + 60000, phase: 'open' };
+  const opts = () => react.__lastTree.children.find((c) => c?.props?.className === 'ats-ask-opts').children;
+  const optionStates = () => opts().filter((n) => n?.type === 'button' && n?.props?.role !== undefined)
+    .map((n) => n.props['aria-checked'] === 'true');
+  const customCtl = () => opts()[opts().length - 1].children[0];
+  const customInput = () => opts()[opts().length - 1].children[1];
+  const row = () => react.__lastTree.children.find((c) => c?.props?.className === 'ats-ask-row');
+  const submitBtn = () => row().children[0];
+  const reason = () => react.__lastTree.children.find((c) => c?.props?.className === 'ats-ask-reason');
 
-  // 单选（multiSelect 缺省 false）：a → b 应替换（false→true 翻转、a 弹回）。
-  const single = { batchId: 'b', sessionId: 's', questionId: 'q1', question: 'q', multiSelect: false,
-    options: [{ label: 'a' }, { label: 'b' }], receivedAt: 0, expiresAt: Date.now() + 60000, phase: 'open' };
+  // ── 单选（multiSelect 缺省 false）────────────────────────────────────────
+  const single = { ...base, questionId: 'q1', multiSelect: false,
+    options: [{ label: 'a' }, { label: 'b' }] };
   react.render(() => product.AskItem({ item: single, t, ask, serverNow: 0, fetchedAt: 0 }));
-  const singleChips = () => react.__lastTree.children[1].children;
-  singleChips()[0].props.onClick();
-  assert.deepEqual(pressed(), [true, false], '单选：点 a 只选 a');
-  singleChips()[1].props.onClick();
-  assert.deepEqual(pressed(), [false, true], '单选：点 b **替换**为 b（回退成恒 toggle 时这里会是 [true,true]→红）');
-  singleChips()[1].props.onClick();
-  assert.deepEqual(pressed(), [false, true], '单选：重复点 b 保持 b（替换语义，非 toggle）');
+  assert.deepEqual(optionStates(), [false, false], '初始无选择（不默认选推荐项）');
+  assert.equal(submitBtn().props.disabled, true, '无选择禁用提交（就近说明在场）');
+  assert.equal(reason()?.children[0], 'ask.needAnswer', '就近说明：需要选择答案');
+  assert.notEqual(row().children[1].props.disabled, true, '忽略不受有效性限制（独立于作答）');
+  opts()[0].props.onClick();
+  assert.deepEqual(optionStates(), [true, false], '单选：点 a 只选 a');
+  assert.equal(submitBtn().props.disabled, false, '有选择可提交');
+  opts()[1].props.onClick();
+  assert.deepEqual(optionStates(), [false, true], '单选：点 b **替换**为 b（回退成恒 toggle 时这里会是 [true,true]→红）');
+  opts()[1].props.onClick();
+  assert.deepEqual(optionStates(), [false, true], '单选：重复点 b 保持 b（替换语义，非 toggle）');
 
-  // 多选（multiSelect=true）：a、b 可叠加、可各自弹回。
-  const multi = { ...single, multiSelect: true };
+  // 单选与自定义互斥（§4.2.1）：输入文本选中自定义 → 预设弹回；草稿保留。
+  customInput().props.onChange({ target: { value: '我的答案' } });
+  assert.equal(customCtl().props['aria-checked'], 'true', '输入非空白文本选中自定义项');
+  assert.deepEqual(optionStates(), [false, false], '单选：自定义与预设互斥（b 弹回）');
+  assert.equal(customInput().props.value, '我的答案', '草稿随组件保存');
+  customCtl().props.onClick();
+  assert.equal(customCtl().props['aria-checked'], 'false', '选择控件取消自定义选择');
+  assert.equal(customInput().props.value, '我的答案', '取消选择不清草稿');
+  assert.equal(submitBtn().props.disabled, true, '回到无选择：禁用提交');
+  customInput().props.onClick();
+  assert.equal(customCtl().props['aria-checked'], 'true', '再次点击输入框重新选中');
+  assert.equal(customInput().props.onFocus, undefined, '键盘焦点移动不改选择（无 onFocus 选择副作用）');
+
+  // 清空已选自定义文本（§4.2.2）：保持选中、禁用提交、不恢复旧预设。
+  customInput().props.onChange({ target: { value: '' } });
+  assert.equal(customCtl().props['aria-checked'], 'true', '清空文本保持自定义选中');
+  assert.deepEqual(optionStates(), [false, false], '不自动恢复预设选择');
+  assert.equal(submitBtn().props.disabled, true, '选中的自定义空白：禁用提交');
+  assert.equal(reason()?.children[0], 'ask.needCustom', '就近说明换档：自定义空白');
+  // Enter 快捷键与按钮同规则（§4.2.4）：无效状态下 Enter 不提交。
+  customInput().props.onKeyDown({ key: 'Enter', preventDefault() {} });
+  assert.equal(submitted.length, 0, '空白自定义：Enter 不提交');
+  // 填回文本：载荷只含自定义原文（空白检查不改写用户文本）。
+  customInput().props.onChange({ target: { value: ' 前后空白 ' } });
+  customInput().props.onKeyDown({ key: 'Enter', preventDefault() {} });
+  assert.deepEqual(submitted[submitted.length - 1], { selected: [], custom: ' 前后空白 ' },
+    'Enter 提交：自定义原文照发（未选中草稿不存在）');
+
+  // 草稿排除（§4.2.2）：取消自定义、改选预设 a → 未选中草稿不进载荷。
+  customCtl().props.onClick();
+  opts()[0].props.onClick();
+  submitBtn().props.onClick();
+  assert.deepEqual(submitted[submitted.length - 1], { selected: ['a'], custom: undefined },
+    '未选中的自定义草稿不进提交载荷');
+
+  // ── 多选（multiSelect=true）─────────────────────────────────────────────
+  const multi = { ...base, questionId: 'q2', multiSelect: true,
+    options: [{ label: 'a' }, { label: 'b' }] };
   react.render(() => product.AskItem({ item: multi, t, ask, serverNow: 0, fetchedAt: 0 }));
-  const multiChips = () => react.__lastTree.children[1].children;
-  multiChips()[0].props.onClick();
-  multiChips()[1].props.onClick();
-  assert.deepEqual(pressed(), [true, true], '多选：a、b 叠加');
-  multiChips()[0].props.onClick();
-  assert.deepEqual(pressed(), [false, true], '多选：a 弹回、b 保留');
+  opts()[0].props.onClick();
+  opts()[1].props.onClick();
+  assert.deepEqual(optionStates(), [true, true], '多选：a、b 叠加');
+  opts()[0].props.onClick();
+  assert.deepEqual(optionStates(), [false, true], '多选：a 弹回、b 保留');
+  // 多选空白自定义不被预设掩盖（§4.2.4）。
+  customInput().props.onChange({ target: { value: 'x' } });
+  assert.equal(customCtl().props['aria-checked'], 'true', '多选：自定义独立选中');
+  assert.deepEqual(optionStates(), [false, true], '多选：自定义选中不清预设');
+  customInput().props.onChange({ target: { value: ' ' } });
+  assert.equal(submitBtn().props.disabled, true, '多选：空白自定义仍禁用提交（已选预设不能掩盖）');
+  assert.equal(reason()?.children[0], 'ask.needCustom', '就近说明指向自定义空白');
+  customInput().props.onChange({ target: { value: '又一条' } });
+  assert.equal(submitBtn().props.disabled, false, '填回有效文本可提交');
+  submitBtn().props.onClick();
+  assert.deepEqual(submitted[submitted.length - 1], { selected: ['b'], custom: '又一条' },
+    '多选组合载荷：已选预设与自定义并列');
+
+  // ── 无预设项（§4.2.1：没有预设项时同样可自定义作答）────────────────────
+  const free = { ...base, questionId: 'q3', multiSelect: false, options: [] };
+  react.render(() => product.AskItem({ item: free, t, ask, serverNow: 0, fetchedAt: 0 }));
+  assert.equal(opts().length, 1, '无预设项：只渲染自定义项');
+  assert.equal(submitBtn().props.disabled, true, '初始无选择禁用提交');
+  customInput().props.onClick();
+  customInput().props.onChange({ target: { value: '自由作答' } });
+  submitBtn().props.onClick();
+  assert.deepEqual(submitted[submitted.length - 1], { selected: [], custom: '自由作答' },
+    '无预设项：仅自定义作答');
 });
 
 test('恢复可见即刻本地重算——同步 notify 先于 poll 往返，重新聚焦不闪旧值（v3）', async () => {
@@ -1500,7 +1778,7 @@ test('AskItem 本地走秒——轮询挂起时读数照走，不冻结在最后
       multiSelect: false, receivedAt: 0, expiresAt: fakeNow + 60000, phase: 'open' };
     react.render(() => product.AskItem({ item, t, ask, serverNow: 0, fetchedAt: 0 }));
     const leftSeconds = () => {
-      const row = react.__lastTree.children[react.__lastTree.children.length - 1];
+      const row = react.__lastTree.children.find((child) => child?.props?.className === 'ats-ask-row');
       const span = row.children.find((child) => child?.props?.className === 'ats-ask-left');
       return String(span.children);
     };
@@ -1650,7 +1928,7 @@ test('J21：语言三档——auto 经 ctx.locale 跟宿主语言，zh/en 钉住
 
 // ── J22：唤醒事件 + 末步竞态补醒 + 起始检查对账（迟到作答通道，需求 §4.4）──────
 
-hostTest('J22-①：作答/忽略到达即刻发本包事件恰一次，作答与忽略同形、载荷含 agent 标识与题号', async () => {
+hostTest('J22-①：作答/忽略投递接受后发本包事件恰一次，作答与忽略同形、载荷含 agent 标识与题号', async () => {
   const agent = fakeAgent('s-evt');
   const { registry, timer, emitted } = makeRegistry({ agentLang: 'en' });
   const pending = registry.take(makeRequest(agent, [Q('q1'), Q('q2')]), agent);
@@ -1737,8 +2015,9 @@ hostTest('J22-④：补醒失败 → 滞留条目转 lost 名单（复合键去�
   agent.finishTurn({ claim: false });
   await flush();
   assert.deepEqual(registry.stateItems().lost, [{
-    batchId: items[0].batchId, questionId: 'q1', question: '问题文本 q1'
-  }], '补醒失败 → lost 名单（含题目内容供面板报错）');
+    batchId: items[0].batchId, questionId: 'q1', question: '问题文本 q1',
+    sessionId: 's-sweepfail'
+  }], '补醒失败 → lost 名单（含题目内容供面板报错；携带所属会话 id 供恢复入口）');
   assert.equal(registry.lateLedger.length, 0, '转 lost 后账本出清');
 });
 
@@ -1845,6 +2124,97 @@ hostTest('J22-⑧：补醒观察期 inbox 不可读 → 观察失败防护（不
   assert.equal(agent.followupCalls.length, 1, '恢复可读后重新武装：补醒提醒恰一条（两滞留条都还在账上）');
   const reminder = agent.followupCalls[0];
   assert.equal(reminder.source.form, 'reminder', '补醒条 form:reminder（不冒充答案）');
+});
+
+hostTest('J25（A-F08）：投递次序先于唤醒判定——投递抛错不制造到达事实，等待方按原预算继续；成功投递恰一次事件+账本在册+等待方唤醒', async () => {
+  // 反例形态（sol core-probes「late delivery rejection still wakes an active
+  // wait」）：合法超时题迟到提交、主体 inject 抛错、outcome=failed——旧次序先发
+  // 事件，活动等待在数毫秒内被「答案已到」唤醒，收件箱却为空。等待方用真实的
+  // watchLateAnswer（async_wait_* 的迟到唤醒信号源）模拟；注册表的 emit 同步
+  // 转发进 fakeCtx 的 ctx.emit，事件侧与起始检查侧两路命中口径都真实可观察。
+  const { ctx } = fakeCtx();
+  const emitted = [];
+  let clockNow = 1_000_000;
+  const registry = new AskBatchRegistry({
+    timer: fakeTimer(),
+    readSnapshot: () => ({ askTakeover: true, askTimeoutMs: 5000, agentLang: 'en' }),
+    emit: (name, payload) => { emitted.push({ name, payload }); ctx.emit(name, payload); },
+    now: () => clockNow
+  });
+
+  // ── 反例组：运行中（走 inject）+ inject 同步抛错 ──
+  const broken = fakeAgent('s-latefail'); // 默认 running → inject 通道
+  const pendingBad = registry.take(makeRequest(broken, [Q('q1')]), broken);
+  const badItem = registry.stateItems().items[0];
+  clockNow += 5000;
+  registry.timer.fire(0);
+  await pendingBad;
+  broken.inject = () => { throw new Error('agent gone'); };
+  // 等待方先挂（收件箱为空——起始检查不命中），再迟到提交：
+  const waiting = watchLateAnswer(ctx, broken);
+  assert.equal(
+    registry.submitLate({ batchId: badItem.batchId, questionId: 'q1', kind: 'answer', selected: ['x'] }),
+    'failed', '投递抛错 → outcome=failed（既有回执路径）'
+  );
+  assert.equal(emitted.length, 0, '零 LATE_ANSWER_EVENT——宿主没收下，不制造到达事实');
+  assert.equal(registry.lateLedger.length, 0, '待领账本零登记');
+  assert.equal(registry.sweeps.size, 0, '空闲观察零武装');
+  assert.equal(registry.stateItems().lost.length, 0, '投递失败不进 lost（那是补醒失败名单）');
+  assert.equal(registry.batches.size, 0, 'failed 仍出列（J12 口径不变）');
+  // 等待方不被「答案已到」打断：事件没发、收件箱为空（事件与起始检查两路都
+  // 不命中），等待保持原预算继续、到期照常交回。已 resolve 的 promise 在微任务
+  // 里先于 flush（宏任务）胜出——quiet ＝ 确实没醒（旧次序此处必得 woken）。
+  const raceBad = await Promise.race([
+    waiting.promise.then(() => 'woken'),
+    flush().then(() => 'quiet')
+  ]);
+  assert.equal(raceBad, 'quiet', '等待方未被唤醒（收件箱为空的「答案已到」不出现）');
+  waiting.dispose();
+
+  // ── followup 通道（空闲）抛错同判：事件同样不发 ──
+  const brokenIdle = fakeAgent('s-latefail-idle', { status: 'idle' });
+  const pendingIdle = registry.take(makeRequest(brokenIdle, [Q('q2')]), brokenIdle);
+  const idleItem = registry.stateItems().items.find((item) => item.questionId === 'q2');
+  clockNow += 5000;
+  registry.timer.fire(registry.timer.armed.length - 1);
+  await pendingIdle;
+  brokenIdle.followup = () => { throw new Error('agent gone idle'); };
+  const waitingIdle = watchLateAnswer(ctx, brokenIdle);
+  assert.equal(
+    registry.submitLate({ batchId: idleItem.batchId, questionId: 'q2', kind: 'ignore' }),
+    'failed', 'followup 抛错 → failed（两通道一个口径）'
+  );
+  assert.equal(emitted.length, 0, 'followup 失败同样零事件');
+  assert.equal(
+    (await Promise.race([waitingIdle.promise.then(() => 'woken'), flush().then(() => 'quiet')])),
+    'quiet', '空闲通道失败同样不唤醒等待方'
+  );
+  waitingIdle.dispose();
+
+  // ── 对照组：同批形状、inject 成功 → 事件恰一次、账本在册、等待方唤醒 ──
+  const agent = fakeAgent('s-lateok');
+  const pendingOk = registry.take(makeRequest(agent, [Q('q3')]), agent);
+  const okItem = registry.stateItems().items.find((item) => item.questionId === 'q3');
+  clockNow += 5000;
+  registry.timer.fire(registry.timer.armed.length - 1);
+  await pendingOk;
+  const waitingOk = watchLateAnswer(ctx, agent);
+  assert.equal(
+    registry.submitLate({ batchId: okItem.batchId, questionId: 'q3', kind: 'answer', selected: ['y'] }),
+    'late', '投递接受 → late'
+  );
+  assert.equal(emitted.length, 1, '事件恰一次');
+  assert.equal(emitted[0].name, LATE_ANSWER_EVENT, '事件名 = 本包常量');
+  assert.equal(emitted[0].payload.questionId, 'q3', '载荷含题号');
+  assert.equal(registry.lateLedger.length, 1, '账本在册');
+  assert.equal(registry.lateLedger[0].questionId, 'q3', '账本条目配对题号');
+  const signal = await Promise.race([
+    waitingOk.promise,
+    flush().then(() => null)
+  ]);
+  assert.ok(signal !== null, '等待方被唤醒（投递接受后事件即达）');
+  assert.equal(signal.qid, 'q3', '唤醒信号透传题号');
+  waitingOk.dispose();
 });
 
 // ═══════════════════ 延长等待（需求 §4.3，判据 E1–E8）═════════════════════
@@ -2216,3 +2586,129 @@ test('E7：客户端组头延长按钮——extend 裸传 {sessionId}、失败�
 function registry_take(rig, agent, questionId) {
   return rig.registry.take(makeRequest(agent, [Q(questionId)]), agent);
 }
+
+// ---------------------------------------------------------------------------
+// 状态读取代际（设计 §4.3）。反例形态（受控客户端实测）：A 先发、B 后发
+// 先回，随后 A 的旧响应把新题目与期限回退；开关关闭后，在途回执仍把题目
+// 写回隐藏状态。下列用例用手控 Promise 复现这些时序，验证代际判定——
+// 较旧响应不回退已取得的新题目、计数与期限，旧代迟到回执零写入。
+// ---------------------------------------------------------------------------
+
+test('J40：状态读取代际——同代乱序：后发先回先应用，较旧回执不回退题目与期限', async () => {
+  const react = makeMiniReact();
+  const intervals = [];
+  const product = await loadClientProduct(react, {
+    setInterval: (fn, ms) => { intervals.push({ fn, ms }); return intervals.length; },
+    clearInterval: () => {}
+  });
+  // 手控 remote：state 的回执由测试按任意次序兑现（乱序的装置形态）。
+  const pending = [];
+  const remoteNs = { state: () => new Promise((res) => { pending.push(res); }) };
+  let snap = { status: 'ready', value: { askTakeover: true, askUiSeat: 'sidebar' }, user: {} };
+  const scope = { getSnapshot: () => snap, subscribe: () => () => {}, mutate: async () => true };
+  const ctx = { configForms: { get: () => scope }, uiWorkspace: { openSession() {} } };
+  const flush = async () => { for (let i = 0; i < 4; i++) await Promise.resolve(); };
+
+  const model = product.createAskModel(ctx, remoteNs);
+  await flush();
+  assert.equal(pending.length, 1, '开启即发起首查（不等第一个轮询间隔）');
+
+  // 定时轮询发起第二读（A=首查 seq1，B=seq2）；B 先回：serverNow=200、items=[]。
+  await intervals[0].fn();
+  await flush();
+  assert.equal(pending.length, 2, '两读在途（重叠）');
+  pending[1]({ ok: true, value: { serverNow: 200, items: [] } });
+  await flush();
+  let s = model.store.getSnapshot();
+  assert.equal(s.serverNow, 200, '后发的新状态先应用');
+  const fetchedAtB = s.fetchedAt;
+
+  // A 后回：serverNow=100、items=[OLD] —— 较旧回执丢弃。
+  pending[0]({ ok: true, value: { serverNow: 100, items: [{ batchId: 'OLD', questionId: 'q', sessionId: 's' }] } });
+  await flush();
+  s = model.store.getSnapshot();
+  assert.equal(s.serverNow, 200, '较旧回执不回退 serverNow');
+  assert.equal(s.items.length, 0, '已处理的问题不因过期响应重新出现');
+  assert.equal(s.fetchedAt, fetchedAtB, 'fetchedAt 不回退');
+  model.dispose();
+});
+
+test('J41：状态读取代际——关闭／重开／卸载：迟到成功与失败回执零写入，失败旗标不跨代', async () => {
+  const react = makeMiniReact();
+  const intervals = [];
+  const product = await loadClientProduct(react, {
+    setInterval: (fn, ms) => { intervals.push({ fn, ms }); return intervals.length; },
+    clearInterval: () => {}
+  });
+  const pending = [];
+  const remoteNs = { state: () => new Promise((res) => { pending.push(res); }) };
+  const scopeListeners = [];
+  let snap = { status: 'ready', value: {}, user: {} };
+  const scope = {
+    getSnapshot: () => snap,
+    subscribe: (fn) => { scopeListeners.push(fn); return () => {}; },
+    mutate: async () => true
+  };
+  const ctx = { configForms: { get: () => scope }, uiWorkspace: { openSession() {} } };
+  const flush = async () => { for (let i = 0; i < 4; i++) await Promise.resolve(); };
+  const setSnap = (value) => { snap = value; scopeListeners.forEach((fn) => fn()); };
+  const ENABLED = { status: 'ready', value: { askTakeover: true, askUiSeat: 'sidebar' }, user: {} };
+  const DISABLED = { status: 'ready', value: {}, user: {} };
+
+  const model = product.createAskModel(ctx, remoteNs);
+  await flush();
+  assert.equal(pending.length, 0, '初始关：零读取');
+
+  // ① 开启 → 首查 A 在途；关闭 → 代数推进、题目与 serverNow 清空。
+  setSnap(ENABLED);
+  await flush();
+  assert.equal(pending.length, 1, '开启即首查');
+  setSnap(DISABLED);
+  await flush();
+  let s = model.store.getSnapshot();
+  assert.equal(s.enabled, false);
+  assert.equal(s.items.length, 0, '关闭清题目');
+  assert.equal(s.serverNow, 0, '关闭清 serverNow');
+
+  // ② A 成功迟到（带题目、serverNow=300）——旧代回执丢弃。
+  pending[0]({ ok: true, value: { serverNow: 300, items: [{ batchId: 'LATE', questionId: 'q2', sessionId: 's' }] } });
+  await flush();
+  s = model.store.getSnapshot();
+  assert.equal(s.serverNow, 0, '关闭后的迟到成功回执零写入');
+  assert.equal(s.items.length, 0, '题目不回填隐藏状态');
+
+  // ③ 重开 → 新代首查 B；B 应用新状态（新生命周期不被旧代污染）。
+  setSnap(ENABLED);
+  await flush();
+  assert.equal(pending.length, 2, '重开即首查');
+  pending[1]({ ok: true, value: { serverNow: 400, items: [{ batchId: 'NEW', questionId: 'q3', sessionId: 's' }] } });
+  await flush();
+  s = model.store.getSnapshot();
+  assert.equal(s.serverNow, 400, '新代正常应用');
+  assert.equal(s.items[0]?.batchId, 'NEW', '新代题目在场');
+
+  // ④ 失败迟到不跨代：开启期再发一读（C 在途），关闭后 C 失败返回——
+  // 旧代失败不立 callFailed:'state'。
+  await intervals[1].fn();
+  await flush();
+  assert.equal(pending.length, 3, '开启期第二读在途');
+  setSnap(DISABLED);
+  await flush();
+  pending[2](undefined);
+  await flush();
+  s = model.store.getSnapshot();
+  assert.equal(s.callFailed, null, "关闭后的迟到失败不立 callFailed='state'");
+
+  // ⑤ 卸载：重开、首查 D 在途，dispose 后 D 成功返回——零写入。④ 的关闭
+  // 已把 serverNow／items 清零，这里是「卸载后不得再被回执改写」的基线。
+  setSnap(ENABLED);
+  await flush();
+  assert.equal(pending.length, 4, '重开即首查（dispose 前）');
+  model.dispose();
+  pending[3]({ ok: true, value: { serverNow: 500, items: [{ batchId: 'AFTER-DISPOSE', questionId: 'q4', sessionId: 's' }] } });
+  await flush();
+  s = model.store.getSnapshot();
+  assert.equal(s.serverNow, 0, '卸载后的迟到成功回执零写入（保持关闭清零后的基线）');
+  assert.equal(s.items.length, 0, '题目不被卸载后的回执改写');
+  assert.equal(s.callFailed, null, '卸载后的回执不立失败旗标');
+});

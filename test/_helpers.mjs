@@ -334,9 +334,9 @@ export function fakeCtx() {
     subagents: {
       listChildren() { throw new Error('listChildren not stubbed'); }
     },
-    // 模型选择：`async_agent` 只读 `subagentModelSelectionPolicy` 投影。
-    // 挂载层默认"无 policy"（stateOf 返回 null——reducer 未 record 的初值形态）；
-    // 行为测试在各自文件里覆盖带 routes 的形态（test/agent.test.mjs）。
+    // 模型选择：挂载层默认"无记录"（stateOf 返回 null——fold 未 record 的初值
+    // 形态；list-models 的原生目标口径消费它）。行为测试在各自文件里覆盖带
+    // routes 的形态（test/list-models.test.mjs）。
     sessionProjections: {
       stateOf() { return null; }
     },

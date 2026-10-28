@@ -23,6 +23,7 @@
 import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { instanceCredentials, loadLocalPlaneOrSkip } from '../tools/_local-config.mjs';
+import { WAIT_INTERRUPTED } from './message-markers.mjs';
 
 const localConfig = await loadLocalPlaneOrSkip('verify/probe-r26-create-preset.mjs');
 const { base: BASE, tokenFile: TOKEN_FILE } = instanceCredentials(localConfig);
@@ -207,10 +208,14 @@ const CREATE_MUST_NOT_HAVE = [
 ];
 // 隔离对照：dsh-async 的形态必须不变（async 五件在场；原生委托入口与同步 shell 同样禁用）。
 const ASYNC_MUST_HAVE = ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent', 'async_workflow'];
-// 差集口径：两预设相对各自基线做同款改动，工具面差集只剩基线差——create（cordis 基线）
-// 独有 = tool-cordis 的两件；dsh-async（standard 基线）没有独有工具。
-const CREATE_ONLY_EXPECTED = ['cordis_inspect_list', 'cordis_inspect_query'];
+// 差集口径：两预设相对各自基线做同款改动，工具集差集只剩基线差——create（cordis 基线）
+// 独有 = tool-cordis 的两件＋插件管理入口（cordis 基线两行是 profileContext 条件表达式，
+// 创造上下文中按基线启用——设计 §3.6「异步创造预设不丢失原生插件管理入口」；standard
+// 基线同两行布尔禁用，故 dsh-async 侧不见）；dsh-async（standard 基线）没有独有工具。
+// 比较按无序集合（注册表顺序不构成判据）。
+const CREATE_ONLY_EXPECTED = ['cordis_inspect_list', 'cordis_inspect_query', 'plugin_manager'];
 const CONTROL_ONLY_EXPECTED = [];
+const sameSet = (a, b) => a.slice().sort().join(',') === b.slice().sort().join(',');
 
 // ── face 相位 ────────────────────────────────────────────────────────────────
 async function phaseFace() {
@@ -280,7 +285,7 @@ async function phaseFace() {
     })();
     const interruptSeen = (() => {
       const { resultsById: rById } = callsOf(page);
-      for (const t of rById.values()) { if (/等待被打断|Wait interrupted/.test(String(t))) return true; }
+      for (const t of rById.values()) { if (WAIT_INTERRUPTED.test(String(t))) return true; }
       return false;
     })();
     if (longWaitActive && longWaitSeenPoll < 0) longWaitSeenPoll = pollCount;
@@ -316,7 +321,7 @@ async function phaseFace() {
   record('③b async_wait_agent 有界等待返回 + 子代理回答独立到达（agent-message 含 391）',
     firstWaitReturned && answerMessage !== undefined,
     `等待返回=${String(firstWaitReturned)}；回答消息=${answerMessage === undefined ? '未见' : `${answerMessage.kind} len=${String(answerMessage.text.length)}`}`);
-  const interrupted = waitTexts.filter((t) => /等待被打断|Wait interrupted/.test(t));
+  const interrupted = waitTexts.filter((t) => WAIT_INTERRUPTED.test(t));
   record('④a 插话打断等待（等待返回「等待被打断」）',
     interrupted.length >= 1,
     interrupted.length === 0 ? '未见打断文案' : JSON.stringify(interrupted[0].slice(0, 120)));
@@ -349,8 +354,8 @@ async function phaseFace() {
     missing2.length === 0, missing2.length === 0 ? `${String(face2?.names.length ?? 0)} 个工具` : `缺：${missing2.join(', ')}`);
   const createOnly = face.names.filter((n) => !face2?.names.includes(n));
   const controlOnly = (face2?.names ?? []).filter((n) => !face.names.includes(n));
-  record('⑤b 差集恰为预设裁定的形状（create 独有 = cordis inspect 双件；dsh-async 独有 = 无）',
-    createOnly.join(',') === CREATE_ONLY_EXPECTED.join(',') && controlOnly.join(',') === CONTROL_ONLY_EXPECTED.join(','),
+  record('⑤b 差集恰为预设裁定的形状（create 独有 = cordis inspect 双件＋插件管理入口（条件行在创造上下文启用，§3.6）；dsh-async 独有 = 无）',
+    sameSet(createOnly, CREATE_ONLY_EXPECTED) && sameSet(controlOnly, CONTROL_ONLY_EXPECTED),
     `create 独有=[${createOnly.join(', ')}]；control 独有=[${controlOnly.join(', ')}]`);
 
   return { s1, s2, faceNames: face.names, face2Names: face2?.names ?? [] };

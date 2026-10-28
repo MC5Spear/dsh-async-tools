@@ -83,18 +83,30 @@ jobs:
         env:
           DSAT_HOST_MODULES: ${{ github.workspace }}/node_modules
 
+      # 一段里连跑多条命令时，后面命令的成功可能盖掉前面的失败。逐项检查退出码，
+      # 防止后续成功覆盖失败：任一项非零即整段失败（不中断后续项，收尾统一 throw）。
       - name: 检查器
+        shell: pwsh
         env:
           DSAT_HOST_MODULES: ${{ github.workspace }}/node_modules
         run: |
-          npm run check
-          npm run check:public-surface
-          npm run check:preset
-          npm run check:encoding
-          npm run check:docs
-          npm run check:alias-tokens
-          npm run check:agent-policy
-          npm run check:model-text
+          $checks = @(
+            'check',
+            'check:public-surface',
+            'check:preset',
+            'check:encoding',
+            'check:docs',
+            'check:alias-tokens',
+            'check:agent-policy',
+            'check:model-text'
+          )
+          $failed = @()
+          foreach ($name in $checks) {
+            npm run $name
+            if ($LASTEXITCODE -ne 0) { $failed += "$name（exit $LASTEXITCODE）" }
+          }
+          if ($failed.Count -gt 0) { throw "检查器失败：$($failed -join '；')" }
+          Write-Host "检查器全绿：$($checks.Count) 项"
 
   offline:
     name: 离线形态（无宿主锚 ${{ matrix.node }}）
@@ -128,9 +140,20 @@ jobs:
       - name: 测试套件（离线）
         run: npm run test:offline
 
-      # 公开层边界与编码体检不依赖宿主，两种形态都要过。
+      # 公开层边界与编码体检不依赖宿主，两种形态都要过。逐项检查退出码，防止后续
+      # 成功覆盖失败（理由同上）。
       - name: 检查器（不需宿主锚的那几个）
+        shell: pwsh
         run: |
-          npm run check:public-surface
-          npm run check:encoding
-          npm run check:docs
+          $checks = @(
+            'check:public-surface',
+            'check:encoding',
+            'check:docs'
+          )
+          $failed = @()
+          foreach ($name in $checks) {
+            npm run $name
+            if ($LASTEXITCODE -ne 0) { $failed += "$name（exit $LASTEXITCODE）" }
+          }
+          if ($failed.Count -gt 0) { throw "检查器失败：$($failed -join '；')" }
+          Write-Host "检查器全绿：$($checks.Count) 项"

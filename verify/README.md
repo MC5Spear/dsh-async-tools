@@ -2,7 +2,7 @@
 
 本目录保存可移植的测试、探针和判断函数，不保存真实运行产物。单元替身、真实宿主模块、真实实例、GUI 各证明自己的范围；脚本存在和旧读数不等于当前目标通过。
 
-[需求的验收要求](<../docs/requirements.md#8-验收要求>)定义必须证明的结果，[验证设计](<../docs/design.md#8-验证设计>)定义装置，[当前实施与验证状态](<../docs/design.md#9-当前实施与验证状态>)分档陈述现状——本目录脚本按其中「待验证」档跟进更新，不另立清单。
+[需求的验收要求](<../docs/requirements.md#8-验收要求>)定义必须证明的结果，[验证设计](<../docs/design.md#8-验证设计>)定义装置，[当前实施与验证状态](<../docs/design.md#9-当前实施与验证状态>)区分已实现及待验证内容。本目录脚本按当前目标跟进更新，不另立清单；各脚本的实际覆盖以下方两表的用途与边界为准，脚本存在不证明对应真机验收已执行。
 
 ## 1. 配置、权限与安全前提
 
@@ -35,7 +35,8 @@ npm run check:agent-policy
 
 | 脚本 | 当前用途与边界 |
 | --- | --- |
-| [`check-agent-policy.mjs`](<check-agent-policy.mjs>) | 宿主与本包模型策略定义、schema 和采样的静态核对，不证明真实指定路由已经生效 |
+| [`check-agent-policy.mjs`](<check-agent-policy.mjs>) | 钉版看守本包 `lib/agent-policy.js` 的形状副本与宿主 `dsh-tool-subagent` 现行源同形（有限锚集，宿主侧 H1–H8 对本包侧 O1–O14，其中两锚钉行号）；不注册投影、不锚定采样链——派生路径现读宿主模型选择服务（`subagentModelSelection.current()`），会话投影只用于原生目标的适用性判断；锚外漂移不红，也不证明语义等价或代替实际指定路由验证 |
+| [`d05-readme-composition.mjs`](<d05-readme-composition.mjs>) | README delegation 组示例（cordis:group＋workflow-ptc 引擎行＋async_workflow 行）的进程内装载语义：工具进组、workflowEngine 组隔离、缺引擎行可读拒绝＋零作业；带引擎组合的纯编排成功以真机 dsh-async 预设转录为证（进程内树无 ptcRuntime 提供者，不伪造激活）；需要宿主锚 |
 | [`check-junctions.mjs`](<check-junctions.mjs>) | 开发树接线目标与声明版本核对；缺席、错树、错版分开，不证明内存已加载同一模块 |
 | [`diff-trees.mjs`](<diff-trees.mjs>) | 安装树包级字节差异，属于调研，不以零差异代替行为回归 |
 | [`check-facts-anchors.mjs`](<check-facts-anchors.mjs>) | 维护者事实条目四字段及文件／行号可解析性，不判引用语义正确；缺来源与坏引用分开 |
@@ -50,16 +51,16 @@ npm run check:agent-policy
 
 | 脚本 | 覆盖与副作用 |
 | --- | --- |
-| [`final-acceptance.mjs`](<final-acceptance.mjs>) | 当前覆盖基础工具集合；workflow 另由专门探针承担。会重置共享设置，运行前确认授权和起始值 |
+| [`final-acceptance.mjs`](<final-acceptance.mjs>) | 当前覆盖四个基础工具（async_run / async_wait_job / async_wait_agent / async_agent）；路由查询与实时选择由 acceptance-017 承担，workflow 另由专门探针承担。会重置共享设置，运行前确认授权和起始值 |
 | [`async-e2e.mjs`](<async-e2e.mjs>) | 命令让出、作业取回及插话；可能修改共享设置，不能直接当无副作用批处理 |
 | [`probe-queue-delivery.mjs`](<probe-queue-delivery.mjs>) | 下一轮与下一步领取的区别、插话不杀作业；状态需真实工具结果证明 |
 | [`probe-queue-baseline.mjs`](<probe-queue-baseline.mjs>) | 记录实际投递行为，不作为独立通过判据 |
 | [`probe-agent-e2e.mjs`](<probe-agent-e2e.mjs>) | 后台创建、有界等待、消息及 persona；不涵盖所有当前实时状态或消息类别，执行前读设置写入 |
-| [`probe-settings-behavior-full.mjs`](<probe-settings-behavior-full.mjs>) | 配置变化后的夹紧、裁剪和描述；改共享设置并恢复，完整五工具覆盖须按当前目标核对 |
-| [`probe-preset-portability.mjs`](<probe-preset-portability.mjs>) | 自建测试组合挂本包工具，不代表既有自建预设已禁同步入口；若涉及目录或组成写入须隔离 |
+| [`probe-settings-behavior-full.mjs`](<probe-settings-behavior-full.mjs>) | 配置变化后的夹紧、裁剪和描述；改共享设置并恢复，完整工具覆盖须按当前目标核对 |
+| [`probe-preset-portability.mjs`](<probe-preset-portability.mjs>) | 落盘预设目录形态下的自建挂载可移植性；源目录（`~/.dsh/.agent-presets/dsh-async`）不在时自退出、不产生证据，通过结论不得引用为 bundle patch 路径证据（该路径由 validate-preset 与 d05 承担）；不代表既有自建预设已禁同步入口；若涉及目录或组成写入须隔离 |
 | [`probe-escalation-advertised.mjs`](<probe-escalation-advertised.mjs>) | 真实模型工具 schema 中提权键，不代替实际审批 |
 | [`probe-sandbox-marker.mjs`](<probe-sandbox-marker.mjs>) | 沙箱拒绝的模型可见词表（由按文件族拦截的沙箱规则承载）与退出状态标记；本部署命令族受限、测试运行器被杀时如实记环境事实，不冒称命令族已验 |
-| [`probe-lang-independence.mjs`](<probe-lang-independence.mjs>) | 页面文案与真实描述的双向对照，改共享语言设置；抽样描述不能冒称五工具全文均核验 |
+| [`probe-lang-independence.mjs`](<probe-lang-independence.mjs>) | 页面文案与真实描述的双向对照，改共享语言设置；抽样描述不能冒称全部工具全文均核验 |
 | [`probe-card-visual.mjs`](<_visual/probe-card-visual.mjs>) | 真实 DOM、计算样式和截图对比官方控件；起浏览器、每主题分别核验（须 danger-full-access 或非受限环境，受限令牌下浏览器无法启动、立即退出） |
 | [`probe-r24-bundle-config.mjs`](<_visual/probe-r24-bundle-config.mjs>) | 插件页表单位置、字段身份、秒数与保存恢复；起浏览器并写共享设置，字段期望含延长配置（`askExtendMs`）；同上运行前提 |
 | [`acceptance-017.mjs`](<acceptance-017.mjs>) | 工具、管理、行为、路由和设置等阶段；文件名只是标识，不是兼容基准，具体阶段副作用先读 |

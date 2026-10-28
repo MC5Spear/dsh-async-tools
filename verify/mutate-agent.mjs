@@ -1,15 +1,17 @@
 /**
- * 守哪条需求：需求 §2.3.1（async_agent 永远后台、立返、零等待原语）+ §3.1（persona 强制规则锚句）
+ * 守哪条需求：需求 §2.3.1（async_agent 永远后台、立返、零等待原语）+ §3.1（执行纪律锚句）
  *
  * 两个变异，方向互补：
- * - M1 **前台形态回潮**：把 `startActivation` 换成宿主公开面不存在的前台 `start`
+ * - M1 **前台形态回潮**：把 `startActivation` 换成宿主公开接口不存在的前台 `start`
  *   → 必须红在 test/agent.test.mjs 的"零前台哨兵"上（哨兵记录调用并抛可读错误，
  *   红因一目了然，不是泛型 TypeError）。
- * - M2 **强制规则被删**：把预设模板 persona 里的 DELEGATION RULES 段整段删掉
- *   → 必须红在 `tools/validate-preset.mjs` 的 persona 锚句判据上（校验目标是**包内补丁文件**
- *   `presets/dsh-async.patch.yml`，不是已安装副本——已安装件按需求 §3.2 由使用者自管）。
+ * - M2 **强制规则被删**：把两语表 `discipline.preset.dsh-async` 键（en 档）里的
+ *   委托规则段整段删掉——执行纪律走宿主半边运行时注入的 systemPrompt section，
+ *   文案住在 `lib/text.js`，不再进 persona prefix
+ *   → 必须红在 `tools/validate-preset.mjs` 的词典锚句判据（⑤b）上（校验目标是**包内文件**，
+ *   不是已安装副本——已安装件按需求 §3.2 由使用者自管）。
  *
- * **本脚本会原地改写真实的 `lib/agent.js` 与 `presets/dsh-async.patch.yml`**，
+ * **本脚本会原地改写真实的 `lib/agent.js` 与 `lib/text.js`**，
  * 每个变异跑完立即写回，最后核对 sha256。
  *
  * 用法：node verify/mutate-agent.mjs
@@ -23,13 +25,13 @@ import { fileURLToPath } from 'node:url';
 // 从模块自身位置推仓根（verify/ 上一级）——变异脚本要在任意 cwd 下都能跑。
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const AGENT = join(ROOT, 'lib', 'agent.js');
-const TEMPLATE = join(ROOT, 'presets', 'dsh-async.patch.yml');
+const TEXT = join(ROOT, 'lib', 'text.js');
 const TEST = 'test/agent.test.mjs';
 
 const agentOriginal = readFileSync(AGENT, 'utf8');
-const templateOriginal = readFileSync(TEMPLATE, 'utf8');
+const textOriginal = readFileSync(TEXT, 'utf8');
 const agentHash = createHash('sha256').update(agentOriginal, 'utf8').digest('hex');
-const templateHash = createHash('sha256').update(templateOriginal, 'utf8').digest('hex');
+const textHash = createHash('sha256').update(textOriginal, 'utf8').digest('hex');
 
 /** spawn 没跑起来时 execFileSync 错误的 code 形态。 */
 const SPAWN_FAILURE_CODES = new Set(['EPERM', 'ENOENT', 'EACCES']);
@@ -111,11 +113,11 @@ function firstFailOf(out) {
 /** 写回原文并核对摘要。 */
 function restore() {
   writeFileSync(AGENT, agentOriginal, 'utf8');
-  writeFileSync(TEMPLATE, templateOriginal, 'utf8');
+  writeFileSync(TEXT, textOriginal, 'utf8');
   const agentAfter = createHash('sha256').update(readFileSync(AGENT, 'utf8'), 'utf8').digest('hex');
-  const templateAfter = createHash('sha256').update(readFileSync(TEMPLATE, 'utf8'), 'utf8').digest('hex');
-  if (agentAfter !== agentHash || templateAfter !== templateHash) {
-    throw new Error(`还原失败：请 git checkout 恢复 ${AGENT} 与 ${TEMPLATE}。`);
+  const textAfter = createHash('sha256').update(readFileSync(TEXT, 'utf8'), 'utf8').digest('hex');
+  if (agentAfter !== agentHash || textAfter !== textHash) {
+    throw new Error(`还原失败：请 git checkout 恢复 ${AGENT} 与 ${TEXT}。`);
   }
 }
 
@@ -134,21 +136,25 @@ const M1_MUTATED = [
   '      const { childId } = await ctx.subagents.start(providerName, { ...request, signal: exec.signal });'
 ].join('\n');
 /**
- * M2 变异：把 persona 的强制规则段整段删掉。
+ * M2 变异：把两语表 `discipline.preset.dsh-async` 键（en 档）里的委托规则段
+ * 整段删掉。
  *
- * **按行首内容定位、不依赖缩进**：补丁文件里该段的缩进层级随基线与嵌套深度变化，
- * 逐字锚点会失配。找不到就返回 null，
- * 调用方按"变异失效＝失败"处理。
- * @param {string} source - 待变异的补丁文本。
+ * **按词典键定位、行内按转义边界切割**：两语表里每个键是一整行源码，段界由
+ * 字面 `\n`（源码里的两字符转义，不是换行）标记——从 `\nDELEGATION RULES`
+ * 起删到 `\nASKING RULES` 前。找不到就返回 null，调用方按"变异失效＝失败"处理。
+ * @param {string} source - 待变异的 `lib/text.js` 文本。
  * @returns {string|null} 变异后的文本，或 null（锚点不在）。
  */
 function mutateM2(source) {
   const lines = source.split('\n');
-  const start = lines.findIndex((l) => l.includes('DELEGATION RULES (hard rules, not advice):'));
-  const end = lines.findIndex((l) => l.includes('the final answer arrives as its own message.'));
+  const keyIdx = lines.findIndex((l) => l.includes("'discipline.preset.dsh-async':"));
+  if (keyIdx < 0) return null;
+  const line = lines[keyIdx];
+  const start = line.indexOf('\\nDELEGATION RULES (hard rules, not advice):');
+  const end = line.indexOf('\\nASKING RULES (hard rules, not advice):');
   if (start < 0 || end < start) return null;
-  const indent = /^\s*/.exec(lines[start])[0];
-  return [...lines.slice(0, start), `${indent}# (mutation M2: delegation rules removed)`, ...lines.slice(end + 1)].join('\n');
+  lines[keyIdx] = `${line.slice(0, start)}\\n(mutated M2: delegation rules removed)${line.slice(end)}`;
+  return lines.join('\n');
 }
 
 const baselineTests = runTests(120000);
@@ -181,19 +187,19 @@ try {
   }
 
   // ── M2：强制规则被删 ───────────────────────────────────────────────────────
-  const m2Body = mutateM2(templateOriginal);
+  const m2Body = mutateM2(textOriginal);
   if (m2Body === null) {
-    console.log('SKIP  找不到 M2 锚点（DELEGATION RULES 段），本变异失效——当失败处理。');
+    console.log('SKIP  找不到 M2 锚点（discipline.preset.dsh-async 的委托规则段），本变异失效——当失败处理。');
     ok = false;
   } else {
-    writeFileSync(TEMPLATE, m2Body, 'utf8');
+    writeFileSync(TEXT, m2Body, 'utf8');
     const after = runPresetValidator();
     if (after.state === 'didnt-run') {
       console.log(`DIDNT-RUN  M2 强制规则被删  ${after.summary} —— 环境没跑成校验，不算 CAUGHT（fail-closed）`);
       ok = false;
     } else {
       const caught = after.state === 'red';
-      console.log(`${caught ? 'CAUGHT' : 'MISSED'}  M2 删掉 persona 强制规则段（persona 锚句）  ${after.summary}`);
+      console.log(`${caught ? 'CAUGHT' : 'MISSED'}  M2 删掉词典委托规则段（纪律锚句）  ${after.summary}`);
       if (after.firstFail !== '') console.log(`        ${after.firstFail}`);
       ok = caught && ok;
     }
@@ -202,6 +208,6 @@ try {
   restore();
 }
 console.log('');
-console.log(ok ? '变异被抓住：后台形态与 persona 锚句都有能失败的判据。' : '**变异逃逸或没跑成**——判据是恒真的，或环境不可用。');
+console.log(ok ? '变异被抓住：后台形态与纪律锚句都有能失败的判据。' : '**变异逃逸或没跑成**——判据是恒真的，或环境不可用。');
 console.log('还原完成，摘要一致。');
 process.exitCode = ok ? 0 : 1;

@@ -11,16 +11,18 @@
  * ⇒ 还原功能必须能**独立于探针进程**存在。本脚本就是那个出口：
  * 探针被切断后，跑它一次即可回到默认值。
  *
- * 本清单为 `lib/config.js` 出厂默认的手抄副本，改 schema 默认值时须同步四处：
- * 本文件、`probe-queue-delivery.mjs`、`final-acceptance.mjs`、`acceptance-017.mjs`。
+ * 本清单为 `lib/config.js` 出厂默认的手抄副本；同类副本共八处——本文件、
+ * `probe-queue-delivery.mjs`、`probe-queue-baseline.mjs`、`async-e2e.mjs`、
+ * `final-acceptance.mjs`、`acceptance-017.mjs`、`probe-agent-e2e.mjs`、
+ * `probe-settings-behavior-full.mjs`——改 schema 默认值时须同步全部。
  *
  * 用法：node verify/restore-async-settings.mjs
  */
-import { rpc } from './_rpc.mjs';
-// ns 单一登记点在 `_r28-helpers.mjs`（本文件不自带字面量，统一从登记点取）。
-import { NS } from './_r28-helpers.mjs';
+// 设置读写经共享助手（NS 单一登记点＋嵌套 settings 形状，设计 §8.3）。
+import { readNs, replaceNs } from './_r28-helpers.mjs';
 
-/** 与 `probe-settings-behavior-full.mjs` 的 `DEFAULTS`、以及 `lib/config.js` 的 schema 默认值一致。 */
+/** 与 `lib/config.js` 的 schema 默认值一致；`probe-settings-behavior-full.mjs`
+ * 的 `DEFAULTS` 在此基础上另含 `agentLang`（探针自用键）。 */
 const DEFAULTS = {
   maxResultChars: 30000,
   defaultYieldMs: 20000,
@@ -33,13 +35,12 @@ const DEFAULTS = {
   jobKind: 'async-command'
 };
 
-// 用 `replace` 而不是 `update`：`replace({})` 会**整体重置**用户段、回落到 schema 默认值，
-// 而 `update`（merge）只会覆盖传进去的键——留一个没传的键就还原不干净。
-await rpc('settings/replace', { ns: NS, section: {} });
+// 用 `replace` 而不是 `update`：`replaceNs({})` 会**整体重置** volatile 用户覆盖、
+// 回落到 schema 默认值，而 `update`（merge）只会覆盖传进去的键——留一个没传的键
+// 就还原不干净。
+await replaceNs({});
 
-const described = await rpc('settings/describe', {});
-const ns = described.namespaces.find((n) => n.ns === NS);
-const value = ns.value ?? ns.resolved ?? ns;
+const value = (await readNs()).value;
 const drifted = Object.keys(DEFAULTS).filter((k) => value[k] !== DEFAULTS[k]);
 console.log(`还原后：${drifted.length === 0 ? '全部等于默认值' : `**这些键仍不是默认值：${drifted.join('、')}**`}`);
 for (const k of Object.keys(DEFAULTS)) console.log(`  ${k.padEnd(18, ' ')} ${String(value[k])}`);

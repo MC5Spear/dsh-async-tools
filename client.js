@@ -36,14 +36,14 @@ var module = { exports: {} }; var exports = module.exports;
 //   字段说明 + 换行 + 「生效：S s」+「 · 」+「输入：T s」。值**只写秒文本**
 //   （`600 s` / `0.5 s` / 亚 10 ms 的 `< 0.01 s` / 空草稿的 `—`；整数秒无小数、
 //   非整数最多两位）——毫秒原值输入框里本来就有；生效段恒显示，输入段未保存就
-//   随键入刷新，非数字/非正数时整行随说明行换成 invalidLabel（`composeHint`
-//   单点承担）。
+//   随键入刷新，非数字/非正数时输入段标非法类、由字段外壳另加非法原因行
+//   （`composeHint` 单点承担读数与非法判定；常驻说明与两段读数保留）。
 // - 保存语义：一个「保存」按钮，`!dirty || invalid || saving` 时禁用，
 //   保存中显示「保存中…」；模型 `save()` 一次 `mutate(ops, baseline.revision)`，
 //   布尔为假即 `failed` 并保留草稿，失败文案由官方页脚渲染；离开页面 = 卸载 =
 //   丢弃草稿。成功不弹文案；字段由活 section 值回填，谎报成功没有藏身处。
 //
-// ## 形态约束（沿袭）
+// ## 形态约束
 //
 // - 本文件是 `window.__ModuleLoader__.load({ id, factory })` 的 **CJS 包裹**，顶层不得
 //   出现 ESM 语法；UI 全部 `React.createElement`，无 JSX（浏览器侧没有转译器）。
@@ -335,8 +335,8 @@ var READOUT_PLACEHOLDER = "—";
 
 /**
  * 输入段读数（三姿态）：正数 → 秒文本；空文本 → `—` 占位；
- * 非数字/非正数（`0`、负数）→ `—` 占位 + 非法标记。最后一种姿态下官方说明行整体
- * 换成 invalidLabel，标记只在说明行仍显示的路径上有意义，作为防御保留。
+ * 非数字/非正数（`0`、负数）→ `—` 占位 + 非法标记。非法标记供字段外壳消费
+ * （输入段标红、另加非法原因行），常驻说明行与两段读数保留。
  * @param {string} stagedText - 模型暂存文本。
  * @returns {{fill: string, invalid: boolean}} 输入段的值与非法标记。
  */
@@ -874,7 +874,7 @@ var DICTIONARIES = {
     "invalidPair.minWaitMs": "本值不能大于 {ref}——请调小本值或调大 {ref}",
     "invalidPair.defaultWaitMs": "本值不能大于 {ref}——请调小本值或调大 {ref}",
     "invalidPair.pollIntervalMs": "本值不能大于 {ref}——请调小本值或调大 {ref}",
-    uninstallRisk: "卸载风险：默认预设指向本包预设（dsh-async / dsh-async-create）时，停用或移除本包会让新建会话报 agent-preset/not-found，宿主不会自动清除该选择。卸载前先在宿主设置把默认预设切换到可用预设；已移除后按宿主设置入口清选或重选。",
+    uninstallRisk: "卸载风险：默认预设指向本包预设（dsh-async / dsh-async-create）时，停用或移除本包会让新建会话报 agent-preset/not-found，宿主不会自动清除该选择。卸载前先在宿主设置把默认预设切换到可用预设；已移除后，在宿主设置的默认预设入口清空该选择或改选可用预设。",
     defaultYieldMs: "默认首次等待时长（毫秒）",
     minYieldMs: "首次等待时长下限（毫秒）",
     maxYieldMs: "首次等待时长上限（毫秒）",
@@ -893,47 +893,50 @@ var DICTIONARIES = {
     askExtendMs: "每次增加的等待时长（毫秒）",
     askUiSeat: "待答问题显示方式",
     "hint.defaultYieldMs": "async_run 与 async_workflow 未指定 yield_ms 时使用的首次等待时长；指定时按本次请求与上下限取值。到时仍未完成就结束本次等待、返回作业编号（job_id），后台任务继续运行。",
-    "hint.minYieldMs": "限制本次 yield_ms 的有效值；请求低于此值时按下限取值。不是后台任务的最长运行时间。",
-    "hint.maxYieldMs": "限制本次 yield_ms 的有效值；请求高于此值时按上限取值。不是后台任务的最长运行时间。",
-    "hint.defaultWaitMs": "返回提示里等待调用示例使用的时长；示例只作演示，不等于实际调用的生效等待。wait_ms 仍必填，省略时报错；此值不是省略参数后的备用值。",
-    "hint.minWaitMs": "适用于两个等待工具的 wait_ms；请求低于此值时按下限取值。到时结束本次等待，不停止后台任务。",
-    "hint.maxWaitMs": "适用于两个等待工具的 wait_ms；请求高于此值时按上限取值。到时结束本次等待，不停止后台任务。",
-    "hint.pollIntervalMs": "async_wait_agent 备用检查子代理是否仍在运行的间隔。不是待答面板刷新间隔，也不是子代理运行时限。",
+    "hint.minYieldMs": "限制本次 yield_ms 的有效值；请求低于此值时按下限取值。到时结束本次等待，后台任务继续运行。",
+    "hint.maxYieldMs": "限制本次 yield_ms 的有效值；请求高于此值时按上限取值。到时结束本次等待，后台任务继续运行。",
+    "hint.defaultWaitMs": "返回提示里等待调用示例使用的时长；示例只作演示，不等于实际调用的生效等待。实际调用两个等待工具时须显式填写 wait_ms，省略时报错。",
+    "hint.minWaitMs": "适用于两个等待工具的 wait_ms；请求低于此值时按下限取值。到时结束本次等待，后台任务继续运行。",
+    "hint.maxWaitMs": "适用于两个等待工具的 wait_ms；请求高于此值时按上限取值。到时结束本次等待，后台任务继续运行。",
+    "hint.pollIntervalMs": "async_wait_agent 定期检查子代理运行状态的间隔，用作结束事件未到达时的备用判断。",
     "hint.maxResultChars": "单次返回保留的结果内容字符上限（正整数），超出时保留首尾并说明截断；状态与提示另计。",
-    "hint.jobKind": "注册命令作业用的类型名称，便于在作业列表与日志中识别；不决定命令执行方式。",
-    "hint.subagentProvider": "async_agent 创建子代理使用的后端服务；不是选择大语言模型或模型服务商。",
-    "hint.uiLang": "控制本包设置表单、字段帮助与待答界面文案；跟随宿主语言或显式中英文，不改宿主全局语言。",
-    "hint.agentLang": "控制本包工具描述、参数说明、提示、错误与执行规则文案；不翻译命令、问题或用户输入，不改变行为。",
-    "hint.silentFailureGuard": "“静默失败”指命令可能未执行、却没有明显报错。开关只给条件式提醒，不保证检出或自动修复；仅本包两预设生效，默认关。",
-    "hint.askTakeover": "开启后由待答面板处理本包两预设根 Agent 的普通提问，关闭时保持宿主原生提问流程；到期如实告知未答、不替用户选答案。不接管权限审批或计划评审。",
-    "hint.askTimeoutMs": "从接收一批提问起计时的初始窗口，同批多题共享期限。到期如实说明未答、不替用户选答案；已答内容保留、之后仍可补答。新值不重置进行中的批次。",
-    "hint.askExtendMs": "待答面板“增加等待时间”每点击一次给该会话未到期批次增加的时长；已到期批次不重新等待。",
-    "hint.askUiSeat": "侧边栏底栏徽标显示未处理数、点击展开；右下角浮窗直接显示问题。切换显示方式不改变接管开关。",
+    "hint.jobKind": "注册命令作业用的类型名称，便于在作业列表与日志中识别。",
+    "hint.subagentProvider": "async_agent 创建子代理使用的后端服务。",
+    "hint.uiLang": "控制本包设置表单、字段帮助与待答界面的语言；跟随宿主语言或显式选择中文／英文。",
+    "hint.agentLang": "控制本包工具描述、参数说明、提示、错误与执行纪律文案的语言。",
+    "hint.silentFailureGuard": "“静默失败”指命令可能未执行、却没有明显报错。开启后，出现这种情况时给出诊断提醒和检查建议；仅本包两预设生效，默认关。",
+    "hint.askTakeover": "开启后由待答面板处理本包两预设根 Agent 的普通提问，关闭时使用宿主原生流程；到期后 Agent 继续处理任务，用户仍可稍后作答。",
+    "hint.askTimeoutMs": "从接收一批提问起计时的初始窗口，同批多题共享期限。到期保留已答内容，Agent 继续处理任务，用户仍可稍后作答；新值用于后续批次。",
+    "hint.askExtendMs": "待答面板“增加等待时间”每点击一次，给该会话当时仍在等待的批次各追加的时长。",
+    "hint.askUiSeat": "侧边栏底栏徽标显示未处理数，点击展开；右下角浮窗直接显示问题。",
     "help.a11yName": "{field} 的说明",
-    "help.defaultYieldMs": "配置键：defaultYieldMs（数值，毫秒）。\n\n首次等待机制：async_run 与 async_workflow 用首次等待限制本次调用的占用时长，不终止任务——到时仍未完成就结束本次等待、返回作业编号（job_id），后台任务继续运行，Agent 可以继续其他工作；消息和取消可提前结束等待。\n\n时长示例（演示值，非当前生效值）：设 20000 毫秒——短命令在首次等待内完成，直接取得结果；长命令到时先取得作业编号、稍后用 async_wait_job 读取结果。示例说明等待时长不限制任务寿命。\n\n夹紧关系：默认值须落在首次等待时长的上下限内（minYieldMs ≤ defaultYieldMs ≤ maxYieldMs）。",
-    "help.minYieldMs": "配置键：minYieldMs（数值，毫秒）。\n\n本次 yield_ms 低于此下限时按下限取值；消息和取消仍可提前结束首次等待。与 defaultYieldMs、maxYieldMs 构成首次等待时长的上下限夹紧。",
-    "help.maxYieldMs": "配置键：maxYieldMs（数值，毫秒）。\n\n本次 yield_ms 高于此上限时按上限取值；消息和取消仍可提前结束首次等待。与 minYieldMs、defaultYieldMs 构成首次等待时长的上下限夹紧。",
-    "help.defaultWaitMs": "配置键：defaultWaitMs（数值，毫秒）。\n\nwait_ms 是必填参数：两个等待工具的每次调用都要显式给出（需求 2.1.1），缺省报错——返回提示里给出的 wait_ms 取值随本设置显示，仅为示例，不是省略参数后的备用值。示例与 minWaitMs、maxWaitMs 的区间配对。",
-    "help.minWaitMs": "配置键：minWaitMs（数值，毫秒）。\n\n一份预算覆盖入口检查、查询、重试与等待，不为每个阶段重新计时；到时交回控制权、作业句柄仍有效，再次调用即可继续读。消息到达可提前结束本次等待（需求 2.1）。",
-    "help.maxWaitMs": "配置键：maxWaitMs（数值，毫秒）。\n\n一份预算覆盖入口检查、查询、重试与等待，不为每个阶段重新计时；到时交回控制权、作业句柄仍有效，再次调用即可继续读。消息到达可提前结束本次等待（需求 2.1）。",
-    "help.pollIntervalMs": "配置键：pollIntervalMs（数值，毫秒）。\n\nasync_wait_agent 以结束事件为主、轮询为备用的双通道检查子代理是否仍在运行；本间隔是备用轮询的节奏，受 pollIntervalMs ≤ maxWaitMs 配对约束（需求 5.2）。",
-    "help.maxResultChars": "配置键：maxResultChars（数值，字符）。\n\n按 String.length 计量，必须是正整数（需求 5.2）——注册时按三倍换算宿主输出缓冲上限，小数草稿在保存时被拒；超出时保留首尾并说明省略量与截断；状态与提示另计，不占本预算（需求 2.2.3）。与宿主输出缓冲的三倍换算配合决定溢出时的文件交付路径。",
-    "help.jobKind": "配置键：jobKind（文本）。\n\n注册命令作业时使用的类型名称，用于作业列表与日志的辨识；不决定命令执行方式。空值非法（需求 5.2）。",
-    "help.subagentProvider": "配置键：subagentProvider（文本）。\n\nasync_agent 创建子代理使用的后端服务，默认 spawn；修剪后空值回默认，未知后端在调用时可读拒绝。不是选择大语言模型或模型服务商——模型路由按 provider／model 参数另行指定（需求 2.3.1）。",
-    "help.uiLang": "配置键：uiLang（枚举：auto / zh / en）。\n\n与 agentLang 两个开关独立，修改其中一个不影响另一个；auto 档只读跟随宿主语言，不写宿主全局语言。",
-    "help.agentLang": "配置键：agentLang（枚举：en / zh）。\n\n与 uiLang 两个开关独立，修改其中一个不影响另一个；控制模型可见文案（工具描述、参数说明、提示、错误与执行规则）；跟随宿主语言的开关是 uiLang。",
-    "help.silentFailureGuard": "配置键：silentFailureGuard（布尔）。\n\n开启后三处防线生效：结果诊断（返回提示里的条件式提醒）、命令描述警示、执行纪律提示；关闭则三处全部消失。只给条件式提醒，不保证检出或自动修复（需求 6.3）。仅本包两预设生效，默认关。",
-    "help.askTakeover": "配置键：askTakeover（布尔）。\n\n接管范围：本包两预设的根 Agent 的普通提问（需求 4.1）——在待答面板作答；权限审批与计划评审不接管，走宿主原生流程。迟到作答在记录保留期内经通知送达（自到期起保留 24 小时）；记录被清扫、主体无法接收或投递失败时不会送达。到期不替用户选答案。",
-    "help.askTimeoutMs": "配置键：askTimeoutMs（数值，毫秒）。\n\n从接收一批提问起计时，同批多题共享期限；到期合成超时事实、不代答，Agent 继续工作。可补答路径：面板在到期后仍接受作答，作答记录自到期起保留 24 小时，保留期内经通知送达；超龄被清扫或投递失败则不再送达。",
-    "help.askExtendMs": "配置键：askExtendMs（数值，毫秒）。\n\n组级动作语义（需求 4.3）：组头“增加等待时间”每点击一次，给该会话当时未到期的批次各增加此时长，在原截止点上叠加；已到期批次不重新等待，新批次不继承延长。",
-    "help.askUiSeat": "配置键：askUiSeat（枚举：sidebar / overlay）。\n\n两种方式的展开动作（需求 4.2）：侧边栏底栏徽标显示未处理数、点击展开；右下角浮窗直接显示问题。徽标计数全部处理后消隐。选项默认标记与需求 5.2 一致（默认 sidebar），标记不指示用户当前选择。",
+    "help.defaultYieldMs": "配置键：defaultYieldMs（数值，毫秒）。\n\n首次等待机制：async_run 与 async_workflow 用首次等待限制本次调用的占用时长——到时仍未完成就结束本次等待、返回作业编号（job_id），后台任务继续运行，Agent 可以继续其他工作；消息和取消可提前结束等待。\n\n时长示例（演示值，非当前生效值）：设 20000 毫秒——短命令在首次等待内完成，直接取得结果；长命令到时先取得作业编号、稍后用 async_wait_job 读取结果。\n\n取值限制：默认值必须在首次等待时长的上下限内（minYieldMs ≤ defaultYieldMs ≤ maxYieldMs）。",
+    "help.minYieldMs": "配置键：minYieldMs（数值，毫秒）。\n\n本次 yield_ms 低于此下限时按下限取值；消息和取消仍可提前结束首次等待。与 defaultYieldMs、maxYieldMs 共同构成首次等待时长的上下限；本次取值越界时按对应边界取值。",
+    "help.maxYieldMs": "配置键：maxYieldMs（数值，毫秒）。\n\n本次 yield_ms 高于此上限时按上限取值；消息和取消仍可提前结束首次等待。与 minYieldMs、defaultYieldMs 共同构成首次等待时长的上下限；本次取值越界时按对应边界取值。",
+    "help.defaultWaitMs": "配置键：defaultWaitMs（数值，毫秒）。\n\nwait_ms 是必填参数：两个等待工具的每次调用都要显式给出，缺省报错。返回提示里给出的 wait_ms 取值随本设置显示，仅为示例。示例与 minWaitMs、maxWaitMs 的区间配对。",
+    "help.minWaitMs": "配置键：minWaitMs（数值，毫秒）。\n\n一份预算覆盖本次调用的入口检查、查询、重试与等待；到时交回控制权、作业句柄仍有效，再次调用即可继续读。消息到达可提前结束本次等待。",
+    "help.maxWaitMs": "配置键：maxWaitMs（数值，毫秒）。\n\n一份预算覆盖本次调用的入口检查、查询、重试与等待；到时交回控制权、作业句柄仍有效，再次调用即可继续读。消息到达可提前结束本次等待。",
+    "help.pollIntervalMs": "配置键：pollIntervalMs（数值，毫秒）。\n\nasync_wait_agent 以结束事件为主、轮询为备用的双通道检查子代理是否仍在运行；本间隔是备用轮询的节奏，受 pollIntervalMs ≤ maxWaitMs 配对约束。",
+    "help.maxResultChars": "配置键：maxResultChars（数值，字符）。\n\n按 String.length 计量，必须是正整数，小数草稿在保存时被拒；超出时保留首尾并说明省略量与截断；状态与提示另计。",
+    "help.jobKind": "配置键：jobKind（文本）。\n\n注册命令作业时使用的类型名称，用于作业列表与日志的辨识；输入空串会被拒绝。",
+    "help.subagentProvider": "配置键：subagentProvider（文本）。\n\nasync_agent 创建子代理使用的后端服务，默认 spawn；输入去掉首尾空白后为空时按默认值保存，填了不存在的后端时在调用时可读拒绝。需要指定模型时，在 async_agent 调用参数中用 provider 与 model 指定。",
+    "help.uiLang": "配置键：uiLang（枚举：auto / zh / en）。\n\n界面文案与 Agent 文案是两个独立开关：本开关只影响界面文案，Agent 文案语言由 agentLang 设置；auto 档跟随宿主语言。",
+    "help.agentLang": "配置键：agentLang（枚举：en / zh）。\n\n控制模型可见文案（工具描述、参数说明、提示、错误与执行纪律）；界面文案语言由 uiLang 单独设置，两者互不影响。",
+    "help.silentFailureGuard": "配置键：silentFailureGuard（布尔）。\n\n开启后，命令可能未执行且缺少明显报错的特定条件下，诊断提醒和检查建议出现在返回提示、命令描述与执行纪律三处。",
+    "help.askTakeover": "配置键：askTakeover（布尔）。\n\n迟到作答经通知送达；24 小时只是惰性清扫阈值——仅当下一个提问批次被接管时队列才做一次清扫，没有新批时记录可保留更久、仍可补答；被清扫、所属 Agent 无法接收或投递失败的记录不会送达。未送达时，直接出路是到题目所属会话直接回复。",
+    "help.askTimeoutMs": "配置键：askTimeoutMs（数值，毫秒）。\n\n从接收一批提问起计时，同批多题共享期限；到期时未答的题按超时处理，Agent 继续处理任务。面板在到期后仍接受作答；迟到作答若所属会话本轮已结束，会直接回复到该会话，不进队列。",
+    "help.askExtendMs": "配置键：askExtendMs（数值，毫秒）。\n\n待答面板“增加等待时间”每点击一次，给该会话当时未到期的批次各增加此时长，在原截止点上叠加；新批次按自己的初始期限计时。",
+    "help.askUiSeat": "配置键：askUiSeat（枚举：sidebar / overlay）。\n\n两种显示方式复用同一套题目交互，切换显示方式不改提问、计时或答案交付；徽标计数在全部处理后消隐。",
     "opt.askUiSeat.sidebar": "侧边栏底栏徽标（默认）",
     "opt.askUiSeat.overlay": "右下角浮窗",
     "ask.title": "待答问题",
     "ask.count": "{n} 题待答",
     "ask.answer": "提交",
     "ask.ignore": "不答",
-    "ask.customPlaceholder": "补充说明（可选）",
+    "ask.customAnswer": "自定义回答",
+    "ask.customPlaceholder": "输入自定义回答",
+    "ask.needAnswer": "请选择一项答案或填写自定义回答",
+    "ask.needCustom": "自定义回答为空：填写内容或改选其他答案",
     "ask.jump": "打开会话",
     "ask.expired": "已超时，仍可作答",
     "ask.submitting": "提交中…",
@@ -942,11 +945,12 @@ var DICTIONARIES = {
     // 未知，不得断定"未送达"）③状态读取失败（轮询自动重试）；丢失答案无自动
     // 重试通道，允许手动消除。
     "ask.callFailed": "提交后没有收到宿主确认——可能已送达，也可能没有；稍候面板自动刷新，若仍显示未作答可再提交一次。",
-    "ask.answerRejected": "宿主已收到请求但明确拒绝（可能题目已不在作答窗口）——本次提交没有生效；稍候面板自动刷新。",
+    "ask.answerRejected": "宿主明确拒绝：本次提交没有生效",
+    "ask.undelivered": "未送达：题目记录已不在（超过保留期或批次已结束），本次提交未被接受；如仍需作答，请在所属会话中直接回复。",
     "ask.stateFailed": "待答状态读取失败；面板会自动重试。",
     "ask.extendFailed": "延长请求没有收到宿主确认——可能已生效，也可能没有；按面板刷新后的剩余时间决定是否再点（每次点击都会累加）。",
-    "ask.extendRejected": "宿主已收到延长请求但明确拒绝（可能已无在窗批次）——本次加时没有生效；稍候面板自动刷新。",
-    "ask.lostAnswer": "作答已提交但未能送达 Agent（投递失败，不会自动重试）。",
+    "ask.extendRejected": "宿主已收到延长请求但明确拒绝——本次加时没有生效；稍候面板自动刷新。",
+    "ask.lostAnswer": "作答已提交但未能送达 Agent（投递失败，不会自动重试）；如仍需作答，请打开所属会话直接回复。",
     "ask.dismissLost": "知道了",
     "ask.windowLeft": "剩 {s}",
     "ask.extend": "增加等待时间",
@@ -977,7 +981,7 @@ var DICTIONARIES = {
     "invalidPair.minWaitMs": "This value must not exceed {ref} — lower this value or raise {ref}",
     "invalidPair.defaultWaitMs": "This value must not exceed {ref} — lower this value or raise {ref}",
     "invalidPair.pollIntervalMs": "This value must not exceed {ref} — lower this value or raise {ref}",
-    uninstallRisk: "Uninstall risk: while the default preset points to this package's presets (dsh-async / dsh-async-create), disabling or removing this package makes new sessions fail with agent-preset/not-found; the host does not clear that choice automatically. Switch the default preset to an available one in host settings before uninstalling; after removal, clear or reselect it from the host settings entry.",
+    uninstallRisk: "Uninstall risk: while the default preset points to this package's presets (dsh-async / dsh-async-create), disabling or removing this package makes new sessions fail with agent-preset/not-found; the host does not clear that choice automatically. Switch the default preset to an available one in host settings before uninstalling; after removal, clear that choice or select an available preset in the host's default-preset setting.",
     defaultYieldMs: "Default first-wait duration (ms)",
     minYieldMs: "First-wait lower bound (ms)",
     maxYieldMs: "First-wait upper bound (ms)",
@@ -996,47 +1000,50 @@ var DICTIONARIES = {
     askExtendMs: "Wait time added per click (ms)",
     askUiSeat: "Pending-question display placement",
     "hint.defaultYieldMs": "First-wait duration used by async_run and async_workflow when yield_ms is not given; when given, this request and the bounds decide. If the work is still running when it ends, this wait ends and returns the job id (job_id); the background task keeps running.",
-    "hint.minYieldMs": "Clamps the effective value of this yield_ms; requests below it use the lower bound. Not the background task's maximum run time.",
-    "hint.maxYieldMs": "Clamps the effective value of this yield_ms; requests above it use the upper bound. Not the background task's maximum run time.",
-    "hint.defaultWaitMs": "Duration used by the wait-call example in return notes; the example is a demo, not the effective wait of an actual call. wait_ms is still required and omitting it errors; this value is not a fallback for an omitted parameter.",
-    "hint.minWaitMs": "Applies to wait_ms on both wait tools; requests below it use the lower bound. When it ends, the wait ends without stopping the background task.",
-    "hint.maxWaitMs": "Applies to wait_ms on both wait tools; requests above it use the upper bound. When it ends, the wait ends without stopping the background task.",
-    "hint.pollIntervalMs": "Interval async_wait_agent uses as a backup check that the subagent is still running. Not the pending-panel refresh interval, and not a subagent run limit.",
+    "hint.minYieldMs": "Clamps the effective value of this yield_ms; requests below it use the lower bound. When the wait ends, the background task keeps running.",
+    "hint.maxYieldMs": "Clamps the effective value of this yield_ms; requests above it use the upper bound. When the wait ends, the background task keeps running.",
+    "hint.defaultWaitMs": "Duration used by the wait-call example in return notes; the example is a demo and does not equal the effective wait of an actual call. Actual calls of the two wait tools must give wait_ms explicitly, and omitting it errors.",
+    "hint.minWaitMs": "Applies to wait_ms on both wait tools; requests below it use the lower bound. When the wait ends, the background task keeps running.",
+    "hint.maxWaitMs": "Applies to wait_ms on both wait tools; requests above it use the upper bound. When the wait ends, the background task keeps running.",
+    "hint.pollIntervalMs": "Interval for async_wait_agent's periodic checks of the subagent's running state — the backup judgment when the completion event has not arrived.",
     "hint.maxResultChars": "Character cap (a positive integer) for the result content kept per return; beyond it the head and tail are kept with a truncation note; status and notices are counted separately.",
-    "hint.jobKind": "Type name used to register command jobs, for identification in job lists and logs; it does not decide how commands run.",
-    "hint.subagentProvider": "Backend service async_agent uses to create subagents; this is not choosing a large language model or a model vendor.",
-    "hint.uiLang": "Controls this package's settings form, field help, and pending-panel copy; follows the host language or an explicit Chinese/English choice, and does not change the host's global language.",
-    "hint.agentLang": "Controls this package's tool descriptions, parameter notes, notices, errors, and execution-rule copy; it does not translate commands, questions, or user input, and does not change behavior.",
-    "hint.silentFailureGuard": "\"Silent failure\" means a command may not have run, yet no error is visible. The switch only gives conditional reminders and does not guarantee detection or automatic repair; it applies only to this package's two presets and is off by default.",
-    "hint.askTakeover": "When on, the pending panel handles plain questions from this package's two presets' root agents; when off, the host's native flow stays. On expiry it states honestly that the question went unanswered; it never picks answers for the user. Permission approvals and plan reviews are not taken over.",
-    "hint.askTimeoutMs": "Initial window counted from receiving a batch of questions; all questions in a batch share the deadline. On expiry it states honestly that the question went unanswered and never picks answers for the user; answered content is kept and can still be answered later. A new value does not reset in-flight batches.",
-    "hint.askExtendMs": "Wait time each \"Extend wait\" click adds to that session's unexpired batches; expired batches do not wait again.",
-    "hint.askUiSeat": "The sidebar footer badge shows the open count and expands on click; the bottom-right overlay shows the questions directly. Switching placement does not change the takeover switch.",
+    "hint.jobKind": "Type name used to register command jobs, for identification in job lists and logs.",
+    "hint.subagentProvider": "Backend service async_agent uses to create subagents.",
+    "hint.uiLang": "Controls the language of this package's settings form, field help, and pending panel; follows the host language or an explicit Chinese/English choice.",
+    "hint.agentLang": "Controls the language of this package's tool descriptions, parameter notes, notices, errors, and execution discipline.",
+    "hint.silentFailureGuard": "\"Silent failure\" means a command may not have run, yet no error is visible. When on, such cases get a diagnostic reminder and checking advice; it applies only to this package's two presets and is off by default.",
+    "hint.askTakeover": "When on, the pending panel handles plain questions from this package's two presets' root agents; when off, the host's native flow is used. After expiry the Agent continues the task, and the user can still answer later.",
+    "hint.askTimeoutMs": "Initial window counted from receiving a batch of questions; all questions in a batch share the deadline. On expiry, answered content is kept, the Agent continues the task, and the user can still answer later; a new value applies to later batches.",
+    "hint.askExtendMs": "Wait time each \"Extend wait\" click in the pending panel adds to each batch of that session still waiting at that moment.",
+    "hint.askUiSeat": "The sidebar footer badge shows the open count and expands on click; the bottom-right overlay shows the questions directly.",
     "help.a11yName": "Help for \"{field}\"",
-    "help.defaultYieldMs": "Config key: defaultYieldMs (number, ms).\n\nFirst-wait mechanism: async_run and async_workflow use the first wait to bound this call's occupancy, not to terminate the task — when it ends with work still running, the wait ends and returns the job id (job_id); the background task keeps running and the Agent can continue other work; messages and cancellation can end the wait early.\n\nDuration example (demo value, not the current effective value): with 20000 ms — a short command finishes inside the first wait and you get the result directly; a long command returns the job id first, and you read the result with async_wait_job afterwards. The example shows the wait duration does not limit the task's lifetime.\n\nClamping: the default must sit within the first-wait bounds (minYieldMs ≤ defaultYieldMs ≤ maxYieldMs).",
-    "help.minYieldMs": "Config key: minYieldMs (number, ms).\n\nA yield_ms below this lower bound is clamped to it; messages and cancellation can still end the first wait early. Forms the first-wait clamping bounds together with defaultYieldMs and maxYieldMs.",
-    "help.maxYieldMs": "Config key: maxYieldMs (number, ms).\n\nA yield_ms above this upper bound is clamped to it; messages and cancellation can still end the first wait early. Forms the first-wait clamping bounds together with minYieldMs and defaultYieldMs.",
-    "help.defaultWaitMs": "Config key: defaultWaitMs (number, ms).\n\nwait_ms is required: every call of the two wait tools must give it explicitly (requirement 2.1.1) and omitting it errors — the wait_ms value shown in return notes follows this setting and is only an example, not a fallback for an omitted parameter. The example pairs with the minWaitMs/maxWaitMs range.",
-    "help.minWaitMs": "Config key: minWaitMs (number, ms).\n\nOne budget covers entry checks, lookups, retries, and the wait — no per-stage re-arming; when it ends, control returns with the job handle still valid, and calling again continues reading. An arriving message can end the wait early (requirement 2.1).",
-    "help.maxWaitMs": "Config key: maxWaitMs (number, ms).\n\nOne budget covers entry checks, lookups, retries, and the wait — no per-stage re-arming; when it ends, control returns with the job handle still valid, and calling again continues reading. An arriving message can end the wait early (requirement 2.1).",
-    "help.pollIntervalMs": "Config key: pollIntervalMs (number, ms).\n\nasync_wait_agent checks whether the subagent is still running on two channels — completion events first, polling as the backup; this interval sets the backup polling cadence and is bound by the pollIntervalMs ≤ maxWaitMs pairing (requirement 5.2).",
-    "help.maxResultChars": "Config key: maxResultChars (number, characters).\n\nMeasured by String.length and must be a positive integer (requirement 5.2) — the host output-buffer cap is derived from it threefold at registration, so non-integer drafts are rejected at save; beyond the cap the head and tail are kept and the omission and truncation are stated; status and notices are counted separately and do not consume this budget (requirement 2.2.3). Works with the host output buffer's threefold conversion to decide the overflow file-delivery path.",
-    "help.jobKind": "Config key: jobKind (text).\n\nType name used when registering command jobs, for identification in job lists and logs; it does not decide how commands run. An empty value is invalid (requirement 5.2).",
-    "help.subagentProvider": "Config key: subagentProvider (text).\n\nBackend service async_agent uses to create subagents, spawn by default; an empty value after trimming falls back to the default, and an unknown backend is rejected readably at call time. This is not choosing a large language model or a model vendor — model routing is specified via the provider/model parameters (requirement 2.3.1).",
-    "help.uiLang": "Config key: uiLang (enum: auto / zh / en).\n\nThe two switches are independent — changing this one does not affect agentLang; the auto mode only follows the host language and never writes the host's global language.",
-    "help.agentLang": "Config key: agentLang (enum: en / zh).\n\nThe two switches are independent — changing this one does not affect uiLang; it controls model-visible copy (tool descriptions, parameter notes, notices, errors, and execution rules); the switch that follows the host language is uiLang.",
-    "help.silentFailureGuard": "Config key: silentFailureGuard (boolean).\n\nWhen on, three defenses are active: result diagnostics (the conditional reminder in return notes), the command-description warning, and the execution-discipline note; when off, all three are absent. It only gives conditional reminders and does not guarantee detection or automatic repair (requirement 6.3). It applies only to this package's two presets and is off by default.",
-    "help.askTakeover": "Config key: askTakeover (boolean).\n\nTakeover scope: plain questions from the root agents of this package's two presets (requirement 4.1) — answered in the pending panel; permission approvals and plan reviews are not taken over and use the host's native flow. Late answers arrive as a notice while their record is kept (up to 24 h after expiry); a swept record, an agent that can no longer receive it, or a failed delivery means it will not arrive. On expiry it never picks answers for the user.",
-    "help.askTimeoutMs": "Config key: askTimeoutMs (number, ms).\n\nCounted from receiving a batch of questions; all questions in a batch share the deadline; on expiry a timeout fact is synthesized without answering for anyone, and the Agent continues. Still-answerable path: the panel keeps accepting answers after expiry; records are kept up to 24 h after expiry and delivered as notices within that window — a swept or undeliverable record will not arrive.",
-    "help.askExtendMs": "Config key: askExtendMs (number, ms).\n\nGroup-level action semantics (requirement 4.3): each \"Extend wait\" click in a group header adds this duration to that session's unexpired batches at that moment, stacked on the original deadline; expired batches do not wait again, and new batches do not inherit the extension.",
-    "help.askUiSeat": "Config key: askUiSeat (enum: sidebar / overlay).\n\nExpansion actions of the two placements (requirement 4.2): the sidebar footer badge shows the open count and expands on click; the bottom-right overlay shows the questions directly. The badge hides once everything is handled. The option's default marker matches requirement 5.2 (default sidebar) and does not indicate the user's current choice.",
+    "help.defaultYieldMs": "Config key: defaultYieldMs (number, ms).\n\nFirst-wait mechanism: async_run and async_workflow use the first wait to bound this call's occupancy — when it ends with work still running, the wait ends and returns the job id (job_id); the background task keeps running and the Agent can continue other work; messages and cancellation can end the wait early.\n\nDuration example (demo value, not the current effective value): with 20000 ms — a short command finishes inside the first wait and you get the result directly; a long command returns the job id first, and you read the result with async_wait_job afterwards.\n\nValue bounds: the default must sit within the first-wait bounds (minYieldMs ≤ defaultYieldMs ≤ maxYieldMs).",
+    "help.minYieldMs": "Config key: minYieldMs (number, ms).\n\nA yield_ms below this lower bound is clamped to it; messages and cancellation can still end the first wait early. Forms the first-wait bounds together with defaultYieldMs and maxYieldMs; an out-of-range request uses the corresponding bound.",
+    "help.maxYieldMs": "Config key: maxYieldMs (number, ms).\n\nA yield_ms above this upper bound is clamped to it; messages and cancellation can still end the first wait early. Forms the first-wait bounds together with minYieldMs and defaultYieldMs; an out-of-range request uses the corresponding bound.",
+    "help.defaultWaitMs": "Config key: defaultWaitMs (number, ms).\n\nwait_ms is required: every call of the two wait tools must give it explicitly, and omitting it errors. The wait_ms value shown in return notes follows this setting and is only an example. The example pairs with the minWaitMs/maxWaitMs range.",
+    "help.minWaitMs": "Config key: minWaitMs (number, ms).\n\nOne budget covers this call's entry checks, lookups, retries, and the wait; when it ends, control returns with the job handle still valid, and calling again continues reading. An arriving message can end the wait early.",
+    "help.maxWaitMs": "Config key: maxWaitMs (number, ms).\n\nOne budget covers this call's entry checks, lookups, retries, and the wait; when it ends, control returns with the job handle still valid, and calling again continues reading. An arriving message can end the wait early.",
+    "help.pollIntervalMs": "Config key: pollIntervalMs (number, ms).\n\nasync_wait_agent checks whether the subagent is still running on two channels — completion events first, polling as the backup; this interval sets the backup polling cadence and is bound by the pollIntervalMs ≤ maxWaitMs pairing.",
+    "help.maxResultChars": "Config key: maxResultChars (number, characters).\n\nMeasured by String.length; it must be a positive integer, and non-integer drafts are rejected at save. Beyond the cap the head and tail are kept and the omission and truncation are stated; status and notices are counted separately.",
+    "help.jobKind": "Config key: jobKind (text).\n\nType name used when registering command jobs, for identification in job lists and logs; an empty value is invalid.",
+    "help.subagentProvider": "Config key: subagentProvider (text).\n\nBackend service async_agent uses to create subagents, spawn by default; an empty value after trimming falls back to the default, and an unknown backend is rejected readably at call time. To specify a model, use the provider and model parameters of the async_agent call.",
+    "help.uiLang": "Config key: uiLang (enum: auto / zh / en).\n\nInterface copy and Agent-facing copy are two independent switches: this one only affects interface copy, and agentLang sets the Agent-facing language; the auto mode follows the host language.",
+    "help.agentLang": "Config key: agentLang (enum: en / zh).\n\nControls model-visible copy (tool descriptions, parameter notes, notices, errors, and execution discipline); interface copy is set by uiLang separately, and the two do not affect each other.",
+    "help.silentFailureGuard": "Config key: silentFailureGuard (boolean).\n\nWhen on, in the specific cases where a command may not have run with no visible error, the diagnostic reminders and checking advice appear in three places: return notes, command descriptions, and execution discipline.",
+    "help.askTakeover": "Config key: askTakeover (boolean).\n\nLate answers are delivered as notices; 24 hours is only a lazy sweep threshold — the queue is swept just once when the next question batch is taken over, and with no new batch the records can live longer and can still be answered; a swept record, an agent that can no longer receive it, or a failed delivery will not arrive. When a record will not arrive, the direct fallback is to reply directly in the session that question belongs to.",
+    "help.askTimeoutMs": "Config key: askTimeoutMs (number, ms).\n\nCounted from receiving a batch of questions; all questions in a batch share the deadline; unanswered questions are treated as timed out and the Agent continues the task. The panel keeps accepting answers after expiry; when the owning session's turn has already ended, a late answer is replied directly into that session instead of entering the queue.",
+    "help.askExtendMs": "Config key: askExtendMs (number, ms).\n\nEach \"Extend wait\" click in the pending panel adds this duration to each batch of that session not yet expired at that moment, stacked on the original deadline; new batches run on their own initial deadlines.",
+    "help.askUiSeat": "Config key: askUiSeat (enum: sidebar / overlay).\n\nBoth seats share the same question interaction — switching the display does not change questioning, timing, or answer delivery; the badge hides once everything is handled.",
     "opt.askUiSeat.sidebar": "Sidebar footer badge (default)",
     "opt.askUiSeat.overlay": "Bottom-right overlay",
     "ask.title": "Pending questions",
     "ask.count": "{n} pending",
     "ask.answer": "Submit",
     "ask.ignore": "Skip",
-    "ask.customPlaceholder": "Additional note (optional)",
+    "ask.customAnswer": "Custom answer",
+    "ask.customPlaceholder": "Type a custom answer",
+    "ask.needAnswer": "Choose an option or type a custom answer to submit",
+    "ask.needCustom": "The custom answer is empty: fill it in or choose another answer",
     "ask.jump": "Open session",
     "ask.expired": "Timed out; still answerable",
     "ask.submitting": "Submitting…",
@@ -1045,11 +1052,12 @@ var DICTIONARIES = {
     // 未知，不得断定"未送达"）③状态读取失败（轮询自动重试）；丢失答案无自动
     // 重试通道。（与 zh 词典区同款说明：文案本身是英文界面文本，注释是中文。）
     "ask.callFailed": "No confirmation was received from the host after submitting — it may or may not have arrived; the panel refreshes automatically, and if it still shows unanswered, you can submit again.",
-    "ask.answerRejected": "The host received the request but explicitly refused it (the question may no longer be in its answering window) — this submission did not take effect; the panel refreshes automatically shortly.",
+    "ask.answerRejected": "The host explicitly refused this submission — it did not take effect",
+    "ask.undelivered": "Not delivered: the question record is gone (past its retention or the batch has ended), so this submission was not accepted; if you still want to answer, reply directly in the session.",
     "ask.stateFailed": "Failed to fetch the pending-questions state; the panel retries automatically.",
     "ask.extendFailed": "No confirmation was received for the extend request — it may or may not have taken effect; decide whether to click again based on the remaining time shown after the panel refreshes (each click adds up).",
-    "ask.extendRejected": "The host received the extend request but explicitly refused it (no batch may still be open) — this extension did not take effect; the panel refreshes automatically shortly.",
-    "ask.lostAnswer": "The answer was submitted but could not be delivered to the agent (delivery failed; it will not be retried automatically).",
+    "ask.extendRejected": "The host received the extend request but explicitly refused it — this extension did not take effect; the panel refreshes automatically shortly.",
+    "ask.lostAnswer": "The answer was submitted but could not be delivered to the agent (delivery failed; it will not be retried automatically); to answer again, open the session and reply there directly.",
     "ask.dismissLost": "Dismiss",
     "ask.windowLeft": "{s} left",
     "ask.extend": "Extend wait",
@@ -1139,17 +1147,24 @@ var ASK_REMOTE = {
 
 /**
  * 待答模型：订阅设置 scope 读 `askTakeover`/`askUiSeat`/`uiLang`（生效值 = 用户层
- * ?? 组合层 ?? 默认），开关开时轮询 `state()`。`visibilitychange → visible` 与每次
- * answer/ignore 动作后立即补一次轮询；后台标签页由浏览器节流，轮询不以可见性为前提
- * （设计 §4.3：页面恢复可见及每次提交后立即刷新；后台页节流不当作服务端停止计时）。
+ * ?? 组合层 ?? 默认），（重新）开启即发起首查并按间隔轮询 `state()`。`visibilitychange
+ * → visible` 与每次 answer/ignore 动作后立即补一次轮询；后台标签页由浏览器节流，轮询
+ * 不以可见性为前提（设计 §4.3：页面恢复可见及每次提交后立即刷新；后台页节流不当作
+ * 服务端停止计时）。状态回执统一经读取代际闸门（设计 §4.3）：旧代（关闭／重开／卸载
+ * 后到达）与乱序的较旧回执丢弃，较旧响应不回退新题目、计数与期限。
  *
  * 失败不静默（失败三分）：`callFailed` 分型旗标（null | 'submit' |
  * 'state' | 'extend' | 'answerRejected' | 'extendRejected'，面板顶按失败动作分键
  * 报错。RPC 拒绝（'submit'/'extend'，**没有确认**——执行与否未知，不断定
  * "未送达"，可重试）与宿主回执 `{ok:false}`（'answerRejected'/'extendRejected'，
- * **明确拒绝**——请求已送达、被拒，未执行可断定）分开报错；'extend' 两条路径
+ * **明确拒绝**——请求已送达、被拒，未执行可断定；作答档随附回执 error 的 message（gateway rpcFailure 对象契约，voice-input 同款读法）存
+  * `answerRejectReason`——服务端拒绝原因随 agentLang 透传展示，不预判原因）分开报错；'extend' 两条路径
  * 都立即 poll() 复查真实期限（重试前先看刷新后的剩余时间——每次点击继续
  * 累加，不伪幂等）；
+  * 宿主回执 `outcome:'gone'` 且带 `undelivered:true`（批次/题记录缺席——清扫、
+  * 结清出列或交还，需求 §4.4）→ 'undelivered' 记入未送达名单（与 lostAnswers 同款逐条「知道了」消除、
+   * 计入座位渲染条件——条目随轮询清空后报错仍在场，不随提交成功清除）；他处已落定的
+  * 普通 gone 交轮询收敛（题目已有答案，不是未送达）；
  * 宿主回执 `outcome:'failed'`（迟到注入 followup/inject 抛错、条目已
  * 出列）→ 记入 `lostAnswers`（面板顶逐条列出报错——那一条用户的答案没有送达，且
  * 无重试通道，需求 §4.4）。竞态补醒失败（设计 §4.3）经 `state().lost` 名单随轮询并入——
@@ -1166,9 +1181,17 @@ function createAskModel(ctx, remote) {
   var listeners = new Set();
   var timer = null;
   var seq = 0;
+  // 状态读取代际（设计 §4.3）：读取序号每次发起单调递增；生命周期代在
+  // 关闭、重新开启、卸载时推进。回执只有在代数与当前一致、且序号大于已
+  // 应用最高序号时才写回——旧代迟到回执与同代乱序的较旧回执一律丢弃，
+  // 较旧响应不回退已取得的新题目、计数与期限。
+  var lifecycle = 0;
+  var readSeq = 0;
+  var appliedReadSeq = 0;
   var state = {
     enabled: false, seat: "sidebar", uiLang: "auto",
-    serverNow: 0, fetchedAt: 0, items: [], callFailed: null, lostAnswers: []
+    serverNow: 0, fetchedAt: 0, items: [], callFailed: null, answerRejectReason: null,
+    lostAnswers: [], undelivered: []
   };
 
   function notify() {
@@ -1184,6 +1207,20 @@ function createAskModel(ctx, remote) {
     var key = item.batchId + "/" + item.questionId;
     if (state.lostAnswers.some(function (lost) { return lost.batchId + "/" + lost.questionId === key; })) return;
     state.lostAnswers = [...state.lostAnswers.slice(-19), {
+      batchId: item.batchId, questionId: item.questionId, question: item.question,
+      ...(typeof item.sessionId === "string" ? { sessionId: item.sessionId } : {})
+    }];
+    notify();
+  }
+
+  /** 记录缺席的提交（需求 §4.4：清扫/结清出列/交还）记进面板未送达名单——与
+   * lostAnswers 同款复合键去重与「知道了」消除；名单计入座位渲染条件，条目随
+   * 下轮轮询清空（记录不在，state() 不再列出）后面板不消失，报错不能闪现即逝。
+   * 记录已不在、无可重试通道，出路写在文案（在所属会话中直接回复）。 */
+  function recordUndelivered(item) {
+    var key = item.batchId + "/" + item.questionId;
+    if (state.undelivered.some(function (und) { return und.batchId + "/" + und.questionId === key; })) return;
+    state.undelivered = [...state.undelivered.slice(-19), {
       batchId: item.batchId, questionId: item.questionId, question: item.question
     }];
     notify();
@@ -1201,7 +1238,8 @@ function createAskModel(ctx, remote) {
       if (dismissedLost.has(key)) return;
       if (state.lostAnswers.some(function (item) { return item.batchId + "/" + item.questionId === key; })) return;
       state.lostAnswers = [...state.lostAnswers.slice(-19), {
-        batchId: lost.batchId, questionId: lost.questionId, question: lost.question
+        batchId: lost.batchId, questionId: lost.questionId, question: lost.question,
+        ...(typeof lost.sessionId === "string" ? { sessionId: lost.sessionId } : {})
       }];
       changed = true;
     });
@@ -1226,8 +1264,15 @@ function createAskModel(ctx, remote) {
     state.seat = config.seat;
     state.uiLang = config.uiLang;
     if (config.enabled && timer === null) {
+      // 重新开启推进代数并立即首查（设计 §4.3）：上个开启期的在途回执作废，
+      // 新生命周期从当次状态起算，不等到第一个轮询间隔。
+      lifecycle += 1;
       timer = window.setInterval(poll, ASK_STATE_POLL_MS);
+      poll();
     } else if (!config.enabled && timer !== null) {
+      // 关闭推进代数：清定时器与题目，此后到达的在途成功／失败回执都属
+      // 旧代，不再写回隐藏状态。
+      lifecycle += 1;
       window.clearInterval(timer);
       timer = null;
       state.items = [];
@@ -1237,26 +1282,37 @@ function createAskModel(ctx, remote) {
 
   function poll() {
     if (remote === undefined) return;
+    var seq = ++readSeq;
+    var life = lifecycle;
     remote.state().then(function (result) {
-      if (!result || result.ok !== true) {
-        // 读取失败＝'state'（下一轮轮询自动重试，文案不冒充提交失败）。
-        state.callFailed = 'state';
-        notify();
-        return;
-      }
-      // 读取成功只清**自己**的失败档（'state'）——动作类旗标（'submit'/
-      // 'answerRejected'/'extend'/'extendRejected'）保留到下一次同动作成功：
-      // 失败处理器里的复查轮询会立即回来，无条件清会把刚立起的报错闪没。
-      if (state.callFailed === 'state') state.callFailed = null;
-      state.serverNow = result.value.serverNow;
-      state.fetchedAt = Date.now();
-      state.items = result.value.items;
-      absorbServerLost(result.value.lost);
-      notify();
+      applyRead(seq, life, result);
     }, function () {
+      applyRead(seq, life, undefined);
+    });
+  }
+
+  /** 状态回执的代际闸门（设计 §4.3）：旧代（关闭／重开／卸载后到达）与
+   * 同代内乱序的较旧回执直接丢弃——成功不写 items／serverNow，失败也不
+   * 立 callFailed:'state'（迟到失败同样不得污染新生命周期）；动作类旗标
+   * 与丢失／未送达名单不在此路径，不受影响。 */
+  function applyRead(seq, life, result) {
+    if (life !== lifecycle || seq <= appliedReadSeq) return;
+    appliedReadSeq = seq;
+    if (!result || result.ok !== true) {
+      // 读取失败＝'state'（下一轮轮询自动重试，文案不冒充提交失败）。
       state.callFailed = 'state';
       notify();
-    });
+      return;
+    }
+    // 读取成功只清**自己**的失败档（'state'）——动作类旗标（'submit'/
+    // 'answerRejected'/'extend'/'extendRejected'）保留到下一次同动作成功：
+    // 失败处理器里的复查轮询会立即回来，无条件清会把刚立起的报错闪没。
+    if (state.callFailed === 'state') state.callFailed = null;
+    state.serverNow = result.value.serverNow;
+    state.fetchedAt = Date.now();
+    state.items = result.value.items;
+    absorbServerLost(result.value.lost);
+    notify();
   }
 
   function onVisibility() {
@@ -1272,7 +1328,6 @@ function createAskModel(ctx, remote) {
 
   var unsubscribe = scope.subscribe(function () { applyConfig(readConfig()); notify(); });
   applyConfig(readConfig());
-  if (state.enabled) poll();
   // auto 档跟随宿主语言——订阅 locale 读取侧（revision 推进
   // 驱动重渲：语言切换与词典注册都会推）。只读不写（不调 setLocale）。
   var localeService = ctx.locale !== undefined && ctx.locale !== null
@@ -1290,25 +1345,40 @@ function createAskModel(ctx, remote) {
       if (remote === undefined) { onDone(false); return; }
       remote.answer({ batchId: item.batchId, questionId: item.questionId, selected: selected, custom: custom })
         .then(function (result) {
-          // 成功只有两种回执；failed（迟到注入没送达）记名报错，gone 交给轮询收敛。
+          // 成功只有两种回执；failed（迟到注入没送达）与记录缺席的 gone
+          // （undelivered，需求 §4.4）都记可消除报错名单，普通 gone 交轮询收敛。
           if (result === undefined || result === null || result.ok !== true) {
             // 失败三分——ok:false 是宿主**明确拒绝**（请求已送达、被拒）：可断定
             // 未执行；与 RPC 拒绝（'submit'，执行与否未知）分开报，不混说"未送达"。
+            // 回执 error 是对象（gateway rpcFailure 契约：{code,message,details}，
+            // 同一调用链的 voice-input 同款读法）——message 携带服务端拒绝原因（随
+            // agentLang），透传展示，不猜因。
             state.callFailed = 'answerRejected';
+            state.answerRejectReason = result.error !== undefined && result.error !== null
+              && typeof result.error.message === "string" && result.error.message !== ""
+              ? result.error.message : null;
             notify();
             onDone(false);
             return;
           }
           var outcome = result.value !== undefined && result.value !== null ? result.value.outcome : undefined;
           if (outcome !== "delivered" && outcome !== "late") {
+            // 两种失败都进名单而非旗标：该题条目随下轮轮询出列/清空，纯旗标会连
+            // 面板一起消隐（座位渲染条件只认 items/名单）。他处已落定的普通 gone 不记
+            // 名——题目已有答案，交轮询收敛，不是未送达。
             if (outcome === "failed") recordLost(item);
+            if (outcome === "gone" && result.value !== undefined && result.value !== null
+              && result.value.undelivered === true) recordUndelivered(item);
             onDone(false);
             return;
           }
           // 成功只清**本动作族**的旗标（'submit'/'answerRejected'）——延长族
-          // （'extend'/'extendRejected'）与读取档（'state'）不受牵连：提交失败
-          // 的报错不能被一次无关的延长成功抹掉。
-          if (state.callFailed === 'submit' || state.callFailed === 'answerRejected') state.callFailed = null;
+          // （'extend'/'extendRejected'）与读取档（'state'）不受牵连；丢失/未送达
+          // 名单是逐条事实记录，不随成功清除（「知道了」手动消除）。
+          if (state.callFailed === 'submit' || state.callFailed === 'answerRejected') {
+            state.callFailed = null;
+            state.answerRejectReason = null;
+          }
           onDone(true);
           poll();
         }, function () {
@@ -1324,8 +1394,12 @@ function createAskModel(ctx, remote) {
       remote.ignore({ batchId: item.batchId, questionId: item.questionId })
         .then(function (result) {
           if (result === undefined || result === null || result.ok !== true) {
-            // 与 answer 同一分法：明确拒绝（已送达、被拒）≠ 未收到确认。
+            // 与 answer 同一分法：明确拒绝（已送达、被拒）≠ 未收到确认；error 对象
+            // 的 message 同款透传（忽略路径现无服务端拒绝生产者，结构同款）。
             state.callFailed = 'answerRejected';
+            state.answerRejectReason = result.error !== undefined && result.error !== null
+              && typeof result.error.message === "string" && result.error.message !== ""
+              ? result.error.message : null;
             notify();
             onDone(false);
             return;
@@ -1333,11 +1407,17 @@ function createAskModel(ctx, remote) {
           var outcome = result.value !== undefined && result.value !== null ? result.value.outcome : undefined;
           if (outcome !== "delivered" && outcome !== "late") {
             if (outcome === "failed") recordLost(item);
+            // 与作答同口径（需求 §4.4）：忽略提交命中记录缺席 → 未送达名单。
+            if (outcome === "gone" && result.value !== undefined && result.value !== null
+              && result.value.undelivered === true) recordUndelivered(item);
             onDone(false);
             return;
           }
-          // 与 answer 同族：ignore 成功只清提交族旗标。
-          if (state.callFailed === 'submit' || state.callFailed === 'answerRejected') state.callFailed = null;
+          // 与 answer 同族：成功清提交族旗标与拒绝原因；名单不随成功清除。
+          if (state.callFailed === 'submit' || state.callFailed === 'answerRejected') {
+            state.callFailed = null;
+            state.answerRejectReason = null;
+          }
           onDone(true);
           poll();
         }, function () {
@@ -1389,6 +1469,18 @@ function createAskModel(ctx, remote) {
       if (next.length === state.lostAnswers.length) return;
       state.lostAnswers = next;
       notify();
+    },
+    /** 未送达名单手动消除（「知道了」）——与报错名单同口径：未读不算「处理完」，
+     * 消除后面板回到消隐口径。名单是客户端记录（服务端无此账，与 lostAnswers
+     * 的服务端回弹挡不同源），再次提交同一题会重新记入（新尝试、新的未送达事实）。 */
+    dismissUndelivered: function (batchId, questionId) {
+      var key = batchId + "/" + questionId;
+      var next = state.undelivered.filter(function (und) {
+        return und.batchId + "/" + und.questionId !== key;
+      });
+      if (next.length === state.undelivered.length) return;
+      state.undelivered = next;
+      notify();
     }
   };
 
@@ -1403,6 +1495,9 @@ function createAskModel(ctx, remote) {
     actions: actions,
     locale: localeService,
     dispose: function () {
+      // 卸载推进代数：卸载前在途的状态回执（成功或失败）零写入；卸载后
+      // 监听已清、界面不再消费快照。
+      lifecycle += 1;
       if (timer !== null) window.clearInterval(timer);
       if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisibility);
       if (unsubscribeLocale !== null) unsubscribeLocale();
@@ -1430,12 +1525,38 @@ var ASK_CSS = ""
   + "color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;padding:2px 8px}"
   + ".ats-ask-q{padding:6px 0}"
   + ".ats-ask-text{margin:0 0 6px}"
-  + ".ats-ask-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}"
-  + ".ats-ask-chip{border:.5px solid var(--dsw-alias-border-l4);border-radius:999px;"
-  + "background:none;color:var(--dsw-alias-label-primary);cursor:pointer;"
-  + "font:inherit;font-size:12px;padding:3px 10px}"
-  + ".ats-ask-chip[aria-pressed='true']{border-color:var(--dsw-alias-brand-primary);"
-  + "color:var(--dsw-alias-brand-primary)}"
+  + ".ats-ask-opts{display:flex;flex-direction:column;gap:4px;margin-bottom:6px}"
+  + ".ats-ask-opt{display:flex;align-items:flex-start;gap:8px;text-align:left;"
+  + "border:.5px solid var(--dsw-alias-border-l4);border-radius:8px;background:none;"
+  + "color:var(--dsw-alias-label-primary);cursor:pointer;font:inherit;font-size:12px;"
+  + "padding:6px 8px}"
+  + ".ats-ask-opt[data-selected='true']{background:var(--dsw-alias-interactive-bg-hover);"
+  + "border-color:var(--dsw-alias-brand-primary)}"
+  + ".ats-ask-opt:focus-visible,.ats-ask-optctl:focus-visible,"
+  + ".ats-ask-custom .ats-ask-input:focus-visible"
+  + "{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}"
+  + ".ats-ask-mark{flex:none;width:14px;height:14px;margin-top:2px;box-sizing:border-box;"
+  + "border:1.5px solid var(--dsw-alias-label-secondary);border-radius:50%}"
+  + ".ats-ask-opt[data-multi='true'] .ats-ask-mark,"
+  + ".ats-ask-custom[data-multi='true'] .ats-ask-mark{border-radius:4px}"
+  + ".ats-ask-opt[data-selected='true'] .ats-ask-mark,"
+  + ".ats-ask-custom[data-selected='true'] .ats-ask-mark"
+  + "{border-color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-brand-primary);"
+  + "box-shadow:inset 0 0 0 2.5px var(--dsw-alias-bg-layer-3)}"
+  + ".ats-ask-optbody{display:flex;flex-direction:column;gap:2px;min-width:0}"
+  + ".ats-ask-optlabel{color:var(--dsw-alias-label-primary)}"
+  + ".ats-ask-optdesc{color:var(--dsw-alias-label-tertiary);font-size:12px}"
+  + ".ats-ask-custom{display:flex;align-items:flex-start;gap:8px;"
+  + "border:.5px solid var(--dsw-alias-border-l4);border-radius:8px;background:none;"
+  + "padding:6px 8px}"
+  + ".ats-ask-custom[data-selected='true']{background:var(--dsw-alias-interactive-bg-hover);"
+  + "border-color:var(--dsw-alias-brand-primary)}"
+  + ".ats-ask-optctl{display:flex;align-items:flex-start;gap:8px;background:none;"
+  + "border:none;cursor:pointer;font:inherit;font-size:12px;padding:0;"
+  + "color:var(--dsw-alias-label-primary)}"
+  + ".ats-ask-custom .ats-ask-input{flex:1;min-width:0;margin-bottom:0}"
+  + ".ats-ask-reason{color:var(--dsw-alias-state-error-primary);font-size:12px;margin:4px 0 0}"
+  + ".ats-ask-submit:disabled{opacity:.5;cursor:not-allowed}"
   + ".ats-ask-input{width:100%;box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l4);"
   + "border-radius:8px;background:var(--dsw-alias-bg-layer-3);font:inherit;font-size:12px;"
   + "padding:6px 8px;color:var(--dsw-alias-label-primary);margin-bottom:6px}"
@@ -1470,27 +1591,43 @@ function injectAskStyles() {
 }
 
 /**
- * 单题组件：选项 chips（多选 toggle；无 options 的题只渲染自定义输入）、补充输入、
- * 提交/忽略、剩余秒数（`expiresAt` 按宿主 `serverNow` 校准时差后本地走秒，仅显示用）。
+ * 单题组件（需求 §4.2.1–4.2.4）：预设选项与「自定义回答」并列作答，各自独立选中；
+ * 单选互斥、多选可组合，未选中的自定义草稿不进提交；无有效答案时禁用提交并就近
+ * 说明原因。剩余秒数（`expiresAt` 按宿主 `serverNow` 校准时差后本地走秒，仅显示用）。
  */
 function AskItem(props) {
   var item = props.item;
   var t = props.t;
   var ask = props.ask;
-  // multiSelect=false（缺省）时点第二个 chip 是**替换**，不是叠加——与原生
-  // user-questions 的 choose() 同语义；multiSelect=true 才是 toggle。
-  var reducer = function (set, action) {
-    if (action.multiSelect === true) {
-      var next = new Set(set);
-      if (next.has(action.label)) next.delete(action.label); else next.add(action.label);
-      return next;
+  var multi = item.multiSelect === true;
+  // 选择状态（需求 §4.2.1）：预设项集合 + 自定义项独立选中位。单选（multiSelect
+  // 缺省 false）点任一项是**替换**并清自定义选中；多选各自切换、互不清除——
+  // 与原生 user-questions 的 choose() 同语义。
+  var reducer = function (state, action) {
+    if (action.type === "preset") {
+      if (action.multiSelect === true) {
+        var next = new Set(state.presets);
+        if (next.has(action.label)) next.delete(action.label); else next.add(action.label);
+        return { presets: next, custom: state.custom };
+      }
+      return { presets: new Set([action.label]), custom: false };
     }
-    return new Set([action.label]);
+    if (action.type === "customOn") {
+      return action.multiSelect === true
+        ? { presets: state.presets, custom: true }
+        : { presets: new Set(), custom: true };
+    }
+    if (action.type === "customOff") return { presets: state.presets, custom: false };
+    return state;
   };
-  var pair = React.useReducer(reducer, new Set());
-  var selected = pair[0];
+  var pair = React.useReducer(reducer, { presets: new Set(), custom: false });
+  var selection = pair[0];
   var dispatch = pair[1];
-  var customRef = React.useRef(null);
+  // 自定义草稿（需求 §4.2.2）：文本随组件保存——取消选择不清空草稿，未选中的
+  // 草稿不参与提交；再次点击输入框或输入非空白文本时重新选中。
+  var draftPair = React.useState("");
+  var draft = draftPair[0];
+  var setDraft = draftPair[1];
   var busyRef = React.useRef(false);
   var rerender = React.useState(0)[1];
   // 本地走秒（需求 §4.3「倒计时继续运行」）：显示层每秒自跳一拍，**不依赖轮询返回**——
@@ -1509,14 +1646,20 @@ function AskItem(props) {
   var leftText = leftMs > 0
     ? t("ask.windowLeft").replace("{s}", Math.ceil(leftMs / 1000) + " s")
     : t("ask.expired");
+  // 有效性（需求 §4.2.4）：无选中项不可提交；选中的自定义文本去首尾空白后为空
+  // 同样不可提交——多选已选预设项也不能掩盖。空白检查只判有效性，不改写文本。
+  var hasAnswer = selection.presets.size > 0 || selection.custom;
+  var customBlank = selection.custom && draft.trim() === "";
+  var valid = hasAnswer && !customBlank;
   function submit() {
-    if (busyRef.current) return;
+    if (busyRef.current || !valid) return;
     busyRef.current = true;
     rerender(function (n) { return n + 1; });
+    // 载荷只含当前选中的预设项与选中且有效的自定义原文（需求 §4.2.4）。
     ask.actions.answer(
       item,
-      [...selected],
-      customRef.current !== null && customRef.current.value !== "" ? customRef.current.value : undefined,
+      [...selection.presets],
+      selection.custom ? draft : undefined,
       function () { busyRef.current = false; rerender(function (n) { return n + 1; }); }
     );
   }
@@ -1526,29 +1669,74 @@ function AskItem(props) {
     rerender(function (n) { return n + 1; });
     ask.actions.ignore(item, function () { busyRef.current = false; rerender(function (n) { return n + 1; }); });
   }
-  var chips = item.options.map(function (option) {
+  var questionDomId = "ats-q-" + item.batchId + "-" + item.questionId;
+  var optionRole = multi ? "checkbox" : "radio";
+  var customOn = function () { dispatch({ type: "customOn", multiSelect: multi }); };
+  var options = item.options.map(function (option) {
+    var on = selection.presets.has(option.label);
     return React.createElement("button", {
-      key: option.label, type: "button", className: "ats-ask-chip",
-      "aria-pressed": selected.has(option.label) ? "true" : "false",
-      onClick: function () { dispatch({ label: option.label, multiSelect: item.multiSelect === true }); }
-    }, option.label);
+      key: option.label, type: "button", className: "ats-ask-opt",
+      role: optionRole, "aria-checked": on ? "true" : "false",
+      "data-selected": on ? "true" : "false", "data-multi": multi ? "true" : "false",
+      onClick: function () { dispatch({ type: "preset", label: option.label, multiSelect: multi }); }
+    },
+      React.createElement("span", { className: "ats-ask-mark", "aria-hidden": "true" }),
+      React.createElement("span", { className: "ats-ask-optbody" },
+        React.createElement("span", { className: "ats-ask-optlabel" }, option.label),
+        typeof option.description === "string" && option.description !== ""
+          ? React.createElement("span", { className: "ats-ask-optdesc" }, option.description)
+          : null));
   });
   return React.createElement("div", { className: "ats-ask-q" },
-    React.createElement("p", { className: "ats-ask-text" }, item.question),
-    chips.length > 0 ? React.createElement("div", { className: "ats-ask-chips" }, chips) : null,
-    React.createElement("input", {
-      ref: customRef, className: "ats-ask-input", type: "text",
-      placeholder: t("ask.customPlaceholder")
-    }),
+    React.createElement("p", { className: "ats-ask-text", id: questionDomId }, item.question),
+    React.createElement("div", {
+      className: "ats-ask-opts", role: multi ? "group" : "radiogroup",
+      "aria-labelledby": questionDomId
+    },
+      options,
+      React.createElement("div", {
+        key: "custom", className: "ats-ask-custom",
+        "data-selected": selection.custom ? "true" : "false",
+        "data-multi": multi ? "true" : "false"
+      },
+        React.createElement("button", {
+          type: "button", className: "ats-ask-optctl", role: optionRole,
+          "aria-checked": selection.custom ? "true" : "false",
+          "aria-label": t("ask.customAnswer"),
+          onClick: function () {
+            dispatch({ type: selection.custom ? "customOff" : "customOn", multiSelect: multi });
+          }
+        },
+          React.createElement("span", { className: "ats-ask-mark", "aria-hidden": "true" }),
+          React.createElement("span", { className: "ats-ask-optlabel" }, t("ask.customAnswer"))),
+        React.createElement("input", {
+          className: "ats-ask-input", type: "text", value: draft,
+          placeholder: t("ask.customPlaceholder"), "aria-label": t("ask.customAnswer"),
+          // 点击输入框选中自定义项；键盘 Tab 聚焦不选中（需求 §4.2.2 只认点击
+          // 与主动输入）。输入非空白文本同样选中（取消后的重新选中路径）。
+          onClick: customOn,
+          onChange: function (event) {
+            var value = event.target.value;
+            setDraft(value);
+            if (value.trim() !== "") customOn();
+          },
+          onKeyDown: function (event) {
+            if (event.key === "Enter") { event.preventDefault(); submit(); }
+          }
+        }))),
     React.createElement("div", { className: "ats-ask-row" },
-      React.createElement("button", { type: "button", className: "ats-ask-submit", onClick: submit },
-        t(busyRef.current ? "ask.submitting" : "ask.answer")),
+      React.createElement("button", {
+        type: "button", className: "ats-ask-submit", onClick: submit,
+        disabled: !valid || busyRef.current
+      }, t(busyRef.current ? "ask.submitting" : "ask.answer")),
       React.createElement("button", { type: "button", className: "ats-ask-skip", onClick: skip }, t("ask.ignore")),
       React.createElement("span", {
         className: item.phase === "expired" ? "ats-ask-left ats-ask-expired" : "ats-ask-left"
-      }, leftText)
-    )
-  );
+      }, leftText)),
+    !valid && !busyRef.current
+      ? React.createElement("p", { className: "ats-ask-reason" },
+          t(customBlank ? "ask.needCustom" : "ask.needAnswer"))
+      : null);
 }
 
 /**
@@ -1598,19 +1786,39 @@ function AskList(props) {
     React.createElement("p", { className: "ats-ask-title" },
       t("ask.title") + " · " + t("ask.count").replace("{n}", String(state.items.length))),
     state.callFailed ? React.createElement("p", { className: "ats-ask-failed" },
-      t(state.callFailed === 'state'
-        ? "ask.stateFailed"
-        : state.callFailed === 'extend' ? "ask.extendFailed"
-        : state.callFailed === 'extendRejected' ? "ask.extendRejected"
-        : state.callFailed === 'answerRejected' ? "ask.answerRejected"
-        : "ask.callFailed")) : null,
+      (state.callFailed === 'answerRejected'
+        // 明确拒绝档：基础句＋回执携带的服务端原因串（随 agentLang 透传，不猜因）。
+        ? t("ask.answerRejected") + (state.answerRejectReason ? " · " + state.answerRejectReason : "")
+        : t(state.callFailed === 'state'
+          ? "ask.stateFailed"
+          : state.callFailed === 'extend' ? "ask.extendFailed"
+          : state.callFailed === 'extendRejected' ? "ask.extendRejected"
+          : "ask.callFailed"))) : null,
+    state.undelivered.map(function (und) {
+      // 与 lostAnswers 同款逐条「知道了」——记录已不在，报错必须被人看到，看到后
+      // 可收走（需求 §4.4：未送达可见，且出路写在文案）。
+      return React.createElement("p", {
+        key: "undelivered-" + und.batchId + "/" + und.questionId, className: "ats-ask-failed"
+      },
+        t("ask.undelivered") + " · " + und.question + " ",
+        React.createElement("button", {
+          type: "button", className: "ats-ask-dismiss",
+          onClick: function () { ask.actions.dismissUndelivered(und.batchId, und.questionId); }
+        }, t("ask.dismissLost")));
+    }),
     state.lostAnswers.map(function (lost) {
       // 逐条「知道了」消除——报错必须被人看到，看到后可手动收走。丢失答案
-      // 用专属键（已到宿主、投递失败——不冒称未到宿主，也不建议无出路的重试）。
+      // 用专属键（已到宿主、投递失败——不冒称未到宿主，也不建议无出路的重试）；
+      // 恢复动作＝打开所属会话直接回复（需求 §4.4 失败提示的可行下一步，
+      // 会话 id 在场时给跳转按钮，与组头「打开会话」同款动作）。
       return React.createElement("p", {
         key: "lost-" + lost.batchId + "/" + lost.questionId, className: "ats-ask-failed"
       },
         t("ask.lostAnswer") + " · " + lost.question + " ",
+        typeof lost.sessionId === "string" ? React.createElement("button", {
+          type: "button", className: "ats-ask-jump",
+          onClick: function () { ask.actions.jump(lost.sessionId); }
+        }, t("ask.jump")) : null,
         React.createElement("button", {
           type: "button", className: "ats-ask-dismiss",
           onClick: function () { ask.actions.dismissLost(lost.batchId, lost.questionId); }
@@ -1650,22 +1858,24 @@ function askTranslator(uiLang, locale) {
 }
 
 /**
- * 座位渲染条件的公共口径：计数 > 0 **或** 存在未消除的 lostAnswers 才显示。
- * failed 只发生在 expired 批迟到提交，该题随即出列——条件若只看计数，单题批次（最常见
- * 形态）的报错名单永不显示。未读失败不算「处理完」，消除后才回到消隐口径。
+ * 座位渲染条件的公共口径：计数 > 0、存在未消除的 lostAnswers 或未送达名单
+ * （undelivered——记录缺席的提交）才显示。failed 只发生在 expired 批迟到提交、
+ * undelivered 只发生在记录缺席之后——两种形态该题条目随即不再列出，条件若只看
+ * 计数，单题批次（最常见形态）的报错永不显示。未读失败不算「处理完」，消除后
+ * 才回到消隐口径。
  */
 function askHasFace(state) {
-  return state.items.length > 0 || state.lostAnswers.length > 0;
+  return state.items.length > 0 || state.lostAnswers.length > 0 || state.undelivered.length > 0;
 }
 
-/** overlay 座位：开关开 + 座位 overlay + 有内容显示（见 askHasFace）才渲染浮框。 */
+/** overlay 座位浮框（渲染条件见 askHasFace：题目与两类报错名单任一在场）。 */
 function AskOverlaySeat(props) {
   var state = React.useSyncExternalStore(props.ask.store.subscribe, props.ask.store.getSnapshot);
   if (!state.enabled || state.seat !== "overlay" || !askHasFace(state)) return null;
   return React.createElement(AskList, { ask: props.ask });
 }
 
-/** sidebar 座位：开关开 + 座位 sidebar + 有内容显示（见 askHasFace）渲染自绘徽标按钮。 */
+/** sidebar 座位徽标（渲染条件见 askHasFace；徽标＝未处理数入口，点击展开题目）。 */
 function AskSidebarSeat(props) {
   var state = React.useSyncExternalStore(props.ask.store.subscribe, props.ask.store.getSnapshot);
   var openRef = React.useRef(false);

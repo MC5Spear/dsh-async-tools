@@ -58,7 +58,7 @@ const { dir, names } = (() => {
     return definedNames();
   } catch (error) {
     console.error(String(error instanceof Error ? error.message : error));
-    console.error('设 DSAT_HOST_MODULES 指向 0.2.0 线运行树的 node_modules（含 @deepseek-ai）后重试；机器路径不写进本文件。');
+    console.error('设 DSAT_HOST_MODULES 指向 0.2.1 线运行树的 node_modules（含 @deepseek-ai）后重试；机器路径不写进本文件。');
     process.exit(2);
   }
 })();

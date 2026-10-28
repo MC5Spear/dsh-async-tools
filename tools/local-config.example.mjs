@@ -42,7 +42,7 @@ export default {
   // `verify/` 下的探针连的就是它。等价环境变量：`DSAT_INSTANCE_URL` / `DSAT_TOKEN_FILE`。
   instanceUrl: 'http://127.0.0.1:34567',
 
-  // 文件内容是托管方输出的 URL，每行一条、带 `?token=`；探针取令牌后换 cookie。
+  // 文件内容是托管方提供的 URL，每行一条、带 `?token=`；探针取令牌后换 cookie。
   // 常见来源是服务进程的 stdout 重定向文件。
   tokenFile: 'C:\\path\\to\\service\\current-url.txt',
 

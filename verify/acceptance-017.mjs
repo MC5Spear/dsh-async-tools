@@ -1,5 +1,7 @@
 /**
- * 阶段二真机验收驱动（dsh 0.2.0-rc.2 / 验证实例；判据清单 = 需求 §8 验收要求、设计 §8 验证设计）。
+ * 真机验收驱动（判据清单 = 需求 §8 验收要求、设计 §8 验证设计）。目标实例与凭据经
+ * `tools/_local-config.mjs` 的本机配置解析（开发约定目标宿主精确锁定 0.2.1-rc.2；无
+ * `.local/` 配置的环境按文档化跳过处理）。
  *
  * ## 为什么是"驱动"而不是一次性脚本
  *
@@ -30,7 +32,12 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { instanceCredentials, loadLocalPlaneOrSkip } from '../tools/_local-config.mjs';
 import { judgeDeliveredBytes } from './r24-judgements.mjs';
-import { judgeAgentRouting } from './agent-judgements.mjs';
+import { judgeAgentRouting, queryVerdictAllowed, queryVerdictDisabled } from './agent-judgements.mjs';
+// async-tools-host 的设置读写经共享助手（嵌套 settings 形状，设计 §8.3）；
+// SEL_NS 等宿主自有命名空间仍走本文件的原生形状直读。
+import { readNs, patchNs } from './_r28-helpers.mjs';
+// 词典句判据锚从共享锚模块取用（两语成对——单语锚在 zh 档实例下假红）。
+import { WAIT_INTERRUPTED, SUBJECT_UNTOUCHED, CHILD_SETTLED, WAIT_WOKE_BY_MESSAGE, YIELD_RUNNING, NOT_TERMINATED } from './message-markers.mjs';
 
 const localConfig = await loadLocalPlaneOrSkip('verify/acceptance-017.mjs');
 const BASE = instanceCredentials(localConfig).base;
@@ -40,6 +47,9 @@ const TOKEN_FILE = localConfig.tokenFile;
 /** 服务错误日志（托管服务 `AppStderr`，**追加**写：只许按字节游标读新增段）。 */
 const LOG_PATH = localConfig.serviceLog;
 const LOG_DIR = join(localConfig.evidenceDir, 'logs');
+// 证据目录先行就位：settings/reload-control 相位的 delta 写点早于主流程收尾，
+// 全新证据目录首跑不得因 logs/ 缺席而 ENOENT（主证据与 delta 同目录落点）。
+mkdirSync(LOG_DIR, { recursive: true });
 
 const phase = process.argv[2] ?? 'face';
 const tokenArg = process.argv.find((a) => a.startsWith('--token='));
@@ -304,8 +314,7 @@ async function phaseFace() {
   const nsNames = described.namespaces.map((n) => n.ns ?? n.namespace ?? n.id);
   record('前置 宿主行在线：settings/describe 含 async-tools-host',
     nsNames.includes('async-tools-host'), `命名空间数=${String(nsNames.length)}`);
-  const ns = described.namespaces.find((n) => (n.ns ?? n.namespace ?? n.id) === 'async-tools-host');
-  const liveValue = ns?.value ?? {};
+  const liveValue = (await readNs()).value;
   const drifted = Object.keys(FACTORY).filter((k) => liveValue[k] !== FACTORY[k]);
   record('前置 生效设置 = 出厂默认（否则"数字随设置变"的读数不可比）',
     drifted.length === 0, drifted.length === 0 ? '十项全等' : `偏离=${drifted.join(',')}`);
@@ -377,8 +386,8 @@ async function behaviorA() {
   record('短命令直接返回（结果里有 SHORT_OK）',
     results.some((t) => t.includes('SHORT_OK')), `async_run 调用 ${String(runCalls)} 次`);
   record('长命令让出而非被杀（note 说明超出首次等待且未被终止）',
-    results.some((t) => /it outlived the \d+ ms first wait/.test(t) && /It was NOT terminated/.test(t)),
-    `命中首次等待文案=${String(results.filter((t) => /outlived the \d+ ms first wait/.test(t)).length)} 条`);
+    results.some((t) => YIELD_RUNNING.test(t) && NOT_TERMINATED.test(t)),
+    `命中首次等待文案=${String(results.filter((t) => YIELD_RUNNING.test(t)).length)} 条`);
   record('让出返回给出可复制的 async_wait_job 调用（带作业编号）与生效数字',
     results.some((t) => /async_wait_job\(job_id="[^"]+", wait_ms=\d+\)/.test(t)),
     `async_wait_job 调用 ${String(waitCalls)} 次`);
@@ -386,7 +395,7 @@ async function behaviorA() {
     results.some((t) => t.includes('LONG_DONE')));
   extra.behaviorA = {
     calls: calls.map((c) => c.name),
-    yieldNotes: results.filter((t) => /outlived the \d+ ms first wait/.test(t)).map((t) => t.slice(0, 400))
+    yieldNotes: results.filter((t) => YIELD_RUNNING.test(t)).map((t) => t.slice(0, 400))
   };
 }
 
@@ -424,16 +433,16 @@ async function behaviorB() {
   record('运行形态：B 段会话同样运行在 danger-full-access 下',
     modesB.includes('danger-full-access'), `sandbox/mode 事件序列=${modesB.join(' → ') || '(无)'}`);
   const { results } = parseEvents(transcriptB);
-  record('插话打断等待，且 note 说明作业完全未受影响',
-    results.some((t) => /Wait interrupted: a user message has arrived/.test(t) && /completely unaffected/.test(t)),
-    `命中打断文案=${String(results.filter((t) => /Wait interrupted:/.test(t)).length)} 条`);
+  record('插话打断等待，且 note 说明结束等待没有终止作业',
+    results.some((t) => WAIT_INTERRUPTED.test(t) && SUBJECT_UNTOUCHED.test(t)),
+    `命中打断文案=${String(results.filter((t) => WAIT_INTERRUPTED.test(t)).length)} 条`);
   record('job_list 显示作业仍在 running（插话没有取消作业）',
-    results.some((t) => /async-command-\d+/.test(t) && /running/.test(t)));
+    results.some((t) => /\[async-command\]/.test(t) && /running/.test(t)));
   record('60 秒作业最终仍输出完整结果（SURVIVED）',
     results.some((t) => t.includes('SURVIVED')));
   extra.behaviorB = {
-    interruptedNotes: results.filter((t) => /Wait interrupted:/.test(t)).map((t) => t.slice(0, 300)),
-    jobList: results.filter((t) => /async-command-\d+/.test(t)).map((t) => t.slice(0, 300))
+    interruptedNotes: results.filter((t) => WAIT_INTERRUPTED.test(t)).map((t) => t.slice(0, 300)),
+    jobList: results.filter((t) => /\[async-command\]/.test(t)).map((t) => t.slice(0, 300))
   };
 }
 
@@ -451,8 +460,8 @@ async function behaviorC() {
   record('async_agent 立即返回 agent_id 与可复制的等待调用',
     results.some((t) => /async_wait_agent\(agent_id="[^"]+", wait_ms=\d+\)/.test(t)),
     `async_agent 调用 ${String(calls.filter((c) => c.name === 'async_agent').length)} 次`);
-  record('async_wait_agent 结算文案说明最终回答不在返回值里',
-    results.some((t) => /is no longer observed running/.test(t)),
+  record('async_wait_agent 有界等待以合法出口返回（结算：最终回答另行到达；或消息唤醒：交还运行句柄）',
+    results.some((t) => CHILD_SETTLED.some((re) => re.test(t)) || WAIT_WOKE_BY_MESSAGE.test(t)),
     `async_wait_agent 调用 ${String(calls.filter((c) => c.name === 'async_wait_agent').length)} 次`);
   extra.behaviorC = { calls: calls.map((c) => c.name), results: results.map((t) => t.slice(0, 300)) };
 }
@@ -485,13 +494,15 @@ function childModelsOf(pageResult) {
 }
 
 async function phaseAgent() {
-  // 主腿（白名单开）三判据 + 白名单关对照腿 + 收尾恢复。白名单关对照腿是
-  // 宿主管控口径（无 policy 会话不暴露模型参数，设计 §3.3）的活体证据。
+  // 三腿（实时口径，需求 §2.3.2）：主腿（白名单开，指定路由被接受 + 查询工具
+  // 判允许）、实时腿（**同一会话**内开关翻转：关 → 拒 + 查询判不允许；开回 →
+  // 再次接受。旧采样口径要新会话才生效，实时口径同会话即时生效——这条腿
+  // 就是两代语义的可失败判据）、收尾恢复。
   const SEL_NS = 'subagent-model-selection-settings';
   const selBefore = await readNsOf(SEL_NS);
   say(`模型选择白名单改前：enabled=${String(selBefore.value.enabled)} allowedModels=${JSON.stringify(selBefore.value.allowedModels ?? [])}`);
   try {
-    // 指定路由只在"会话有模型选择策略"时可用（需求 §2.3.2）；验证实例出厂 enabled=false，
+    // 指定路由只在"模型选择开"时可用（需求 §2.3.2）；验证实例出厂 enabled=false，
     // 先开白名单（含 zai/glm-5.3——用户指定的子代理路由）。
     await rpc('settings/update', {
       ns: SEL_NS,
@@ -502,13 +513,14 @@ async function phaseAgent() {
     record('前置 会话模型白名单设置区存在（subagent-model-selection-settings）',
       nsNames.includes(SEL_NS), `命名空间数=${String(nsNames.length)}`);
 
-    // ── 主腿：白名单开——会话被采样、策略在位，指定路由预期被接受 ──
+    // ── 主腿：白名单开——指定路由被接受；查询工具判允许（§2.3.4 目标适用性）──
     const sid = await newSession('dsh-async');
     sessionIds.agent = sid;
     await ask(sid, [
       'Follow these steps in order and do nothing else:',
       '1) async_agent with prompt: `Reply with exactly one line: ROUTED` and provider `zai`, model `glm-5.3`',
-      '2) reply with exactly one line: ROUTE_DONE'
+      '2) call async_list_subagent_models with query `zai` (no other arguments)',
+      '3) reply with exactly one line: ROUTE_DONE'
     ].join('\n'), 300000);
     const transcript = await page(sid);
     const { results } = parseEvents(transcript);
@@ -516,18 +528,9 @@ async function phaseAgent() {
     const routing = judgeAgentRouting(results, 'zai', 'glm-5.3');
     record('指定路由的 async_agent 调用被接受（note 锚 requested 标记）',
       routing.ok, routing.detail);
-
-    // 会话转录含策略持久事件——采样落档的直接证据（设计 §3.3：
-    // fresh 顶层 + 白名单开 ⇒ agent/created 采样追加 subagent/model-selection-policy）。
-    const policyEvents = (transcript.records ?? [])
-      .filter((r) => r.event?.type === 'subagent/model-selection-policy');
-    const policyRoutes = policyEvents.length > 0
-      ? (policyEvents[policyEvents.length - 1].event.data?.allowedModels ?? [])
-      : [];
-    record('会话转录含 subagent/model-selection-policy 持久事件（模型策略采样的直接证据）',
-      policyEvents.length > 0
-        && policyRoutes.some((route) => route?.provider === 'zai' && route?.model === 'glm-5.3'),
-      `事件数=${String(policyEvents.length)} 路由=${JSON.stringify(policyRoutes)}`);
+    record('async_list_subagent_models 判 async_agent 目标允许显式选择（现读口径：开）',
+      results.some((r) => queryVerdictAllowed(r) && r.includes('zai')),
+      `结果条数=${String(results.length)}`);
 
     // 真机判据的强形态：不满足于工具 note 的自述——从 subagent/catalog 事件拿
     // childId，翻**子会话**转录，断言子代理的 assistant 消息真的产生自 zai/glm-5.3。
@@ -557,22 +560,42 @@ async function phaseAgent() {
     }
     extra.agent = { results: results.map((t) => t.slice(0, 500)) };
 
-    // ── 对照腿：白名单关（enabled=false）——新会话无策略，指定路由得可读拒绝 ──
-    // 白名单关 ⇒ 采样不落事件 ⇒ 投影无值 ⇒ lib/agent.js 保守拒绝
-    // （error.noPolicy 文案锚在 lib/text.js）。
+    // ── 实时腿：同一会话内开关翻转（不重开会话——与采样口径的分水岭）──
+    // ① 关：本会话下一次指定路由必须可读拒绝（selectionDisabled 或启动前重读
+    //    撤回 routeRecheckFailed——两者都是实时口径的合法拒绝形态），且零派生；
+    //    查询工具同拍判"不允许显式选择"（双向差异，§2.3.4）。
     await rpc('settings/update', { ns: SEL_NS, patch: { enabled: false } });
-    const sidOff = await newSession('dsh-async');
-    sessionIds.agentOff = sidOff;
-    await ask(sidOff, [
+    await ask(sid, [
       'Follow these steps in order and do nothing else:',
       '1) async_agent with prompt: `Reply with exactly one line: OFF_ATTEMPTED` and provider `zai`, model `glm-5.3`',
-      '2) reply with exactly one line: OFF_DONE'
+      '2) call async_list_subagent_models with query `zai` (no other arguments)',
+      '3) reply with exactly one line: OFF_DONE'
     ].join('\n'), 300000);
-    const transcriptOff = await page(sidOff);
-    const routingOff = judgeAgentRouting(parseEvents(transcriptOff).results, 'zai', 'glm-5.3');
-    record('白名单关时新会话的指定路由调用得到可读拒绝（error.noPolicy 锚）',
-      routingOff.sawNoPolicy && !routingOff.sawRequested, routingOff.detail);
-    extra.agentOff = { results: routingOff.count };
+    const transcriptOff = await page(sid);
+    const resultsOff = parseEvents(transcriptOff).results;
+    const routingOff = judgeAgentRouting(resultsOff, 'zai', 'glm-5.3');
+    record('同一会话内开关关：下一次指定路由调用得到可读拒绝（selectionDisabled／routeRecheckFailed 锚）',
+      (routingOff.sawDisabled || routingOff.sawRecheck) && !routingOff.sawRequested, routingOff.detail);
+    record('同一会话内开关关：async_list_subagent_models 判不允许显式选择（双向差异）',
+      resultsOff.some((r) => queryVerdictDisabled(r)),
+      `结果条数=${String(resultsOff.length)}`);
+    extra.agentOff = { results: resultsOff.map((t) => t.slice(0, 300)) };
+
+    // ② 开回：同一会话再调一次指定路由——必须再次被接受（拒绝不是缓存/sticky）。
+    await rpc('settings/update', {
+      ns: SEL_NS,
+      patch: { enabled: true, allowedModels: [{ provider: 'zai', model: 'glm-5.3' }] }
+    });
+    await ask(sid, [
+      'Follow these steps in order and do nothing else:',
+      '1) async_agent with prompt: `Reply with exactly one line: ROUTED_AGAIN` and provider `zai`, model `glm-5.3`',
+      '2) reply with exactly one line: ON_AGAIN_DONE'
+    ].join('\n'), 300000);
+    const transcriptOn = await page(sid);
+    const routingOn = judgeAgentRouting(parseEvents(transcriptOn).results, 'zai', 'glm-5.3');
+    record('同一会话内开关开回：指定路由调用再次被接受（实时恢复，note 锚 requested）',
+      routingOn.sawRequested, routingOn.detail);
+    extra.agentOn = { results: routingOn.count };
   } finally {
     // 恢复原值（共享验证实例不留脏状态）；恢复本身回读比对。
     await rpc('settings/update', { ns: SEL_NS, patch: selBefore.value });
@@ -609,17 +632,14 @@ function logSince(from) {
 }
 
 // ── 相位：settings（活的设置链） ─────────────────────────────────────────────
-/** 读某个命名空间的现行值。 */
+/** 读某个命名空间的现行值（原生形状直读：供 SEL_NS 等**宿主自有**命名空间用——
+ * 它们的投影形状由各自宿主行决定，不走本包嵌套契约；async-tools-host 的读写
+ * 一律经共享助手 `_r28-helpers.mjs`）。 */
 async function readNsOf(ns) {
   const described = await rpc('settings/describe', {});
   const found = described.namespaces.find((n) => (n.ns ?? n.namespace ?? n.id) === ns);
   if (found === undefined) throw new Error(`${ns} 命名空间不在 describe 里（宿主行没激活？）`);
   return { value: found.value ?? {}, revision: found.revision ?? null };
-}
-
-/** 读 async-tools-host 的现行值。 */
-async function readNs() {
-  return readNsOf('async-tools-host');
 }
 
 async function phaseSettings() {
@@ -629,7 +649,7 @@ async function phaseSettings() {
   const mark = logMark();
   const patch = { defaultYieldMs: 12000, maxWaitMs: 480000 };
   try {
-    await rpc('settings/update', { ns: 'async-tools-host', patch });
+    await patchNs(patch);
     const after = await readNs();
     // 保存成功不靠异常判定（mutate 失败不抛错）——回读快照比对。
     record('保存后回读 = 新值（不靠 try/catch 判成败）',
@@ -652,7 +672,7 @@ async function phaseSettings() {
     const reloadHits = delta.split('\n').filter((l) => l.includes('async-tools-host'));
     record('volatile 提交的新增日志段里没有 async-tools-host 装载行',
       reloadHits.length === 0, `新增字节=${String(delta.length)}，含 async-tools-host 的行=${String(reloadHits.length)}`);
-    const deltaPath = `${LOG_DIR}acc017-settings-logdelta.txt`;
+    const deltaPath = join(LOG_DIR, 'acc017-settings-logdelta.txt');
     writeFileSync(deltaPath, delta, 'utf8');
     extra.settings = {
       before: before.value, patch, after: after.value, revisionBefore: before.revision, revisionAfter: after.revision,
@@ -662,7 +682,7 @@ async function phaseSettings() {
     say(`新增日志段 ${String(delta.length)} 字节（已落 ${deltaPath}）`);
   } finally {
     // 恢复出厂值：验证实例是共享资源，不留脏状态；恢复本身也要回读比对。
-    await rpc('settings/update', { ns: 'async-tools-host', patch: { defaultYieldMs: 20000, maxWaitMs: 600000 } });
+    await patchNs({ defaultYieldMs: 20000, maxWaitMs: 600000 });
     const restored = await readNs();
     record('收尾恢复出厂值（回读比对，不留脏状态）',
       restored.value.defaultYieldMs === 20000 && restored.value.maxWaitMs === 600000,
@@ -696,7 +716,7 @@ async function phaseReloadControl() {
   const delta = logSince(mark);
   const after = await readNs();
   const hits = delta.split('\n').filter((l) => l.includes('async-tools-host') || l.includes('ordinary config values'));
-  const deltaPath = `${LOG_DIR}acc017-reload-control-logdelta.txt`;
+  const deltaPath = join(LOG_DIR, 'acc017-reload-control-logdelta.txt');
   writeFileSync(deltaPath, delta, 'utf8');
   extra.reloadControl = {
     mutated: 'cordis.patch.yml 宿主行加 config.pollIntervalMs=700（非 volatile 侧的组合层改动）',
@@ -766,7 +786,7 @@ async function phaseSandboxControl() {
   extra.sandboxControl = { results: results.map((r) => r.slice(0, 600)) };
 }
 
-// ── 相位：sibling-coexist（第三方插件在 0.2.0-rc.2 + 最小链接集下共存） ───────────
+// ── 相位：sibling-coexist（本包与第三方兄弟包在同一次部署下共存） ───────────────
 /** 验证实例的 profile 目录（与 BASE/LOG_PATH 同源，经配置加载器取 instanceHome 派生）。 */
 const PROFILE_DIR = join(localConfig.instanceHome, 'profiles', 'web');
 
@@ -897,8 +917,8 @@ say('');
 say(`总判定：${String(checks.length - failed.length)}/${String(checks.length)} 通过${phaseError === null ? '' : '（相位中断，判据不完整）'}`);
 for (const f of failed) say(`未通过：${f.name}`);
 mkdirSync(LOG_DIR, { recursive: true });
-writeFileSync(`${LOG_DIR}acc017-${phase}.json`, JSON.stringify({
+writeFileSync(join(LOG_DIR, `acc017-${phase}.json`), JSON.stringify({
   phase, at: startedAt, base: BASE, sessionIds, faces, extra, phaseError, checks
 }, null, 2), 'utf8');
-writeFileSync(`${LOG_DIR}acc017-${phase}.log`, `${lines.join('\n')}\n`, 'utf8');
+writeFileSync(join(LOG_DIR, `acc017-${phase}.log`), `${lines.join('\n')}\n`, 'utf8');
 process.exit(failed.length === 0 && phaseError === null ? 0 : 1);

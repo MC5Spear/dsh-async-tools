@@ -4,7 +4,7 @@
  * ## 证明的是哪一句
  *
  * 需求 §3.2 明写：「工具行只在挂载它们的预设范围内注册」且「使用者可在自建预设
- * 按工具选择挂载」——`dsh-async` 预设只是替使用者把四行写好的默认模板，
+ * 按工具选择挂载」——`dsh-async` 预设只是替使用者把六行写好的默认模板，
  * 本包不提供"只在某个预设里可见"的机制。
  *
  * ## 为什么必须有这条反向证据
@@ -13,21 +13,33 @@
  *
  * | 已有判据 | 它说的 |
  * |---|---|
- * | 本包预设里四个工具都在 | 本包的预设里有这四个工具 |
+ * | 本包预设里根可见的五个工具都在 | 本包的预设里有这些工具 |
  * | standard 里不出现 | 本包**没有**把它们强行装到所有预设 |
  *
  * 两条合起来**证明不了**"别处也能有"。只靠这两条，一个"把工具**锁死在**本预设里"的
  * 实现同样能全绿——而那正好与 §3.2 相悖。
  *
- * ⇒ 本探针在**另一个预设 id** 下挂同样的四行，断言工具出现。
+ * ⇒ 本探针在**另一个预设 id** 下挂同样的六行，断言根可见工具出现。
  * 这才是"预设是模板、不是限制"的证据。
+ *
+ * ## 装置前提与证据边界
+ *
+ * 本探针走**落盘预设目录**机制（`~/.dsh/.agent-presets/` 下的目录与
+ * `agent.cordis.yml`）：源目录不存在时**自退出**——那不是产品失败，只是
+ * 本机没有这种部署形态，本探针不产生任何证据。它的通过与不通过都**只对
+ * 落盘挂载路径有效**：bundle patch 路径（本包现行主发布形态，经
+ * `presets/*.patch.yml` 在安装期生效）的组合装载由 `tools/validate-preset.mjs`
+ * （静态逐行）与 `verify/d05-readme-composition.mjs`（装载语义＋缺引擎拒绝）
+ * 证明，本探针不得作为 bundle patch 的通过证据引用。
  *
  * ## 它做什么
  *
  * 1. 在可写预设根下建一个**临时**预设 `dsh-async-portability-probe`（复制已部署那份，
  *    只改 `id` 与 `preset.yml` 的 `name`/`order`）；
  * 2. 用它开一个会话，从真实 `request/header` 读工具清单；
- * 3. 断言四个工具都在（若本插件真的"只在某个预设里可见"，这里必然缺失）；
+ * 3. 断言五个根作用域可见的工具都在（`async_workflow` 钉在 delegation 组内、
+ *    根作用域本就不可见——它的注册与组隔离由 `verify/d05-readme-composition.mjs`
+ *    证明，不在此重复断言）；
  * 4. **无论成败都删掉那个临时预设目录**，并复核删干净了。
  *
  * 只碰它自己建的那个目录：目录名是固定常量，删除前会核对**里面确实只有本探针写的文件**。
@@ -87,7 +99,12 @@ if (existsSync(PROBE_DIR)) {
   console.log(`**${PROBE_DIR} 已存在**——上一次没清干净。先手工确认它不是你要的东西再删。`);
   process.exit(2);
 }
-const source = readFileSync(`${SOURCE_DIR}\\agent.cordis.yml`, 'utf8');
+if (!existsSync(join(SOURCE_DIR, 'agent.cordis.yml'))) {
+  console.log(`**源预设不在 ${SOURCE_DIR}**——本机没有落盘部署形态的 dsh-async 预设。`);
+  console.log('本探针只测落盘挂载路径的可移植性；这不是产品失败，也不产生任何证据（含 bundle patch 路径）。');
+  process.exit(3);
+}
+const source = readFileSync(join(SOURCE_DIR, 'agent.cordis.yml'), 'utf8');
 if (!source.includes('toolName: async_run')) {
   console.log('**源预设里没有本包的工具行**——拿它复制证明不了任何事，本探针失效。');
   process.exit(2);
@@ -96,8 +113,8 @@ if (!source.includes('toolName: async_run')) {
 // `^id:` 永远匹配不到；探针目录若与 dsh-async 同名，实验证明的东西就是空的）。
 // ⇒ 复制组合文件原样即可；id 由下面的目录名给出。
 mkdirSync(PROBE_DIR, { recursive: true });
-writeFileSync(`${PROBE_DIR}\\agent.cordis.yml`, source, 'utf8');
-writeFileSync(`${PROBE_DIR}\\preset.yml`,
+writeFileSync(join(PROBE_DIR, 'agent.cordis.yml'), source, 'utf8');
+writeFileSync(join(PROBE_DIR, 'preset.yml'),
   `name: 可移植性探针\n`
   + `description: 临时预设，只用来证明"工具随挂载它的那一行生效，不限于 dsh-async 预设"。用完即删。\n`
   + 'order: 99\n', 'utf8');
@@ -158,10 +175,12 @@ try {
     .filter((r) => r.event?.type === 'request/header')
     .flatMap((r) => r.event.data?.header?.tools ?? [])
     .map((t) => t?.name);
-  const ours = ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent'];
+  // 根作用域可见的五个本包工具（async_workflow 在 delegation 组内、根不可见，
+  // 由 d05 组合探针证明，此处不断言）。
+  const ours = ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent', 'async_list_subagent_models'];
   const present = ours.filter((n) => tools.includes(n));
-  record('四个工具在**另一个预设**下也出现（"不限于本预设"）',
-    present.length === 4,
+  record('五个根可见工具在**另一个预设**下也出现（"不限于本预设"）',
+    present.length === ours.length,
     `实得 ${JSON.stringify(present)}；该预设工具数 ${String(tools.length)}`);
   failed = checks.filter((c) => !c.ok).length;
 } finally {

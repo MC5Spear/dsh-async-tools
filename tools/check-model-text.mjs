@@ -100,19 +100,20 @@ const ALLOWLIST = {
     { needle: '最近提交的原始值自检失败', why: 'internal/config waterfall 降级通告的 logger.warn，操作者一侧（同 volatile 提交后配置自检失败一条的通道）' },
     { needle: '最近提交的设置未生效', why: '同上通道的 stderr 通告（emitLifecycleNotice），操作者一侧（同 volatile 提交未生效一条）' }
   ],
-  // 装载期的两条降级通告（emitLifecycleNotice → stderr）：与 index.js 的
-  // 「设置快照缺席」同类先例——部署期线索给操作者，不进模型上下文。
-  'agent-policy.js': [
-    { needle: '模型选择设置服务缺席', why: 'stderr 通告（emitLifecycleNotice），操作者一侧（settings 缺席降级）' },
-    { needle: '宿主组合未含 model-selection-settings', why: '同上通告的续行字符串，操作者一侧' },
-    { needle: 'Session 注册表缺席', why: 'stderr 通告（emitLifecycleNotice），操作者一侧（sessions 缺席只跳父继承分支）' },
-    { needle: '顶层新会话采样不受影响', why: '同上通告的续行字符串，操作者一侧' }
-  ],
-  // startActivation result 观察通道的两条诊断（emitLifecycleNotice → stderr）：
-  // 子代理非完成结局/结果通道拒绝是操作者线索，最终回答走宿主通知（设计 §3.3）。
+  // 装载期降级通告（emitLifecycleNotice → stderr）的豁免先例见 index.js 的
+  // 「设置快照缺席」组——agent-policy.js 现仅含形状副本与 policyOf，无 CJK
+  // 字面量，不设豁免组。
   'agent.js': [
     { needle: '以非完成结局收场', why: 'stderr 通告（emitLifecycleNotice），操作者一侧（result 观察通道）' },
-    { needle: '结果通道拒绝（基础设施故障）', why: '同上通道的拒绝分支通告，操作者一侧' }
+    { needle: '结果通道拒绝（基础设施故障）', why: '同上通道的拒绝分支通告，操作者一侧' },
+    { needle: '子代理路由预检拒绝', why: 'stderr 通告（emitLifecycleNotice），操作者一侧（预检拒绝的完整宿主原文）' },
+    { needle: '子代理启动前重读模型选择设置失败', why: '同上通道的启动前重读失败通告，操作者一侧（完整原错走 stderr；模型侧只吃 routeRecheckReadFailed 词典键的单行化截断段）' }
+  ],
+  // 注册拒绝完整原文的 stderr 通告：操作者一侧——模型侧只吃单行化＋500 截断
+  // 段（t() 词典 error.startRefused*），完整原文不进模型上下文（同 agent.js
+  // 预检拒绝通告的先例）。
+  'jobs.js': [
+    { needle: '注册拒绝（进程启动前）完整原文', why: 'stderr 通告（emitLifecycleNotice），操作者一侧（注册拒绝的完整宿主原文）' }
   ],
   // 静默失败签名 2 的 ZH 拒绝锚：**判定常量**——匹配的是命令输出文本，不是面向模型的文案
   // （EN 对零 CJK 不触发本层；文案本身在 text.js 的 note.silentDenied）。
@@ -142,7 +143,7 @@ function stripComments(source) {
     if (ch === "'" || ch === '"' || ch === '`') { quote = ch; out += ch; i += 1; continue; }
     if (ch === '/' && next === '/') {
       while (i < source.length && source[i] !== '\n') i += 1;
-      continue; // 换行符保留——行号与原文件一致（不输出注释本体）
+      continue; // 换行符保留——行号与原文件一致（不含注释本体）
     }
     if (ch === '/' && next === '*') {
       i += 2;
@@ -186,8 +187,8 @@ function stripComments(source) {
 // ── 硬编码文案层：连"看起来像句子的英文字面量"一起挡 ────────────────────────
 //
 // 只扫 CJK 有个盲区：中文档下**硬编码的英文句子**既不触发 CJK 判据，也不在 `t()` 的键集里，
-// 于是那句提示永远是英文、中英混排，而三层判据全绿（真实形态：`lib/wait-agent.js` 的
-// " (a user message arrived during the wait)"）。这一层把"像句子的字面量"全部点出来：
+// 于是那句提示永远是英文、中英混排，而三层判据全绿（例：硬编码英文句
+// " (a user message arrived during the wait)" 一类）。这一层把"像句子的字面量"全部点出来：
 // 面向模型的文案只能来自 `lib/text.js`（该文件本身由表层逐键审计）。
 //
 // 判据口径：字面量里出现"两个 ≥2 字母的词、中间有空白"就算句子。允许清单只收**标记**
@@ -237,14 +238,16 @@ const OPERATOR_MARKERS = ['LOG_PREFIX', 'logger.', 'logger?.', 'diag(', 'process
 const PROSE_ALLOWLIST = {
   'jobs.js': [
     { needle: '[output truncated', why: '截断标记（与宿主 pwsh 同款定长英文标记）' },
+    { needle: 'guard ownership evidence', why: '`ctx.effect` 的标签（行卸载时清归属证据的处置器；诊断侧，进 Fiber 树与日志，不进模型上下文——与 host.js 的 host snapshot source 同类）' },
     { needle: 'exit code', why: '退出码标记（同上）' },
     { needle: 'tool call aborted', why: '宿主契约串（宿主把中止的工具调用整体改写为 "Error: tool call aborted"，本包入口检查抛同款短语走同一改写通道——不是本包文案）' },
     { needle: 'async-tools: yield race concluded', why: '内部中止原因（喂给 raceAbort 的 Error，只在进程内传播；同 wait-job 的 wait concluded 一类）' },
     { needle: 'preparation failed', why: '防御性回退占位（正常路径 detail/原始错误必在；英文是它唯一形态，同 config-view 只读防御一类）' },
-    { needle: 'registry settled completed before the process handle arrived', why: '不变量破坏时的 fail-loud 断言（正常路径不可达，不进模型上下文；同 config-view 只读防御一类）' }
+    { needle: 'registry settled completed before the process handle arrived', why: '不变量破坏时的 fail-loud 断言（正常路径不可达，不进模型上下文；同 config-view 只读防御一类）' },
+    { needle: 'subprocess failed before reporting an outcome', why: '宿主契约判定常量（dsh-pwsh-local/dsh-bash-local「进程未上报结局」注记前缀——killed 触发形态的检测信号按宿主逐字匹配命令输出，双语化即失配；判定常量不是文案，诊断文案在 text.js 的 error.workdirPrep*，同 silent-failure 签名锚对一类）' }
   ],
   'workflow.js': [
-    { needle: 'tool call aborted', why: '宿主契约串（入口中止守卫：宿主把中止的工具调用整体改写为 "Error: tool call aborted"，本包抛同款短语走同一改写通道——与 jobs.js 的同名条目同一理由。旧实现摊平豁免时它蹭 jobs.js 的条目放行，按文件收紧后补正式登记）' },
+    { needle: 'tool call aborted', why: '宿主契约串（入口中止守卫：宿主把中止的工具调用整体改写为 "Error: tool call aborted"，本包抛同款短语走同一改写通道——与 jobs.js 的同名条目同一理由）' },
     { needle: 'unknown error', why: '宿主同形回退（jobOutcomeOf error 支的 detail 缺省值——宿主原文，非本包文案）' },
     { needle: 'workflow run ended abnormally', why: '宿主同形防御分支（stopReason 封闭联合的未来变体；正常路径不可达，宿主同款英文）' },
     { needle: 'async workflow job killed', why: '内部取消缺省理由（喂给 run.cancel，经注册表 kill-reason 合并；对应宿主后台的 background workflow job killed 同类缺省）' },
@@ -261,6 +264,8 @@ const PROSE_ALLOWLIST = {
     { needle: 'agentLang must be', why: '同上（语言字段值域）' },
     { needle: 'jobKind must be a non-empty string', why: '同上' },
     { needle: '[async-tools] cross-field violation', why: '跨字段校验错误的组装前缀（操作者一侧：武装/降级回调的 schema 拒绝与降级 stderr，与前缀拼 detail 的 must lie within 同类；detail 部分来自 error.message 变量，本就不过字面量层）' },
+    { needle: '[async-tools] type violation', why: '布尔类型检查错误的组装前缀（操作者一侧：武装/降级回调的 schema 拒绝，与 cross-field violation 同一形态——自包含回调不能引用词典，序列化链约束见 makeSelfSustaining）' },
+    { needle: 'must be a boolean, got', why: '同上（布尔类型检查的逐字段明细片段；字段名与候选值来自变量插值，本就不过字面量层）' },
     { needle: 'const BASELINE', why: '降级回调的 Function 构造源码模板（一段 JS 源码片段，不是面向模型的文案——模板内嵌的拒绝前缀经上一条豁免，五查判据由两形同值对账测试与 armed 形锁定）' }
   ],
   'settings.js': [
@@ -334,11 +339,13 @@ const PROSE_ALLOW_NEEDLES = Object.values(PROSE_ALLOWLIST).flat().map((entry) =>
   }
 }
 
-// ── 运行时层：两档各构造五个工具，取全部模型可见串 ────────────────────────
+// ── 运行时层：两档各构造四个工具，另对编排取端到端渲染样例 ────────────────
 //
-// 构造五个工具，取 description / 参数说明 / render 输出 / 全部 note 与 digest 函数的
-// 样例串——这些正是模型看到的串。en 档零 CJK；zh 档与 en 同位串不同且含 CJK。
-// 需要宿主依赖可解析：`node --import ./tools/_host-hooks.mjs tools/check-model-text.mjs`。
+// 构造 async_run / async_wait_job / async_wait_agent / async_agent 四个工具，取
+// description / 参数说明 / render 输出 / 全部 note 与 digest 函数的样例串——这些
+// 正是模型看到的串；编排工具的完成分支渲染经下方端到端取样，查询工具的模型可见
+// 文本全部由词典键组装、由表层逐键判据覆盖。en 档零 CJK；zh 档与 en 同位串不同
+// 且含 CJK。需要宿主依赖可解析：`node --import ./tools/_host-hooks.mjs tools/check-model-text.mjs`。
 
 /**
  * 编排完成渲染的端到端取样（常设看守）：最小内联装置走真实

@@ -8,11 +8,12 @@
  *     ——**回应是投递的实证**，模型只能回应它收到过的东西）；
  *  C. 随后另一次等待期间发 **steer** 消息 → 立即返回"等待被打断/用户插话已送达"，
  *     且 **job_list 的工具结果行**显示该作业仍在 running（需求 §2.1.2 的实证——只认 job_list
- *     的渲染行 `async-command-N [async-command] running`；句柄文案与模型自述是软证据，
+ *     的渲染行 `<id> [<kind>] <status> — <label>`，编号是不透明字符串；句柄文案与模型自述是软证据，
  *     作业已不在运行时也可能被满足，不作回退依据）。
  *
- * 改前基线（旧实现 queue 也打断）见 `verify/probe-queue-baseline.mjs` 与其落盘的
- * queue-baseline.json——两条探针合起来构成"改前/改后"的对照。
+ * 对照取证：`verify/probe-queue-baseline.mjs`（不断言、只记录）取证 queue 消息
+ * 对待等待与后续投递的实际行为——本探针钉住「queue 不打断等待、消息照常投递」的
+ * 判据，基线记录用于识别打断退化形态。
  *
  * 用法：node verify/probe-queue-delivery.mjs
  * 证据：本机证据目录 logs/queue-delivery.json；任一判据不成立退出码 1。
@@ -20,8 +21,8 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { rpc, rowOf, transcriptOf, localConfig } from './_rpc.mjs';
-import { SUBJECT_UNTOUCHED, WAIT_INTERRUPTED, WAIT_AGAIN } from './message-markers.mjs';
-import { NS, elevateSession } from './_r28-helpers.mjs';
+import { SUBJECT_UNTOUCHED, WAIT_INTERRUPTED, WAIT_AGAIN, JOB_LIST_RUNNING } from './message-markers.mjs';
+import { replaceNs, elevateSession } from './_r28-helpers.mjs';
 
 const CWD = localConfig.workspaceDir;
 const PRESET = 'dsh-async';
@@ -36,8 +37,8 @@ const DEFAULTS = {
   maxResultChars: 30000, defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
   defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000, pollIntervalMs: 500, jobKind: 'async-command'
 };
-// ns 单一登记点 `_r28-helpers.mjs`（各探针统一从这里取，不自带字面量）。
-await rpc('settings/replace', { ns: NS, section: DEFAULTS });
+// 设置写入经共享助手（`_r28-helpers.mjs` 的 NS 单一登记点＋嵌套 settings 形状）。
+await replaceNs(DEFAULTS);
 
 const created = await rpc('session/create', { request: { cwd: CWD, agentPreset: PRESET } });
 if (created.agentPreset !== PRESET) throw new Error(`session/create fell back: ${String(created.agentPreset)}`);
@@ -180,10 +181,12 @@ judge('场景B判据1 steer 消息打断了等待：结果含打断锚（两语�
 judge('场景B判据2 打断的返回里明说作业未受影响（需求 §2.1.2 的文案半边）',
   textsB.some((t) => SUBJECT_UNTOUCHED.test(t)),
   textsB.find((t) => SUBJECT_UNTOUCHED.test(t))?.slice(0, 120) ?? '');
-// B3 只认 **job_list 的工具结果行**（渲染格式 `async-command-N [async-command] running`，
-// 判据文档均按此格式引用 job_list 输出）。让出句柄文案（`命令仍在运行：…`）
-// 不含 `[async-command]` 标记，不可能误满足；模型自述不再作为回退依据——它不是证据。
-const JOB_LIST_RUNNING = /async-command-\d+\s*\[async-command\]\s*running/;
+// B3 只认 **job_list 的工具结果行**（共享锚 `JOB_LIST_RUNNING`＝宿主渲染行
+// `<id> [<kind>] running — <label>`，行首＋列分隔符双边界；编号按不透明字符串对待——
+// 真实形态如 `async-command-29bb2c6b2dff4ad9`，旧数字夹具同认，锚回归见
+// test/message-markers.test.mjs）。`[async-command]` 类型标识的前提＝起跑写回出厂默认。
+// 让出句柄文案（`命令仍在运行：…`）不含 `[async-command]` 标记，不可能误满足；
+// 模型自述不作回退依据——它不是证据。
 judge('场景B判据3 打断后 job_list 的工具结果显示该作业仍在 running（需求 §2.1.2 的硬证据）',
   textsB.some((t) => JOB_LIST_RUNNING.test(t)),
   textsB.find((t) => JOB_LIST_RUNNING.test(t))?.slice(0, 160)

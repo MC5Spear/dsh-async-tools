@@ -1,7 +1,10 @@
 /**
- * 钉版看守（设计 §3.3 有限锚集）：本包 `lib/agent-policy.js` 的投影定义/采样链
+ * 钉版看守（设计 §3.3 有限锚集）：本包 `lib/agent-policy.js` 的投影定义形状
  * 副本与宿主 `dsh-tool-subagent` 的现行源按**有限锚集**逐行互锚——锚外漂移不红、
  * **不证明语义等价**，也不代替实际指定路由验证（清单以本脚本的锚表为准）。
+ * 只看守形状副本与宿主定义的同形、不锚定采样链——派生路径现读实时策略
+ * （需求 §2.3.2，无会话采样），形状副本只服务于原生会话投影的解读与钉版
+ * （设计 §3.3）。
  *
  * ## 为什么要有它
  *
@@ -11,20 +14,32 @@
  *
  * ## 判据（缺一即红；缺树即红——显式红，与 preset.test 的对账口径一致）
  *
- * 宿主侧（H1–H9）：投影定义 key/stateVersion/zod import/schema 串/init 短路/
- * assert 调用/空名单 throw/采样链四锚。本包侧（O1–O14）：与宿主逐条对应的常量与
- * 实现行；O13/O14 额外钉**行号**（fold 返回值行、provider/model 字段类型行——
+ * 宿主侧（H1–H8）：投影定义 key/stateVersion/zod import/schema 串/init 短路/
+ * assert 调用/空名单 throw。本包侧（O1–O12）：与宿主逐条对应的常量与实现行；
+ * O13/O14 额外钉**行号**（fold 返回值行、provider/model 字段类型行——
  * 行被移走或行序漂移即红，行号以现行 `lib/agent-policy.js` 为准，改行序须重锚）。
  * 纯函数 `analyzeAgentPolicy` 供变异看守（`verify/mutate-agent-policy.mjs`）
  * 进程内复用（默认沙箱下不起子进程）；锚表可经第二参数覆盖（变异看守的
  * 「锚改错行号」腿用，缺省即本表）。
  *
  * 用法：node verify/check-agent-policy.mjs [--host-file <tool-subagent index.js>]
+ *
+ * 宿主源按 `--host-file` > 环境变量 `DSAT_HOST_MODULES` > 本机配置 `evidenceTree['021']`
+ * 取（`explicitHostSource` / `resolveHostSource`）。前两者是**显式来源**：给了就不装载
+ * 本机配置——干净公开副本（无 `.local/`）与 CI 里都能独立执行，运行期留下的 `.local/`
+ * 祖先也不改变结论。没有显式来源时保留本机配置的原有加载合同（整个不在 → 文档化跳过；
+ * 在场却损坏 → 红）。缺树与错误锚一律红，不回退、不跳过。
  */
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { LOCAL_DIR, loadLocalPlaneOrSkip } from '../tools/_local-config.mjs';
+import {
+  LOCAL_DIR,
+  LocalPlaneAbsent,
+  loadLocalConfig,
+  loadLocalPlaneOrSkip,
+  treeFromHostModules
+} from '../tools/_local-config.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
@@ -46,15 +61,11 @@ const HOST_ANCHORS = [
   ['H5', /^\s*init: \(\) => null,/m, 'init null'],
   ['H6', /^\s*if \(policy !== null \|\| event\.type !== "subagent\/model-selection-policy"\) return policy;/m, 'fold 短路（先到先记）'],
   ['H7', /^\s*assertAllowedModelRoutes\(allowedModels\);/m, 'fold 内校验调用'],
-  ['H8', /length === 0[\s\S]{0,200}requires at least one route/, '空名单 throw'],
-  ['H9a', /firstLiveSeq === 0/, '采样链：fresh 判定'],
-  ['H9b', /session\/end-seed/, '采样链：恢复会话排除'],
-  ['H9c', /parentSession/, '采样链：父继承'],
-  ['H9d', /settings\.current\(\)/, '采样链：全局白名单读取']
+  ['H8', /length === 0[\s\S]{0,200}requires at least one route/, '空名单 throw']
 ];
 
 /** 本包侧锚（lib/agent-policy.js，与宿主逐条对应；**一律行锚**——注释化/删行变异不许命中。
- * 第 4 元（可选）＝1-based 行号：正则须**从该行行首**命中，行被移走或行序漂移即红。） */
+ * 第 4 元（可选）＝1-based 行号：正则须**从该行行首**命中，行被移走或行序漂移即红。 */
 export const OUR_ANCHORS = [
   ['O1', /^\s*export const POLICY_KEY = 'subagentModelSelectionPolicy';/m, '键常量（与 H1 同串）'],
   ['O2', /^\s*export const POLICY_STATE_VERSION = 1;/m, '版本常量（与 H2 同值）'],
@@ -65,16 +76,11 @@ export const OUR_ANCHORS = [
   ['O7', /^\s*assertRoutes\(allowedModels\);/m, 'fold 内校验调用（与 H7 同形）'],
   ['O8', /^\s*if \(allowedModels\.length === 0\) throw new Error\(`\$\{POLICY_EVENT\} requires at least one route`\);/m, '空名单 throw（与 H8 同形）'],
   ['O9', /^\s*return projections\.stateOf\(session, POLICY_KEY\)\?\.map\(\(route\) => \(\{ \.\.\.route \}\)\);/m, 'policyOf 包装（init null 折 undefined）'],
-  ['O10', /^\s*session\.append\(POLICY_EVENT, \{ allowedModels: routes\.map\(\(route\) => \(\{ \.\.\.route \}\)\) \}\);/m, '幂等追加持久事件'],
-  ['O11a', /^\s*if \(session\.header\.origin === 'subagent'\) \{/m, '采样链：父继承分支'],
-  ['O11b', /session\.firstLiveSeq === 0 && session\.eventAt\(0\)\?\.type !== 'session\/end-seed'/, '采样链：fresh 判定'],
-  ['O11c', /'session\/end-seed'/, '采样链：恢复会话排除'],
-  ['O11d', /^\s*routes = current\.enabled \? current\.allowedModels : undefined;/m, '采样链：白名单开关短路'],
   ['O12', /^\s*export const POLICY_EVENT = 'subagent\/model-selection-policy';/m, '事件类型**值**锚（标识符锚不住串值改错）'],
   // O13/O14 补齐设计 §3.3 锚清单里的「fold 返回值」与「schema 内层字段类型」两项；
-  // 行号对应现行 lib/agent-policy.js（provider/model 在 :96-97，fold 的 return 在 :105）。
-  ['O13', /^ {4}return allowedModels;$/m, 'fold 返回值（首条策略事件折出路由表）', 105],
-  ['O14', /^ {4}provider: z\.string\(\)\.min\(1\),\r?\n {4}model: z\.string\(\)\.min\(1\)$/m, 'provider/model 字段类型（z.string().min(1)）', 96]
+  // 行号对应现行 lib/agent-policy.js（provider/model 在 :74-75，fold 的 return 在 :83）。
+  ['O13', /^ {4}return allowedModels;$/m, 'fold 返回值（首条策略事件折出路由表）', 83],
+  ['O14', /^ {4}provider: z\.string\(\)\.min\(1\),\r?\n {4}model: z\.string\(\)\.min\(1\)$/m, 'provider/model 字段类型（z.string().min(1)）', 74]
 ];
 
 /** 每行行首偏移（含首行 0）。行号钉版锚取「从该行行首起」的文本切片。 */
@@ -133,19 +139,86 @@ export function analyzeAgentPolicy(texts, { hostAnchors = HOST_ANCHORS, ourAncho
   return { report, failures };
 }
 
+/**
+ * 显式宿主源：`--host-file` 优先于环境变量 `DSAT_HOST_MODULES`；空串按"没有来源"。
+ *
+ * 两条都是纯源输入——路径拼装只用 `tools/_local-config.mjs` 的 `treeFromHostModules`，
+ * 不读 `.local/`、不读配置。
+ *
+ * @param {{hostFile?: string, env?: Record<string, string | undefined>}} [options]
+ *   `hostFile` 是 `--host-file` 的值；`env` 默认 `process.env`（测试喂合成值）。
+ * @returns {{hostPath: string, source: 'host-file' | 'env'} | undefined} 显式来源；都没有时 `undefined`。
+ */
+export function explicitHostSource({ hostFile, env = process.env } = {}) {
+  if (typeof hostFile === 'string' && hostFile.length > 0) {
+    return { hostPath: hostFile, source: 'host-file' };
+  }
+  const hostModules = env.DSAT_HOST_MODULES;
+  if (typeof hostModules === 'string' && hostModules.length > 0) {
+    return { hostPath: join(treeFromHostModules(hostModules), ...HOST_REL), source: 'env' };
+  }
+  return undefined;
+}
+
+/**
+ * 解析宿主源：显式来源优先，其次本机配置。
+ *
+ * 显式来源在场时**不装载本机配置**——这是"纯源检查器要能脱离本机环境执行"的那条出口；
+ * 本机配置的缺席/损坏合同留给没有显式来源的路径。
+ *
+ * @param {{hostFile?: string, env?: Record<string, string | undefined>, root?: string}} [options]
+ *   `root` 是仓根（`.local/` 与 `config.mjs` 的解析基准；默认本检查器上一级，测试喂合成根）。
+ * @returns {Promise<
+ *   | {status: 'host', hostPath: string, source: 'host-file' | 'env' | 'local'}
+ *   | {status: 'absent', reason: string}
+ *   | {status: 'no-tree', reason: string}>}
+ *   `absent` = 本机环境整个不在（调用方按文档化跳过，退出码 0）；`no-tree` = 本机配置
+ *   在场却没有 `evidenceTree['021']` 来源（调用方按红退出，缺树不许静默跳过）。
+ *   `.local/` 在场而配置损坏（`LocalConfigInvalid`）不折成状态，原样抛出。
+ */
+export async function resolveHostSource({ hostFile, env = process.env, root = ROOT } = {}) {
+  const explicit = explicitHostSource({ hostFile, env });
+  if (explicit !== undefined) return { status: 'host', ...explicit };
+
+  let config;
+  try {
+    config = await loadLocalConfig({ root, env });
+  } catch (error) {
+    if (error instanceof LocalPlaneAbsent) return { status: 'absent', reason: error.message };
+    throw error;
+  }
+  const tree021 = config.evidenceTree['021'];
+  if (tree021 === undefined) {
+    return {
+      status: 'no-tree',
+      reason: '宿主锚无来源：配置里既没有 evidenceTree[\'021\']，也没有 hostModules。\n'
+        + `二选一：在 ${LOCAL_DIR}/config.mjs 里写 hostModules，或设环境变量 DSAT_HOST_MODULES；`
+        + '也可以临时用 --host-file <路径> 覆盖。'
+    };
+  }
+  return { status: 'host', hostPath: join(tree021, ...HOST_REL), source: 'local' };
+}
+
 // CLI 尾：只在作为主模块运行时执行（变异看守 import 纯函数时不自跑）。
 const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? '').href;
 if (isMain) {
+  const WHAT = 'verify/check-agent-policy.mjs（模型策略钉版看守）';
   const hostArgIdx = process.argv.indexOf('--host-file');
-  const config = await loadLocalPlaneOrSkip('verify/check-agent-policy.mjs（模型策略钉版看守）');
-  const tree021 = config.evidenceTree['021'];
-  if (hostArgIdx < 0 && tree021 === undefined) {
-    console.error('宿主锚无来源：配置里既没有 evidenceTree[\'021\']，也没有 hostModules。');
-    console.error(`二选一：在 ${LOCAL_DIR}/config.mjs 里写 hostModules，或设环境变量 DSAT_HOST_MODULES；`
-      + '也可以临时用 --host-file <路径> 覆盖。');
+  const hostFile = hostArgIdx < 0 ? undefined : process.argv[hostArgIdx + 1];
+  // 显式来源给了就必须可用：缺值不回退本机配置（回退会把调用错误读成"锚漂移"或跳过）。
+  if (hostArgIdx >= 0 && (hostFile === undefined || hostFile.length === 0)) {
+    console.error('--host-file 缺少路径参数。');
     process.exit(2);
   }
-  const hostPath = hostArgIdx >= 0 ? process.argv[hostArgIdx + 1] : join(tree021, ...HOST_REL);
+  const resolved = await resolveHostSource({ hostFile });
+  if (resolved.status === 'absent') {
+    // 本机环境整个不在：走所有 CLI 判据共用的跳过出口（同一文案、退出码 0）。
+    await loadLocalPlaneOrSkip(WHAT);
+  }
+  if (resolved.status === 'no-tree') {
+    console.error(resolved.reason);
+    process.exit(2);
+  }
   const readOr = (path) => {
     try {
       return readFileSync(path, 'utf8');
@@ -154,11 +227,11 @@ if (isMain) {
     }
   };
   const { report, failures } = analyzeAgentPolicy({
-    hostText: readOr(hostPath),
+    hostText: readOr(resolved.hostPath),
     ourText: readOr(join(ROOT, 'lib', 'agent-policy.js'))
   });
   for (const line of report) console.log(line);
-  console.log(`宿主源：${hostPath}`);
+  console.log(`宿主源：${resolved.hostPath}（来源：${resolved.source}）`);
   console.log(failures === 0
     ? `agent-policy 钉版看守全绿（宿主 ${String(HOST_ANCHORS.length)} 锚 + 本包 ${String(OUR_ANCHORS.length)} 锚）`
     : `agent-policy 钉版看守 ${String(failures)} 处红`);

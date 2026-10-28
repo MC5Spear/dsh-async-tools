@@ -17,8 +17,11 @@
  *
  * 三条都取自**真实请求体 / 真实工具返回值**：零浏览器，全程信封 RPC。
  *
- * **探针必须还原设置**（`finally` 里无条件写回并读回核对）：探针改的是
- * 验证实例的真实配置，留在改过的状态会污染后续真机判据。
+ * 设置读写与恢复一律经 `verify/_r28-helpers.mjs` 的共享助手（嵌套 `settings`
+ * 子树契约，设计 §8.3）：起跑先保存原状态（value/user 两层），收尾在 `finally`
+ * 里按联合键集恢复原状态并读回核对——探针改的是验证实例的真实配置，留在改过的
+ * 状态会污染后续真机判据。另有平铺负向对照（显式绕过助手）与嵌套 replace 语义
+ * 两条形状判据。
  *
  * 用法：
  *   node verify/probe-settings-behavior-full.mjs
@@ -26,15 +29,17 @@
  */
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { instanceCredentials, loadLocalPlaneOrSkip } from '../tools/_local-config.mjs';
-import { elevateSession } from './_r28-helpers.mjs';
+// 设置读写/恢复一律走共享助手（设计 §8.3：嵌套形状单点封装；本探针自带的 rpc
+// 只服务会话驱动与「显式绕过助手」的平铺负向对照）。
+import { elevateSession, readNs, patchNs, replaceNs, mutateNs, NS } from './_r28-helpers.mjs';
 
 const localConfig = await loadLocalPlaneOrSkip('verify/probe-settings-behavior-full.mjs');
 const { base: BASE, token } = instanceCredentials(localConfig);
 // 服务住在自己的家目录（服务家目录），**不在本包内**。实例坐标一律经配置加载器取——
 // 写死绝对路径在服务目录迁走之后集体失效。
 const CWD = localConfig.workspaceDir;
-const NS = 'async-tools-host';
 
 const outAt = process.argv.indexOf('--out');
 const OUT_FILE = outAt >= 0 && process.argv[outAt + 1] !== undefined
@@ -42,8 +47,9 @@ const OUT_FILE = outAt >= 0 && process.argv[outAt + 1] !== undefined
   : join(localConfig.evidenceDir, 'logs', 'settings-behavior-full.json');
 mkdirSync(dirname(OUT_FILE), { recursive: true });
 
-/** 原始默认值；收尾一律还原到这些数。agentLang 出厂是 en（`lib/config.js`）；
- * 判据锚的等待读数与工具描述文案是中文档，跑动阶段各补丁统一钉 `agentLang: 'zh'`。 */
+/** 起跑归位用的默认值（行为判据从这组数出发；收尾恢复的是**原状态**不是这组数）。
+ * agentLang 出厂是 en（`lib/config.js`）；判据锚的等待读数与工具描述文案是中文档，
+ * 跑动阶段各补丁统一钉 `agentLang: 'zh'`。 */
 const DEFAULTS = {
   maxResultChars: 30000,
   defaultYieldMs: 20000,
@@ -83,17 +89,9 @@ async function rpc(endpoint, args) {
   return body.result.value;
 }
 
-/** 读当前生效的设置分层值。 */
+/** 读当前生效的设置值（嵌套契约经共享助手，严格取 settings 子树，无多形状回退）。 */
 async function readEffective() {
-  const described = await rpc('settings/describe', {});
-  const ns = described.namespaces.find((candidate) => candidate.ns === NS);
-  return ns.value ?? ns.resolved ?? ns;
-}
-
-/** 写设置。与页面保存同一条链（`settings/update`，ns=宿主行 entry id）——
- * 与 `verify/_r28-helpers.mjs` 一致，单一端点即可。 */
-async function writeSettings(patch) {
-  await rpc('settings/update', { ns: NS, patch });
+  return (await readNs()).value;
 }
 
 /** 读会话清单行。 */
@@ -238,27 +236,57 @@ async function sessionWith(prompt, timeoutMs = 240000) {
 }
 
 const evidence = { base: BASE, checks, runs: [] };
+let valueBefore = null;
+let userBefore = null;
 try {
-  // ── 开跑前先**从基线出发** ────────────────────────────────────────────────
+  // ── 起跑：先保存**原状态**（value 与 user 两层），再从 DEFAULTS 出发 ─────────
   //
-  // 探针若只"读现状"就往下走：被外部切断（跑批超时 kill）时还原写在 `finally`
-  // 里不会跑完，验证实例被留在改过的设置上，判据照样全绿；下一次跑又从脏值
-  // 出发，**脏状态会累积**。
-  //
-  // ⇒ 每次开跑先无条件把设置写成 `DEFAULTS`。于是"被切断留下脏状态"不可能发生：
-  // 即使上一次留了尾巴，这一次开跑就抹平了。还原仍然保留（它让**正常结束**的
-  // 那次也回到基线），两者一个管"跑前"，一个管"跑后"。
-  await writeSettings(DEFAULTS);
+  // 保存原状态是恢复的依据（收尾按 userBefore 逐键恢复，见 finally）；
+  // 随后无条件把设置写成 `DEFAULTS`，让行为判据从确定基线出发——外部切断
+  // （跑批超时 kill）留下的脏状态在下一次开跑即被抹平，不会累积。
+  const entry0 = await readNs();
+  valueBefore = structuredClone(entry0.value);
+  userBefore = structuredClone(entry0.user);
+  evidence.before = { value: entry0.value, user: entry0.user, revision: entry0.revision };
+  await patchNs(DEFAULTS);
   const before = await readEffective();
-  evidence.before = { maxWaitMs: before.maxWaitMs, maxResultChars: before.maxResultChars };
-  console.log(`起跑基线：maxWaitMs=${String(before.maxWaitMs)}  maxResultChars=${String(before.maxResultChars)}`);
+  evidence.baseline = { maxWaitMs: before.maxWaitMs, maxResultChars: before.maxResultChars };
+  console.log(`原状态已存（user 覆盖 ${String(Object.keys(userBefore).length)} 键）；起跑基线：maxWaitMs=${String(before.maxWaitMs)}  maxResultChars=${String(before.maxResultChars)}`);
   console.log('');
+
+  // ── 0 形状契约：平铺拒绝（负向对照，显式绕过助手）＋嵌套 update/replace ──────
+  //
+  // 宿主行 describe 的 value 投影是 `{ settings: { … } }`；直接放在根上的字段
+  // 会被宿主路径校验拒绝。负向对照**必须**绕过共享助手裸发平铺 patch——若哪天
+  // 宿主接受平铺写（契约回摆），这条会变红，而不是被助手的包装悄悄掩盖。
+  let flatError = '';
+  try {
+    await rpc('settings/update', { ns: NS, patch: { maxResultChars: 13731 } });
+  } catch (error) {
+    flatError = String(error?.message ?? error);
+  }
+  const afterFlat = await readNs();
+  check('平铺 patch 被 settings/rejected 拒绝（not volatile）且生效值不变（负向对照）',
+    /settings\/rejected/.test(flatError) && /not volatile/.test(flatError) && afterFlat.value.maxResultChars !== 13731,
+    flatError.slice(0, 160) || '(未抛错：平铺写被接受＝形状负向对照失败)');
+
+  await patchNs({ maxResultChars: 48000 });
+  const afterNested = await readNs();
+  check('嵌套 update 生效并落在用户覆盖层（value 与 user 同键同值）',
+    afterNested.value.maxResultChars === 48000 && afterNested.user.maxResultChars === 48000,
+    `value=${String(afterNested.value.maxResultChars)}  user=${String(afterNested.user.maxResultChars)}`);
+
+  await replaceNs(structuredClone(entry0.base));
+  const afterReplace = await readNs();
+  check('嵌套 replace（完整 base）重建 volatile 生效值（复位语义，不是稀疏更新）',
+    isDeepStrictEqual(afterReplace.value, entry0.base),
+    `value===base：${String(isDeepStrictEqual(afterReplace.value, entry0.base))}`);
 
   // ── ① 夹紧：把 maxWaitMs 压到 2000，模型请求 600000，实际必须约 2 秒返回 ──
   //
   // 这是"值变了"与"行为变了"的分界：一个把设置读进内存后再也不看的实现，
   // 会老老实实等满 600 秒（或等到作业结束），而不是 2 秒就返回 running。
-  await writeSettings({ ...DEFAULTS, maxWaitMs: 2000, defaultWaitMs: 2000, agentLang: 'zh' });
+  await patchNs({ ...DEFAULTS, maxWaitMs: 2000, defaultWaitMs: 2000, agentLang: 'zh' });
   const effectiveClamp = await readEffective();
   check('先把 `maxWaitMs` 写成 2000 并读回确认（区分"没写进去"与"写进去没生效"）',
     effectiveClamp.maxWaitMs === 2000,
@@ -313,7 +341,7 @@ try {
       : `已等待 ${waited[1]} ms（期望 ≥200；若下界失效会约 1，或干脆不进入等待）`);
 
   // ── ② 截断：把 maxResultChars 压到 500，长输出的返回必须变短并带截断说明 ──
-  await writeSettings({ ...DEFAULTS, maxResultChars: 500, agentLang: 'zh' });
+  await patchNs({ ...DEFAULTS, maxResultChars: 500, agentLang: 'zh' });
   const effectiveCut = await readEffective();
   check('再把 `maxResultChars` 写成 500 并读回确认',
     effectiveCut.maxResultChars === 500,
@@ -338,15 +366,14 @@ try {
 
   // ── ③ 描述里的数字：模型收到的那份请求体里，**四个工具**的数字都必须跟着变 ──
   //
-  // 各工具的预算片段**形态互不相同**，五条替换规则里每条只对一部分工具生效
-  // （见 `lib/index.js` 里那张表）。只验一个工具，等于放过了其他——而 `async_run`
-  // 恰好是唯一带**两个不同区间**（让出 + 等待）的那个，最容易写错。
-  // `async_agent` 正文无预算区间，只有尾摘要——它入 (c) 组。
+  // 去重后的形态：正文的预算区间只在 `async_run`（首次等待，digest.yield）；
+  // 等待区间四个等待语义工具都在**尾部摘要**（digest.wait 共享同一句，正文不重复
+  // 第二遍）。
+  // `async_agent` 正文无预算区间，只有尾摘要——它与其他三个同组。
   //
-  // 三条断言各自能独立失败：
-  //   (a) `async_wait_job` / `async_wait_agent` 的**正文**里等待区间是新值；
-  //   (b) `async_run` 的**正文**里让出区间是**让出**的新值（不是被写成等待区间）；
-  //   (c) 四个工具的**尾摘要**等待区间都是新值。
+  // 两条断言各自能独立失败：
+  //   (a) `async_run` 的**正文**里让出区间仍是现行值（本轮未改的默认，不是被写成等待区间）；
+  //   (b) 四个工具的**尾摘要**等待区间都是新值。
   const tools = pageClamp.records
     .filter((r) => r.event?.type === 'request/header')
     .flatMap((r) => r.event.data?.header?.tools ?? []);
@@ -358,20 +385,9 @@ try {
       .map((n) => [n, (descOf(n) ?? '').match(/\d+–\d+ ms/g) ?? []]))
   });
 
-  const waitBody = ['async_wait_job', 'async_wait_agent']
-    .map((n) => ({ n, hit: /wait_ms 必填，范围 (\d+)–(\d+) ms/.exec(descOf(n) ?? '') }))
-    .filter((x) => x.hit === null);
-  check('(a) `async_wait_job` 与 `async_wait_agent` 的正文里，等待区间已是新值',
-    tools.length > 0 && waitBody.length === 0,
-    tools.length === 0
-      ? '请求体里没有工具清单'
-      : waitBody.length === 0
-        ? waitBody.map((x) => x.n).join('、') + ' 均匹配到新值（250–2000）'
-        : `未更新的：${waitBody.map((x) => x.n).join('、')}`);
-
   const runDesc = descOf('async_run') ?? '';
   const yieldBody = /范围 (\d+)–(\d+) ms）；/.exec(runDesc);
-  check('(b) `async_run` 正文里的**让出**区间是让出的新值，不是被写成等待区间',
+  check('(a) `async_run` 正文里的**让出**区间仍是现行默认，不是被写成等待区间',
     yieldBody !== null && yieldBody[1] === '1000' && yieldBody[2] === '600000',
     yieldBody === null
       ? 'async_run 正文里找不到让出区间'
@@ -380,7 +396,7 @@ try {
   const tailTools = ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent']
     .map((n) => ({ n, hit: /等待预算必须显式传入，范围 (\d+)–(\d+) ms/.exec(descOf(n) ?? '') }))
     .filter((x) => x.hit === null || x.hit[2] !== '2000');
-  check('(c) 四个工具的尾摘要等待区间都已换成新值',
+  check('(b) 四个工具的尾摘要等待区间都已换成新值',
     tools.length > 0 && tailTools.length === 0,
     tools.length === 0
       ? '请求体里没有工具清单'
@@ -388,18 +404,18 @@ try {
         ? '四个工具的尾摘要均为 250–2000'
         : `未换的：${tailTools.map((x) => x.n).join('、')}`);
 
-  // ── ④ 让出区间**也要跟着变**（补上第 (b) 条的区分力）────────────────────────
+  // ── ④ 让出区间**也要跟着变**（补上第 (a) 条的区分力）────────────────────────
   //
-  // 第 (b) 条只改 `maxWaitMs`，让出区间全程停在默认值 ⇒ 它只能证明
+  // 第 (a) 条只改 `maxWaitMs`，让出区间全程停在默认值 ⇒ 它只能证明
   // "让出区间**没被写错**"，**证明不了"让出区间会跟着设置变"**。
   // 这两个结论的强度差得很远：前者在一个"让出区间永远是默认值"的实现上也会绿。
   //
   // 所以再改一次设置，**只动让出区间**，然后从真实请求体里读回来。`async_run` 是
-  // 唯一有 `yieldDigest` 的工具，这条也是唯一能覆盖第③条替换规则的判据。
+  // 唯一有 `yieldDigest` 的工具，这条也是唯一能覆盖第③条形态规则的判据。
   // `defaultWaitMs` 必须跟着 `maxWaitMs` 一起收窄——跨字段校验会拒掉
   // "默认值落在区间外"的组合（`settings/rejected`：`defaultWaitMs (30000) 必须在 250–2000 ms 之内`）。
   // 那条校验本身是 `test/two-planes.test.mjs` T7b 在守的东西，这里撞上它说明它在工作。
-  await writeSettings({ ...DEFAULTS, maxWaitMs: 2000, defaultWaitMs: 2000, minYieldMs: 1500, maxYieldMs: 450000, defaultYieldMs: 7000, agentLang: 'zh' });
+  await patchNs({ ...DEFAULTS, maxWaitMs: 2000, defaultWaitMs: 2000, minYieldMs: 1500, maxYieldMs: 450000, defaultYieldMs: 7000, agentLang: 'zh' });
   const pageYield = await sessionWith('回复一个句号即可，不要调用任何工具。');
   const runYield = (pageYield.records
     .filter((r) => r.event?.type === 'request/header')
@@ -408,28 +424,45 @@ try {
   evidence.runs.push({ label: '让出区间', text: runYield.slice(0, 400) });
   const yieldTail = /首次等待默认 (\d+) ms（可传 yield_ms，范围 (\d+)–(\d+) ms）/.exec(runYield);
   const yieldBodyAfter = /范围 (\d+)–(\d+) ms）；/.exec(runYield);
-  check('(d) 改首次等待后，`async_run` 正文与尾摘要里的**首次等待**区间都跟着变成新值',
+  check('(c) 改首次等待后，`async_run` 正文与尾摘要里的**首次等待**区间都跟着变成新值',
     yieldTail !== null && yieldBodyAfter !== null
     && yieldBodyAfter[1] === '1500' && yieldBodyAfter[2] === '450000'
     && yieldTail[1] === '7000' && yieldTail[2] === '1500' && yieldTail[3] === '450000',
     `正文 ${yieldBodyAfter === null ? '(找不到)' : `${yieldBodyAfter[1]}–${yieldBodyAfter[2]}`}；`
     + `尾摘要 ${yieldTail === null ? '(找不到)' : `${yieldTail[1]} ms 默认 / ${yieldTail[2]}–${yieldTail[3]}`}`
     + '（期望 1500–450000，默认 7000）');
-  check('(e) 同时等待区间**没有**被首次等待区间污染（两个区间各自对号）',
+  check('(d) 同时等待区间**没有**被首次等待区间污染（两个区间各自对号）',
     /单次等待预算必须显式传入，范围 250–2000 ms/.test(runYield),
     JSON.stringify((/单次等待预算必须显式传入，范围 [\d–]+ ms/.exec(runYield) ?? ['(找不到)'])[0]));
 } finally {
-  // **无条件还原**：探针改的是验证实例的真实配置。
+  // **无条件恢复原状态**（设计 §8.3）：replace 会给整组字段建用户覆盖，所以恢复
+  // 按 `userBefore ∪ userNow` 逐键处理——原有覆盖按原值 set、其余 unset（回继承
+  // 值，不把生效值写成新覆盖）；再读回核对 value 与 user **两层**都与原状态一致。
+  // 恢复失败单独报错，不被主断言掩盖。
   try {
-    await writeSettings(DEFAULTS);
-    const now = await readEffective();
-    const drifted = Object.keys(DEFAULTS).filter((k) => now[k] !== DEFAULTS[k]);
-    console.log('');
-    console.log(`收尾还原：${drifted.length === 0 ? '全部回到默认值' : `**这些键不是默认值：${drifted.join('、')}**`}`);
-    evidence.restored = drifted.length === 0;
-    evidence.afterRestore = { maxWaitMs: now.maxWaitMs, maxResultChars: now.maxResultChars };
+    if (valueBefore === null) {
+      console.log('收尾恢复跳过：未取得起跑快照（本次探针未改过设置）。');
+      evidence.restored = true;
+    } else {
+      const settle = await readNs();
+      const userNow = settle.user ?? {};
+      const ops = [];
+      for (const key of new Set([...Object.keys(userBefore), ...Object.keys(userNow)])) {
+        ops.push(Object.hasOwn(userBefore, key)
+          ? { op: 'set', path: ['settings', key], value: userBefore[key] }
+          : { op: 'unset', path: ['settings', key] });
+      }
+      if (ops.length > 0) await mutateNs(ops);
+      const finalEntry = await readNs();
+      const valueSame = isDeepStrictEqual(finalEntry.value, valueBefore);
+      const userSame = isDeepStrictEqual(finalEntry.user, userBefore);
+      console.log('');
+      console.log(`收尾恢复原状态：${valueSame && userSame ? 'value 与 user 两层均回到原状' : '**存在未恢复差异（见 afterRestore）**'}`);
+      evidence.restored = valueSame && userSame;
+      evidence.afterRestore = { value: finalEntry.value, user: finalEntry.user };
+    }
   } catch (error) {
-    console.log(`收尾还原**失败**：${String(error)}——验证实例可能停在被改过的状态。`);
+    console.log(`收尾恢复**失败**：${String(error)}——验证实例可能停在被改过的状态。`);
     evidence.restoreError = String(error);
   }
 }

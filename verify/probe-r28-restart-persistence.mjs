@@ -94,7 +94,7 @@ try {
     console.log(`  （异常路径复原失败：${String(restoreError)}）`);
   }
 } finally {
-  writeFileSync(`${LOGS}\\r28-restart-persistence.json`,
+  writeFileSync(join(LOGS, 'r28-restart-persistence.json'),
     JSON.stringify({ at: new Date().toISOString(), ...log, results }, null, 2), 'utf8');
 }
 const failures = results.filter((r) => !r.ok).length;

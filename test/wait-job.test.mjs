@@ -55,11 +55,12 @@ afterEach(() => {
  * ）；signal abort 时 reject（竞速收敛后的 raceAbort 走这条）。
  *
  * @param {object} f - fakeCtx 探针。
- * @param {object} options - `{ status, readChunks, readLossy, readResult, waitDelayMs, view }`。
+ * @param {object} options - `{ status, readChunks, readLossy, readResult, waitDelayMs, view, spillPaths }`。
  * @returns {{ waitCalls: object[], getCalls: unknown[][], readCalls: unknown[][], job: object, probes: object }} 探针。
  */
 function installJobs(f, {
-  status = 'running', readChunks = [{ text: 'job output', channel: 'stdout' }], readLossy = false, readResult, waitDelayMs = 0, view
+  status = 'running', readChunks = [{ text: 'job output', channel: 'stdout' }], readLossy = false, readResult, waitDelayMs = 0, view,
+  spillPaths = []
 } = {}) {
   const waitCalls = [];
   const getCalls = [];
@@ -70,6 +71,12 @@ function installJobs(f, {
   // 一次性 result 通道的替身状态（真实注册表 resultDelivered 的投影）。
   const TERMINAL_SET = new Set(['completed', 'killed', 'failed']);
   let resultDelivered = false;
+  // 读取回执的 job 视图（真实注册表 view(job) 的投影）：output.spillPaths
+  // 只在源报告了留存文件时在场（R6-F02——视图路径是找回线索的交付通道）。
+  const readViewOutput = {
+    total: 100, earliest: readLossy ? 40 : 0,
+    ...(spillPaths.length > 0 ? { spillPaths } : {})
+  };
   const jobs = {
     get(id, caller) {
       getCalls.push([id, caller]);
@@ -92,7 +99,7 @@ function installJobs(f, {
         chunks: readChunks,
         lossy: readLossy,
         ...(result === undefined ? {} : { result }),
-        job: { id: job.id, status: job.status }
+        job: { id: job.id, status: job.status, output: readViewOutput }
       };
     },
     kill() {
@@ -408,6 +415,92 @@ hostTest('async_wait_job：等待路径上 wait 被结算释放 → 终态结果
   assert.match(result.detail, /exit code: 0/);
 });
 
+hostTest('async_wait_job（R6-F02）：宿主视图报告的留存路径必须进模型可见输出——首次终态读取，行序 状态→留存线索→正文', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  // 真实注册表快照的 output.spillPaths 由读取回执的 job 视图携带（dsh-jobs
+  // view.d.ts：源声明的留存文件，比任何分块都活得久）——反例形态是只交付
+  // 正文与 detail、丢掉视图路径，producer 不必把路径写进 detail。
+  installJobs(f, {
+    status: 'completed', readResult: 'FINAL',
+    spillPaths: ['D:\\isolated-probe\\complete-output.txt']
+  });
+  const tool = createWaitJobTool(f.ctx, config);
+
+  const result = await tool.execute({ job_id: 'j-1', wait_ms: 5000 }, exec);
+  assert.equal(result.status, 'completed');
+  assert.ok(result.output.includes('D:\\isolated-probe\\complete-output.txt'),
+    '宿主已报告的留存路径必须在本次结果里（不能只靠 producer 写进 detail）');
+  const lines = result.output.split('\n');
+  const statusIdx = lines.findIndex((line) => line.includes('job completed'));
+  const spillIdx = lines.findIndex((line) => line.includes('complete-output.txt'));
+  const bodyIdx = lines.findIndex((line) => line.trim() === 'job output');
+  const finalIdx = lines.findIndex((line) => line.trim() === 'FINAL');
+  assert.ok(statusIdx >= 0 && spillIdx > statusIdx && bodyIdx > spillIdx && finalIdx > spillIdx,
+    '行序：终态状态行 → 留存线索行 → 正文（增量与一次性 result 并入同次返回）');
+});
+
+hostTest('async_wait_job（R6-F02）：后台再次读取同样交付视图路径；lossy 与留存路径并存各占一行', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  installJobs(f, {
+    status: 'completed', readResult: 'FINAL', readLossy: true,
+    spillPaths: ['D:\\spill-dir\\tail.txt']
+  });
+  const tool = createWaitJobTool(f.ctx, config);
+
+  const first = await tool.execute({ job_id: 'j-1', wait_ms: 5000 }, exec);
+  const second = await tool.execute({ job_id: 'j-1', wait_ms: 5000 }, exec);
+  for (const [label, result] of [['首次', first], ['后台再读', second]]) {
+    assert.ok(result.output.includes('D:\\spill-dir\\tail.txt'),
+      `${label}：视图路径都要在场（留存线索比任何分块活得久，可重复交付）`);
+    assert.ok(result.output.includes('earlier output was partially dropped'),
+      `${label}：lossy 前缀与路径行并存、各自成行`);
+    const lines = result.output.split('\n');
+    const lossyIdx = lines.findIndex((line) => line.includes('partially dropped'));
+    const spillIdx = lines.findIndex((line) => line.includes('tail.txt'));
+    assert.ok(lossyIdx >= 0 && spillIdx > lossyIdx, `${label}：lossy 前缀在留存线索之前`);
+  }
+  // 一次性 result 语义不变：首次并入正文，再读不重复（既有判据在此配置下仍成立）。
+  assert.equal(second.output.split('FINAL').length - 1, 0, '后台再读不重复交付一次性 result');
+});
+
+hostTest('async_wait_job（R6-F02）：留存线索行在内容预算之外——裁剪正文不裁路径', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  installJobs(f, {
+    status: 'completed',
+    readChunks: [{ text: 'x'.repeat(200), channel: 'stdout' }],
+    spillPaths: ['D:\\spill-dir\\full-output.txt']
+  });
+  const tool = createWaitJobTool(f.ctx, resolveConfig({ toolName: 'async_run', maxResultChars: 40 }));
+
+  const result = await tool.execute({ job_id: 'j-1', wait_ms: 5000 }, exec);
+  assert.equal(result.truncated, true, '正文被裁剪');
+  assert.ok(result.output.includes('D:\\spill-dir\\full-output.txt'),
+    '留存路径行完整在场（诊断行不占 maxResultChars 预算）');
+});
+
+hostTest('async_wait_job（R6-F02·zh）：留存线索行随中文档词典交付', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  installJobs(f, {
+    status: 'completed',
+    spillPaths: ['D:\\spill-dir\\zh-output.txt']
+  });
+  const tool = createWaitJobTool(f.ctx, resolveConfig({ toolName: 'async_run', agentLang: 'zh' }));
+
+  const result = await tool.execute({ job_id: 'j-1', wait_ms: 5000 }, exec);
+  // zh 档断言（其余三条 F02 用例走英文档）：线索行措辞来自词典 render.spillPaths
+  // 的 zh 键——「宿主报告…留存文件…可能仍可从中找回」（R9-O01：与 en 档
+  // may be recoverable 同为不确定口径，不断言文件可读）＋路径本体都在场。
+  assert.ok(result.output.includes('宿主报告了本作业的输出留存文件'),
+    'zh 档线索行措辞在场（词典 zh 键被消费，不是 en 键透传）');
+  assert.ok(result.output.includes('从内存缓冲丢弃的字节可能仍可从中找回'), '找回语义完整（不确定口径）');
+  assert.ok(result.output.includes('D:\\spill-dir\\zh-output.txt'), '路径本体随行');
+  assert.ok(result.output.includes('[作业已完成]'), 'zh 档状态行同在（整份输出同一语言档）');
+});
+
 hostTest('async_wait_job：等待中途的快照查询抛错不得泄漏为工具报错', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
@@ -435,25 +528,30 @@ hostTest('async_wait_job：等待中途的快照查询抛错不得泄漏为工�
   assert.equal(result.status, 'running');
 });
 
-hostTest('async_wait_job：描述必须带锚①与 waitDigest，且不许再出现"唯一途径"', async () => {
+hostTest('async_wait_job：描述声明取回职责与 waitDigest，且不许再出现"唯一途径"', async () => {
   const tool = buildWaitJobTool(fakeCtx().ctx, config);
-  // 规则①的锚（wait 两兄弟独有；refreshToolDescriptions 靠它就地改数字）。
-  assert.match(tool.description, /wait_ms is required, range 250–600000 ms\./);
+  // 工具职责（p1）：等待后台作业并返回其输出——这是"怎么取回输出"的单点表述。
+  assert.match(tool.description, /then return its output/, '描述必须写明本工具返回作业输出');
+  // 等待必填＋范围的单点表述在尾部 waitDigest（四个等待语义工具共享同一句）；
+  // 参数级口径由 wait_ms 参数说明承担。
   assert.match(tool.description, /Per-call wait budgets must be passed explicitly, range 250–600000 ms;/);
+  assert.match(String(tool.parameters.properties.wait_ms.description), /Required/,
+    'wait_ms 参数说明必须声明必填');
   // 覆盖口径句——wait_ms 约束的是总时长（快照 + 等待段）。
   assert.match(tool.description, /budget bounds the total call time: one existence snapshot plus the wait segment/,
     '覆盖口径句必须在描述里（口径：总时长 = 快照 + 等待段）');
   // 已作废的措辞不许回来。宿主的 tool-jobs 会在结算无人等待时补发完成通知
-  // （`dsh-tool-jobs/lib/index.js:263-269`），"唯一途径"在新机制下是假的。
-  assert.doesNotMatch(tool.description, /唯一途径|only way/, '"唯一途径"已作废，不许回到描述里');
-  assert.match(tool.description, /established way/, '正确口径：既定途径');
+  // （`dsh-tool-jobs/lib/index.js:263-269`），"唯一途径"在新机制下是假的；
+  // "既定途径"句与 p1 的职责句重复自证，不得出现。
+  assert.doesNotMatch(tool.description, /唯一途径|only way|established way|既定途径/,
+    '"唯一途径"是假口径、"既定途径"与职责句重复，都不许出现在描述里');
   // wait 工具不该出现 yield_ms。
   assert.doesNotMatch(tool.description, /yield_ms/);
 });
 
 hostTest('W-render（R11 P1）：模型可见文本必须带上 detail —— 那是找回被丢弃输出的唯一线索', () => {
   // 缺陷形态：`render` 在终态分支
-  // 若只输出 `value.output`，"output partially dropped from memory; full output at <路径>"
+  // 若只带 `value.output`，"output partially dropped from memory; full output at <路径>"
   // 这句 `detail` **永远到不了模型眼前**。
   //
   // 为什么这种缺陷不易被发现：**模型只看得见 `render` 的输出**，结构化 `value` 不进模型上下文。

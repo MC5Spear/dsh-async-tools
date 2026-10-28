@@ -54,7 +54,7 @@ for (const pkg of pkgs) {
   const aDir = resolveRoot(join(A, pkg)), bDir = resolveRoot(join(B, pkg));
   if (!existsSync(aDir) || !existsSync(bDir)) {
     // 按缺失侧打印对应目录路径（A 缺失优先报 A；两侧都缺时先报 A）。
-    const missSide = !existsSync(aDir) ? `0.1.7（${aDir}）` : `0.2.0（${bDir}）`;
+    const missSide = !existsSync(aDir) ? `0.1.7（${aDir}）` : `0.2.1（${bDir}）`;
     console.log(`## ${pkg}: MISSING in ${missSide}`);
     continue;
   }

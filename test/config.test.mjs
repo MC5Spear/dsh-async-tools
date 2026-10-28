@@ -5,15 +5,18 @@
  * 分两段：
  * - 单元段（离线可跑）：根形态、双向解包、嵌套禁令、自续序列化、回调三形
  *   （武装／降级基线／初始容忍）、两侧判据对账与既有夹紧/枚举/身份透传判据；
+ *   布尔开关的候选透传、类型检查判据组与三侧（武装／降级／apply 自检）
+ *   同值对账；
  * - 进程内段（宿主锚在场才跑）：真实 loader／config-editor／settings 链上的
  *   describe 投影、写入拒绝、行身份保护、三形启动、降级基线与运行中非法重载
- *   （替身插件 `test/_host-row-standin.mjs` 挂真实 `Config` 与真实接线）。
+ *   （替身插件 `test/_host-row-standin.mjs` 挂真实 `Config` 与真实接线）；
+ *   布尔开关的三路径写入拒绝与启动损坏值降级（A-F10）。
  *
  * 回调形态是模块级状态（宿主行与工具行共用同一模块实例，设计 §5.1）：依赖
  * 初始态的用例入口先复位，武装用例收尾复位——进程内整链测试同进程串行，
  * 不互相污染。
  */
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
@@ -25,6 +28,8 @@ import {
   isOwnConfigCandidate
 } from '../lib/config.js';
 import { HOST_SKIP_REASON, loadOfflineSafe } from './_host-gate.mjs';
+import { t } from '../lib/text.js';
+import { attachSnapshotSource } from '../lib/settings.js';
 
 // ───────────────────────────── 单元段（离线可跑） ─────────────────────────────
 
@@ -37,10 +42,11 @@ test('clamp：缺省取默认值，越界被夹紧', () => {
 });
 
 test('isOwnConfigCandidate：waterfall 候选归属甄别（外来行不得进本包自检）', () => {
-  // 甄别标记三形态：带 toolName 的候选须是本包五名之一；不带 toolName 的
-  // 候选（宿主行全量 / volatile 部分补丁 / simplify 最小写回）须整体落在
-  // settings 字段键集内。真实实例启动日志实证过外来行（subagent /
-  // subagent_fork）流经本包监听的形态——甄别缺失时它们会制造假降级登记。
+  // 甄别标记三形态：带 toolName 的候选须是本包六名之一（命令、两等待、
+  // 派生、编排与路由查询）；不带 toolName 的候选（宿主行全量 / volatile
+  // 部分补丁 / simplify 最小写回）须整体落在 settings 字段键集内。外来行
+  // （subagent / subagent_fork 等）流经本包监听时，甄别缺失会制造假降级
+  // 登记——按候选实际键集判归属，不按来源猜测。
   for (const toolName of TOOL_NAMES) {
     assert.equal(isOwnConfigCandidate({ toolName }), true, `本包工具行候选：${toolName}`);
   }
@@ -276,7 +282,7 @@ test('降级态（回调三形＋降级基线）：基线等值放行、不同�
   assert.throws(() => callback({ ...baseline, extra: 1 }), /cross-field violation/,
     '多出未知键不按基线等值放行');
 
-  // ⑤ 自续序列化往返后基线语义不变（两跳 schema 投影的硬约束；复活方式与
+  // ⑤ 自续序列化往返后基线语义不变（两跳 schema 投影的硬性约束；复活方式与
   //    schemastery 对端一致：new Function 求值 toJSON 的自重建表达式）。
   const serialized = JSON.parse(JSON.stringify({ cb: callback })).cb;
   assert.equal(typeof serialized, 'string', 'toJSON 产出自重建表达式字符串');
@@ -320,7 +326,7 @@ test('降级态切换：setConfigValidationDegraded 置未武装；setConfigVali
 
 test('两侧判据对账：武装 callback 与 assertCrossFieldOrder 对同一组值同判（设计 §5.1）', () => {
   // callback 必须自包含（序列化链硬性约束），无法直接引用 ORDERED_PAIRS——
-  // 一致性只能靠对账测试锁住：schema 层与运行侧对同一组值给出同一裁决。
+  // 一致性只能靠对账测试锁住：schema 层与运行侧对同一组值给出同一判定。
   const cases = [
     { minYieldMs: 5000, maxYieldMs: 1000 },
     { defaultYieldMs: 99, minYieldMs: 1, maxYieldMs: 10 },
@@ -339,7 +345,7 @@ test('两侧判据对账：武装 callback 与 assertCrossFieldOrder 对同一�
       try { Config({ settings: { ...value } }); } catch { schemaRejected = true; }
       try { assertCrossFieldOrder(value); } catch { runtimeRejected = true; }
       assert.equal(schemaRejected, runtimeRejected,
-        `两侧裁决必须一致：${JSON.stringify(value)}（schema=${schemaRejected}; runtime=${runtimeRejected}）`);
+        `两侧判定必须一致：${JSON.stringify(value)}（schema=${schemaRejected}; runtime=${runtimeRejected}）`);
     }
   } finally {
     setConfigValidationArmed(false);
@@ -349,7 +355,7 @@ test('两侧判据对账：武装 callback 与 assertCrossFieldOrder 对同一�
 test('两形同值对账：武装与降级基线（非基线值）对同一组值同判同文案（设计 §5.1）', () => {
   // 降级回调的五查是源码复制（自包含约束，见 degradedSettingsCallback）——
   // 与武装形没有共享代码路径，单侧漂移没有任何判据会红。这里用同一组值
-  // 对两形对账：裁决必须一致，拒绝文案里的 cross-field violation 段必须
+  // 对两形对账：判定必须一致，拒绝文案里的 cross-field violation 段必须
   // 逐字一致（单侧改消息或改判据都红）。基线本身除外——两形在那儿有意
   // 分叉（降级放行基线等值、武装拒绝一切非法）。
   const cases = [
@@ -383,7 +389,7 @@ test('两形同值对账：武装与降级基线（非基线值）对同一组�
       const armedResult = attempt(() => Config({ settings: { ...resolved } }));
       const degradedResult = attempt(() => degraded({ ...resolved }));
       assert.equal(degradedResult.rejected, armedResult.rejected,
-        `两形裁决必须一致：${JSON.stringify(value)}（armed=${armedResult.rejected}; degraded=${degradedResult.rejected}）`);
+        `两形判定必须一致：${JSON.stringify(value)}（armed=${armedResult.rejected}; degraded=${degradedResult.rejected}）`);
       if (armedResult.rejected) {
         assert.ok(armedResult.violation !== undefined && degradedResult.violation !== undefined,
           `两形拒绝都必须带 cross-field violation 段：${JSON.stringify(value)}`);
@@ -398,6 +404,146 @@ test('两形同值对账：武装与降级基线（非基线值）对同一组�
     assert.equal(armedFormAttempt.rejected, true, '武装形对同一份基线值照常拒绝');
   } finally {
     setConfigValidationArmed(false);
+  }
+});
+
+test('布尔开关：schema 透传候选原值，类型检查在写入判据组与自检（设计 §5.1，A-F10）', () => {
+  setConfigValidationArmed(false);
+  // 初始（容忍）态：非布尔候选原样通过 schema resolve——启动损坏值靠它活着
+  // 走完装配（字段层拦截会直接杀死行、卡片消失），到 apply 自检才降级。
+  const tolerated = Config({ settings: { askTakeover: 'INVALID_BOOLEAN', silentFailureGuard: 'not-a-boolean' } });
+  assert.equal(tolerated.settings.get().askTakeover, 'INVALID_BOOLEAN', '候选原值保留到回调判据（不静默收敛）');
+  assert.equal(tolerated.settings.get().silentFailureGuard, 'not-a-boolean', '两字段同款透传');
+  // null 与缺省走 schema 默认（isNullable 分支）：null＝未设置语义，不是非法布尔。
+  assert.equal(Config({ settings: { askTakeover: null } }).settings.get().askTakeover, false, 'null 回默认（未设置语义）');
+  assert.equal(Config({}).settings.get().askTakeover, false, '缺省回默认');
+  // apply 自检通道（snapshotFromConfig→resolveConfig）对非布尔抛错：启动损坏值
+  // 在此降级为合法默认运行，而不是静默收敛成 false。
+  assert.throws(() => resolveConfig({ settings: { askTakeover: 'INVALID_BOOLEAN' } }),
+    (error) => error.message === '[async-tools] type violation: askTakeover must be a boolean, got string "INVALID_BOOLEAN"',
+    '自检拒绝非布尔，原因带字段名与实际类型/值');
+  assert.throws(() => resolveConfig({ silentFailureGuard: 1 }),
+    /\[async-tools\] type violation: silentFailureGuard must be a boolean, got number 1/,
+    '平铺输入同判（数字形态）');
+  assert.throws(() => resolveConfig({ silentFailureGuard: { get: () => 'yes' } }),
+    /\[async-tools\] type violation: silentFailureGuard must be a boolean, got string "yes"/,
+    '字段级假 Ref 解包后同判（loader 就地提交的原地改写形状）');
+  assert.equal(resolveConfig({ settings: { silentFailureGuard: null } }).silentFailureGuard, false, '自检对 null 放行（未设置）');
+  for (const v of [true, false]) {
+    assert.equal(resolveConfig({ settings: { askTakeover: v } }).askTakeover, v, `合法 ${v} 放行`);
+  }
+});
+
+test('武装态：布尔开关类型检查拒绝非布尔并给字段名与实际类型/值（需求 §5.1，A-F10）', () => {
+  setConfigValidationArmed(true);
+  try {
+    const cases = [
+      ['askTakeover', 'INVALID_BOOLEAN'],
+      ['silentFailureGuard', 'not-a-boolean'],
+      ['askTakeover', 1],
+      ['silentFailureGuard', { x: 1 }],
+      ['askTakeover', ['yes']]
+    ];
+    for (const [key, value] of cases) {
+      assert.throws(() => Config({ settings: { [key]: value } }), (error) => {
+        assert.match(error.message, /^\[async-tools\] type violation: /);
+        assert.equal(error.message,
+          `[async-tools] type violation: ${key} must be a boolean, got ${typeof value} ${JSON.stringify(value)}`,
+          '拒绝文案必须带字段名与实际类型/值');
+        return true;
+      }, `武装态必须拒绝 ${key}=${JSON.stringify(value)}`);
+    }
+    // 两字段同时非法：合并为一条消息（'; ' 连接，silentFailureGuard 在前＝判据组声明序）。
+    assert.throws(
+      () => Config({ settings: { askTakeover: 'B', silentFailureGuard: 'A' } }),
+      (error) => error.message === '[async-tools] type violation: silentFailureGuard must be a boolean, got string "A"; askTakeover must be a boolean, got string "B"',
+      '双字段违例合并一条消息'
+    );
+    // 判据组内序：跨字段与布尔类型同时违例时，跨字段消息先出（既有消息形态不变）。
+    assert.throws(
+      () => Config({ settings: { defaultWaitMs: 1, askTakeover: 'X' } }),
+      (error) => /^(\[async-tools\] cross-field violation:)/.test(error.message) && !/type violation/.test(error.message),
+      '跨字段违例优先报出（类型检查不抢既有文案）'
+    );
+    // 合法 true/false 照常通过（resolve 不是清洗器）。
+    const legal = Config({ settings: { silentFailureGuard: true, askTakeover: false } });
+    assert.equal(legal.settings.get().silentFailureGuard, true, '合法 true 放行');
+    assert.equal(legal.settings.get().askTakeover, false, '合法 false 放行');
+  } finally {
+    setConfigValidationArmed(false);
+  }
+});
+
+test('降级态（布尔基线）：等值重放放行、基线外非法拒绝、合法修复放行、往返携带基线（设计 §5.1，A-F10）', () => {
+  const baseline = resolveSettingsValue({ settings: { askTakeover: 'INVALID_BOOLEAN' } });
+  assert.equal(baseline.askTakeover, 'INVALID_BOOLEAN', '基线携带布尔候选原值（any 透传，非法值原样进基线）');
+  const callback = degradedSettingsCallback(baseline);
+  const again = { ...baseline };
+  assert.equal(callback(again), again, '基线等值重放放行（loader 再解析与原样重存在回调上不可区分）');
+  assert.throws(() => callback({ ...baseline, askTakeover: 'OTHER' }),
+    (error) => error.message === '[async-tools] type violation: askTakeover must be a boolean, got string "OTHER"',
+    '与基线不同的非法布尔照常拒绝');
+  assert.throws(() => callback({ ...baseline, silentFailureGuard: 'junk' }),
+    /\[async-tools\] type violation: silentFailureGuard must be a boolean, got string "junk"/,
+    '基线外的另一字段非法同样拒绝');
+  const legal = callback({ ...baseline, askTakeover: true });
+  assert.equal(legal.askTakeover, true, '合法修复放行（降级不拦修复通道）');
+  // 序列化往返（客户端复活副本）：同一基线、同一判据（共享序列化链的既定后果）。
+  const serialized = JSON.parse(JSON.stringify({ cb: callback })).cb;
+  const revived = new Function(`return ${serialized}`)();
+  assert.equal(revived({ ...baseline }).askTakeover, 'INVALID_BOOLEAN', '复活副本对基线等值放行且携带原值');
+  assert.throws(() => revived({ ...baseline, askTakeover: 'OTHER' }),
+    /\[async-tools\] type violation: askTakeover must be a boolean, got string "OTHER"/,
+    '复活副本对基线外非法照常拒绝');
+});
+
+test('三侧同值对账：武装／降级（非基线）／apply 自检对布尔非法同判同文案（设计 §5.1，A-F10）', () => {
+  // 回调两形因自包含约束是源码复制、apply 自检（resolveConfig）是第三份实现
+  // ——没有共享代码路径，单侧漂移没有任何判据会红。同一组值三侧对账：
+  // 判定一致，type violation 段逐字一致（单侧改消息或改判据都红）。
+  const cases = [
+    { askTakeover: 'INVALID_BOOLEAN' },
+    { askTakeover: 'OTHER' },
+    { silentFailureGuard: 'not-a-boolean' },
+    { askTakeover: 1 },
+    { silentFailureGuard: { x: 1 } },
+    { askTakeover: true },
+    { silentFailureGuard: false }
+  ];
+  const violationOf = (message) => /(\[async-tools\] type violation: [^\n]*)/.exec(String(message))?.[1];
+  const attempt = (fn) => {
+    try {
+      fn();
+      return { rejected: false, violation: undefined };
+    } catch (error) {
+      return { rejected: true, violation: violationOf(error.message) };
+    }
+  };
+  // 数值基线：布尔用例必在基线之外（降级形走判据组而不是基线放行）。
+  const baseline = resolveSettingsValue({ settings: { defaultWaitMs: 1 } });
+  const degraded = degradedSettingsCallback(baseline);
+  let armedResults;
+  setConfigValidationArmed(true);
+  try {
+    armedResults = cases.map((value) => attempt(() => Config({ settings: { ...resolveSettingsValue({ settings: { ...value } }) } })));
+  } finally {
+    setConfigValidationArmed(false);
+  }
+  // apply 自检侧在容忍回调下跑：这正是启动链的形态（装配放行、自检拒绝）。
+  const selfCheckResults = cases.map((value) => attempt(() => resolveConfig({ settings: { ...value } })));
+  const degradedResults = cases.map((value) => attempt(() => degraded({ ...resolveSettingsValue({ settings: { ...value } }) })));
+  for (let index = 0; index < cases.length; index += 1) {
+    const value = cases[index];
+    assert.equal(degradedResults[index].rejected, armedResults[index].rejected,
+      `降级形与武装形判定必须一致：${JSON.stringify(value)}`);
+    assert.equal(selfCheckResults[index].rejected, armedResults[index].rejected,
+      `apply 自检与武装形判定必须一致：${JSON.stringify(value)}`);
+    if (armedResults[index].rejected) {
+      assert.equal(degradedResults[index].violation, armedResults[index].violation,
+        `降级形与武装形拒绝文案必须逐字一致：${JSON.stringify(value)}`);
+      assert.equal(selfCheckResults[index].violation, armedResults[index].violation,
+        `apply 自检与武装形拒绝文案必须逐字一致：${JSON.stringify(value)}`);
+    }
   }
 });
 
@@ -447,18 +593,121 @@ test('resolveYield：缺省取默认值，超出范围被夹紧', () => {
   assert.equal(resolveYield(1, c), c.minYieldMs);
 });
 
-test('Config schema 暴露 toolName 且只接受登记的全部工具名（五个）', () => {
+test('Config schema 暴露 toolName 且只接受登记的全部工具名（六个）', () => {
   setConfigValidationArmed(false);
-  // 遍历 `TOOL_NAMES` 而**不是手抄四个名字**：手抄清单在新增工具名时跟不上，
+  // 遍历 `TOOL_NAMES` 而**不是手抄五个名字**：手抄清单在新增工具名时跟不上，
   // "从登记表里删掉一个工具名"这类变异就**抓不住**（手抄清单里那个名字照样能过 `Config()`）。
   // 名单漏一项就是假绿，所以清单只能有一个来源。个数断言是第二道锁：
   // 加工具时它逼你回来确认一次。
   for (const toolName of TOOL_NAMES) {
     assert.equal(Config({ toolName }).toolName, toolName);
   }
-  assert.equal(TOOL_NAMES.length, 5,
+  assert.equal(TOOL_NAMES.length, 6,
     '工具名清单变了：同步这条断言、README 的取值列表与预设补丁的行数');
   assert.throws(() => Config({ toolName: 'nope' }), /async_run.*async_wait_job.*async_wait_agent.*async_agent/s, '错误文案必须列出可选值，便于排查');
+});
+
+test('Config 根接受委托行级键：agentOptions／agentPreset／allowedAgentPresets（§2.3.1，非 volatile）', () => {
+  setConfigValidationArmed(false);
+  // 行级委托键与宿主原生工具行同名同形：resolveConfig 输出为平铺形态
+  // （17 个设置字段平铺＋行身份键同层）——三个键落在根层即「不在 settings
+  // volatile 子树里」（表单投影不显示它们，进程内用例另有专测），
+  // 并实施原生同款约束（重复预设、默认预设 ∈ 允许集合）。
+  const c = resolveConfig({
+    toolName: 'async_agent',
+    agentOptions: { provider: 'zai', model: 'glm-5.3', reasoningEffort: 'low' },
+    agentPreset: 'reviewer',
+    allowedAgentPresets: ['reviewer', 'writer']
+  });
+  assert.deepEqual(c.agentOptions, { provider: 'zai', model: 'glm-5.3', reasoningEffort: 'low' });
+  assert.equal(c.agentPreset, 'reviewer');
+  assert.deepEqual(c.allowedAgentPresets, ['reviewer', 'writer']);
+  assert.equal(c.settings, undefined, '输出是平铺形态：不得出现嵌套 settings 键');
+
+  // 原生同款约束：允许集合不得重复；默认预设必须含于允许集合。
+  assert.throws(
+    () => resolveConfig({ toolName: 'async_agent', allowedAgentPresets: ['a', 'a'] }),
+    /duplicate preset ids/
+  );
+  assert.throws(
+    () => resolveConfig({ toolName: 'async_agent', agentPreset: 'x', allowedAgentPresets: ['a'] }),
+    /agentPreset must be included in allowedAgentPresets/
+  );
+  // 声明带 `.default(void 0)`（原生同形）：缺席解析为 undefined（不物化成
+  // `[]`）；显式空数组与空串元素在 schema 层即被原生同形拒绝（原料层的
+  // 词典文案拒绝在 internal/config waterfall，见下一条用例）。
+  const plain = resolveConfig({ toolName: 'async_agent' });
+  assert.equal('agentOptions' in plain, false, '缺席 agentOptions 不得携带（父继承交宿主侧）');
+  assert.equal('allowedAgentPresets' in plain, false, '缺席允许集合＝未配置（agent_preset 不暴露）');
+  assert.throws(
+    () => resolveConfig({ toolName: 'async_agent', allowedAgentPresets: [], agentOptions: {} }),
+    /expected array length >= 1/,
+    '显式空数组在 schema 层拒绝（原生同形：z.array(...).min(1).default(void 0)）'
+  );
+  assert.throws(
+    () => resolveConfig({ toolName: 'async_agent', allowedAgentPresets: [''] }),
+    /string length >= 1/,
+    '空串预设 id 同拒（元素级 min(1)，原生同形）'
+  );
+  const noPresetKeys = resolveConfig({ toolName: 'async_agent', agentOptions: {} });
+  assert.equal('agentOptions' in noPresetKeys, false, '无键对象折回未配置');
+  // 词典键两档在场（原料层抛错的线上形态取英文档，设计 §5.1）。
+  assert.match(t('en', 'error.config.allowedPresetsEmpty'), /at least one preset id/);
+  assert.match(t('zh', 'error.config.allowedPresetsEmpty'), /至少含一个预设/);
+  // 整树输入（settings 子树形态）的透传归一到同一平铺结果。
+  const treeForm = resolveConfig({
+    toolName: 'async_agent',
+    settings: { subagentProvider: 'fork' },
+    allowedAgentPresets: ['reviewer']
+  });
+  assert.deepEqual(treeForm.allowedAgentPresets, ['reviewer']);
+  assert.equal(treeForm.subagentProvider, 'fork');
+});
+
+test('internal/config 原料层：本包候选的显式空允许集合抛错拒绝；缺席与外来候选照常续链（S01，设计 §5.1）', () => {
+  setConfigValidationArmed(false);
+  // 原料层＝cordis `Fiber._resolveConfig` 每次 resolve（装载、重挂、volatile
+  // 就地提交）先流经的 internal/config waterfall——原始候选在 schema 解析
+  // 之前经过本监听，本包词典文案在这里**先行**拒绝；schema 层（原生同形
+  // `.min(1).default(void 0)`，见上一条用例）兜住不经 fiber 咽喉的解析
+  // （config-editor 落盘前 resolve、客户端草稿校验）。抛错 → resolve 中断：
+  // 装载／重挂 fiber 置 inactive，volatile 提交 loader 捕获记 warn、refs
+  // 不动（提交被拒）；这与 resolve 侧的降级登记（只告警不拒绝）不同通道。
+  const listeners = new Map();
+  const ctx = {
+    on(event, fn) { listeners.set(event, fn); return () => {}; },
+    logger: { warn() {} }
+  };
+  const wiring = attachSnapshotSource(ctx, resolveConfig({}));
+  const listener = listeners.get('internal/config');
+  assert.ok(typeof listener === 'function', '接线注册 internal/config 监听');
+  const SENTINEL = Symbol('next');
+  const next = () => SENTINEL;
+
+  // 本包候选＋显式空数组 → 抛错（可读文案＝词典英文档）。
+  assert.throws(
+    () => listener({ toolName: 'async_agent', settings: {}, allowedAgentPresets: [] }, next),
+    /allowedAgentPresets must contain at least one preset id when present/
+  );
+  // 「空数组＋默认预设并存」同拒——不存在折叠后单独接受默认预设的形态。
+  assert.throws(
+    () => listener({ toolName: 'async_agent', settings: {}, allowedAgentPresets: [], agentPreset: 'reviewer' }, next),
+    /at least one preset id when present/
+  );
+  // 缺席键（未配置）与合法非空集合照常放行续链。
+  assert.equal(listener({ toolName: 'async_agent', settings: {} }, next), SENTINEL, '缺席＝未配置，放行续链');
+  assert.equal(
+    listener({ toolName: 'async_agent', settings: {}, allowedAgentPresets: ['reviewer'] }, next),
+    SENTINEL, '非空集合放行续链'
+  );
+  // 外来候选不进本包判据（归属甄别先于空数组判据）。
+  assert.equal(
+    listener({ toolName: 'subagent', allowedAgentPresets: [] }, next),
+    SENTINEL, '外来候选直接续链（不是我们的行）'
+  );
+
+  wiring.dispose();
+  setConfigValidationArmed(false);
 });
 
 test('toolName 缺省 = 宿主角色：不得抛错，也不得回填默认值（单包化）', () => {
@@ -494,13 +743,19 @@ test('resolveConfig：未知配置键不得进入生效配置——embedBudgetsI
 // ───────────────────── 进程内段（真实 loader／settings 链） ─────────────────────
 
 /**
- * 工作目录：`repo/.local/tmp/f04-chain`（gitignored；组合目录、profile、
- * 迷你 bundle 的落点）。组合里替身插件按相对路径指回 `test/`——loader 的
- * ModuleLoader 解析走本进程的 resolve 钩子与标准相对解析，插件内的
- * `../lib/*` 导入按插件自身位置解析回仓库。
+ * 工作目录：`repo/.local/tmp/f04-chain-<进程>-<时间>`（gitignored；组合目录、
+ * profile、迷你 bundle 的落点）——**每次运行唯一**，自建自删，不固定路径重建：
+ * 固定路径会把归属不明的既有目录整树删掉。组合里替身插件按相对路径指回
+ * `test/`——loader 的 ModuleLoader 解析走本进程的 resolve 钩子与标准相对解析，
+ * 插件内的 `../lib/*` 导入按插件自身位置解析回仓库。
  */
 const HERE = fileURLToPath(new URL('.', import.meta.url));
-const WORK = join(HERE, '..', '.local', 'tmp', 'f04-chain');
+const WORK = join(HERE, '..', '.local', 'tmp',
+  `f04-chain-${process.pid.toString(36)}-${Date.now().toString(36)}`);
+
+after(() => {
+  rmSync(WORK, { recursive: true, force: true });
+});
 
 const BASE_SETTINGS = {
   defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
@@ -842,6 +1097,196 @@ test('进程内（真实链）：三形启动、降级基线与运行中非法�
     assert.equal(foreignEntry?.fiber?.state, 2, '外来行照常激活（甄别不改写别家候选）');
     assert.equal(readDegraded(), degradeBeforeForeign,
       '外来行流经 waterfall 不得触发本包降级登记（否则启动即污染模型可见的描述警示段——真实实例启动日志实证过该污染形态）');
+  } finally {
+    setConfigValidationArmed(false);
+    chain.clearSnapshot();
+    chain.clearDegraded();
+  }
+});
+
+test('进程内（真实链）：布尔开关新输入三路径拒绝、三处保持原值；合法 true/false 放行（A-F10）', async (t) => {
+  const anchors = await Promise.all([
+    loadOfflineSafe('@deepseek-ai/cordis'),
+    loadOfflineSafe('@deepseek-ai/cordis-plugin-loader'),
+    loadOfflineSafe('@deepseek-ai/dsh-config-editor'),
+    loadOfflineSafe('@deepseek-ai/dsh-settings'),
+    loadOfflineSafe('@deepseek-ai/dsh-app-boot')
+  ]);
+  if (anchors.some((m) => m === undefined)) {
+    t.skip(HOST_SKIP_REASON);
+    return;
+  }
+  const chain = await getChain();
+  const { loader, settings, ns, liveSettings } = chain;
+  try {
+    setConfigValidationArmed(true);
+    // 前置清场：前序用例经 loader.create 留下的运行时行（t1/t2/foreign）不在
+    // profile 组合层——任何一次成功落盘的 edit 都会在 reconcile 时把它们拆掉，
+    // 其 wiring 处置器清空模块快照，污染本用例的快照断言。先用宿主 API 显式
+    // 移除（EntryGroup.remove），让本用例的每次成功写入都不触发拆除。
+    for (const row of loader.entries()) {
+      if (['f04-host-t1', 'f04-host-t2', 'f04-foreign'].includes(row.options.id)) {
+        row.parent.remove(row.options.id);
+      }
+    }
+    // 主行布尔两字段未被覆盖（此前用例只动过数值字段），并播种一份具名快照
+    // （拒绝断言要核对「有效值保持原值」，快照缺席形态没有对拍基准）。
+    assert.equal(liveSettings()?.askTakeover, false, '前置：askTakeover 未被覆盖');
+    assert.equal(liveSettings()?.silentFailureGuard, false, '前置：silentFailureGuard 未被覆盖');
+    await settings.update(ns, { settings: { defaultWaitMs: 31000 } });
+    assert.equal(liveSettings()?.defaultWaitMs, 31000, '种子写入生效（活 Ref）');
+    assert.equal(chain.readSnapshot()?.askTakeover, false, '快照在场且布尔为默认关');
+
+    // ① update 路径（A-F10 反例形态）：非布尔字符串提交 → 拒于落盘前，
+    //    原因带字段名与实际类型/值；用户层、patch 文件与有效值三处保持原值。
+    const patchBefore = existsSync(settings.documentPath) ? readFileSync(settings.documentPath, 'utf8') : null;
+    const userBefore = settings.describe().find((row) => row.ns === ns)?.user;
+    await assert.rejects(
+      () => settings.update(ns, { settings: { askTakeover: 'INVALID_BOOLEAN' } }),
+      (error) => /type violation/.test(error.message) && /askTakeover/.test(error.message)
+        && /string/.test(error.message) && /INVALID_BOOLEAN/.test(error.message),
+      'update 提交非布尔字符串必须被拒且原因带字段名与实际类型/值'
+    );
+    assert.equal(existsSync(settings.documentPath) ? readFileSync(settings.documentPath, 'utf8') : null, patchBefore,
+      '拒绝时 patch 文件不动（持久文件保持原值）');
+    assert.deepEqual(settings.describe().find((row) => row.ns === ns)?.user, userBefore, '用户层保持原值');
+    assert.equal(liveSettings()?.askTakeover, false, '活 Ref 保持原值（不吃进字符串）');
+    assert.equal(chain.readSnapshot()?.askTakeover, false, '有效快照保持原值');
+
+    // ② mutate 路径：另一字段、字符串形态。
+    await assert.rejects(
+      () => settings.mutate(ns, [{ op: 'set', path: ['settings', 'silentFailureGuard'], value: 'not-a-boolean' }]),
+      (error) => /type violation/.test(error.message) && /silentFailureGuard/.test(error.message),
+      'mutate 路径同样拒绝'
+    );
+    // ③ replace 路径：整组携带非法布尔（数字形态）同样拒绝。
+    await assert.rejects(
+      () => settings.replace(ns, { settings: { ...BASE_SETTINGS, askTakeover: 1 } }),
+      (error) => /type violation/.test(error.message) && /askTakeover/.test(error.message) && /number 1/.test(error.message),
+      'replace 路径同样拒绝'
+    );
+    assert.equal(existsSync(settings.documentPath) ? readFileSync(settings.documentPath, 'utf8') : null, patchBefore,
+      '三路径拒绝后 patch 文件仍不动');
+    assert.deepEqual(settings.describe().find((row) => row.ns === ns)?.user, userBefore,
+      '三路径拒绝后用户层仍原值');
+    assert.equal(liveSettings()?.silentFailureGuard, false, '三路径拒绝后活 Ref 仍原值');
+
+    // ④ 合法 true/false 放行：两字段分别、活 Ref／快照／用户层三处同步。
+    await settings.update(ns, { settings: { askTakeover: true } });
+    assert.equal(liveSettings()?.askTakeover, true, '合法 true 生效（活 Ref）');
+    assert.equal(chain.readSnapshot()?.askTakeover, true, '合法 true 生效（快照）');
+    assert.equal(settings.describe().find((row) => row.ns === ns)?.user?.settings?.askTakeover, true,
+      '用户层携带 true');
+    await settings.update(ns, { settings: { askTakeover: false, silentFailureGuard: true } });
+    assert.equal(liveSettings()?.askTakeover, false, '合法 false 生效');
+    assert.equal(liveSettings()?.silentFailureGuard, true, '另一字段合法 true 生效');
+    assert.equal(chain.readSnapshot()?.silentFailureGuard, true, '快照同步另一字段');
+    // 收尾复位（后续进程内用例沿用主行默认关假设）。
+    await settings.update(ns, { settings: { silentFailureGuard: false } });
+    assert.equal(liveSettings()?.silentFailureGuard, false, '收尾复位 false');
+  } finally {
+    setConfigValidationArmed(false);
+  }
+});
+
+test('进程内（真实链）：启动损坏布尔→降级运行、原值显示、基线放行、修复自愈（A-F10）', async (t) => {
+  const anchors = await Promise.all([
+    loadOfflineSafe('@deepseek-ai/cordis'),
+    loadOfflineSafe('@deepseek-ai/cordis-plugin-loader'),
+    loadOfflineSafe('@deepseek-ai/dsh-config-editor'),
+    loadOfflineSafe('@deepseek-ai/dsh-settings'),
+    loadOfflineSafe('@deepseek-ai/dsh-app-boot')
+  ]);
+  if (anchors.some((m) => m === undefined)) {
+    t.skip(HOST_SKIP_REASON);
+    return;
+  }
+  const chain = await getChain();
+  const { standin, settings, loader, ns, liveSettings } = chain;
+  const pluginSpec = relative(join(WORK, 'comp'), join(HERE, '_host-row-standin.mjs')).split(sep).join('/');
+  try {
+    // ── 启动段：模拟新进程初态（回调复位容忍），启动损坏布尔必须活着走完
+    // 装配，apply 自检（判据与回调同源，含类型检查）失败走既有降级。
+    // 本段只做拒绝类写入——放行类写入会触发落盘 reconcile 拆除运行时行
+    // （loader.create 的行不在 profile 组合层），其处置器清空快照污染断言。
+    setConfigValidationArmed(false);
+    await loader.create({
+      id: 'f04-host-tb',
+      name: pluginSpec,
+      config: { settings: { ...BASE_SETTINGS, askTakeover: 'INVALID_BOOLEAN', silentFailureGuard: 'not-a-boolean' } }
+    }, 'include');
+    await loader.await();
+    const entryTB = loader.resolve('include:f04-host-tb');
+    assert.equal(entryTB.fiber?.state, 2, '启动损坏布尔：行激活（容忍态放行装配，修复入口不死）');
+    assert.equal(standin.STATE.wirings.at(-1)?.degraded, true, '该行装配侧自检失败（布尔类型检查进 apply 自检）');
+    const viewTB = settings.describe().find((row) => row.ns === 'f04-host-tb');
+    assert.ok(viewTB !== undefined, '设置卡片在场（describe 含该 ns）');
+    assert.equal(viewTB?.value?.settings?.askTakeover, 'INVALID_BOOLEAN', '值投影显示原始非法值（修复依据）');
+    assert.equal(viewTB?.value?.settings?.silentFailureGuard, 'not-a-boolean', '另一字段原始非法值同样显示');
+    assert.ok(/type violation/.test(String(chain.readDegraded() ?? '')),
+      `降级明细登记布尔类型违例：${chain.readDegraded()}`);
+    // 有效快照按合法默认运行（两开关默认关）。
+    assert.equal(chain.readSnapshot()?.askTakeover, false, '有效值按合法默认运行（askTakeover）');
+    assert.equal(chain.readSnapshot()?.silentFailureGuard, false, '有效值按合法默认运行（silentFailureGuard）');
+    const decodeTB = await clientValidate(viewTB.schema, viewTB.value);
+    assert.equal(decodeTB.ok, true,
+      `降级态表单可渲染（客户端复活副本携带同一布尔基线，等值草稿放行）：${decodeTB.message ?? ''}`);
+
+    // 降级期守护：与基线不同的非法提交照常拒于落盘前（运行中拒绝与启动降级分离）。
+    const patchBefore = existsSync(settings.documentPath) ? readFileSync(settings.documentPath, 'utf8') : null;
+    await assert.rejects(
+      () => settings.update('f04-host-tb', { settings: { askTakeover: 'DIFFERENT_INVALID' } }),
+      (error) => /type violation/.test(error.message) && /askTakeover/.test(error.message)
+        && /DIFFERENT_INVALID/.test(error.message),
+      '降级期间与基线不同的非法提交照常拒绝'
+    );
+    assert.equal(existsSync(settings.documentPath) ? readFileSync(settings.documentPath, 'utf8') : null, patchBefore,
+      '拒绝不落盘');
+    // 主行（合法行）在降级态下的运行中拒绝同样有效：非法新输入与启动保守处理分离。
+    const mainGuardBefore = liveSettings()?.silentFailureGuard;
+    await assert.rejects(
+      () => settings.update(ns, { settings: { silentFailureGuard: 'junk' } }),
+      /\[async-tools\] type violation: silentFailureGuard must be a boolean, got string "junk"/,
+      '降级期间其他行的非法新输入同样拒绝'
+    );
+    assert.equal(liveSettings()?.silentFailureGuard, mainGuardBefore, '主行活 Ref 不动');
+
+    // ── 基线段：放行类写入迁到主行（运行时行不可组合持久化）。先移除 tb，
+    // 避免成功落盘的 reconcile 拆行时其处置器清空快照；再用与启动段同形的
+    // 布尔损坏值构造降级基线（结构与 apply 侧 setConfigValidationDegraded
+    // 写入的基线一致：已解析值、非法候选原样在内）。
+    entryTB.parent.remove('f04-host-tb');
+    await settings.update(ns, { settings: { defaultWaitMs: 32000 } });
+    assert.equal(chain.readSnapshot()?.defaultWaitMs, 32000, '基线段种子写入生效');
+    const boolBaseline = resolveSettingsValue({
+      settings: { ...BASE_SETTINGS, defaultWaitMs: 32000, askTakeover: 'INVALID_BOOLEAN', silentFailureGuard: 'not-a-boolean' }
+    });
+    setConfigValidationDegraded(boolBaseline);
+    // 基线等值重放（原样重存同一非法值）放行：行不死、有效快照保旧＋告警维持
+    // ——放行不扩大运行范围（有效值仍按合法默认关运行）。
+    await settings.update(ns, { settings: { askTakeover: 'INVALID_BOOLEAN', silentFailureGuard: 'not-a-boolean' } });
+    assert.equal(loader.resolve(`include:${ns}`)?.fiber?.state, 2, '基线等值重放不杀伤行');
+    assert.equal(liveSettings()?.askTakeover, 'INVALID_BOOLEAN', '重放后活 Ref 吃进基线值（loader 就地提交放行）');
+    assert.equal(chain.readSnapshot()?.askTakeover, false, '快照保旧（继续按合法默认运行）');
+    assert.equal(chain.readSnapshot()?.silentFailureGuard, false, '快照保旧（另一字段同判）');
+    assert.ok(/type violation|must be a boolean/.test(String(chain.readDegraded() ?? '')),
+      '降级登记维持（volatile 监听 catch：保旧＋告警）');
+
+    // 合法布尔修复：清基线再武装、自愈（降级明细清空、快照跟进修复值）。
+    await settings.update(ns, { settings: { askTakeover: true, silentFailureGuard: false } });
+    assert.equal(isConfigValidationArmed(), true, '合法修复后重新武装（清基线）');
+    assert.equal(chain.readDegraded(), undefined, '降级明细清空（自愈）');
+    assert.equal(chain.readSnapshot()?.askTakeover, true, '快照跟进修复值');
+    assert.equal(liveSettings()?.askTakeover, true, '活 Ref 吃进修复值');
+    // 自愈后的武装态：原样重存同一非法值不再放行（基线已清）。
+    const patchAfterRepair = existsSync(settings.documentPath) ? readFileSync(settings.documentPath, 'utf8') : null;
+    await assert.rejects(
+      () => settings.update(ns, { settings: { askTakeover: 'INVALID_BOOLEAN' } }),
+      /\[async-tools\] type violation: askTakeover must be a boolean, got string "INVALID_BOOLEAN"/,
+      '武装恢复后原样重存非法值照常拒绝'
+    );
+    assert.equal(existsSync(settings.documentPath) ? readFileSync(settings.documentPath, 'utf8') : null, patchAfterRepair,
+      '自愈后的拒绝同样不落盘');
   } finally {
     setConfigValidationArmed(false);
     chain.clearSnapshot();

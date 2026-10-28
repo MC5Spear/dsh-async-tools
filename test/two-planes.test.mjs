@@ -56,8 +56,8 @@ test('T1：设置快照链——宿主行播报、工具行读快照、任何地
   // ③ 快照模块的四个入口（seed/read/clear + 接线）——工具行的取值入口点名 readSnapshot。
   const entryCode = stripComments(read('lib/index.js'));
   assert.match(entryCode,
-    /makeConfigView\(\(\) => \{\s*const snapshot = readSnapshot\(\);\s*return snapshot === undefined\s*\?\s*initial\s*: \{ \.\.\.snapshot, owningPreset: initial\.owningPreset \};\s*\}\)/,
-    '工具行取值必须是"快照优先、缺快照回退本行默认值"的活视图，且快照合并保留本行装载期的 owningPreset（行身份非 volatile，设计 §6.2）');
+    /makeConfigView\(\(\) => \{\s*const snapshot = readSnapshot\(\);\s*return snapshot === undefined\s*\?\s*initial\s*: \{\s*\.\.\.snapshot,\s*owningPreset: initial\.owningPreset,\s*\.\.\.\(initial\.agentOptions === undefined \? \{\} : \{ agentOptions: initial\.agentOptions \}\),\s*\.\.\.\(initial\.agentPreset === undefined \? \{\} : \{ agentPreset: initial\.agentPreset \}\),\s*\.\.\.\(initial\.allowedAgentPresets === undefined \? \{\} : \{ allowedAgentPresets: initial\.allowedAgentPresets \}\)\s*\};\s*\}\)/,
+    '工具行取值必须是"快照优先、缺快照回退本行默认值"的活视图；快照合并保留本行装载期的 owningPreset 与三个行级委托键（行身份与委托配置都非 volatile、不进宿主行快照，设计 §6.2／§3.3）——漏保留即宿主行在场时自定义行委托配置整组失效');
 });
 
 test('T2（R6）：宿主入口不注册任何工具', () => {
@@ -133,27 +133,21 @@ test('T3：改设置后模型看到的数字真的跟着变（行为差异，不
     refreshToolDescriptions(tool, view);
 
     assert.notEqual(tool.description, topBefore, `${name}：改设置后顶层描述必须变化（否则模型看到的是过期的上限）`);
-    // 锚④：尾部摘要的等待区间（waitDigest 拼出，以 `;` 结尾）。
+    // 锚④：尾部摘要的等待区间（waitDigest 拼出，以 `;` 结尾）——四个等待语义
+    // 工具共享同一句，是 wait 范围在描述里的**单点**（正文不再重复第二遍）。
     const topRange = /Per-call wait budgets must be passed explicitly, range (\d+)–(\d+) ms;/.exec(tool.description);
     assert.deepEqual([topRange?.[1], topRange?.[2]], ['250', '130000'], `${name}：尾部摘要的等待区间必须更新`);
 
-    // ── **正文那处**必须单独断言（现行判据必须单列）──────────────────
-    //
-    // 模型实际读到的是**正文**——各工具的正文形态不一样，断言不能一刀切：
+    // ── 正文那处必须单独断言（各工具的正文形态不一样，断言不能一刀切）──────
     //
     // | 工具 | 正文里有 | 英文锚 |
     // |---|---|---|
-    // | `async_wait_job` / `async_wait_agent` | 等待区间 | 锚① `wait_ms is required, range N–M ms` |
-    // | `async_run` | **只有首次等待区间** | 锚② `First wait bounded to N–M ms` |
-    // | `async_agent` | 都没有 | 只在尾部摘要有等待区间（⑤ 是 provider 名） |
+    // | `async_run` | 只有首次等待区间 | `The first wait defaults to N ms (pass yield_ms, range N–M ms)` |
+    // | `async_wait_job` / `async_wait_agent` / `async_agent` | 等待区间只在尾部摘要 | 已由锚④覆盖 |
     if (name === 'async_run') {
-      const yieldBody = /First wait bounded to (\d+)–(\d+) ms/.exec(tool.description);
-      assert.deepEqual([yieldBody?.[1], yieldBody?.[2]], ['1000', '120000'],
-        'async_run：正文里的**首次等待**区间必须更新成首次等待的值，不能写成单次等待');
-    } else {
-      const bodyRange = /wait_ms is required, range (\d+)–(\d+) ms/.exec(tool.description);
-      assert.deepEqual([bodyRange?.[1], bodyRange?.[2]], ['250', '130000'],
-        `${name}：**正文**里的等待区间必须更新（模型读的是这一处，不是尾部摘要）`);
+      const yieldBody = /The first wait defaults to (\d+) ms \(pass yield_ms, range (\d+)–(\d+) ms\)/.exec(tool.description);
+      assert.deepEqual([yieldBody?.[1], yieldBody?.[2], yieldBody?.[3]], ['5000', '1000', '120000'],
+        'async_run：正文里的**首次等待**数字必须更新成首次等待的值，不能写成单次等待');
     }
 
     // 参数说明由 `defineTool` 固化，必须一并刷新。
@@ -172,8 +166,8 @@ test('T3：改设置后模型看到的数字真的跟着变（行为差异，不
   // 调工厂、绕过了接线，而工厂拿到的 Proxy 与快照在那条路径上读到相同的初始值。
   const wiring = stripComments(read('lib/index.js'));
   assert.match(wiring,
-    /const configView = makeConfigView\(\(\) => \{\s*const snapshot = readSnapshot\(\);\s*return snapshot === undefined\s*\?\s*initial\s*: \{ \.\.\.snapshot, owningPreset: initial\.owningPreset \};\s*\}\)/,
-    '必须构造"快照优先、缺快照回退本行默认值"的活取值视图（owningPreset 恒取装载期值）');
+    /const configView = makeConfigView\(\(\) => \{\s*const snapshot = readSnapshot\(\);\s*return snapshot === undefined\s*\?\s*initial\s*: \{\s*\.\.\.snapshot,\s*owningPreset: initial\.owningPreset,\s*\.\.\.\(initial\.agentOptions === undefined \? \{\} : \{ agentOptions: initial\.agentOptions \}\),\s*\.\.\.\(initial\.agentPreset === undefined \? \{\} : \{ agentPreset: initial\.agentPreset \}\),\s*\.\.\.\(initial\.allowedAgentPresets === undefined \? \{\} : \{ allowedAgentPresets: initial\.allowedAgentPresets \}\)\s*\};\s*\}\)/,
+    '必须构造"快照优先、缺快照回退本行默认值"的活取值视图（owningPreset 与三个行级委托键恒取装载期值——设计 §6.2／§3.3）');
   assert.match(wiring, /factory\(ctx, configView\)/, '工厂必须拿到活视图，不能拿构造时的快照');
 });
 
@@ -563,7 +557,7 @@ test('T10：宿主侧的 volatile 提交必须真的到达预设工具的描述'
   const tool = registeredTools.get('async_run');
   assert.ok(tool !== undefined, '工具必须注册');
   assert.ok(bus.listenerCount() >= 1, '预设层装载后登记表里必须有刷新回调');
-  assert.match(tool.description, /First wait bounded to 1000–600000 ms/, '快照缺席时描述用本行默认值');
+  assert.match(tool.description, /pass yield_ms, range 1000–600000 ms/, '快照缺席时描述用本行默认值');
 
   // ② 宿主侧（同一插件、行配置没有 toolName）：首播快照。settings 子树形态：
   //    17 个可编辑字段住在 `settings` 键下（设计 §5.1——新根形态）。
@@ -649,7 +643,8 @@ test('T13：静态 inject 九项服务；设置链不引入任何服务依赖', 
   // 的会话当前有效目录）。
   // `settings` / `agentPresets` 不得出现在其中：写了就等于要求"这个部署必须有它们"，
   // 缺一个就让整行不激活 → 升级成 dsh 启动失败。设置快照链**不依赖任何
-  // 服务**（宿主行读自己的 ctx.config、监听 loader 事件），所以这两个名字没有
+  // 服务**（宿主行的活配置经 apply 的第二参取得——cordis 没有 `ctx.config` 访问口，
+  // volatile 提交监听挂在宿主行自己的 ctx 上），所以这两个名字没有
   // 存在的理由。
   const code = stripComments(read('lib/index.js'));
   const injectMatch = code.match(/export const inject\s*=\s*(\[[^\]]*\])/);
@@ -662,17 +657,23 @@ test('T13：静态 inject 九项服务；设置链不引入任何服务依赖', 
     );
   }
   // 宿主半边没有 `ctx.get`（设置快照不查服务）、也不等任何服务；有
-  // 运行时 `ctx.inject`：纪律段的 systemPrompt+预设过滤三服务段（需求 §6.3：c 防线按
-  // 目标会话实际预设过滤，与提问接管判定同一条读取路径）与提问接线的三服务段
-  // （ask 批次登记要读会话/投影/子代理）。静态 inject 列表依旧不动、快照链
-  // 依旧零服务依赖。除此之外的任何服务等待仍然禁止——`settings`/`agentPresets`
+  // 运行时 `ctx.inject`：纪律段只等 systemPrompt（预设过滤两服务经
+  // `ctx.get` 在 text 内**组稿期现读**——需求 §6.3：c 防线按目标会话实际预设
+  // 过滤；不进等待名单，服务缺席 ⇒ 空串 ⇒ 段不出现，失效安全 = 关）与提问接线的
+  // 三服务段（ask 批次登记要读会话/投影/子代理）。静态 inject 列表依旧不动、
+  // 快照链依旧零服务依赖。除此之外的任何服务等待仍然禁止——`settings`/`agentPresets`
   // 那类"缺服务整行不激活"的等待形态没有回潮的理由。
   const hostCode = stripComments(read('lib/host.js'));
   const hostInjects = [...hostCode.matchAll(/ctx\.inject\(\s*(\[[^\]]*\])/g)].map((m) => m[1]);
   assert.deepEqual(hostInjects,
-    ["['systemPrompt', 'sessions', 'sessionProjections']", "['sessions', 'sessionProjections', 'agents']"],
-    '宿主半边只允许 R28 纪律段（含预设过滤）与 R30 提问接线两个运行时注入；其余服务等待仍禁止（快照链零服务依赖）');
-  assert.doesNotMatch(hostCode, /ctx\.get\(/, '宿主半边不得 ctx.get 探测服务');
+    ["['systemPrompt']", "['sessions', 'sessionProjections', 'agents']"],
+    '宿主半边只允许 R28 纪律段与 R30 提问接线两个运行时注入；其余服务等待仍禁止（快照链零服务依赖）');
+  // 宿主半边的 `ctx.get` 只服务于纪律段 text 的预设过滤（sessions/sessionProjections
+  // 两服务的现读，各一处）——设置快照链（`attachSnapshotSource`）依旧零服务读取，
+  // 其它任何服务探测都没有存在的理由。
+  const hostGets = [...hostCode.matchAll(/ctx\.get\(\s*'([^']+)'\s*\)/g)].map((m) => m[1]);
+  assert.deepEqual([...new Set(hostGets)].sort(), ['sessionProjections', 'sessions'],
+    '宿主半边 ctx.get 只许读预设过滤两服务（组稿期现读，缺席=关）');
 });
 
 test('T14（R10）：卡片样式必须走主题变量，不得写死颜色', () => {
@@ -1115,7 +1116,7 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   // 12 个值字段（10 预算 + askTimeoutMs + askExtendMs）、3 个枚举下拉
   // （两语言 + askUiSeat）。
   assert.equal(inputs.length, 12, '十二个值字段必须以官方 input 在场（10 预算 + R30 askTimeoutMs + askExtendMs）');
-  assert.equal(selects.length, 3, '三个枚举字段必须以 select 在场（两语言 + R30 askUiSeat；控件本体自绘，裁决 B）');
+  assert.equal(selects.length, 3, '三个枚举字段必须以 select 在场（两语言 + R30 askUiSeat；控件本体自绘，裁定 B）');
   // 两个布尔开关（静默失败防护 + 提问接管）：控件本体是官方 Switch（可见标签长在壳上），
   // 不进 input/select 的 id 清单——按无障碍属性（role/aria-label/aria-checked）钉在场。
   const switchButtons = collectByType(tree, 'button').filter((node) => node.props.role === 'switch');
@@ -1209,7 +1210,7 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
 
   // ②-b 输入段实时（判据 10 的核心）：**不保存**、只在输入框键入 → 输入段当场变；
   //     逐位键入的中间态（4）给亚 10 ms 读数；非法/非正数 → — 占位 + 非法标记
-  //     （说明行仍显示时；数字字段的非法态整行换成 invalidLabel 见 ④）；清空 = — 占位。
+  //     （非法原因行另加、常驻说明与读数保留，见 ④）；清空 = — 占位。
   //     （真机对应探针：`verify/_visual/probe-r24-bundle-config.mjs` 的两段读数断言。）
   inputById(tree, 'plugin-config-pollIntervalMs').props.onChange({ target: { value: '4' } });
   tree = renderCard();
@@ -1642,90 +1643,297 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     assert.equal(DICT.zh[key], expected, `zh 字段名必须逐字对齐需求 §5.5 表：${key}`);
   }
 
-  // ② hint 锚第一层 = 词典全文对账（夹具入库，改写即红；权威文本＝client.js
-  //    词典与本夹具的对账，设计 §5.6 只登记要点与子串，不另维护全文）。
-  const HINTS_ZH = {
-    defaultYieldMs: 'async_run 与 async_workflow 未指定 yield_ms 时使用的首次等待时长；指定时按本次请求与上下限取值。到时仍未完成就结束本次等待、返回作业编号（job_id），后台任务继续运行。',
-    minYieldMs: '限制本次 yield_ms 的有效值；请求低于此值时按下限取值。不是后台任务的最长运行时间。',
-    maxYieldMs: '限制本次 yield_ms 的有效值；请求高于此值时按上限取值。不是后台任务的最长运行时间。',
-    defaultWaitMs: '返回提示里等待调用示例使用的时长；示例只作演示，不等于实际调用的生效等待。wait_ms 仍必填，省略时报错；此值不是省略参数后的备用值。',
-    minWaitMs: '适用于两个等待工具的 wait_ms；请求低于此值时按下限取值。到时结束本次等待，不停止后台任务。',
-    maxWaitMs: '适用于两个等待工具的 wait_ms；请求高于此值时按上限取值。到时结束本次等待，不停止后台任务。',
-    pollIntervalMs: 'async_wait_agent 备用检查子代理是否仍在运行的间隔。不是待答面板刷新间隔，也不是子代理运行时限。',
-    maxResultChars: '单次返回保留的结果内容字符上限（正整数），超出时保留首尾并说明截断；状态与提示另计。',
-    jobKind: '注册命令作业用的类型名称，便于在作业列表与日志中识别；不决定命令执行方式。',
-    subagentProvider: 'async_agent 创建子代理使用的后端服务；不是选择大语言模型或模型服务商。',
-    uiLang: '控制本包设置表单、字段帮助与待答界面文案；跟随宿主语言或显式中英文，不改宿主全局语言。',
-    agentLang: '控制本包工具描述、参数说明、提示、错误与执行规则文案；不翻译命令、问题或用户输入，不改变行为。',
-    silentFailureGuard: '“静默失败”指命令可能未执行、却没有明显报错。开关只给条件式提醒，不保证检出或自动修复；仅本包两预设生效，默认关。',
-    askTakeover: '开启后由待答面板处理本包两预设根 Agent 的普通提问，关闭时保持宿主原生提问流程；到期如实告知未答、不替用户选答案。不接管权限审批或计划评审。',
-    askTimeoutMs: '从接收一批提问起计时的初始窗口，同批多题共享期限。到期如实说明未答、不替用户选答案；已答内容保留、之后仍可补答。新值不重置进行中的批次。',
-    askExtendMs: '待答面板“增加等待时间”每点击一次给该会话未到期批次增加的时长；已到期批次不重新等待。',
-    askUiSeat: '侧边栏底栏徽标显示未处理数、点击展开；右下角浮窗直接显示问题。切换显示方式不改变接管开关。'
+  // ② hint 事实组断言（设计 §5.6）：每个 hint 字段按「必要事实」组织——语义
+  //    事实＝同义短语组（每组 ≥2 短语，任一命中即在场）；协议标识与稳定名称
+  //    （async_agent、wait_ms、徽标形态一类）＝单短语锚。三条判据：
+  //    a) 词典文本（两语言）全部命中——改写不红、删事实才红；
+  //    b) 等义改写样本（刻意用组内**非词典措辞**）全部命中——证明钉的是事实
+  //       而非措辞，等义精简不挂测试；
+  //    c) 按词典文本删除单一事实组的全部命中短语后，必须恰好缺该组——每组
+  //       都承载独立信号，不是全文夹具的摆设。
+  const HINT_FACTS_ZH = {
+    defaultYieldMs: [
+      ['未指定 yield_ms 时使用', '省略 yield_ms 的调用时', '省略 yield_ms 时取的默认'],
+      ['按本次请求与上下限取值', '请求值与上下限共同决定'],
+      ['返回作业编号', '返回 job id', '交回 job id'],
+      ['后台任务继续运行', '任务在后台继续', '在后台继续']
+    ],
+    minYieldMs: [
+      ['低于此值时按下限取值', '低于下限时按下限取值', '低于下限会被钳到下限'],
+      ['结束本次等待', '等待到时结束', '提前交回控制权'],
+      ['后台任务继续运行', '后台继续运行']
+    ],
+    maxYieldMs: [
+      ['高于此值时按上限取值', '高于上限时按上限取值', '超过上限被钳回上限'],
+      ['结束本次等待', '等待到时结束', '提前交回控制权'],
+      ['后台任务继续运行', '后台继续运行']
+    ],
+    defaultWaitMs: [
+      ['示例只作演示', '仅为演示', '只是演示'],
+      ['显式填写 wait_ms', 'wait_ms 必填', '必须显式给出 wait_ms'],
+      ['省略时报错', '缺省报错', '省略会报错']
+    ],
+    minWaitMs: [
+      ['适用于两个等待工具', '作用于两个等待工具', '两个等待工具的 wait_ms'],
+      ['低于此值时按下限取值', '低于下限时按下限取值', '低于下限会被钳到下限'],
+      ['结束本次等待', '等待到时结束', '提前交回控制权'],
+      ['后台任务继续运行', '后台继续运行']
+    ],
+    maxWaitMs: [
+      ['适用于两个等待工具', '作用于两个等待工具', '两个等待工具的 wait_ms'],
+      ['高于此值时按上限取值', '高于上限时按上限取值', '超过上限被钳回上限'],
+      ['结束本次等待', '等待到时结束', '提前交回控制权'],
+      ['后台任务继续运行', '后台继续运行']
+    ],
+    pollIntervalMs: [
+      ['async_wait_agent'],
+      ['定期检查', '周期性检查', '按间隔检查'],
+      ['备用判断', '备用检查', '作为备用检查手段']
+    ],
+    maxResultChars: [
+      ['正整数', '必须是正整数'],
+      ['保留首尾', '保留开头与结尾', '首尾都保留'],
+      ['说明截断', '注明截断', '截断说明'],
+      ['另计', '不计入', '单独计量']
+    ],
+    jobKind: [
+      ['注册命令作业用的类型名称', '注册命令作业时使用的类型名称', '命令作业注册时用的类型名'],
+      ['作业列表'], ['日志']
+    ],
+    subagentProvider: [
+      ['async_agent'],
+      ['创建子代理使用的后端服务', '创建子代理的后端', '子代理创建的后端']
+    ],
+    uiLang: [
+      ['设置表单', '界面文案'],
+      ['跟随宿主语言', '自动跟随宿主', '宿主语言或显式选择'],
+      ['中文／英文', '中文/英文', '中文还是英文']
+    ],
+    agentLang: [
+      ['工具描述', '模型可见文案', '模型侧文案'],
+      ['执行纪律'], ['错误']
+    ],
+    silentFailureGuard: [
+      ['命令可能未执行', '可能没有执行', '命令没跑'],
+      ['诊断提醒', '诊断提示', '诊断说明'],
+      ['仅本包两预设生效', '只对两预设生效', '仅两预设'],
+      ['默认关', '默认关闭', '默认不开启']
+    ],
+    askTakeover: [
+      ['普通提问', '一般性提问'],
+      ['根 Agent', '根代理'],
+      ['宿主原生流程', '原生流程', '宿主默认流程'],
+      ['继续处理任务', 'Agent 继续工作', '继续执行任务'],
+      ['稍后作答', '之后再回答', '仍可再回答']
+    ],
+    askTimeoutMs: [
+      ['从接收一批提问起', '自收到一批提问', '接收一批问题时开始计时'],
+      ['共享期限', '共用一个期限', '共享截止'],
+      ['保留已答内容', '已答内容保留', '已作的回答保留'],
+      ['继续处理任务', 'Agent 继续工作', '继续执行任务'],
+      ['稍后作答', '之后再回答', '仍可再回答'],
+      ['新值用于后续批次', '改值只影响之后的批次', '新设置作用在后续批次']
+    ],
+    askExtendMs: [
+      ['增加等待时间'],
+      ['每点击一次', '每次点击', '每按一下'],
+      ['追加的时长', '各追加', '各加'],
+      ['仍在等待的批次', '未到期的批次', '等待中的批次']
+    ],
+    askUiSeat: [
+      ['徽标', '角标'],
+      ['未处理数', '待处理数量'],
+      ['浮窗'],
+      ['显示问题', '展示问题', '直接展示']
+    ]
   };
-  for (const [key, text] of Object.entries(HINTS_ZH)) {
-    assert.equal(DICT.zh[`hint.${key}`], text, `zh 常驻短说明必须与夹具全文一致（权威＝词典＋夹具对账）：${key}`);
-    assert.notEqual(DICT.en[`hint.${key}`], undefined, `en 常驻短说明必须在场：${key}`);
-  }
-
-  // ③ hint 锚第二层 = 常驻要点子串逐字段在场（防全文改写时要点缩水；设计 §5.6 清单，
-  //    en 档为对译短语随本夹具定义）。
-  const POINTS_ZH = {
-    defaultYieldMs: ['作业编号', '继续运行', '上下限'],
-    minYieldMs: ['下限', '最长运行时间'], maxYieldMs: ['上限', '最长运行时间'],
-    defaultWaitMs: ['示例', '报错', '备用值'],
-    minWaitMs: ['下限', '不停止'], maxWaitMs: ['上限', '不停止'],
-    pollIntervalMs: ['备用', '刷新间隔'], maxResultChars: ['正整数', '截断', '另计'],
-    jobKind: ['注册', '不决定'], subagentProvider: ['后端', '大语言模型'],
-    uiLang: ['设置表单', '宿主全局语言'], agentLang: ['工具描述', '不翻译'],
-    silentFailureGuard: ['静默失败', '条件式', '两预设'],
-    askTakeover: ['到期', '权限审批'], askTimeoutMs: ['共享', '不替用户选答案', '补答'],
-    askExtendMs: ['未到期', '不重新等待'], askUiSeat: ['徽标', '浮窗', '接管']
+  const HINT_FACTS_EN = {
+    defaultYieldMs: [
+      ['when yield_ms is not given', 'when yield_ms is omitted', 'calls that omit yield_ms'],
+      ['this request and the bounds decide', 'the request value and the bounds'],
+      ['returns the job id', 'return the job id', 'you get a job id back'],
+      ['the background task keeps running', 'keeps running in the background', 'keeps running']
+    ],
+    minYieldMs: [
+      ['use the lower bound', 'clamped to the lower bound', 'clamps to the lower bound'],
+      ['the wait ends', 'this wait ends', 'ends the wait'],
+      ['keeps running', 'the background task keeps running']
+    ],
+    maxYieldMs: [
+      ['use the upper bound', 'uses the upper bound', 'clamped to the upper bound'],
+      ['the wait ends', 'this wait ends', 'ends the wait'],
+      ['keeps running', 'the background task keeps running']
+    ],
+    defaultWaitMs: [
+      ['is a demo', 'for illustration only', 'demo only'],
+      ['must give wait_ms explicitly', 'wait_ms explicitly', 'must explicitly state wait_ms'],
+      ['omitting it errors', 'omission errors', 'leaving it out errors']
+    ],
+    minWaitMs: [
+      ['both wait tools', 'the two wait tools', 'on both wait tools'],
+      ['use the lower bound', 'clamped to the lower bound', 'clamps to the lower bound'],
+      ['the wait ends', 'this wait ends', 'ends the wait'],
+      ['keeps running', 'the background task keeps running']
+    ],
+    maxWaitMs: [
+      ['both wait tools', 'the two wait tools', 'on both wait tools'],
+      ['use the upper bound', 'uses the upper bound', 'clamped to the upper bound'],
+      ['the wait ends', 'this wait ends', 'ends the wait'],
+      ['keeps running', 'the background task keeps running']
+    ],
+    pollIntervalMs: [
+      ['async_wait_agent'],
+      ['periodic checks', 'how often', 'at this cadence'],
+      ['backup judgment', 'backup check', 'the backup']
+    ],
+    maxResultChars: [
+      ['a positive integer', 'positive integer'],
+      ['the head and tail are kept', 'head and tail kept', 'keeps the head and tail'],
+      ['truncation note', 'a note about the truncation', 'states the truncation'],
+      ['counted separately', 'not counted toward the cap', 'separate from the cap']
+    ],
+    jobKind: [
+      ['used to register command jobs', 'used when registering command jobs', 'registering command jobs'],
+      ['job lists'], ['logs']
+    ],
+    subagentProvider: [
+      ['async_agent'],
+      // 组内短语不得内嵌其它组的命中词（这里若写 'service async_agent uses'，
+      // 删除腿删掉 async_agent 会连带消灭本组命中，恰缺断言红）。
+      ['uses to create subagents', 'spawns subagents with', 'backend used to create subagents']
+    ],
+    uiLang: [
+      ['settings form', 'interface copy', 'settings page'],
+      ['follows the host language', 'follow the host language', 'follows the host'],
+      ['Chinese/English', 'Chinese or English']
+    ],
+    agentLang: [
+      ['tool descriptions', 'model-visible copy'],
+      ['execution discipline'], ['errors']
+    ],
+    silentFailureGuard: [
+      ['may not have run', 'may not have executed', 'command did not run'],
+      ['diagnostic reminder', 'diagnostic reminders'],
+      ["only to this package's two presets", "applies only to this package's two presets", "covers only this package's two presets"],
+      ['off by default', 'disabled by default']
+    ],
+    askTakeover: [
+      ['plain questions', 'ordinary questions'],
+      ['root agents', 'root agent'],
+      ['native flow', "host's native flow", 'native process'],
+      ['continues the task', 'continues working', 'Agent continues'],
+      ['answer later', 'still answer', 'answered later']
+    ],
+    askTimeoutMs: [
+      ['counted from receiving a batch', 'timed from receiving a batch', 'from receiving a batch'],
+      ['share the deadline', 'shared deadline', 'share one deadline'],
+      ['answered content is kept', 'answers given so far are kept', 'kept answered content'],
+      ['continues the task', 'continues working', 'Agent continues'],
+      ['answer later', 'still answer', 'answered later'],
+      ['later batches', 'subsequent batches', 'a new value applies to later']
+    ],
+    askExtendMs: [
+      ['Extend wait'],
+      ['click'],
+      ['adds', 'adds this duration', 'adds the time'],
+      ['still waiting', 'not yet expired', 'batch of that session']
+    ],
+    askUiSeat: [
+      ['badge'],
+      ['shows the open count', 'open count'],
+      ['overlay'],
+      ['shows the questions', 'displays the questions']
+    ]
   };
-  const POINTS_EN = {
-    defaultYieldMs: ['job id', 'keeps running', 'bounds'],
-    minYieldMs: ['lower bound', 'maximum run time'], maxYieldMs: ['upper bound', 'maximum run time'],
-    defaultWaitMs: ['example', 'errors', 'fallback'],
-    minWaitMs: ['lower bound', 'without stopping'], maxWaitMs: ['upper bound', 'without stopping'],
-    pollIntervalMs: ['backup', 'refresh interval'], maxResultChars: ['positive integer', 'truncation note', 'counted separately'],
-    jobKind: ['register', 'does not decide'], subagentProvider: ['Backend', 'large language model'],
-    uiLang: ['settings form', 'global language'], agentLang: ['tool descriptions', 'does not translate'],
-    silentFailureGuard: ['Silent failure', 'conditional', 'two presets'],
-    askTakeover: ['expiry', 'approvals'], askTimeoutMs: ['share the deadline', 'never picks answers', 'answered later'],
-    askExtendMs: ['unexpired', 'do not wait again'], askUiSeat: ['badge', 'overlay', 'takeover switch']
+  // 等义改写样本：与词典同事实、不同措辞（刻意使用组内非词典短语；稳定名称
+  // 锚保持原样）。改写自由度是断言的一部分——钉事实不钉措辞。
+  const REWRITE_ZH = {
+    defaultYieldMs: 'async_run、async_workflow 收到省略 yield_ms 的调用时，首次等待取这个默认时长；调用带值时由请求值与上下限共同决定。等待结束时若工作还没完，就交回 job id，任务在后台继续。',
+    minYieldMs: '本次 yield_ms 低于下限会被钳到下限。等待到时结束，后台继续运行。',
+    maxYieldMs: '本次 yield_ms 高于上限时按上限取值。等待到时结束，后台继续运行。',
+    defaultWaitMs: '返回提示中的示例时长仅为演示，与真实调用的生效等待不同。两个等待工具要 wait_ms 必填，缺省报错。',
+    minWaitMs: '作用于两个等待工具的 wait_ms；请求低于下限时按下限取值。等待到时结束，后台继续运行。',
+    maxWaitMs: '作用于两个等待工具的 wait_ms；高于上限时按上限取值。等待到时结束，后台继续运行。',
+    pollIntervalMs: 'async_wait_agent 按这个间隔周期性检查子代理是否还在跑，作为结束事件没到时的备用检查手段。',
+    maxResultChars: '结果内容单次保留的字符数上限，必须是正整数；超限时保留开头与结尾并注明截断，状态与提示单独计量。',
+    jobKind: '命令作业注册时用的类型名，出现在作业列表和日志里方便辨认。',
+    subagentProvider: 'async_agent 创建子代理的后端。',
+    uiLang: '决定界面文案（设置表单、字段帮助、待答界面）显示中文还是英文；自动档跟随宿主语言。',
+    agentLang: '决定模型侧文案（含工具描述与执行纪律、错误与提示）的语言。',
+    silentFailureGuard: '所谓静默失败，就是命令可能没有执行却看不到报错。开启后这类情况会给出诊断提示和检查建议；只对两预设生效，默认关闭。',
+    askTakeover: '开启后，两预设根代理的一般性提问在待答面板作答；关掉则走宿主默认流程。到期后 Agent 继续工作，用户仍可之后再回答。',
+    askTimeoutMs: '自收到一批提问时开始计时，同批多题共用一个期限。到期时已作的回答保留，Agent 继续工作，用户仍可之后再回答；改值只影响之后的批次。',
+    askExtendMs: '待答面板的「增加等待时间」按钮每按一下，就给该会话此刻等待中的批次各加这段时间。',
+    askUiSeat: '侧边栏底栏的角标显示待处理数量、点开列表；右下角的浮窗把问题直接展示出来。'
   };
-  for (const [key, points] of Object.entries(POINTS_ZH)) {
-    for (const point of points) {
-      assert.ok(DICT.zh[`hint.${key}`].includes(point), `zh 常驻要点子串在场：${key} ⊇ ${point}`);
-      assert.ok(DICT.en[`hint.${key}`].includes(POINTS_EN[key][points.indexOf(point)]),
-        `en 对译短语在场：${key} ⊇ ${POINTS_EN[key][points.indexOf(point)]}`);
+  const REWRITE_EN = {
+    defaultYieldMs: 'The default first-wait span async_run and async_workflow use for calls that omit yield_ms; a call with a value gets it from the request value and the bounds. When the wait ends with work unfinished, you get a job id back and the task keeps running in the background.',
+    minYieldMs: 'A yield_ms below the lower bound is clamped to the lower bound; the wait ends on schedule and the background task keeps running.',
+    maxYieldMs: 'A yield_ms above this ceiling uses the upper bound; the wait ends on schedule and the background task keeps running.',
+    defaultWaitMs: 'The span shown for the wait-call example in return notes is for illustration only, not the effective wait of a real call. Real calls of the two wait tools must explicitly state wait_ms; leaving it out errors.',
+    minWaitMs: 'Governs wait_ms on the two wait tools; a request below the floor is clamped to the lower bound; the wait ends on schedule and the background task keeps running.',
+    maxWaitMs: 'Governs wait_ms on the two wait tools; a request above this ceiling uses the upper bound; the wait ends on schedule and the background task keeps running.',
+    pollIntervalMs: 'async_wait_agent decides how often to run a backup check of the subagent running state when the completion event has not arrived.',
+    maxResultChars: 'Cap on characters kept per result (must be a positive integer); past it the head and tail are kept with a note about the truncation; status and notices are counted separately.',
+    jobKind: 'The type name used when registering command jobs so they can be told apart in job lists and logs.',
+    subagentProvider: 'The backend async_agent spawns subagents with.',
+    uiLang: 'Sets the language (Chinese or English) of the settings form, field help, and pending panel; the auto choice follows the host language.',
+    agentLang: 'Sets the language of model-visible copy: tool descriptions, parameter notes, notices, execution discipline, and errors.',
+    silentFailureGuard: '"Silent failure" is when a command may not have executed with no visible error. When on, such cases get a diagnostic reminder and checking advice; it covers only this package\'s two presets and is disabled by default.',
+    askTakeover: 'When on, the pending panel answers plain questions from the root agents of this package\'s two presets; when off, the host\'s native flow handles them. After expiry the Agent continues working and the user can still answer later.',
+    askTimeoutMs: 'Timed from receiving a batch of questions; the batch\'s questions share one deadline. On expiry the answers given so far are kept, the Agent continues working, the user can still answer later; a new setting applies to subsequent batches.',
+    askExtendMs: 'Each "Extend wait" click in the pending panel adds this much time to every batch of that session not yet expired at that moment.',
+    askUiSeat: 'A sidebar footer badge shows the open count and opens the list on click; a bottom-right overlay displays the questions directly.'
+  };
+  const missingFactGroups = (text, groups) => groups.flatMap((group, index) => (group.some((phrase) => text.includes(phrase)) ? [] : [index]));
+  for (const key of Object.keys(HINT_FACTS_ZH)) {
+    // a) 词典文本两语言全部命中。
+    assert.deepEqual(missingFactGroups(DICT.zh[`hint.${key}`], HINT_FACTS_ZH[key]), [],
+      `zh 常驻说明事实组全部在场：${key}`);
+    assert.deepEqual(missingFactGroups(DICT.en[`hint.${key}`], HINT_FACTS_EN[key]), [],
+      `en 常驻说明事实组全部在场：${key}`);
+    // b) 等义改写样本必须通过（钉事实不钉措辞）。
+    assert.deepEqual(missingFactGroups(REWRITE_ZH[key], HINT_FACTS_ZH[key]), [],
+      `zh 等义改写样本必须通过事实组：${key}`);
+    assert.deepEqual(missingFactGroups(REWRITE_EN[key], HINT_FACTS_EN[key]), [],
+      `en 等义改写样本必须通过事实组：${key}`);
+    // c) 删单一事实组的全部命中短语后，必须**恰好**缺该组（独立信号：删 A 组
+    //    不得连带消灭 B 组的命中短语——组间短语若互为子串，这里会红，逼夹具
+    //    把短语组改成不互相包含的写法）。
+    for (const [dict, facts] of [[DICT.zh[`hint.${key}`], HINT_FACTS_ZH[key]], [DICT.en[`hint.${key}`], HINT_FACTS_EN[key]]]) {
+      for (let index = 0; index < facts.length; index += 1) {
+        const stripped = facts[index].reduce((acc, phrase) => acc.split(phrase).join('……'), dict);
+        assert.deepEqual(missingFactGroups(stripped, facts), [index],
+          `删除事实组 hint.${key}[${String(index)}] 的全部命中短语后必须恰好只缺该组`);
+      }
     }
   }
 
-  // ④ help 展开区正锚（设计 §5.6 每字段 1–2 个不可省短语，两档各断言；
-  //    en 为同义对译短语随本夹具定义）。
+  // ④ help 展开区正锚（每字段 1–3 个不可省短语，两档各断言；锚只锁审查确认
+  //    必要的信息、稳定名称与协议标识——配对公式、验证规则、到期/迟到语义、
+  //    模型指定方式（provider 与 model）；en 为同义对译短语随本夹具定义）。
   const HELP_ANCHORS_ZH = {
-    defaultYieldMs: ['等待时长不限制任务寿命', '作业编号'],
+    defaultYieldMs: ['先取得作业编号', 'minYieldMs ≤ defaultYieldMs ≤ maxYieldMs'],
     minYieldMs: ['提前结束', '上下限'], maxYieldMs: ['提前结束', '上下限'],
     defaultWaitMs: ['仅为示例', '必填'],
     minWaitMs: ['一份预算'], maxWaitMs: ['一份预算'],
     pollIntervalMs: ['轮询', '配对'], maxResultChars: ['正整数', '截断', '另计'],
-    jobKind: ['空值非法'], subagentProvider: ['不是选择大语言模型', '可读拒绝'],
-    uiLang: ['跟随宿主语言', '独立'], agentLang: ['跟随宿主语言', '独立'],
-    silentFailureGuard: ['三处', '条件式'], askTakeover: ['普通提问', '迟到'],
-    askTimeoutMs: ['共享', '可补答'], askExtendMs: ['新批次不继承'], askUiSeat: ['消隐']
+    jobKind: ['空串'], subagentProvider: ['provider 与 model', '可读拒绝'],
+    uiLang: ['跟随宿主语言', '独立'], agentLang: ['工具描述', '互不影响'],
+    silentFailureGuard: ['诊断提醒', '返回提示'], askTakeover: ['迟到', '不会送达'],
+    askTimeoutMs: ['共享', '仍接受作答'], askExtendMs: ['原截止点', '初始期限'], askUiSeat: ['消隐', '不改提问']
   };
   const HELP_ANCHORS_EN = {
-    defaultYieldMs: ['does not limit the task', 'job id'],
-    minYieldMs: ['end the first wait early', 'clamping'], maxYieldMs: ['end the first wait early', 'clamping'],
+    defaultYieldMs: ['returns the job id first', 'minYieldMs ≤ defaultYieldMs ≤ maxYieldMs'],
+    minYieldMs: ['end the first wait early', 'bounds'], maxYieldMs: ['end the first wait early', 'bounds'],
     defaultWaitMs: ['only an example', 'required'],
     minWaitMs: ['One budget covers'], maxWaitMs: ['One budget covers'],
     pollIntervalMs: ['polling', 'pairing'], maxResultChars: ['positive integer', 'truncation', 'counted separately'],
-    jobKind: ['empty value is invalid'], subagentProvider: ['not choosing a large language model', 'rejected readably'],
-    uiLang: ['follows the host language', 'independent'], agentLang: ['follows the host language', 'independent'],
-    silentFailureGuard: ['three defenses', 'conditional'], askTakeover: ['plain questions', 'Late answers'],
-    askTimeoutMs: ['share the deadline', 'Still-answerable'], askExtendMs: ['do not inherit the extension'],
-    askUiSeat: ['hides once everything is handled']
+    jobKind: ['empty value is invalid'], subagentProvider: ['provider and model', 'rejected readably'],
+    uiLang: ['follows the host language', 'independent'], agentLang: ['tool descriptions', 'do not affect each other'],
+    silentFailureGuard: ['diagnostic reminders', 'return notes'], askTakeover: ['Late answers', 'will not arrive'],
+    askTimeoutMs: ['share the deadline', 'keeps accepting answers'], askExtendMs: ['stacked on the original deadline', 'own initial deadlines'],
+    askUiSeat: ['hides once everything is handled', 'does not change questioning']
   };
   for (const [key, anchors] of Object.entries(HELP_ANCHORS_ZH)) {
     for (const anchor of anchors) {
@@ -1747,25 +1955,18 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
   assert.deepEqual([DICT.zh['opt.uiLang.auto'], DICT.zh['opt.uiLang.zh'], DICT.zh['opt.uiLang.en']],
     ['跟随界面语言', '中文', 'English'], 'uiLang 三选项齐备');
 
-  // ⑥ 负向锚（两档各查）：defaultWaitMs 相关键不得以肯定句式自述为备用值——
-  //    zh“备用值”/en“fallback”只允许出现在否定表述中；askTimeoutMs 常驻含不代答。
+  // ⑥ 负向锚（两档各查）：defaultWaitMs 相关键不得出现「备用值」/「fallback」——
+  //    该事实以「仅为示例／必填、缺省报错」正面表达；「示例≠生效等待」由 ②③④
+  //    的正锚锁定。askTimeoutMs 的到期语义（仍可作答、后续批次）由 ③ 正锚锁定，
+  //    排除式短语不得回潮。
   for (const lang of ['zh', 'en']) {
     for (const key of ['defaultWaitMs', 'hint.defaultWaitMs', 'help.defaultWaitMs']) {
       const text = String(DICT[lang][key]);
       const marker = lang === 'zh' ? '备用值' : 'fallback';
-      const negation = lang === 'zh' ? /(不是|不等于|并非|≠)[^。；]*?备用值/ : /not a fallback/;
-      const hits = text.split(marker).length - 1;
-      const negated = (lang === 'zh' ? /不是省略参数后的备用值/g : /not a fallback for an omitted parameter/g);
-      assert.ok(hits === 0 || (negation.test(text) && hits <= 2),
-        `${lang} 档 ${key} 的「${marker}」只许出现在否定表述中（实得 ${String(hits)} 处）`);
-      assert.ok(hits === 0 || (text.match(negated) ?? []).length === hits,
-        `${lang} 档 ${key} 的每处「${marker}」都必须落在否定句式里`);
+      assert.ok(!text.includes(marker),
+        `${lang} 档 ${key} 不得出现「${marker}」（审定文案以「仅为示例」正面表达，任何出现都是退化）`);
     }
   }
-  assert.ok(DICT.zh['hint.askTimeoutMs'].includes('不替用户选答案'),
-    'askTimeoutMs 常驻必须含「不替用户选答案」（需求 §5.5）');
-  assert.ok(DICT.en['hint.askTimeoutMs'].includes('never picks answers for the user'),
-    'en 档同义负向锚');
 
   // ⑦ T21 在场断言扩展：17 字段的字段名键、hint.<键>、help.<键> 两档全必须在场
   //    （删任一键即红——本循环逐键断言）。
@@ -2136,7 +2337,8 @@ test('T23b（R29-d·判据 14）：卡片层跨字段配对——pollIntervalMs 
     'makeBundleCard 必须把配对违例叠加进 SettingsForm 的 state.invalid');
   // 字段显示层：pollIntervalMs 的非法原因文案（invalidRange/invalidPair 分档）。
   // `pairHit !== null` 必须显式归布尔：chainHitOf 命中时返回的是**字符串**（参照
-  // 字段键），而 FieldShell 全部消费点（消息替换、aria-invalid、hasMessage）都是
+  // 字段键），而 FieldShell 全部消费点（非法原因行渲染、aria-invalid、
+  // described 顺序）都是
   // 严格 `=== true` 门——旧形 `=== true || pairHit` 会把字符串原样传下去，违例
   // 时红框与原因文案全灭、只剩保存按钮变灰（需求 §5.4 字段原因不可达的失效形态）。
   assert.match(code, /invalid: fieldState\.invalid === true \|\| pairHit !== null/,

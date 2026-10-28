@@ -128,7 +128,7 @@ try {
   check('真机 1a 设置卡含静默失败开关（官方 Switch，aria-checked=false）',
     form0.switches.some((s) => s.label === '命令静默失败提示' && s.checked === 'false'),
     `switches=${JSON.stringify(form0.switches)} 值/枚举字段数=${String(form0.names.length)}`);
-  await screenshot(page, `${SHOTS}\\r28-01-off.png`);
+  await screenshot(page, join(SHOTS, 'r28-01-off.png'));
   const off1 = await askBattery(PRESET);
   log.off1 = { session: off1.sessionId, answer: off1.answer };
   check('真机 1b c 段缺席（行为：无防杀退出码规则、无纪律段）',
@@ -164,7 +164,7 @@ try {
   check('真机 2a 静默失败开关控件可用（Switch 翻转 + 页面保存生效）',
     flipped === 'clicked' && onNs.value.silentFailureGuard === true,
     `动作=${String(flipped)} 保存后读数=${String(onNs.value.silentFailureGuard)}`);
-  await screenshot(page, `${SHOTS}\\r28-02-on.png`);
+  await screenshot(page, join(SHOTS, 'r28-02-on.png'));
   const on1 = await askBatteryConsistent(PRESET, 'en');
   log.on1 = { session: on1.sessionId, answer: on1.answer, attempts: on1.attempts };
   check('真机 2b c 段在场（行为：防杀退出码 4294967295 + 语义判别子 + 语言子；矛盾读数换会话重抽 ≤3 全记录）',
@@ -269,7 +269,7 @@ try {
   }
 } finally {
   rmSync(EMPTY_DIR, { recursive: true, force: true });
-  writeFileSync(`${LOGS}\\r28-silent-failure.json`,
+  writeFileSync(join(LOGS, 'r28-silent-failure.json'),
     JSON.stringify({ at: new Date().toISOString(), base: BASE, ...log, results }, null, 2), 'utf8');
   if (page !== undefined) await page.close?.();
   await close();

@@ -237,6 +237,8 @@ export function checkPublicSurface(root = MODULE_ROOT, { quiet = false, scope } 
   }
 
   // ── 逐文件扫 ──────────────────────────────────────────────────────────────
+  /** 本趟真正扫过的豁免文件 → 影子命中数（名单守卫的零命中判据用）。 */
+  const exemptHits = new Map();
   const skip = skipDirsFrom(ignoreText);
   const files = walk(root, skip)
     .filter((file) => scope === undefined || scope.some((prefix) => file.startsWith(prefix)));
@@ -261,15 +263,21 @@ export function checkPublicSurface(root = MODULE_ROOT, { quiet = false, scope } 
     const textLines = text.split('\n');
     const isDoc = DOC_EXTENSIONS.has(extname(file).toLowerCase());
 
+    // 豁免文件照跑判据，但只记**影子计数**（不红）：名单守卫要求每条豁免
+    // 真的用得上——登记了却零命中的豁免是名单烂了，循环结束后按红处理。
+    let shadowHits = 0;
     for (let i = 0; i < textLines.length; i += 1) {
       const line = textLines[i];
-      if (exempt) break; // 豁免文件整个跳过两类内容判据
       for (const rule of FINGERPRINTS) {
-        if (rule.pattern.test(line)) note(file, '指纹', i + 1, line, rule.why);
+        if (!rule.pattern.test(line)) continue;
+        if (exempt) shadowHits += 1;
+        else note(file, '指纹', i + 1, line, rule.why);
       }
       if (isDoc) {
         for (const rule of INTERNAL_REFS) {
-          if (rule.pattern.test(line)) note(file, '引用', i + 1, line, rule.why);
+          if (!rule.pattern.test(line)) continue;
+          if (exempt) shadowHits += 1;
+          else note(file, '引用', i + 1, line, rule.why);
         }
       }
     }
@@ -279,20 +287,33 @@ export function checkPublicSurface(root = MODULE_ROOT, { quiet = false, scope } 
     // 只查**代码本体**（剥掉注释）：注释里解释"配置落在哪个目录"是在讲机制，
     // 不是在读本机事实。不剥的话，每个想告诉读者配置在哪的模块都得进豁免名单——
     // 那名单会迅速变成"所有提到了机制的文件"，判据也就废了。
-    if (!exempt && !isDoc && stripComments(text).includes(`${LOCAL_DIR}/`)) {
-      const stripped = stripComments(text).split('\n');
-      const lineNo = stripped.findIndex((l) => l.includes(`${LOCAL_DIR}/`)) + 1;
-      note(file, '结构', lineNo, stripped[lineNo - 1] ?? '',
-        '`.local/` 字面量在**代码里**只许出现在配置加载器、形状示例、变异脚本、本检查器自身与两个单测'
-        + '——豁免全集以 `PUBLIC_SURFACE_ALLOWLIST` 为准，'
-        + `其余脚本一律经 \`tools/_local-config.mjs\` 取本机事实（要写路径就用它导出的 \`LOCAL_DIR\` 拼）`);
+    //
+    // 豁免文件的影子计数对**原文**（含注释）取 `.local/`：豁免名单里有的条目
+    // 恰恰是因为注释里的教学/机制文本要写这个字面量（如形状示例文件）。
+    if (!isDoc && (exempt ? text : stripComments(text)).includes(`${LOCAL_DIR}/`)) {
+      if (exempt) shadowHits += 1;
+      else {
+        const stripped = stripComments(text).split('\n');
+        const lineNo = stripped.findIndex((l) => l.includes(`${LOCAL_DIR}/`)) + 1;
+        note(file, '结构', lineNo, stripped[lineNo - 1] ?? '',
+          '`.local/` 字面量在**代码里**只许出现在配置加载器、形状示例、变异脚本、本检查器自身与两个单测'
+          + '——豁免全集以 `PUBLIC_SURFACE_ALLOWLIST` 为准，'
+          + `其余脚本一律经 \`tools/_local-config.mjs\` 取本机事实（要写路径就用它导出的 \`LOCAL_DIR\` 拼）`);
+      }
     }
+    if (exempt) exemptHits.set(file, shadowHits);
   }
 
   // 豁免名单自身的两条守卫：条目要在盘上，且**真的用得上**（零命中 = 名单烂了）。
+  // 只查本趟真正扫过的文件（`exemptHits` 有键）：scope 分块作业与二进制跳过
+  // 不在扫过的集合里，不因没扫而误判零命中。
   for (const [file, why] of PUBLIC_SURFACE_ALLOWLIST) {
     if (!existsSync(join(root, file))) {
       note(file, '结构', 0, '', `豁免名单里有它但盘上不存在（名单该清）：${why}`);
+      continue;
+    }
+    if (exemptHits.has(file) && exemptHits.get(file) === 0) {
+      note(file, '结构', 0, '', `豁免名单里有它但零命中（豁免没被用上，名单该清）：${why}`);
     }
   }
 

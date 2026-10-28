@@ -347,7 +347,7 @@ hostTest('async_workflow（F-C·未证实档）：yield 到期且复查读取失
 });
 
 hostTest('async_workflow（F-D）：killed 无 detail → 渲染带终态状态行，不得为空串', () => {
-  // 设计 §3.1（对齐需求 §2.2.2）：编排 killed 无 detail 的可见文本同样非空——
+  // 设计 §3.1（与需求 §2.2.2 的要求一致）：编排 killed 无 detail 的可见文本同样非空——
   // 与 async_run 的 killed 渲染同口径（设计 §3.5 称谓分档之外的一致形态）。
   const { tool } = rig();
 

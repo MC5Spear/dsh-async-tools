@@ -274,7 +274,7 @@ try {
     console.log(`  ${scheme} 主题下字段底色：${bg}`);
     check(`${scheme} 主题下字段在场且能读到底色`, /^rgba?\(/.test(bg), bg);
 
-    const shot = await screenshot(page, `${SHOTS}\\card-${scheme}-top.png`,
+    const shot = await screenshot(page, join(SHOTS, `card-${scheme}-top.png`),
       { width: 1500, height: 1000, fullPage: true });
     console.log(`  截图 ${scheme}-top：${String(shot.bytes)} B`);
     // 内层滚动容器滚到底再拍一张：页脚「保存」与末尾字段（askExtendMs/askUiSeat）
@@ -288,7 +288,7 @@ try {
       return scrollers.length;
     })()`);
     await sleep(700);
-    const shotBottom = await screenshot(page, `${SHOTS}\\card-${scheme}-bottom.png`,
+    const shotBottom = await screenshot(page, join(SHOTS, `card-${scheme}-bottom.png`),
       { width: 1500, height: 1000, fullPage: false });
     console.log(`  截图 ${scheme}-bottom：${String(shotBottom.bytes)} B`);
 
@@ -314,7 +314,7 @@ try {
     return s !== null;
   })()`);
   await sleep(700);
-  await screenshot(page, `${SHOTS}\\card-light-enum-open.png`, { width: 1500, height: 1000, fullPage: false });
+  await screenshot(page, join(SHOTS, 'card-light-enum-open.png'), { width: 1500, height: 1000, fullPage: false });
   await evaluate(page, `(() => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     const s = document.querySelector('[data-plugin-config] select[id^="plugin-config-"]');

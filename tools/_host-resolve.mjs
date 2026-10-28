@@ -6,11 +6,10 @@
  *   node --import ./tools/_host-hooks.mjs --test "test/*.test.mjs"
  *
  * 0.2.1 线适配：本包的九个 `@deepseek-ai/dsh*` peer 已锁 `0.2.1-rc.2`，
- * `@deepseek-ai/schemastery` 需要 `~3.18.5` 的 `.volatile()`——开发机请把
- * `DSAT_HOST_MODULES` 指向 0.2.1 线运行树（服务 AppParameters 所指的那棵
- * node_modules，位于服务家目录下；
- * 一次性 `setx` 即可）。落到旧版本运行树时
- * `.volatile is not a function` 就是 "锚点错了"的诚实信号，而不是静默用错版本。
+ * `@deepseek-ai/schemastery` 需要 `~3.18.5` 的 `.volatile()`——把
+ * `DSAT_HOST_MODULES` 指向任一 0.2.1-rc.2 宿主安装树的 node_modules 即可。
+ * 落到旧版本运行树时 `.volatile is not a function` 就是「锚点错了」的
+ * 诚实信号，而不是静默用错版本。
  *
  * 可用 `DSAT_HOST_MODULES` 覆盖锚点目录。
  */

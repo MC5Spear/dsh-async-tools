@@ -52,7 +52,7 @@ test('yieldNote（R1 硬性需求）：必须带 job_id、可复制的调用示�
   assert.match(note, /async_wait_job\(job_id="async-command-7", wait_ms=30000\)/, '必须含可照抄的调用示例');
   assert.match(note, /20000 ms/, '必须写出实际生效的首次等待');
   assert.match(note, /600000 ms/, '必须写出实际生效的等待上限');
-  assert.match(note, /It was NOT terminated; the background task keeps running/, '必须说明命令没有被杀死');
+  assert.match(note, /It was NOT terminated/, '必须说明命令没有被杀死');
 });
 
 test('yieldNote：示例里的 `wait_ms` 必须取**生效配置的默认值**，不能写死', () => {
@@ -82,7 +82,7 @@ test('yieldNote（R32-c-b）：插话提前让出 → 注明用户到达且命�
   const note = yieldNote({ ...base, mode: 'user' });
   assert.match(note, /ended early: a user message arrived/, '开宗明义注明因用户到达提前让出');
   assert.match(note, /4321/, '带上已运行时长');
-  assert.match(note, /unaffected and the background task keeps running/, '必须说明命令本身不受影响');
+  assert.match(note, /itself is unaffected/, '必须说明命令本身不受影响');
   assert.doesNotMatch(note, /outlived the .* first wait/, '提前结束不是等待到期——开头不得再出现"超出首次等待"句');
   assert.match(note, /async_wait_job\(job_id="async-command-7", wait_ms=7000\)/, '恢复示例照带（取生效默认值）');
 });
@@ -112,8 +112,7 @@ test('interruptedNote（R4 硬性需求）：必须说明结束等待没有终�
 test('cancelledNote/cancelledPreexistingNote（设计 §2.5 取消口径）：取消与消息到达分开，行为陈述不作运行断言', () => {
   const note = cancelledNote({ subject: 'job j-1', waitedMs: 300, resume: 'async_wait_job(job_id="j-1", wait_ms=...)' });
   assert.match(note, /The wait was cancelled after 300 ms/);
-  assert.match(note, /cancellation did not stop job j-1/);
-  assert.match(note, /never stops the background work/);
+  assert.match(note, /cancellation did not stop job j-1/, '取消≠停止工作（本次原因＋后台状态，一遍即可）');
   assert.doesNotMatch(note, /still running/, '取消出口不做状态复查，不得写运行断言');
   assert.doesNotMatch(note, /user message/, '取消不是消息到达，不用 interrupted 口径');
 
@@ -205,7 +204,8 @@ test('yieldDigest 只谈让出；waitDigest 只谈等待（两个预算分开说
   const yieldText = yieldDigest(c);
   assert.match(yieldText, /15000 ms/, '首次等待必须来自生效配置');
   assert.match(yieldText, /yield_ms/, 'yield_ms 是 async_run 的参数，必须说');
-  assert.match(yieldText, /moves to the background and returns a job id/, '"转后台"只属于 async_run');
+  // 「转后台＋返回作业编号」的完整故事由 tool.run.p2 表达（见 jobs.test.mjs 对
+  // 整段描述的 /job id \(job_id\)/ 断言）；digest 只带数字口径，不重复第二遍。
   // 反向：让出段里不该混进等待范围，否则两个指标又粘在一起了。
   assert.doesNotMatch(yieldText, /wait budgets/i, '首次等待段不该谈等待预算');
 

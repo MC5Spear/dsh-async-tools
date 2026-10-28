@@ -172,7 +172,7 @@ try {
   const helpVerdict = judgeHelpButtons(helpReading, EXPECTED_KEYS);
   check(`⑥-a 字段帮助按钮逐项在场（${String(EXPECTED_KEYS.length)} 个，aria-controls 身份核对；需求 §5.5/§5.6）`,
     helpVerdict.ok, helpVerdict.detail);
-  await screenshot(page, `${SHOTS}\\r24-04-plugin-page-config.png`);
+  await screenshot(page, join(SHOTS, 'r24-04-plugin-page-config.png'));
 
   /** 把目标字段写成 `value`（`''` = 清空）；按 id 定位，不按标签文本、不按下标。 */
   const typeInto = (value) => evaluate(page, `(() => {
@@ -186,9 +186,10 @@ try {
   })()`);
   /**
    * 读目标字段的两段读数与保存按钮态。
-   * 两段 = 说明行 `<p>` 里的两个 span（生效段 `.ats-sec-effective` / 输入段
-   * `.ats-sec-input`——值只写秒文本，空草稿占位 `—`；非法草稿整行换 invalidLabel，
-   * 两段都不在，这是官方行为）。
+   * 两段 = 常驻说明行 `<p>` 里的两个 span（生效段 `.ats-sec-effective` / 输入段
+   * `.ats-sec-input`——值只写秒文本，空草稿占位 `—`；非法草稿时说明行与两段
+   * 保留，另加非法原因行，且 `aria-describedby` 首指原因行 id——非法态采样
+   * 说明行应取 described 列表里的 `-message` id，本探针未走非法路径）。
    */
   const readBack = () => evaluate(page, `(() => {
     const ctl = document.querySelector('#plugin-config-${FIELD}');
@@ -260,7 +261,7 @@ try {
   // 视觉证据必须真的包含被断言的字段。
   await evaluate(page, `document.getElementById('plugin-config-${FIELD}')?.scrollIntoView({ block: 'center' }), true`);
   await sleep(300);
-  await screenshot(page, `${SHOTS}\\r24-05-plugin-page-typed.png`);
+  await screenshot(page, join(SHOTS, 'r24-05-plugin-page-typed.png'));
 
   // ④ 改值 → 保存 → 落盘 + 字段回生效值 + 生效段跟着变
   const saveAction = await save();
@@ -278,7 +279,7 @@ try {
     followed.ok, followed.detail);
   await evaluate(page, `document.getElementById('plugin-config-${FIELD}')?.scrollIntoView({ block: 'center' }), true`);
   await sleep(300);
-  await screenshot(page, `${SHOTS}\\r24-06-plugin-page-saved.png`);
+  await screenshot(page, join(SHOTS, 'r24-06-plugin-page-saved.png'));
 
   // ⑤ 复原：清空该字段再保存（清空输入段先换成 — 占位——不给秒数）
   const cleared = await typeInto('');
@@ -301,7 +302,7 @@ try {
     `动作=${restoreAction}；复原后仍命中=${String(hitFinal)}；${restored.detail}`);
   await evaluate(page, `document.getElementById('plugin-config-${FIELD}')?.scrollIntoView({ block: 'center' }), true`);
   await sleep(300);
-  await screenshot(page, `${SHOTS}\\r24-07-plugin-page-restored.png`);
+  await screenshot(page, join(SHOTS, 'r24-07-plugin-page-restored.png'));
 
   // —— ⑥-b 字段帮助·交互判据：开合 + aria + 无副作用（复原之后做——帮助开合不得
   //    弄脏表单，此拍表单必须干净；保存按钮启用状态前后对照）——
@@ -335,7 +336,7 @@ try {
   })()`);
   await evaluate(page, `document.getElementById('plugin-config-defaultYieldMs-help')?.scrollIntoView({ block: 'center' }), true`);
   await sleep(300);
-  await screenshot(page, `${SHOTS}\\r24-08-help-open.png`);
+  await screenshot(page, join(SHOTS, 'r24-08-help-open.png'));
   const closed = await evaluate(page, `(() => {
     document.querySelector('[aria-controls="plugin-config-defaultYieldMs-help"]').click();
     return true;

@@ -50,7 +50,8 @@
 import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { rpc, transcriptOf, localConfig } from './_rpc.mjs';
-import { newSession, prompt, waitTurnEnd, lastAssistantText, NS, PRESET } from './_r28-helpers.mjs';
+import { newSession, prompt, waitTurnEnd, lastAssistantText, readNs, patchNs, PRESET } from './_r28-helpers.mjs';
+import { WAIT_INTERRUPTED, LATE_ANSWER_ARRIVED, LATE_ANSWER_SUMMARY } from './message-markers.mjs';
 import { findBrowser, launch, openPage, evaluate, waitFor, screenshot } from './_visual/cdp.mjs';
 
 const LOGS = join(localConfig.evidenceDir, 'logs');
@@ -58,22 +59,38 @@ const SHOTS = join(localConfig.evidenceDir, 'shots');
 mkdirSync(LOGS, { recursive: true });
 mkdirSync(SHOTS, { recursive: true });
 
-// —— 锚句（与 lib/text.js 对应项逐字一致；改文案必须同步）——
+// —— 锚句 ——
+// note/summary 取共享锚模块（verify/message-markers.mjs，两语成对、漂移由
+// test/message-markers.test.mjs 的 t() 两档渲染回归钉住）。共享锚是「en|zh」
+// 合一正则，而本探针使用点是字符串 includes 语义——按内容拆出各档字面量
+// （这两枚锚的 source 无转义、两半中恰一半为纯 ASCII——en 半边）。
+// timeout/late/delay 留本地：timeout 是「词典前缀＋场景秒数 10」复合、
+// late 与 delay 是 ask.lateAnswer＋ask.lateIgnore 两键共用的跨键片段（按
+// 设计 §8.3 口径不入共享锚；改词典文案时须同步这里）。
 // 双档锚（真机读数）：验证实例是共享实例，agentLang 可能被并行轮/用户置
 // zh——锚句随实例实况选档，不强制改别人的 agentLang。
+const anchorTiers = (anchor) => {
+  const halves = anchor.source.split('|');
+  return {
+    en: halves.find((s) => /^[\x20-\x7F]+$/.test(s)),
+    zh: halves.find((s) => !/^[\x20-\x7F]+$/.test(s))
+  };
+};
+const NOTE_TIERS = anchorTiers(LATE_ANSWER_ARRIVED);
+const SUMMARY_TIERS = anchorTiers(LATE_ANSWER_SUMMARY);
 const ANCHORS = {
   en: {
     timeout: 'The user has not answered within 10 s',
     late: '[Late answer]',
-    note: 'A late answer has arrived',
-    summary: 'Late answer for',
+    note: NOTE_TIERS.en,
+    summary: SUMMARY_TIERS.en,
     delay: 'Delay:'
   },
   zh: {
-    timeout: '用户暂未应答（等待 10 秒超时）',
-    late: '[迟到应答]',
-    note: '迟到作答已到',
-    summary: '的迟到作答',
+    timeout: '用户暂未作答（等待 10 秒超时）',
+    late: '[迟到作答]',
+    note: NOTE_TIERS.zh,
+    summary: SUMMARY_TIERS.zh,
     delay: '时延：提问后'
   }
 };
@@ -187,8 +204,7 @@ let nsBefore = null;
 
 async function mainPhase() {
   console.log('· 前置：接管开 + 窗口 10 s + 界面 auto + 座位清层（默认档先行；agentLang 按实例实况选锚档）');
-  const described0 = await rpc('settings/describe', {});
-  nsBefore = described0.namespaces.find((n) => (n.ns ?? n.namespace ?? n.id) === NS)?.value ?? null;
+  nsBefore = (await readNs()).value;
   log.nsBefore = nsBefore;
   A = nsBefore?.agentLang === 'zh' ? ANCHORS.zh : ANCHORS.en;
   log.anchorLang = nsBefore?.agentLang === 'zh' ? 'zh' : 'en';
@@ -197,15 +213,14 @@ async function mainPhase() {
   //「无覆盖」：宿主配置行与用户层都没写这个字段，生效值只能来自 schema 默认 sidebar。
   let seatUnsetOk = true;
   try {
-    await rpc('settings/update', { ns: NS, patch: { askTakeover: true, askTimeoutMs: 10000, uiLang: 'auto', askUiSeat: null } });
+    await patchNs({ askTakeover: true, askTimeoutMs: 10000, uiLang: 'auto', askUiSeat: null });
   } catch (error) {
     seatUnsetOk = false;
     log.seatUnsetError = String(error);
     console.log(`  （askUiSeat=null 清层不被支持：${String(error)}；⓪ 降级为留痕跳过）`);
-    await rpc('settings/update', { ns: NS, patch: { askTakeover: true, askTimeoutMs: 10000, uiLang: 'auto' } });
+    await patchNs({ askTakeover: true, askTimeoutMs: 10000, uiLang: 'auto' });
   }
-  const described = await rpc('settings/describe', {});
-  const ns = described.namespaces.find((n) => (n.ns ?? n.namespace ?? n.id) === NS);
+  const ns = await readNs();
   check('前置 开关开 + 窗口 10 s + auto + 默认座位 sidebar（回读比对）',
     ns?.value?.askTakeover === true && ns?.value?.askTimeoutMs === 10000
     && ns?.value?.askUiSeat === 'sidebar' && ns?.value?.uiLang === 'auto',
@@ -225,7 +240,7 @@ async function mainPhase() {
         `徽标数=${String(badgeCount)}`);
       check('⓪-b 默认座位浮框缺席（.ats-ask-panel = 0）', panel0 === 0,
         `面板数=${String(panel0)}`);
-      await screenshot(page, `${SHOTS}\\r30-0-default-sidebar-badge.png`);
+      await screenshot(page, join(SHOTS, 'r30-0-default-sidebar-badge.png'));
     } else {
       // 留痕跳过：不算通过也不算失败——总判定行会把它带进分子，但 ok=true 只是
       //「没有失败」，skipped=true 与 detail 里的清层报错才是它的真实身份。
@@ -235,9 +250,8 @@ async function mainPhase() {
 
     // —— ⓪-b 显式 overlay（前置 B；①② 在此档执行）——
     console.log('· 前置 B：显式 askUiSeat=overlay（显式选择保持原值、不被清洗——与 ⓪ 两步对照）');
-    await rpc('settings/update', { ns: NS, patch: { askUiSeat: 'overlay' } });
-    const describedB = await rpc('settings/describe', {});
-    const nsB = describedB.namespaces.find((n) => (n.ns ?? n.namespace ?? n.id) === NS);
+    await patchNs({ askUiSeat: 'overlay' });
+    const nsB = await readNs();
     check('⓪-c 显式 overlay 回读在位（不被清洗回默认）',
       nsB?.value?.askUiSeat === 'overlay', `读数=${JSON.stringify(nsB?.value)}`);
 
@@ -267,11 +281,11 @@ async function mainPhase() {
     const chipCount = await waitFor(page, chipsIn(s2), (n) => Number(n) >= 2, 20_000);
     check('②-b 目标会话组内两个选项 chip 在场（组内定位——expired 批按设计留列，全局数无意义）',
       Number(chipCount) === 2, `组内 chip 数=${String(chipCount)}`);
-    await screenshot(page, `${SHOTS}\\r30-2-overlay-open.png`);
+    await screenshot(page, join(SHOTS, 'r30-2-overlay-open.png'));
     const expiredMark = await waitFor(page, expiredIn(s2), (n) => Number(n) >= 1, 20_000);
     check('②-c 超时后目标组仍在且带超时徽标（expired 批留列——迟到作答入口）',
       Number(expiredMark) >= 1, `组内超时标记数=${String(expiredMark)}`);
-    await screenshot(page, `${SHOTS}\\r30-2-overlay-expired.png`);
+    await screenshot(page, join(SHOTS, 'r30-2-overlay-expired.png'));
     // 点的是组内**第一条**条目——按 state 的 questionId 记住它（模型可能在收到迟到
     // 作答前重问同题，生成新的 expired 条目；②-f 只认被答的那条出列，真机读数）。
     const stateBeforeClick = await rpc('async-tools-ask/state', {});
@@ -348,7 +362,7 @@ async function mainPhase() {
     }
     check('⑥-a async_wait_job 已进入等待（tool/call 在转录）', waitCallSeen,
       `wait 调用=${String(waitCallSeen)}`);
-    await screenshot(page, `${SHOTS}\\r30-6-waiting.png`);
+    await screenshot(page, join(SHOTS, 'r30-6-waiting.png'));
     await clickFirstOptionAndSubmit(page, s6);
     // 轮询转录：wait 的 tool/result 带 note 锚句（唤醒提前返回）。真机形状（真机
     // 读数）：data.message.content[0].text 是**渲染文本**（note + 再等提示直文），
@@ -369,10 +383,11 @@ async function mainPhase() {
     check(`⑥-b 等待被唤醒提前返回（tool/result note 含迟到作答已到锚，${log.anchorLang} 档）`,
       wakeResult !== null, `命中=${String(wakeResult !== null)}`);
     if (wakeResult !== null) {
-      // 运行句柄语义 = 渲染文含「仍在运行」（lateArrived 与再等提示两处都带），
-      // 且不含打断锚（note.interrupted 的「等待被打断」/「Wait interrupted」）。
+      // 运行句柄语义 = 渲染文含「仍在运行」（唤醒文＝wait.lateArrived 与再等提示
+      // note.waitAgain 拼接，「仍在运行」来自后者——wait.lateArrived 本身不含该词），
+      // 且不含打断锚（note.interrupted，两语锚取共享模块）。
       const runningHit = wakeResult.includes('仍在运行') || wakeResult.includes('still running');
-      const interruptedHit = wakeResult.includes('等待被打断') || wakeResult.includes('Wait interrupted');
+      const interruptedHit = WAIT_INTERRUPTED.test(wakeResult);
       check('⑥-c 运行句柄非 interrupted 非终态（渲染文含「仍在运行」、无打断锚）',
         runningHit && !interruptedHit,
         `running=${String(runningHit)} interrupted=${String(interruptedHit)}`);
@@ -387,7 +402,7 @@ async function mainPhase() {
     check('⑥-e 模型继续工作（turn/end 后 assistant 文本）',
       lastAssistantText(t6end).length > 0,
       `末条=${JSON.stringify(lastAssistantText(t6end).slice(0, 120))}`);
-    await screenshot(page, `${SHOTS}\\r30-6-after-wake.png`);
+    await screenshot(page, join(SHOTS, 'r30-6-after-wake.png'));
 
     // —— ⑧ 通道与整批领取（迟到作答通道联测，需求 §4.4 判据⑧）——
     // (a) 子代理等待期间作答不排队：正文当回合进入上下文（秒级），非等待预算耗尽后。
@@ -418,7 +433,7 @@ async function mainPhase() {
     }
     check('⑧-a-1 async_wait_agent 已进入等待（tool/call 在转录）', waitAgentSeen,
       `wait_agent 调用=${String(waitAgentSeen)}`);
-    await screenshot(page, `${SHOTS}\\r30-8a-waiting.png`);
+    await screenshot(page, join(SHOTS, 'r30-8a-waiting.png'));
     const t8aClick = Date.now();
     await clickFirstOptionAndSubmit(page, s8a);
     // 轮询：迟到正文锚进入转录的时延。秒级 = 运行中走 inject、wait 返回后的下一
@@ -511,11 +526,11 @@ async function mainPhase() {
     }
     check('⑧-b-3 同一领取点整批领取（相邻两条通知记录无间隔）', adjacent8b,
       `相邻命中=${String(adjacent8b)}`);
-    await screenshot(page, `${SHOTS}\\r30-8b-batch.png`);
+    await screenshot(page, join(SHOTS, 'r30-8b-batch.png'));
 
     // —— ④ 座位切换（sidebar 徽标；纯呈现层）——
     console.log('· ④ askUiSeat=sidebar → 徽标在场、浮框缺席');
-    await rpc('settings/update', { ns: NS, patch: { askUiSeat: 'sidebar' } });
+    await patchNs({ askUiSeat: 'sidebar' });
     const s4 = await newSession(PRESET);
     log.session4 = s4;
     await prompt(s4, ASK_PROMPT);
@@ -524,12 +539,12 @@ async function mainPhase() {
     check('④-a 徽标在场（.ats-ask-badge ≥ 1）', Number(badgeCount) >= 1, `徽标数=${String(badgeCount)}`);
     check('④-b 浮框缺席（未点徽标时 .ats-ask-panel = 0）', Number(panelDuringSidebar) === 0,
       `面板数=${String(panelDuringSidebar)}`);
-    await screenshot(page, `${SHOTS}\\r30-4-sidebar-badge.png`);
+    await screenshot(page, join(SHOTS, 'r30-4-sidebar-badge.png'));
     await evaluate(page, 'document.querySelector(".ats-ask-badge").click()');
     const panelAfterBadge = await waitFor(page, countOf('.ats-ask-panel'), (n) => Number(n) >= 1, 5000);
     check('④-c 点徽标浮框出现（同组件换座位）', Number(panelAfterBadge) >= 1,
       `面板数=${String(panelAfterBadge)}`);
-    await screenshot(page, `${SHOTS}\\r30-4-sidebar-opened.png`);
+    await screenshot(page, join(SHOTS, 'r30-4-sidebar-opened.png'));
     // 窗口内快速作答，释放会话（不留给 ⑤ 的重启安全检查添堵）——同样组内定位。
     await waitFor(page, chipsIn(s4), (n) => Number(n) >= 2, 10_000);
     await clickFirstOptionAndSubmit(page, s4);
@@ -537,7 +552,7 @@ async function mainPhase() {
     check('④-d 窗口内作答照常回流（turn/end + assistant 文本）',
       lastAssistantText(t4).length > 0,
       `末条=${JSON.stringify(lastAssistantText(t4).slice(0, 120))}`);
-    await rpc('settings/update', { ns: NS, patch: { askUiSeat: 'overlay' } });
+    await patchNs({ askUiSeat: 'overlay' });
 
     // —— ③ standard 预设对照（零接管的宿主侧证明）——
     // 原生问题卡（.Mbwy4a_card）只渲染在**正在查看该会话**的主视图里；API 建的会话
@@ -563,7 +578,7 @@ async function mainPhase() {
       `ask=${String(askCalled3)} 合成=${String(synth3)}`);
     const oursGroup3 = await evaluate(page, groupPresent(s3));
     check('③-c 本包的浮框里没有 s3 的组', oursGroup3 === false, `组在场=${String(oursGroup3)}`);
-    await screenshot(page, `${SHOTS}\\r30-3-standard-notake.png`);
+    await screenshot(page, join(SHOTS, 'r30-3-standard-notake.png'));
     // 原生卡留给官方 UI 的超时/人工路径——会话悬置安静，不影响 ⑤ 的安静检查项。
 
     // —— ⑦ 语言四组合（需求 §5.3）——
@@ -575,13 +590,13 @@ async function mainPhase() {
     const headerText = '(() => { const p = document.querySelector(".ats-ask-panel"); '
       + 'return p === null ? null : p.textContent.slice(0, 60); })()';
     const assertCombo = async (comboPage, combo) => {
-      await rpc('settings/update', { ns: NS, patch: { uiLang: combo.uiLang } });
+      await patchNs({ uiLang: combo.uiLang });
       await sleep(2500); // 轮询周期（1 s）+ 渲染余量
       const header = await evaluate(comboPage, headerText);
       check(`⑦ ${combo.name} → 面板标题=${combo.expect}`,
         typeof header === 'string' && header.includes(combo.expect),
         `读数=${JSON.stringify(header)}`);
-      await screenshot(comboPage, `${SHOTS}\\r30-7-lang-${combo.host}-${combo.uiLang}.png`);
+      await screenshot(comboPage, join(SHOTS, `r30-7-lang-${combo.host}-${combo.uiLang}.png`));
     };
     // zh 宿主（默认实例，页面在场）：auto → zh；en 档钉住 en。
     await assertCombo(page, { name: 'auto×zh 宿主', host: 'zh-CN', uiLang: 'auto', expect: TITLE_ZH });
@@ -596,7 +611,7 @@ async function mainPhase() {
       en.instance.close();
     }
     // 收尾：语言档复原 auto（默认）；主实例已关（外层 finally 的 close 幂等）。
-    await rpc('settings/update', { ns: NS, patch: { uiLang: 'auto' } });
+    await patchNs({ uiLang: 'auto' });
   } finally {
     instance.close();
   }
@@ -609,11 +624,10 @@ async function mainPhase() {
 async function afterRestartPhase() {
   console.log('· ⑤ 重启后：设置与行为双回读');
   // 锚档与起始快照都从主相日志带过来（重启相是独立进程）。
-  const mainLog = JSON.parse(readFileSync(`${LOGS}\\r30-ask-takeover.json`, 'utf8'));
+  const mainLog = JSON.parse(readFileSync(join(LOGS, 'r30-ask-takeover.json'), 'utf8'));
   A = mainLog?.nsBefore?.agentLang === 'zh' ? ANCHORS.zh : ANCHORS.en;
   log.anchorLang = mainLog?.nsBefore?.agentLang === 'zh' ? 'zh' : 'en';
-  const described = await rpc('settings/describe', {});
-  const ns = described.namespaces.find((n) => (n.ns ?? n.namespace ?? n.id) === NS);
+  const ns = await readNs();
   log.nsAfterRestart = ns?.value;
   check('⑤-a 开关重启后仍开（持久化，不是内存态）',
     ns?.value?.askTakeover === true && ns?.value?.askTimeoutMs === 10000,
@@ -633,9 +647,8 @@ async function afterRestartPhase() {
   // 别人的字段（agentLang 等）探针从未改过，不碰。
   const restorePatch = { askTakeover: false, askTimeoutMs: 60000, askUiSeat: 'overlay', uiLang: 'auto' };
   console.log(`· 复原到探针固定档：${JSON.stringify(restorePatch)}`);
-  await rpc('settings/update', { ns: NS, patch: restorePatch });
-  const restored = await rpc('settings/describe', {});
-  const nsRestored = restored.namespaces.find((n) => (n.ns ?? n.namespace ?? n.id) === NS);
+  await patchNs(restorePatch);
+  const nsRestored = await readNs();
   log.nsRestored = nsRestored?.value;
   check('⑤-c 复原到探针固定档（回读比对）',
     nsRestored?.value?.askTakeover === false && nsRestored?.value?.askTimeoutMs === 60000
@@ -654,14 +667,14 @@ try {
   try {
     // 异常路径复原到探针固定档（与 ⑤-c 同一套四字段——探针自控范围，别人的字段不碰）。
     const restorePatch = { askTakeover: false, askTimeoutMs: 60000, askUiSeat: 'overlay', uiLang: 'auto' };
-    await rpc('settings/update', { ns: NS, patch: restorePatch });
+    await patchNs(restorePatch);
     console.log(`  （异常路径复原到探针固定档：${JSON.stringify(restorePatch)}）`);
   } catch (restoreError) {
     console.log(`  （异常路径复原失败：${String(restoreError)}）`);
   }
 } finally {
   const suffix = phase === '--after-restart' ? '-after-restart' : '';
-  writeFileSync(`${LOGS}\\r30-ask-takeover${suffix}.json`,
+  writeFileSync(join(LOGS, `r30-ask-takeover${suffix}.json`),
     JSON.stringify({ ...log, results }, null, 2), 'utf8');
 }
 const failures = results.filter((r) => !r.ok).length;

@@ -49,6 +49,7 @@ import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { rpc, transcriptOf, localConfig } from './_rpc.mjs';
 import { newSession, prompt, waitTurnEnd, elevateSession, NS, PRESET } from './_r28-helpers.mjs';
+import { YIELD_EARLY_BY_USER as EARLY_ANCHOR, START_REFUSED as REFUSED_ANCHOR, HOST_JOB_NOTICE, HOST_JOB_FINISHED } from './message-markers.mjs';
 import { findBrowser, launch, openPage, evaluate, waitFor } from './_visual/cdp.mjs';
 
 const LOG_DIR = join(localConfig.evidenceDir, 'logs');
@@ -61,11 +62,15 @@ const LONG_RUN_SECONDS = 55;
 const YIELD_MS = 60000;
 /** 调用落转录后的入窗等待：注册+spawn 在调用后毫秒级完成，2 s 足够落进让出窗口。 */
 const POST_CALL_MS = 2000;
-/** 语法判据锚（渲染文双档：实例语言档未知，两种都认）。 */
-const EARLY_ANCHOR = /ended early: a user message arrived|让出提前结束：有用户消息到达/;
+/**
+ * 语法判据锚。词典句锚（提前结束注记、触顶拒绝）已收敛到共享锚模块
+ * `verify/message-markers.mjs`（两语成对；漂移由 test/message-markers.test.mjs
+ * 的 `t()` 两档渲染回归钉住）。留在本地的两枚按设计 §8.3 口径豁免：
+ * - `HANDLE_ANCHOR`：`lib/output.js` 代码构造的调用句式字面量，非词典成句；
+ * - `ABORT_ANCHOR`：宿主 dsh-tools 对中止调用的改写文本，非本包词典。
+ */
 const HANDLE_ANCHOR = /async_wait_job\(job_id="/;
 const ABORT_ANCHOR = /Error: tool call aborted/;
-const REFUSED_ANCHOR = /refused before the process launched|进程启动前被拒绝/;
 
 const results = [];
 const record = (id, ok, detail) => {
@@ -142,7 +147,10 @@ function completionNotices(transcript) {
     const source = msg?.source ?? {};
     if (source.kind !== 'tool-jobs' || source.form !== 'notice') continue;
     const text = (msg?.content ?? []).map((c) => String(c.text ?? '')).join('\n');
-    if (/async-command-\d+|background job|后台作业/.test(text) && /(finished|completed|已完成)/.test(text)) {
+    // 宿主完成通知恒为英文（dsh-tool-jobs，agentLang 不影响宿主文本）、编号不透明
+    // （形如 async-command-29bb2c6b2dff4ad9）——锚取共享模块的宿主锚，不假定数字
+    // 编号、不依赖类型前缀（本探针不写设置）。
+    if (HOST_JOB_NOTICE.test(text) && HOST_JOB_FINISHED.test(text)) {
       const id = String(msg?.id ?? `${notices.length}-`);
       if (!seen.has(id)) {
         seen.add(id);
@@ -462,7 +470,7 @@ try {
     const notice = await waitForNoticeCount(sid, 1, (LONG_RUN_SECONDS + 30) * 1000);
     summary.criteria.a = { sessionId: sid, noticeCount: notice.count, ...reading };
     record('f-a-one-notice', notice.count === 1,
-      `插话路径结算后完成通知 ${String(notice.count)} 条（判据恰 1——撤销在先、结算照发；若模型自建 async_wait_job 等到结算，则按 (e) 相活 waiter 语义应为 0——提示词已明令禁止，见头注）`);
+      `插话路径结算后完成通知 ${String(notice.count)} 条（判据恰 1——撤销在先、结算照发；若模型自建 async_wait_job 等到结算，则按 (e) 相同的活 waiter 语义应为 0——提示词已明令禁止，见头注）`);
   }
   if (want('d')) {
     const sid = await newSession(PRESET);
@@ -483,7 +491,7 @@ try {
   summary.pass = pass;
   summary.fail = results.length - pass;
   summary.results = results;
-  writeFileSync(`${LOG_DIR}\\r32-run-interruptible.json`, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
+  writeFileSync(join(LOG_DIR, 'r32-run-interruptible.json'), `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
   console.log(`\n真机探针：${String(pass)}/${String(results.length)}（证据目录 logs/r32-run-interruptible.json）`);
   process.exitCode = results.every((r) => r.ok) ? 0 : 1;
 }

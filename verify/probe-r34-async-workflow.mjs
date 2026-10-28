@@ -17,7 +17,8 @@
  * - (d) 触顶：与 async_run 同池（每 owner 出厂存活上限 10，设计 §3.5）——混编 11 连发（6 命令 +
  *   5 编排）第 11 条 startRefused（含 limit 与出路锚句）；收尾 session/cancel。
  * - (e) 预算内结算：短编排（1 agent 即回）→ 渲染文本 `workflow "x" completed
- *   (1 agent)` + Return value JSON + 零完成通知（活 waiter）。
+ *   (1 agent)`（zh 档 `workflow「x」已完成（1 个子代理）`）+ Return value／返回值
+ *   JSON + 零完成通知（活 waiter）。
  * - (f) 描述门槛（需求 §2.4：使用条件与替代入口说明）：dsh-async / dsh-async-create 两预设 request/header
  *   里 `async_workflow` 在场且描述含 p2 门槛短语、宿主 `workflow` 与
  *   `subagent` 系缺席；standard 对照：宿主 workflow 与 subagent 在场（需求 §3.2 隔离对照）。
@@ -42,6 +43,7 @@ import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { rpc, transcriptOf, localConfig } from './_rpc.mjs';
 import { newSession, prompt, waitTurnEnd, elevateSession, NS, PRESET } from './_r28-helpers.mjs';
+import { YIELD_EARLY_BY_USER as EARLY_ANCHOR, START_REFUSED as REFUSED_ANCHOR, WORKFLOW_COMPLETED as COMPLETED_ANCHOR, WORKFLOW_RETURN as RETURN_ANCHOR, WORKFLOW_P2_PHRASE as P2_PHRASE } from './message-markers.mjs';
 import { findBrowser, launch, openPage, evaluate, waitFor } from './_visual/cdp.mjs';
 
 const LOG_DIR = join(localConfig.evidenceDir, 'logs');
@@ -56,14 +58,15 @@ const IMMENSITY_MS = 5000;
 const YIELD_MS = 60000;
 /** tool/call 落转录后的入窗等待：注册+引擎启动毫秒级，2 s 足够落进让出窗口。 */
 const POST_CALL_MS = 2000;
-/** 双档锚句（渲染文两种语言档都认）。 */
-const EARLY_ANCHOR = /ended early: a user message arrived|让出提前结束：有用户消息到达/;
+/**
+ * 语法判据锚。词典句锚（提前结束注记、触顶拒绝、完成渲染头两半、门槛短语）已
+ * 收敛到共享锚模块 `verify/message-markers.mjs`（两语成对；漂移由
+ * test/message-markers.test.mjs 的 `t()` 两档渲染回归钉住）。留在本地的两枚按
+ * 设计 §8.3 口径豁免：`HANDLE_ANCHOR` 是 `lib/output.js` 代码构造的调用句式
+ * 字面量、`ABORT_ANCHOR` 是宿主 dsh-tools 的改写文本，均非本包词典成句。
+ */
 const HANDLE_ANCHOR = /async_wait_job\(job_id="/;
 const ABORT_ANCHOR = /Error: tool call aborted/;
-const REFUSED_ANCHOR = /refused before the process launched|进程启动前被拒绝/;
-const COMPLETED_ANCHOR = /workflow "[^"]+" completed \(\d+ agents?\)/;
-const RETURN_ANCHOR = /Return value:/;
-const P2_PHRASE = /large multi-agent orchestration|大规模多代理编排/;
 
 /**
  * 编排脚本体：
@@ -571,7 +574,7 @@ try {
   if (browser !== null) browser.close();
   const failed = results.filter((r) => !r.ok).length;
   summary.results = results;
-  const path = `${LOG_DIR}\\r34-async-workflow.json`;
+  const path = join(LOG_DIR, 'r34-async-workflow.json');
   writeFileSync(path, JSON.stringify(summary, null, 2), 'utf8');
   console.log(`\n探针结束：${String(results.length - failed)}/${String(results.length)} 通过；证据 ${path}`);
   process.exitCode = failed === 0 ? 0 : 1;

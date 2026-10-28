@@ -1,7 +1,7 @@
 /**
  * 探针：本机能不能制造"回滚也失败"？
  *
- * 背景：若某些场景让 `rollbackFailure` **恒为 `null`**，
+ * 背景：若某些情形让 `rollbackFailure` **恒为 `null`**，
  * 则"回滚也失败"那条分支的 warn 与消息都没有被覆盖（末尾还是 `void logged;`）。
  * 要真正覆盖它，必须先找到一种让 `rmSync(dir, {recursive:true, force:true})` 抛错的办法。
  *

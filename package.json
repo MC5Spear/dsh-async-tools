@@ -1,7 +1,7 @@
 {
   "name": "dsh-async-tools",
   "version": "0.2.5+dsh.0.2.1-rc.2",
-  "description": "Bounded-yield async execution tools for DSH: `async_run` yields to a background job instead of killing long commands, `async_wait_job` / `async_wait_agent` wait within a required bounded budget and return early when the user speaks, without disturbing the background work.",
+  "description": "Async execution plugin for DSH: `async_run` moves long commands to background jobs instead of killing them, `async_agent` delegates in the background, `async_wait_job` reads job results with a bounded wait, `async_wait_agent` bounds the wait on a subagent's running status while its final answer arrives as a separate message, `async_workflow` runs script orchestration as a background job, and every bounded wait returns early on user messages while background work keeps running.",
   "license": "MIT",
   "author": "MC5Spear (https://github.com/MC5Spear)",
   "repository": {
@@ -44,6 +44,7 @@
     "acceptance": "node verify/final-acceptance.mjs",
     "acceptance:e2e": "node verify/async-e2e.mjs",
     "acceptance:settings": "node verify/probe-settings-behavior-full.mjs",
+    "probe:e2e": "node --import ./tools/_host-hooks.mjs tools/probe-e2e.mjs",
     "check:model-text": "node --import ./tools/_host-hooks.mjs tools/check-model-text.mjs"
   },
   "dsh": {

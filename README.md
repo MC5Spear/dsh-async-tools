@@ -4,29 +4,30 @@
 
 > 第三方 DSH 插件，与 DeepSeek 官方无隶属关系。个人维护，接受 issue、不接受外部 PR，不保证响应或修复时间；安全问题同样通过 issue 提交，请先脱敏。
 
-让长命令和子代理工作在后台，让 Agent 能继续其他工作，并用有界等待取得控制权。包提供五个工具、两个异步预设、插件设置，以及默认关闭的提问接管和静默失败防护。
+让长命令和子代理工作在后台，让 Agent 能继续其他工作，并用有界等待取得控制权。本包提供六个工具、两个异步预设、插件设置，以及默认关闭的提问接管和静默失败防护。本文的“宿主”指加载本插件的 dsh。
 
-**English summary.** Five tools provide background command execution, bounded job and subagent waits, background-only delegation, and workflow orchestration. The plugin uses official bundle declarations and never patches host source. The current documentation defines target behavior, not a guarantee that every requirement is implemented or verified. Check the implementation gaps in the design before deployment.
+**English summary.** The target toolset provides background command execution, bounded job and subagent waits, background-only delegation, workflow orchestration, and paginated provider/model discovery with search. Delegation reads the existing dsh model-selection settings at creation time; discovery reports applicability to the selected creation tool. The plugin uses official bundle declarations without patching dsh source. All six tools are implemented in the current code; per-mechanism verification and review status is tracked in the design's implementation status section — check it before deployment.
 
 ## 实现与验收边界
 
-[需求](<docs/requirements.md>)定义当前目标；[设计的当前实施与验证状态](<docs/design.md#9-当前实施与验证状态>)分档陈述现状，部署前核对其中「待验证」档。
+[需求](<docs/requirements.md>)定义当前目标；[设计的当前实施与验证状态](<docs/design.md#9-当前实施与验证状态>)区分已实现及待验证内容。六个工具与本文所述机制均已在现行代码实现；各项的真机验证与独立审查状态以设计第 9 章为准。
 
-不要把目标行为当已经发布的保证。部署前核对所用提交、包版本、宿主版本、设置及对应验收证据；CI 或文档审查通过不证明真实消息、GUI、受限命令和卸载情形全部可用。
+机制实现不等于逐项验证通过。部署前核对所用提交、包版本、宿主版本、设置及对应验收证据；CI 或文档审查通过不证明真实消息、GUI、受限命令和卸载情形全部可用。
 
 ## 工具与预设
 
-| 工具 | 目标用途 |
+| 工具 | 用途 |
 | --- | --- |
 | `async_run` | 执行命令；预算内完成时直接返回结果，超出首次等待或收到可处理消息时交出作业句柄，不因等待到时杀进程 |
 | `async_wait_job` | 显式 `wait_ms` 有界等待，终态时在同一次返回中交付读取结果 |
-| `async_agent` | 仅后台创建可续子代理，立即返回 `agent_id`，可成对指定模型路由 |
+| `async_agent` | 仅后台创建可续子代理，立即返回 `agent_id`；公共参数兼容目标 dsh 原生创建工具，显式模型选择使用当前 dsh 配置 |
 | `async_wait_agent` | 对合法目标检查当前运行状态并有界等待；消息唤醒不等于目标完成 |
-| `async_workflow` | 包装宿主编排引擎，将一次脚本运行纳入作业管理 |
+| `async_workflow` | 包装 dsh 编排引擎，将一次脚本运行纳入作业管理 |
+| `async_list_subagent_models` | 分页浏览或搜索供应商／模型，查看模型及推理强度，并按目标创建工具说明适用性 |
 
-`dsh-async` 是通用编码的异步模式，`dsh-async-create` 是保留创作工具的异步创造模式。两者直接提供五工具，创建和等待采用本包入口，检查、消息和停止管理仍使用宿主工具。原有预设不被改写。
+`dsh-async` 是通用编码的异步模式，`dsh-async-create` 是保留创作工具的异步创造模式。六个工具全部直接放入这两个预设；创建和等待采用本包入口，检查、消息和停止管理仍使用 dsh 工具。原有预设不被改写。
 
-工具也可挂入使用者自己的预设；这样不会自动移除其已有同步工具。每行 `config.toolName` 选择一个工具，缺省是宿主配置角色，不注册工具。`async_workflow` 行须处于能取得编排引擎的 delegation 组，其他行按预设组成挂载。
+工具可分别挂入使用者自己的预设；查询工具可单独使用，与 dsh 原生创建／查询工具共存。组合不会自动移除已有同步工具或改写其他工作流；是否采用由用户决定。每行 `config.toolName` 选择一个工具，缺省为不注册工具的宿主配置角色。五个顶层工具按预设组成挂载；`async_workflow` 行须挂在 `isolate: { workflowEngine: true }` 的 delegation 组内，且组内须有编排引擎提供行（如 `@deepseek-ai/dsh-workflow-ptc`，与 dsh 出厂 standard／cordis 预设的 delegation 组同款）——缺引擎行时调用得到可读拒绝、零作业。下例包含全部六个工具行。
 
 ```yaml
 - id: async-run
@@ -41,19 +42,34 @@
 - id: async-agent
   name: dsh-async-tools
   config: { toolName: async_agent }
+- id: async-list-subagent-models
+  name: dsh-async-tools
+  config: { toolName: async_list_subagent_models }
+- id: delegation
+  name: cordis:group
+  group: true
+  isolate: { workflowEngine: true }
+  config:
+    - id: workflow-ptc
+      name: '@deepseek-ai/dsh-workflow-ptc'
+      config: { provider: spawn }
+    - id: async-workflow
+      name: dsh-async-tools
+      config: { toolName: async_workflow }
 ```
 
 ## 运行边界与安全
 
-- 命令由宿主执行，使用该会话的权限、审批和目录；本包不绕过沙箱，也不额外替用户限制命令。
-- 首次等待到时、消息唤醒或停止等待不等于取消后台工作。真正停止用宿主作业／子代理管理入口；不需要的任务应显式收尾。
+- 命令由宿主执行，沿用该会话原有的权限、审批、沙箱与目录。
+- 首次等待到时或停止等待都不取消后台工作；需要停止时用宿主作业／子代理管理入口，不需要的任务应显式收尾。
 - 作业属于发起会话，卸载工具生产者行不代表作业立刻消失。owner 或服务处置与插件行处置是不同生命周期。
-- 目标等待规则只认发给当前主体、下一步骤可处理的消息，queue 保持下一轮语义；消息到达不能把别的任务伪装成等待目标已完成。
-- 指定子代理路由受会话创建时的模型策略约束；不指定时继承父路由。策略后的全局编辑不追溯改变既有会话。
-- 本包不发起网络请求、不收集遥测、不读写凭据，不修改宿主源码。子进程环境由宿主提供；命令本身可能访问网络或敏感信息，仍由操作者负责。
+- 等待中收到发给当前 Agent 的用户插话会立即结束等待；排队消息按下一轮处理。
+- `async_agent` 后续创建使用当前 dsh 子代理模型选择开关和允许名单；成功保存后已有会话也生效，运行中的子代理保持原模型。省略全部模型选择参数时沿用配置默认或继承；显式选择推理强度同样受当前名单约束。
+- dsh 原生创建工具仍按自己的实际会话策略执行，可能与实时配置不同；本包查询结果按目标工具区分适用性，不承诺一份结果适用于所有入口。实时配置规则不改变 `async_workflow` 内部 `agent()` 钩子的参数和策略。
+- 本包不自行发起网络请求、不收集遥测、不读写凭据，不修改 dsh 源码。路由目录与模型信息由 dsh 公开接口提供，适配器访问遵循 dsh；查询不发起模型推理。子进程环境由 dsh 提供，命令本身可能访问网络或敏感信息，仍由操作者负责。
 - 输出可能被宿主缓冲裁剪或写系统临时位置；读取交付实际 spill 线索，不承诺临时文件长期存在。
-- 信息暴露边界：子进程取得宿主 `shellEnv.collect(exec)` 返回的键集，本包不增删；宿主部署向子进程贡献的环境键以运行时集合为准，不在这里维护过期变量清单。spill 为宿主报告的系统临时绝对路径；模型侧注册错误最多 500 字符且单行化，完整原错只在操作者日志。
-- Windows 与 Linux 要分别验证；没有 Linux 证据不能推广 Windows 结果。macOS 和远程执行环境不在验证范围。
+- 信息暴露边界：子进程取得宿主 `shellEnv.collect(exec)` 返回的键集，本包不增删；环境键以宿主运行时集合为准。spill 为宿主报告的系统临时绝对路径；模型侧注册错误最多 500 字符且单行化，完整原错只在操作者日志。
+- 命令执行面向 Windows 环境验证；Linux 环境的装载与运行尚未执行验证（状态见[设计第 9 章](<docs/design.md#9-当前实施与验证状态>)），macOS 和远程执行环境同样不在验证范围。
 
 ## 兼容性
 
@@ -71,7 +87,7 @@ dsh plugin --profile web add github:MC5Spear/dsh-async-tools
 
 GUI 安装对话框可填写相同 spec；固定版本时在 GitHub spec 的 `#` 后指定已发布、已核验的完整标签，保留包版本的宿主构建元数据，不用 SemVer 范围选择适配版本。包不从 npm 分发。官方 bundle 声明提供宿主配置行与两预设，不需要手工生成用户预设目录，不改 shipped 文件。
 
-装载组合和客户端入口变化需要重新装载实例并重新打开页面；不要启动另一个无关服务器来替代原实例。重启从服务进程树外执行，先确认不会停止他人的活动会话。
+装载组合和客户端入口变化需要重新装载实例并重新打开页面。重启从服务进程树外执行，先确认不会停止他人的活动会话。
 
 ### 开发链接
 
@@ -92,15 +108,25 @@ dsh plugin --profile web add <克隆目录的绝对路径>
 
 | 设置组 | 用途 |
 | --- | --- |
-| 首次等待与等待预算 | 控制默认示例、请求夹紧及本次等待占用，不控制后台任务寿命 |
+| 首次等待与等待预算 | 控制默认示例、请求取值限制及本次等待占用，不控制后台任务寿命 |
 | 轮询、结果长度、作业 kind | 目标状态备用查询、模型结果裁剪和命令作业标识 |
 | `subagentProvider` | 子代理后端，不等同 LLM provider 路由 |
 | `uiLang` / `agentLang` | 界面与模型文案独立选择 |
 | `silentFailureGuard` | 本包预设内的结果诊断、描述警示和执行纪律；默认关闭 |
 | `askTakeover` / `askTimeoutMs` / `askUiSeat` | 本包根 Agent 普通提问的接管、初始窗口和面板位置；默认关闭，面板默认侧边栏底栏徽标、可选右下角浮窗 |
-| `askExtendMs` | 待答面板「增加等待时间」每次延长的时长，默认 60 秒；延长只作用于未到期批次、在原截止时间上叠加，跨会话组隔离，已到期题不复活 |
+| `askExtendMs` | 待答面板「增加等待时间」每次延长的时长，默认 60 秒；延长只作用于未到期批次、在原截止时间上叠加，跨会话组隔离，已到期题按迟到补答处理 |
 
 编辑先暂存，保存才写；恢复默认也需要保存，离开丢弃草稿。覆盖按用户层字段是否存在判断，保存失败保留草稿。毫秒输入同时显示生效与输入秒数，输入段未保存就跟随键入。每字段旁有带圈问号帮助按钮，展开技术标识与详细说明，开合不写设置、不影响暂存与保存。保存后的后续行为及描述应使用新值，不能只看页面变化。
+
+### 子代理模型选择与查询
+
+模型选择仍在 dsh 现有的子代理设置中管理，本包不复制开关或允许名单。保存后，后续 `async_agent` 创建读取新配置，无需重开会话；开关关闭时不能显式指定路由或推理强度，仍可省略这些参数使用配置默认或继承。
+
+`async_list_subagent_models` 无供应商筛选且无搜索词时浏览供应商；指定 `provider` 查看模型；用 `query` 跨供应商或在指定供应商内搜索。搜索匹配 ID 和显示名称，忽略大小写；`provider` 与 `model` 一起指定时查看准确模型及推理强度。分页默认及范围见[需求的分页规则](<docs/requirements.md#234-路由列表搜索与目标工具适用性>)，继续翻页使用返回参数；列表版本失效时重新查询。
+
+可用 `target_tool` 指定当前会话可见的创建工具。结果区分允许选择、不允许选择和适用性未确认；原生工具可能仍使用旧会话名单，不能用当前全局配置替它作保证。未指定目标且存在多个创建入口时，不把列表当通用调用许可；仅挂查询工具时也能查目录，但不代表已有创建入口。
+
+创建时使用返回的准确 `provider`／`model` ID。`reasoning_effort` 仅用于接受该字段的目标，并从模型已确认的选项中选择。`cwd` 和条件性 `agent_preset` 等公共参数按 dsh 原生语义处理，实际支持以目标工具定义及配置为准；查询参数不传给创建工具。目录未列出但允许配置中存在的模型可按准确 ID 查询；查询成功不保证凭据或远端服务可用。创建拒绝时，按错误指引保留目标重新列出或搜索，不自动换模型或换创建工具。
 
 ### 命令与结果
 
@@ -112,23 +138,23 @@ async_run(command="Start-Sleep -Seconds 30; Write-Output LONG_DONE",
 async_wait_job(job_id="<返回的id>", wait_ms=30000)
 ```
 
-请求等待工具必须显式给预算。终态首次读取会消费增量及一次性最终结果，工具必须在同次返回交付；再次读取不重复最终结果。读取错误给重试标记，不能据空正文重启有副作用命令。
+请求等待工具必须显式给预算。终态的首次读取在同一次返回中交付全部增量与最终结果；再次读取不重复最终结果。读取失败时给重试指引；空正文不代表命令未执行，重启有副作用的命令前先确认。
 
 ### 提问接管
 
-目标机制仅接管两个异步预设根 Agent 的非计划评审普通提问，不动审批或其他预设。无人作答到期给超时事实，不代选答案；页面面板支持作答、忽略、跳转、延长和迟到通知。
+开启后，两个异步预设根 Agent 的普通提问改在页面待答面板处理；计划评审与审批仍走宿主原生流程，其他预设不受影响。到期未答的题按超时交给 Agent，它继续处理任务；稍后仍可补答，答案照常送达。面板支持作答、忽略、跳转所属会话、延长等待和迟到通知。
 
-每次延长在当前未到期批原期限上增加配置时长，新批独立，已到期题不能复活。迟到答案作为本包通知进入原主体，正文自含题目，不冒充用户发言。到期题的保留期及已清扫题的提交行为见需求 4.4，界面不能假报未送达答案成功。当前运行实现与这些目标的差距必须在部署前核对。
+「增加等待时间」给该会话当时未到期的批次在原截止时间上追加配置时长；新批次使用自己的初始期限，已到期题按迟到补答处理。迟到补答以本包通知送达原发问会话，正文自带完整题目与答案。题目的到期保留与清扫规则见需求 4.4；提交未送达时界面显示失败原因。
 
 ## 停用、卸载与风险
 
-**卸载风险：默认预设指向本包预设（dsh-async / dsh-async-create）时，停用或移除本包会让新建会话报 `agent-preset/not-found`，宿主不会自动清除该选择。** 卸载前先在宿主设置把默认预设切换到可用预设；已移除后按宿主设置入口清选或重选。设置页表单顶部呈现同一口径的醒目提示（两处一致，改一处必须连另一处一起改）。
+**卸载风险：默认预设指向本包预设（dsh-async / dsh-async-create）时，停用或移除本包会让新建会话报 `agent-preset/not-found`，宿主不会自动清除该选择。** 卸载前先在宿主设置把默认预设切换到可用预设；已移除后，在宿主设置的默认预设入口清空该选择或改选可用预设。设置页表单顶部呈现同一口径的醒目提示。
 
 - GUI 卸载按宿主管理 dependency 与 bundle；CLI 移除行为需核对该宿主版本，不仅假设删除依赖就已移除启用项。
 - 对开发链接，移除本包 bundle 声明并重新装载；联接清理仅是文件管理，不等同停用已经加载的模块。
 - 声明退出新会话列表与旧活动组合退役分开；存活会话可继续持有宿主允许的版本引用。
 - 本包计时、监听、配置与客户端贡献随各自生命周期释放；owner 作业不随工具行卸载自动取消，重启可能终止活动进程，不能将它当无风险清理。
-- 可预见问题优先预防和修复，必要时有限独立指南／工具只处理可识别本包残留；不承诺对未知用户配置或 OS 进程的万能修复。
+- 可预见问题优先预防和修复；有限指南与工具只处理**可识别的本包残留**（上文各条即处置清单）。工具未覆盖的残留（未知用户配置、OS 进程）不盲改：按宿主设置与系统进程管理常规处置，动手前先核对上文默认预设与依赖两条。
 
 完整行为要求见需求 7.2；提示与补救机制见设计 5.4 与 7.2。
 
@@ -171,6 +197,15 @@ npm run check:agent-policy
 | `verify/mutate-atb01-final-result.mjs` | `test/wait-job.test.mjs` | 最终结果同次交付，另有真实注册表测试 |
 
 检查器输入变异包括路径、编码之外的公开范围、模型文案、主题、策略和界面判据等，分别由脚本自身声明入口；[变异索引检查器](<tools/check-mutate-index.mjs>)核对上述实现表和具名例外，不以文档表代替执行结论。
+
+## AI 维护者
+
+参与本项目维护的 AI 维护者包括：
+
+- `gpt-6.1-sol`
+- `kimi k3`
+- `glm-5.3`
+- `deepseek-v4.1-flash`
 
 ## 文档与许可
 

@@ -10,10 +10,12 @@
 #   1. tool-bash 无条件 disabled: true——禁同步 shell（需求 §3.1），两平台工具清单
 #      一致（需求 §3.3）；
 #   2. 不挂 tool-pwsh 行——前台同步 shell 到期杀进程树，与异步语义冲突（需求 §3.1）；
-#   3. tool-bash 之后连续成组新增四行 dsh-async-tools（toolName 分派）；第五行
-#      async_workflow 在 delegation 组内 tool-workflow 行后——编排引擎是组内隔离服务，
-#      组外行取不到（需求 §3.2 末条、设计 §3.5）。五行 config 均携带
-#      owningPreset 归属声明（设计 §6.2——描述警示按行归属判定，非 volatile）；
+#   3. tool-bash 之后连续成组新增五行 dsh-async-tools（toolName 分派；第五行
+#      async_list_subagent_models 是顶层只读行——查询工具不进 delegation 组，
+#      设计 §3.6）；第六行 async_workflow 在 delegation 组内 tool-workflow 行后——
+#      编排引擎是组内隔离服务，组外行取不到（需求 §3.2 末条、设计 §3.5）。
+#      六行 config 均携带 owningPreset 归属声明（设计 §6.2——描述警示按行归属
+#      判定，非 volatile）；
 #   4. tool-workflow 与 tool-subagent 系委托入口（单发 / fork）置 disabled: true
 #      （需求 §3.1：委托／编排入口收归本包——派生入口唯一化为 async_agent、
 #      编排入口唯一化为 async_workflow，统一等待预算与消息纪律；原生
@@ -23,18 +25,19 @@
 #      （需求 §3.1 末条）；workflow-ptc（引擎服务，为 async_workflow 提供编排引擎）与
 #      tool-subagent-control / -list-agents（非阻塞检查／管理侧，需求 §3.1"保留宿主
 #      非阻塞的检查、消息和停止管理工具"）保留在场；
-#   5. persona 只改 prefix：基线身份句之上加异步工作纪律与后台委托强制规则（需求
-#      §3.1；锚句被 tools/validate-preset.mjs 锁死：`ALWAYS` + `async_agent is the
-#      ONLY delegation entry` + `never pass run_in_background: false`、
-#      `Do not poll in a loop`）。基线 persona 无 `{{cwd}}` suffix——工作目录由
-#      working-directory 服务经系统提示提供，本预设不复活失效模板变量；
+#   5. persona 与基线逐字一致：prefix 保留基线身份句、不增不改（宿主原生身份句
+#      不承载本包内容）；异步工作纪律、后台委托强制规则与提问角色纪律（需求
+#      §3.1、§9.1）由宿主半边注册的 systemPrompt section 运行时注入——语言档随
+#      设置 agentLang（需求 §5.3：中文档同样完整），锚句被 tools/validate-preset.mjs
+#      锁死在两语表（en＋zh）× 两变体的词典键里。基线 persona 无 `{{cwd}}`
+#      suffix——工作目录由 working-directory 服务经系统提示提供；
 #   6. 预设行**不带** disabled 护栏：loader 的 `refresh()` 在服务就绪前求值
 #      `disabled`——`agentPresets` 服务缺席时**静默跳过 init**，行永远不导入
 #      （cordis-plugin-loader `refresh()` 的服务就绪检查）；shipped 预设行也都不带
 #      护栏——`dsh-agent-preset` 自带 `inject = ['agentPresets']`，注册表缺席时行以
 #      pending 等待（Cordis 原生机制），注册失败沿 fiber 抛出时**可选行只是启动
-#      警告**、不拖垮进程（dsh-app-boot 的 activationDiagnostic）。判据反转：
-#      validate-preset ⑥ 锁死"不得出现该护栏"）。
+#      警告**、不拖垮进程（dsh-app-boot 的 activationDiagnostic）。validate-preset
+#      ⑥ 守护「预设行不带 disabled 护栏」这条）。
 # 其余行（含 time-context、tool-schedule、plan-mode 文案、tool-plugin-manager 与
 # tool-plugin-market 的基线禁用态、workflow-ptc 等）与基线逐字一致，以免行为漂移。
 - insert:
@@ -43,30 +46,15 @@
       config:
         id: dsh-async
         name: 异步模式
-        description: 在标准模式基础上改用异步 shell 的编码 Agent：async_run 的命令超出首次等待不会被杀掉，而是转后台并返回作业编号（job_id）；async_wait_job / async_wait_agent 都是有界等待读取，用户插话时立即返回且后台工作不受影响。
+        description: 在标准模式基础上改用异步命令执行的编码 Agent：async_run 的命令超出首次等待时转入后台并返回作业编号（job_id），稍后用 async_wait_job 取回结果；async_wait_agent 有界等待后台子代理；async_agent 后台派生子代理并支持按 dsh 模型选择设置指定路由，async_list_subagent_models 只读查询可用路由。用户插话时等待立即结束，后台工作继续运行。
         order: 5
         plugins:
-          # ── 身份（改动项 5：persona prefix）──
+          # ── 身份（改动项 5：persona prefix 与基线身份句逐字一致，纪律走运行时
+          #    section——见本文件头改动项 5）──
           - id: persona
             name: '@deepseek-ai/dsh-persona'
             config:
-              prefix: >-
-                You are a coding agent powered by the {{model}} model.
-                This deployment runs commands ASYNCHRONOUSLY. `async_run` returns a job_id
-                instead of blocking when a command outlives its yield budget: when that
-                happens, keep working on other things and call `async_wait_job` later instead
-                of waiting idly or re-running the command. Use `async_wait_agent` (bounded,
-                interruptible) rather than polling when you need a background subagent's
-                outcome. Never treat a returned job_id as a failure.
-                DELEGATION RULES (hard rules, not advice):
-                1) Delegations are ALWAYS background. async_agent is the ONLY
-                delegation entry in this preset (it has no foreground mode); the
-                host subagent / subagent_fork tools are disabled here. A foreground
-                delegation blocks the entire tool batch — never pass
-                run_in_background: false.
-                2) When you need a subagent's result, wait with async_wait_agent (bounded
-                wait_ms). Do not poll in a loop; do not re-delegate just to check
-                progress; the final answer arrives as its own message.
+              prefix: You are a coding agent powered by the {{model}} model.
           - id: agent-instructions
             name: '@deepseek-ai/dsh-agent-instructions'
             config:
@@ -96,6 +84,14 @@
             name: dsh-async-tools
             config:
               toolName: async_agent
+              owningPreset: dsh-async
+          # 顶层只读行：路由查询工具（需求 §2.3.4）。放顶层而非 delegation 组——
+          # 它只消费 llm / subagentModelSelection / sessionProjections / tools 四个
+          # 宿主全局服务，不触碰组内隔离的编排引擎；放组内反而对编排会话外不可见。
+          - id: async-list-models
+            name: dsh-async-tools
+            config:
+              toolName: async_list_subagent_models
               owningPreset: dsh-async
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
@@ -168,9 +164,11 @@
                 name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
               # 宿主单发／派生委托入口禁用（需求 §3.1：委托入口收归本包——派生
               # 入口唯一化为 async_agent，等待纪律单点；config 逐字保留以便翻转）。
-              # 宿主行的 cwd / reasoning_effort / agent_preset 模型参数与行配置的
-              # agentOptions / maxDepth 不在本包创建工具中——需要时按宿主规则
-              # 换预设开新会话（需求 §3.1 末条）。
+              # 公共参数已同形收进 async_agent（需求 §2.3.1：cwd / provider+model /
+              # reasoning_effort / agent_preset）；本包预设行不配置可选预设集合，
+              # agent_preset 恒不暴露。宿主行的 agentOptions / maxDepth 行级默认
+              # 与全功能入口仍以换预设开新会话为出路（需求 §3.1 末条）；路由
+              # 名单以 async_list_subagent_models 实时口径查询（需求 §2.3.4）。
               - id: tool-subagent
                 name: '@deepseek-ai/dsh-tool-subagent'
                 disabled: true
@@ -191,7 +189,7 @@
               - id: tool-workflow
                 name: '@deepseek-ai/dsh-tool-workflow'
                 disabled: true
-              # 第五行 async_workflow 插在 delegation 组内（tool-workflow 行后）——
+              # 第六行 async_workflow 插在 delegation 组内（tool-workflow 行后）——
               # 编排引擎是组内隔离服务，组外行 ctx.get 恒取不到（需求 §3.2 末条、
               # 设计 §3.5/§3.6）；组内注册工具的成例即上面的 tool-workflow 行。
               - id: async-workflow

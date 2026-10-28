@@ -10,6 +10,9 @@
  * ## 准入与字段来源
  *
  * 1. 先检查 `.local/` 与 `.local/config.mjs`，缺席/损坏处置如下；环境变量不绕过准入。
+ *    例外：调用方只**需要宿主源**时，可用显式来源（环境变量 `DSAT_HOST_MODULES` 或
+ *    命令行 `--host-file`）不装载本机配置直接执行——此时本机配置的缺席/损坏合同不适用
+ *    （现行实例：`verify/check-agent-policy.mjs` 的 `resolveHostSource`）。
  * 2. 准入后逐字段取非空环境变量优先、文件值备用；支持 `DSAT_HOST_MODULES` /
  *    `DSAT_INSTANCE_URL` / `DSAT_TOKEN_FILE` 等。文件为 ESM 默认导出对象，示例为
  *    `tools/local-config.example.mjs`。宿主解析钩子可单独用环境变量跑单测，与本入口不同。
@@ -25,8 +28,8 @@
  * - **`.local/` 在、`config.mjs` 不在或装载失败** → `LocalConfigInvalid`。这是**开发机
  *   配置坏了**，按**红**处理。
  *
- * 若不分开，开发机上误删一次 `config.mjs` 就会让所有本机判据静默变绿——那正是
- * 本仓反复登记过的"假绿"形态（`verify/README.md` 现行要点：「优先默认权限执行；纯函数判断尽量进程内复用」）。
+ * 若不分开，开发机上误删一次 `config.mjs` 就会让所有本机判据静默变绿（假绿比不测
+ * 更糟；`verify/README.md` 现行要点：「优先默认权限执行；纯函数判断尽量进程内复用」）。
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -76,6 +79,19 @@ const ENV_FIELDS = [
  */
 export function localPlanePresent(root = MODULE_ROOT) {
   return existsSync(join(root, LOCAL_DIR));
+}
+
+/**
+ * `hostModules` → 0.2.1 线证据树根（其下的 `@deepseek-ai` 域目录）。
+ *
+ * 结构性缺省只此一处：走到显式宿主源（`DSAT_HOST_MODULES` / `--host-file`）的调用方
+ * 也用它拼路径，域目录名不另抄一份；宿主锚与证据锚因此读同一份来源。
+ *
+ * @param {string | undefined} hostModules - 宿主安装树的 `node_modules`（无来源时 `undefined`）。
+ * @returns {string | undefined} 证据树根；无来源时 `undefined`。
+ */
+export function treeFromHostModules(hostModules) {
+  return hostModules === undefined ? undefined : join(hostModules, '@deepseek-ai');
 }
 
 /**
@@ -151,7 +167,7 @@ export async function loadLocalConfig({ root = MODULE_ROOT, env = process.env } 
    * `verify/check-junctions.mjs` 的同根对账因此是构造性的，不靠让两处常量保持一致。
    */
   const evidenceTree = {
-    '021': fileTrees['021'] ?? (hostModules === undefined ? undefined : join(hostModules, '@deepseek-ai')),
+    '021': fileTrees['021'] ?? treeFromHostModules(hostModules),
     '020': fileTrees['020'],
     '017': fileTrees['017'],
     '015': fileTrees['015']
@@ -234,6 +250,7 @@ export function describeConfig(config) {
     `本机配置 来源=${config.source} 文件=${config.configFile ?? '（无）'}`,
     line('hostModules', config.hostModules),
     line("evidenceTree021", config.evidenceTree['021']),
+    line("evidenceTree020", config.evidenceTree['020']),
     line("evidenceTree017", config.evidenceTree['017']),
     line("evidenceTree015", config.evidenceTree['015']),
     line('instanceUrl', config.instanceUrl),

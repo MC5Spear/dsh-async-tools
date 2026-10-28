@@ -116,7 +116,7 @@ test('watchWakeSignal：上下文形态与无 form 消息即使落在 next-step 
   emit('agent/inbox/inserted', inboxPayload({ agent, sourceKind: 'user', form: 'catalog', text: 'catalog snapshot', target: 'next-step' }));
   emit('agent/inbox/inserted', inboxPayload({ agent, sourceKind: 'user', form: 'recall', text: 'recall context', target: 'next-step' }));
   emit('agent/inbox/inserted', inboxPayload({
-    agent, sourceKind: LATE_ANSWER_SOURCE, form: 'notice', summary: 's', text: '[迟到应答]', target: 'next-step'
+    agent, sourceKind: LATE_ANSWER_SOURCE, form: 'notice', summary: 's', text: '[迟到作答]', target: 'next-step'
   }));
 
   const race = await Promise.race([
@@ -282,7 +282,7 @@ test('watchLateAnswer：插件事件唤醒——agentId 过滤 + summary/qid 透
   // 同名前缀的宿主事件也不触发（载体是插件事件，不再是 agent/inbox/inserted）。
   emit('agent/inbox/inserted', inboxPayload({
     agent, sourceKind: LATE_ANSWER_SOURCE, form: 'notice',
-    summary: 's', text: '[迟到应答] …'
+    summary: 's', text: '[迟到作答] …'
   }));
   assert.ok(await stillPending(watcher.promise), '别人的作答/宿主插入事件不得触发唤醒分支');
 
@@ -384,7 +384,7 @@ test('（R30-d 互斥联测，通道轮）迟到作答专门分支与通用唤�
     assert.ok(await stillPending(pendings[key]), `迟到作答事件不得触发 ${key}`);
   }
   emit('agent/inbox/inserted', inboxPayload({
-    agent, sourceKind: LATE_ANSWER_SOURCE, form: 'notice', summary: 's', text: '[迟到应答]'
+    agent, sourceKind: LATE_ANSWER_SOURCE, form: 'notice', summary: 's', text: '[迟到作答]'
   }));
   for (const key of ['wake', 'settled', 'activity']) {
     assert.ok(await stillPending(pendings[key]), `本包 kind 的宿主插入事件不得触发 ${key}（互斥由载体分家保证）`);

@@ -15,6 +15,9 @@
  */
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
+import { join } from 'node:path';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
 import { validateJsonSchemaValue, checkedTool, fakeAgent, fakeCtx, fakeProc, freezeTimers, inboxPayload } from './_helpers.mjs';
 import { LATE_ANSWER_EVENT } from '../lib/interrupts.js';
@@ -77,7 +80,7 @@ hostTest('async_run：超出首次等待 → 返回作业编号，命令不被�
   assert.match(result.job_id, /^async-command-/);
   assert.match(result.note, /async_wait_job\(job_id="/);
   assert.match(result.note, /was NOT terminated/, '首次等待到期不杀命令（R22 英文口径）');
-  assert.match(result.note, /the background task keeps running/);
+  assert.match(result.note, /is still running/, 'note 明说命令仍在运行（防误判终止后重跑）');
   assert.equal(isKilled(), false, '让出不得杀死命令 —— 这是与内置 pwsh 的根本区别');
   assert.equal(f.jobsFake.registeredSpecs.length, 1, '让出路径应注册一个作业');
   assert.equal(f.startedSpecs.length, 1, '不得重复执行进程');
@@ -637,8 +640,8 @@ hostTest('async_run：描述里写出生效的预算数字（锚②③④都接�
   // `async_run` 是**唯一**该看到 yield_ms 与"转后台"的工具。
   assert.match(tool.description, /yield_ms/, 'async_run 必须告诉模型 yield_ms 参数');
   assert.match(tool.description, /job id \(job_id\)/, 'async_run 必须说清超时后转后台');
-  // 锚点：②③④（刷新规则就地改写的锚句必须真的在描述里）。
-  assert.match(tool.description, /First wait bounded to \d+–\d+ ms/);
+  // 首次等待的数字口径（默认值＋参数名＋范围）单点落在 digest.yield——刷新
+  // 就地改数字的锚就是这一句（描述里不得另起一份重复的区间句）。
   assert.match(tool.description, /The first wait defaults to 15000 ms \(pass yield_ms, range \d+–\d+ ms\)/);
   assert.match(tool.description, /Per-call wait budgets must be passed explicitly, range \d+–120000 ms;/);
   assert.equal(typeof tool.parameters.properties.yield_ms, 'object', 'async_run 的 parameters 里必须有 yield_ms');
@@ -770,6 +773,40 @@ hostTest('async_run（注册拒绝分流）：非触顶的注册拒绝不得套�
   assert.equal(listed, 0, '非触顶路径根本不该去查存活清单（listAliveJobs 是触顶分支专属）');
 });
 
+hostTest('async_run（注册拒绝·操作者通道）：完整原文进 stderr 且单行化——多行宿主原文不得伪造日志行（§6.2/§6.3）', async () => {
+  const f = fakeCtx();
+  const { settle } = fakeProc({ text: '', status: 'running', autoResolve: false });
+  f.installShellExecute(() => { throw new Error('shell must not be reached'); });
+  // 宿主注册拒绝原文带换行（堆栈形态）：模型侧截断单行，操作者侧 stderr 必须
+  // 吃到**完整**原文（不只是截断段）且不得因换行拆行。
+  const rawLines = ['job registration failed: validation stack', '  at jobs.start (host.js:9:3)', '\tinner: label invalid'];
+  f.ctx.jobs.start = () => { throw new Error(rawLines.join('\n')); };
+
+  const stderrChunks = [];
+  const realStderrWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (chunk) => { stderrChunks.push(String(chunk)); return true; };
+  let raised;
+  try {
+    await createRunTool(f.ctx, resolveConfig({ toolName: 'async_run', defaultYieldMs: 1, minYieldMs: 1 }))
+      .execute({ command: 'Start-Sleep 600', description: 'long build' }, exec);
+  } catch (error) {
+    raised = error;
+  } finally {
+    process.stderr.write = realStderrWrite;
+  }
+  settle();
+
+  assert.ok(raised !== undefined, '注册失败必须让本次调用失败');
+  const captured = stderrChunks.join('');
+  const lines = captured.split('\n');
+  const notice = lines.find((line) => line.includes('注册拒绝') && line.includes('完整原文'));
+  assert.ok(notice !== undefined, '完整原文必须有一条 stderr 操作者日志');
+  assert.ok(notice.includes('validation stack') && notice.includes('inner: label invalid'),
+    'stderr 行携带完整原文（含模型侧被截断的尾部内容）');
+  assert.ok(lines.every((line) => !line.trimStart().startsWith('at jobs.start')),
+    '换行被转义——宿主堆栈不得成为独立日志行');
+});
+
 // ---------------------------------------------------------------------------
 // T7：把返回值喂给宿主自己的输出校验器。
 // ---------------------------------------------------------------------------
@@ -824,7 +861,7 @@ hostTest('async_run（T7）：校验器活性证明——`exit_code: null` 确�
 });
 
 hostTest('J-render（R11 P1）：async_run 的完成分支必须把 note 渲染进模型可见文本', () => {
-  // 缺陷形态：完成分支的 `render` 若只输出
+  // 缺陷形态：完成分支的 `render` 若只带
   // `value.output`，"输出被内存丢弃、完整输出在 <路径>"这句 `note` **永远到不了模型眼前**。
   //
   // 根因是**把"值里有"当成了"模型看得见"**：结构化 `value` 不进模型上下文。
@@ -865,7 +902,7 @@ hostTest('J-render（R11 P1）：async_run 的完成分支必须把 note 渲染�
 // 安全/健壮性/异常处理的缺陷防御判据。
 // ---------------------------------------------------------------------------
 
-hostTest('R29-e（判据 7·）：让出窗口内被信号杀死且 done 照常 resolve → killed 结局带部分输出，且过 output schema', async () => {
+hostTest('R29-e（判据 7·）：让出窗口内进程被信号终止且 done 照常 resolve → killed 结局带部分输出，且过 output schema', async () => {
   const f = fakeCtx();
   // done 在预算内 resolve（微任务先行，赢过 5ms 的让出定时器），但 status 是
   // 'killed'——被杀进程的 done 也是 resolve。无条件走 completed
@@ -909,7 +946,7 @@ hostTest('R29-e（判据 7b·无文形态）：killed 且无任何输出 → 不
 });
 
 hostTest('F-D：killed 无 signal／无丢失标记／无输出 → 渲染仍含两语终态状态行，不得为空串', () => {
-  // 设计 §3.1（对齐需求 §2.2.2 终态可分辨）：无细节形态的可见文本同样非空——
+  // 设计 §3.1（与需求 §2.2.2 终态可分辨的要求一致）：无细节形态的可见文本同样非空——
   // 空串会让模型把被杀当成「没有结果」，三形终态必须可分辨。
   const f = fakeCtx();
   const tool = createRunTool(f.ctx, config);
@@ -1013,7 +1050,7 @@ hostTest('R29-f（判据 11·注册失败单行化）：宿主原文多行超长
   immediateTimers(f.ctx);
   const { proc } = fakeProc({ text: 'bg', status: 'running', autoResolve: false });
   f.installShellExecute(() => Promise.resolve(proc));
-  // 615 字符、含 \n、\r\n\t：拍平后 612 → 模型侧截到 500 + (+112)。
+  // 614 字符、含 \n、\r\n\t：拍平后 612 → 模型侧截到 500 + (+112)。
   const rawDetail = `${'X'.repeat(250)}\n${'Y'.repeat(250)}\r\n\t${'Z'.repeat(110)}`;
   f.ctx.jobs.start = () => { throw new Error(rawDetail); };
   const tool = createRunTool(f.ctx, config);
@@ -1142,6 +1179,8 @@ hostTest('async_run（prep 窗口）：prep 失败——execute 异步拒绝（�
   // done 链把 execute 拒绝分类为 {status:'failed'} → 注册表按 failed 结算 →
   // 首次等待带回 failed view → settleNow 重抛闭包里的原始错误（与
   // 「准备失败直接抛」等价；作业侧终态卡在册，job_list 可见）。
+  // 缺省 workdir 的准备失败无新信息：不加诊断、原样重抛（诊断只服务显式
+  // workdir，见下方 prep 诊断用例组）。
   const f = fakeCtx();
   freezeTimers(f.ctx);
   f.installShellExecute(() => Promise.reject(new Error('spawn EPERM at process creation')));
@@ -1149,11 +1188,276 @@ hostTest('async_run（prep 窗口）：prep 失败——execute 异步拒绝（�
 
   await assert.rejects(
     () => tool.execute({ command: 'bad-prep', description: 'prep fail', yield_ms: 600000 }, exec),
-    /spawn EPERM at process creation/,
-    '原始错误不得被吞成别的形状'
+    (error) => {
+      const text = error instanceof Error ? error.message : String(error);
+      assert.ok(text.includes('spawn EPERM at process creation'), '原始错误不得被吞成别的形状');
+      assert.ok(!text.includes('Requested workdir'), '缺省 workdir 不加诊断');
+      return true;
+    }
   );
   const views = f.jobsFake.views();
   assert.equal(views.length, 1, '执行即注册：prep 失败也留下作业记录');
   assert.equal(views[0].status, 'failed', '作业按 failed 结算（宿主 done→结算契约，通知侧同 killed 路）');
   assert.match(views[0].detail, /spawn EPERM/);
+});
+
+// ---------------------------------------------------------------------------
+// 显式 workdir 的 shell 准备失败诊断（设计 §3.1）。反例形态：真机上显式
+// workdir 指向不存在的目录时，模型只收到 spawn ENOENT 原文——没有请求
+// 目录，也没有检查／改正出路。目录存在性核实走真实文件系统（失败时刻
+// stat），不 mock 判定：可证实的才断言「目录不存在」。
+// ---------------------------------------------------------------------------
+
+hostTest('async_run（prep 诊断·目录不存在）：显式 workdir 指向不存在目录 → 五要素诊断＋「目录不存在」，原错独立拼接，重抛与注册表 detail 同一文本', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  const base = await mkdtemp(join(tmpdir(), 'prep-diag-missing-'));
+  try {
+    f.setWorkingDir(base);
+    f.installShellExecute(() => Promise.reject(new Error('spawn C:\\Program Files\\nodejs\\node.exe ENOENT')));
+    const tool = createRunTool(f.ctx, config);
+
+    let message = '';
+    await assert.rejects(
+      () => tool.execute(
+        { command: 'probe-missing', description: 'prep diag', workdir: 'missing-dir', yield_ms: 600000 },
+        exec
+      ),
+      (error) => { message = error instanceof Error ? error.message : String(error); return true; }
+    );
+    assert.ok(message.includes('Requested workdir: missing-dir'), '请求原值在场');
+    assert.ok(message.includes(resolve(base, 'missing-dir')), '解析绝对路径在场');
+    assert.ok(message.includes(base), '会话当前目录在场');
+    assert.ok(message.includes('The resolved directory does not exist.'), '可证实的「目录不存在」结论');
+    assert.ok(message.includes('Correct workdir and retry'), '修正重试出路在场');
+    assert.ok(message.includes('spawn C:\\Program Files\\nodejs\\node.exe ENOENT'), '真实原错在场');
+    assert.equal(
+      message.split('spawn C:\\Program Files\\nodejs\\node.exe ENOENT').length - 1, 1,
+      '原错原文恰出现一次、未被改写或重复拼接'
+    );
+    assert.ok(
+      message.indexOf('node.exe ENOENT') > message.indexOf('Correct workdir and retry'),
+      '原错独立拼接在诊断之后（不进占位模板）'
+    );
+
+    const views = f.jobsFake.views();
+    assert.equal(views[0].status, 'failed', '终态保持 failed（诊断不改判）');
+    assert.equal(views[0].detail, message, '后台 detail 与首次重抛同一文本（两路径一致，设计 §3.1）');
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+hostTest('async_run（prep 诊断·目录存在）：目录实际在而失败另有原因 → 明示「目录存在、原因在别处」，不妄断目录缺失、不切目录', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  const base = await mkdtemp(join(tmpdir(), 'prep-diag-exists-'));
+  try {
+    f.setWorkingDir(base);
+    f.installShellExecute(() => Promise.reject(new Error('spawn EPERM at process creation')));
+    const tool = createRunTool(f.ctx, config);
+
+    let message = '';
+    await assert.rejects(
+      () => tool.execute(
+        { command: 'probe-exists', description: 'prep diag', workdir: base, yield_ms: 600000 },
+        exec
+      ),
+      (error) => { message = error instanceof Error ? error.message : String(error); return true; }
+    );
+    assert.ok(message.includes('The resolved directory exists'), '明示目录存在');
+    assert.ok(!message.includes('does not exist'), '不把失败妄断为目录缺失');
+    assert.ok(message.includes('spawn EPERM at process creation'), '真实原错保留');
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+hostTest('async_run（prep 诊断·killed 排除）：prep 窗口被 kill → 仍按 killed 原样呈现，不套 workdir 诊断', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  const base = await mkdtemp(join(tmpdir(), 'prep-diag-killed-'));
+  try {
+    f.setWorkingDir(base);
+    f.installShellExecute((spec) => new Promise((_, reject) => {
+      spec.signal.addEventListener('abort', () => reject(new Error('spawn aborted before start')));
+    }));
+    const tool = createRunTool(f.ctx, config);
+
+    const pending = tool.execute(
+      { command: 'slow-prep', description: 'prep window', workdir: 'missing-dir', yield_ms: 600000 },
+      exec
+    );
+    await new Promise((r) => { setTimeout(r, 5); });
+    const jobId = f.jobsFake.views()[0].id;
+    f.jobsFake.killJob(jobId, 'test kill in prep window');
+
+    const result = await pending;
+    assert.equal(result.status, 'killed', '中止形态按 killed 归类（诊断不覆盖，设计 §3.1）');
+    assert.match(result.detail, /spawn aborted before start/);
+    assert.ok(!String(result.detail).includes('Requested workdir'), 'killed 形态不带诊断');
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 核实的第四档（设计 §3.1）：workdir 指向**已存在的普通文件**——spawn 侧报
+// ENOTDIR（把它当 cwd 用），stat 核实却成功且不是目录。旧实现只看 stat 成败，
+// 会误报「目录存在、失败原因在别处」，把读者引去查命令本身。
+// ---------------------------------------------------------------------------
+
+hostTest('async_run（prep 诊断·不是目录）：workdir 指向已存在的普通文件 → 明示「路径已存在但不是目录」，不误导查别处', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  const base = await mkdtemp(join(tmpdir(), 'prep-diag-notdir-'));
+  try {
+    f.setWorkingDir(base);
+    const filePath = join(base, 'plain-file');
+    await writeFile(filePath, 'x', 'utf8');
+    f.installShellExecute(() => Promise.reject(new Error('spawn C:\\cwd\\plain-file ENOTDIR')));
+    const tool = createRunTool(f.ctx, config);
+
+    let message = '';
+    await assert.rejects(
+      () => tool.execute(
+        { command: 'probe-notdir', description: 'prep diag', workdir: filePath, yield_ms: 600000 },
+        exec
+      ),
+      (error) => { message = error instanceof Error ? error.message : String(error); return true; }
+    );
+    assert.ok(message.includes('The resolved path exists but is not a directory'), '第四档结论：路径已存在但不是目录');
+    assert.ok(!message.includes('failure has another cause'), '不得再误报「原因在别处」');
+    assert.ok(message.includes('spawn C:\\cwd\\plain-file ENOTDIR'), '真实原错保留');
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// killed 触发形态（设计 §3.1）：宿主本地 shell 执行器的「进程未上报结局」契约
+// ——spawn 失败时 execute 照常 resolve 出句柄、以 killed 结算（退出码与信号皆
+// null）、整条观测 stderr 被替换为宿主注记。R7 的用例只覆盖 execute 拒绝形态；
+// 本组用例钉住这一 killed 形态的核实诊断。检测信号＝「注记在输出中＋无退出码无信号」。
+// ---------------------------------------------------------------------------
+
+hostTest('async_run（prep 诊断·未上报结局）：killed＋注记＋显式 workdir → 附 stat 核实诊断，保留 killed 状态与原错，两出口同一文本', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  const base = await mkdtemp(join(tmpdir(), 'prep-diag-note-'));
+  try {
+    f.setWorkingDir(base);
+    const note = 'subprocess failed before reporting an outcome: Error: spawn C:\\Program Files\\nodejs\\node.exe ENOENT';
+    const { proc, settle } = fakeProc({
+      text: `[stderr]\n${note}`,
+      spawnFailed: note,
+      autoResolve: false
+    });
+    f.installShellExecute(() => Promise.resolve(proc));
+    const tool = createRunTool(f.ctx, config);
+
+    const pending = tool.execute(
+      { command: 'probe-note', description: 'provider failure', workdir: 'missing-dir', yield_ms: 600000 },
+      exec
+    );
+    settle({ status: 'killed', exitCode: null, signal: null });
+    const result = await pending;
+
+    assert.equal(result.status, 'killed', '终态保持 killed（诊断不改判）');
+    assert.ok(result.detail.includes('Requested workdir: missing-dir'), '诊断要素：请求原值在场');
+    assert.ok(result.detail.includes('The resolved directory does not exist.'), '诊断结论来自 stat 核实');
+    assert.ok(result.detail.includes('Correct workdir and retry'), '修正重试出路在场');
+    assert.ok(!result.detail.includes('subprocess failed before reporting an outcome'),
+      '注记已在输出中——诊断不重复拼接原错');
+    assert.ok(result.output.includes(note), '宿主注记（含原错）原样保留在输出中');
+    // 两出口同一文本：注册表 detail（done 钩子路径）与首次等待返回的 detail 一致。
+    const views = f.jobsFake.views();
+    assert.equal(views[0].status, 'killed', '后台结算同样按 killed');
+    assert.equal(views[0].detail, result.detail, '两条出口同一诊断文本（设计 §3.1）');
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+hostTest('async_run（prep 诊断·未上报结局排除）：缺省 workdir 与带信号的真实 kill 都不套诊断', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  const base = await mkdtemp(join(tmpdir(), 'prep-diag-note-x-'));
+  try {
+    f.setWorkingDir(base);
+    const note = 'subprocess failed before reporting an outcome: Error: spawn node.exe ENOENT';
+    const tool = createRunTool(f.ctx, config);
+
+    // ① 缺省 workdir：无请求可核对（无新信息），不加诊断。
+    const bare = fakeProc({ text: `[stderr]\n${note}`, spawnFailed: note, autoResolve: false });
+    f.installShellExecute(() => Promise.resolve(bare.proc));
+    const barePending = tool.execute(
+      { command: 'probe-bare', description: 'provider failure bare', yield_ms: 600000 },
+      exec
+    );
+    bare.settle({ status: 'killed', exitCode: null, signal: null });
+    const bareResult = await barePending;
+    assert.equal(bareResult.status, 'killed');
+    assert.ok(!String(bareResult.detail).includes('Requested workdir'), '缺省 workdir 不加诊断');
+    assert.ok(bareResult.output.includes(note), '注记原样保留');
+
+    // ② 真实 kill（带信号）：注记前缀即便巧合在场，无码无信号的合取也不成立。
+    const killed = fakeProc({ text: 'partial output before kill', autoResolve: false });
+    f.installShellExecute(() => Promise.resolve(killed.proc));
+    const killedPending = tool.execute(
+      { command: 'probe-kill', description: 'real kill', workdir: 'missing-dir', yield_ms: 600000 },
+      exec
+    );
+    killed.settle({ status: 'killed', exitCode: null, signal: 'SIGTERM' });
+    const killedResult = await killedPending;
+    assert.equal(killedResult.status, 'killed');
+    assert.ok(!String(killedResult.detail).includes('Requested workdir'), '带信号的真实 kill 不套诊断');
+
+    // ③ 注记在场但信号也在（宿主契约下不可达的合成形态）：「无退出码无信号」
+    // 是检测信号的独立条件——变异删掉该项检查时，本反例必红。
+    const noted = fakeProc({ text: `[stderr]\n${note}`, spawnFailed: note, autoResolve: false });
+    f.installShellExecute(() => Promise.resolve(noted.proc));
+    const notedPending = tool.execute(
+      { command: 'probe-noted-signal', description: 'synthetic note plus signal', workdir: 'missing-dir', yield_ms: 600000 },
+      exec
+    );
+    noted.settle({ status: 'killed', exitCode: null, signal: 'SIGKILL' });
+    const notedResult = await notedPending;
+    assert.equal(notedResult.status, 'killed');
+    assert.ok(!String(notedResult.detail).includes('Requested workdir'), '注记在场但信号在场 ⇒ 合取不成立，不套诊断');
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+hostTest('async_run（prep 诊断·未上报结局·不是目录）：killed 形态与拒绝形态同一四分结论', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  const base = await mkdtemp(join(tmpdir(), 'prep-diag-note-notdir-'));
+  try {
+    f.setWorkingDir(base);
+    const filePath = join(base, 'plain-file');
+    await writeFile(filePath, 'x', 'utf8');
+    const note = 'subprocess failed before reporting an outcome: Error: spawn C:\\cwd\\plain-file ENOTDIR';
+    const { proc, settle } = fakeProc({
+      text: `[stderr]\n${note}`,
+      spawnFailed: note,
+      autoResolve: false
+    });
+    f.installShellExecute(() => Promise.resolve(proc));
+    const tool = createRunTool(f.ctx, config);
+
+    const pending = tool.execute(
+      { command: 'probe-note-notdir', description: 'provider failure notdir', workdir: filePath, yield_ms: 600000 },
+      exec
+    );
+    settle({ status: 'killed', exitCode: null, signal: null });
+    const result = await pending;
+    assert.equal(result.status, 'killed');
+    assert.ok(result.detail.includes('The resolved path exists but is not a directory'),
+      'killed 形态同样给出第四档结论（两形态同一结论）');
+    assert.ok(result.output.includes(note), '注记原样保留');
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
 });

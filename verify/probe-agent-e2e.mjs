@@ -1,10 +1,9 @@
 /**
  * 子代理派生与等待的真机端到端证据（验证实例；需求 §2.3、设计 §8 验证设计）。
  *
- * 设置起跑块走现行宿主形状：命名空间是宿主行 entry id `async-tools-host`
- * （不是包名 `async-tools`），读 `settings/describe`（namespaces 数组）、写
- * `settings/update({ns, patch})`——与 `verify/_r28-helpers.mjs`、final-acceptance
- * 同一条链。三节取证本体（转录读回）不依赖 settings API。
+ * 设置起跑块经共享助手（`verify/_r28-helpers.mjs`）：命名空间是宿主行 entry id
+ * `async-tools-host`（不是包名 `async-tools`），嵌套 `settings` 子树形状——与
+ * final-acceptance 同一条链。三节取证本体（转录读回）不依赖 settings API。
  *
  * 三件事，全部从**真实会话转录**读回，不碰验证实例以外的任何实例：
  *  1. 模型用 `async_agent` 派生子代理：调用参数只有 description+prompt（没有
@@ -29,7 +28,8 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { rpc, transcriptOf, localConfig } from './_rpc.mjs';
-import { CHILD_SETTLED } from './message-markers.mjs';
+import * as MESSAGE_MARKERS from './message-markers.mjs';
+import { readNs, patchNs } from './_r28-helpers.mjs';
 
 // 探针驱动子代理的工作目录从配置的工作目录派生（仓根的上一级）。
 const CWD = dirname(localConfig.workspaceDir);
@@ -49,13 +49,8 @@ const FACTORY_DEFAULTS = {
   pollIntervalMs: 500, maxResultChars: 30000, jobKind: 'async-command',
   subagentProvider: 'spawn'
 };
-const SETTINGS_NS = 'async-tools-host';
-
 async function readSettings() {
-  const described = await rpc('settings/describe', {});
-  const ns = (described.namespaces ?? []).find((candidate) => candidate.ns === SETTINGS_NS);
-  if (ns === undefined) throw new Error(`settings/describe 里没有命名空间 ${SETTINGS_NS}`);
-  return ns.value ?? ns.resolved ?? {};
+  return (await readNs()).value;
 }
 
 {
@@ -63,7 +58,7 @@ async function readSettings() {
   const drifted = Object.keys(FACTORY_DEFAULTS).filter((k) => before[k] !== FACTORY_DEFAULTS[k]);
   if (drifted.length > 0) {
     console.log(`起跑前发现设置漂移，先归位：${drifted.map((k) => `${k}=${String(before[k])}`).join(' ')}`);
-    await rpc('settings/update', { ns: SETTINGS_NS, patch: FACTORY_DEFAULTS });
+    await patchNs(FACTORY_DEFAULTS);
   }
   const after = await readSettings();
   const stillDrifted = Object.keys(FACTORY_DEFAULTS).filter((k) => after[k] !== FACTORY_DEFAULTS[k]);
@@ -199,8 +194,8 @@ await ask(sid,
   // 在全量 results 里找会"断言等待收尾、证据却来自别处"。等待
   // 文案是中文，盯 "settled" 字样抓不住。
   const waitResultText = waitCallIndex >= 0 ? (results[waitCallIndex] ?? '') : '';
-  const wokeByMessage = /A processable message arrived|一条可处理消息已到/.test(waitResultText);
-  const settledHit = CHILD_SETTLED.some((m) => m.test(waitResultText));
+  const wokeByMessage = MESSAGE_MARKERS.WAIT_WOKE_BY_MESSAGE.test(waitResultText);
+  const settledHit = MESSAGE_MARKERS.CHILD_SETTLED.some((m) => m.test(waitResultText));
   record('等待收尾对齐该次调用：settled 三选一，或被消息唤醒且不冒称已结束',
     settledHit || (wokeByMessage && !settledHit && /still running|仍在运行/.test(waitResultText)
       && /async_wait_agent/.test(waitResultText)),

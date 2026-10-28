@@ -27,6 +27,9 @@ import { checkPublicSurface, PUBLIC_SURFACE_ALLOWLIST } from '../tools/check-pub
 
 /** 合成树里那份"干净"的 `.gitignore`（与真仓同形：只有那几条，外加 `.local/`）。 */
 const CLEAN_IGNORE = ['# 本机侧的唯一例外目录', '.local/', '', 'node_modules/', '.vscode/', 'Thumbs.db', 'Desktop.ini', ''].join('\n');
+/** 豁免文件在合成树里的占位内容：含 `.local/` 字面量，保证豁免"真的用得上"
+ * （零命中守卫不误伤——名单条目在本趟扫描里都有影子命中）。 */
+const ALLOWLIST_STUB = 'export const ALLOWLIST_STUB = ".local/";\n';
 const CLEAN_SOURCE = 'export const answer = 42;\n';
 const CLEAN_DOC = '# 合成文档\n\n这份文档不该引用任何未公开内容。\n';
 
@@ -48,7 +51,7 @@ function sandbox(patch = {}) {
   };
   for (const file of PUBLIC_SURFACE_ALLOWLIST.keys()) {
     if (file === patch.skipAllowlisted) continue;
-    put(file, '');
+    put(file, file === '.gitignore' ? '' : ALLOWLIST_STUB);
   }
   put('.gitignore', patch.ignore ?? CLEAN_IGNORE);
   put('lib/index.js', patch.source ?? CLEAN_SOURCE);
@@ -205,6 +208,23 @@ test('P12 `scope` 只限定扫描范围，不改变判据', () => {
     assert.ok(onlyDocs.findings.every((f) => f.file.startsWith('docs/')),
       `scope 之外的文件不该出现：${onlyDocs.findings.map((f) => f.file).join('、')}`);
     assert.ok(onlyDocs.findings.some((f) => f.family === '引用'), 'scope 之内的判据照旧生效');
+  } finally {
+    box.cleanup();
+  }
+});
+
+test('P13 豁免零命中守卫：登记了却从未用上的豁免必须报', () => {
+  // 名单守卫的第二条：条目存在、本趟也扫了，但三类判据一次都没触发——
+  // 这样的豁免是名单烂了（保护早已不存在的形态），按红处理。
+  const box = sandbox();
+  try {
+    writeFileSync(join(box.root, 'tools/_local-config.mjs'), 'export const CLEAN = true;\n', 'utf8');
+    const result = checkPublicSurface(box.root, { quiet: true });
+    assert.ok(result.findings.some((f) => f.file === 'tools/_local-config.mjs' && /零命中/.test(f.why)),
+      '存在但零命中的豁免条目必须报红');
+    // 对照：其余豁免仍有影子命中，不连带误伤。
+    assert.ok(!result.findings.some((f) => f.file !== 'tools/_local-config.mjs' && /零命中/.test(f.why)),
+      '有影子命中的豁免条目不得连带报零命中');
   } finally {
     box.cleanup();
   }

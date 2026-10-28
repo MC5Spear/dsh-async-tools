@@ -1,9 +1,10 @@
 /**
- * 基线探针（在收窄打断信号**之前**跑）：记录"queue 模式消息"的现行行为。
+ * 取证探针（不断言，只记录）：记录"queue 模式消息"对待等待与后续投递的实际行为，
+ * 供回归判据（`verify/probe-queue-delivery.mjs`）作对照。
  *
  * 要回答的两个问题（都不设断言，只记录——这是取证，不是回归判据）：
  *  1. queue 消息（落 `next-turn`）会不会打断 async_wait_job 的等待？
- *     （旧实现只判 `source.kind === 'user'`，不区分落点——按源码推断"会"，此处取活体证据。）
+ *     （只判 `source.kind === 'user'`、不区分落点的实现会打断——本探针可取证该形态。）
  *  2. 本轮结束（turn/end）之后，宿主会不会把 `next-turn` 里排队的消息领取进新轮次
  *     （user/message 出现）？——这是"收窄后 queue 消息还能不能被投递"的宿主侧地基。
  *
@@ -13,7 +14,7 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { rpc, rowOf, transcriptOf, localConfig } from './_rpc.mjs';
-import { NS, elevateSession } from './_r28-helpers.mjs';
+import { replaceNs, elevateSession } from './_r28-helpers.mjs';
 import { WAIT_INTERRUPTED } from './message-markers.mjs';
 
 const CWD = localConfig.workspaceDir;
@@ -27,8 +28,8 @@ const DEFAULTS = {
   maxResultChars: 30000, defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
   defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000, pollIntervalMs: 500, jobKind: 'async-command'
 };
-// ns 单一登记点 `_r28-helpers.mjs`（各探针统一从这里取，不自带字面量）。
-await rpc('settings/replace', { ns: NS, section: DEFAULTS });
+// 设置写入经共享助手（`_r28-helpers.mjs` 的 NS 单一登记点＋嵌套 settings 形状）。
+await replaceNs(DEFAULTS);
 
 const created = await rpc('session/create', { request: { cwd: CWD, agentPreset: PRESET } });
 if (created.agentPreset !== PRESET) throw new Error(`session/create fell back: ${String(created.agentPreset)}`);

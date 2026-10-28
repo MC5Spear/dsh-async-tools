@@ -19,7 +19,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import * as MESSAGE_MARKERS from './message-markers.mjs';
 import { rpc, rowOf, transcriptOf, localConfig } from './_rpc.mjs';
-import { NS, elevateSession } from './_r28-helpers.mjs';
+import { readNs, replaceNs, elevateSession } from './_r28-helpers.mjs';
 
 // 服务住在自己的家目录（服务家目录），**不在本包内**。实例坐标一律经配置加载器取——
 // 写死绝对路径（含从本文件位置推算服务目录的写法）在服务目录迁走之后集体失效。
@@ -53,13 +53,10 @@ const DEFAULTS = {
   maxResultChars: 30000, defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
   defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000, pollIntervalMs: 500, jobKind: 'async-command'
 };
-// 设置侧是宿主行 entry（`async-tools-host`；单一登记点 `_r28-helpers.mjs` 的 NS）。
-// 命名空间必须逐字一致：describe 里没有的 ns，replace 直接报
-// "No configurable plugin entry"。
-await rpc('settings/replace', { ns: NS, section: DEFAULTS });
-const effective = await rpc('settings/describe', {});
-const asyncNs = effective.namespaces.find((n) => (n.ns ?? n.namespace ?? n.id) === NS);
-const effectiveWait = (asyncNs.value ?? asyncNs.resolved ?? asyncNs).maxWaitMs;
+// 设置读写经共享助手（`_r28-helpers.mjs` 的 NS 单一登记点＋嵌套 settings 形状）：
+// describe 里没有该 ns，replace 直接报 "No configurable plugin entry"。
+await replaceNs(DEFAULTS);
+const effectiveWait = (await readNs()).value.maxWaitMs;
 console.log(`起跑基线：maxWaitMs=${String(effectiveWait)}（必须够宽，否则插话窗口只有 ${String(effectiveWait)} ms 宽，本脚本的 2 秒轮询撞不进）`);
 if (effectiveWait < 600000) {
   throw new Error(`设置没写进去：maxWaitMs=${String(effectiveWait)}——先修设置再跑，否则插话判据会因为窗口太窄而假红`);
@@ -302,7 +299,7 @@ judge('会话里真的调用了 async_run 与 async_wait_job（否则后面的�
 
 // ① 短命令（ROUND 之前那条 SHORT_OK）：必须**直接返回输出**（预算内完成，不回
 //    句柄）。执行即注册——短命令同样注册了作业，只是完成先于首次等待到期，
-//    按完成分支直接交付输出（「不注册作业」是旧说法，与实现不符）。
+//    按完成分支直接交付输出。
 const shortResult = resultOf(0);
 judge('短命令直接返回完整输出（预算内完成，不返回句柄）',
   typeof shortResult === 'string' && shortResult.includes('SHORT_OK'),
@@ -322,7 +319,7 @@ judge('超出首次等待的那次返回了"仍在运行"的作业编号（不�
 //    async_wait_job 调用，取其结果文本验证终态输出。判据要求**每一个**
 //    job_id 都有取回证据——多个作业缺任何一个都判失败（存在性 some 会放走
 //    丢失的那个）。
-const jobIds = [...new Set((yielded.map((x) => /(async-command-\d+)/.exec(x.text)?.[1])).filter(Boolean))];
+const jobIds = [...new Set((yielded.map((x) => /async_wait_job\(job_id="([^"]+)"/.exec(x.text)?.[1])).filter(Boolean))];
 const finalTextOf = (id) => waitCalls
   .filter((c) => c.args?.job_id === id)
   .map((c) => resultsById.get(c.callId))
@@ -342,7 +339,9 @@ judge('每一次让出的作业都被 async_wait_job 按参数关联取回了最
 judge('取回的输出证明进程正常结束：末尾输出完整、无截断、无失败标记',
   waitTexts.some((t) => /LONG_DONE|PATIENCE/.test(t)
     && !/output truncated|已截断/.test(t)
-    && !/exit code: [1-9]|退出码: [1-9]|killed by signal|被信号杀死/.test(t)),
+    // 失败标记＝非零退出码（场景复合值，含数字类属——留本地）＋信号终止句干
+    // （词典单键 render.killedBySignal，取共享锚 KILLED_BY_SIGNAL）。
+    && !(/exit code: [1-9]|退出码: [1-9]/.test(t) || MESSAGE_MARKERS.KILLED_BY_SIGNAL.test(t))),
   waitTexts.map((t) => JSON.stringify(t.slice(-40))).join(' | ').slice(0, 140));
 
 // ⑤ 插话：等待被中断，而作业**不受影响**（需求 §2.1.2 的不变量）。
@@ -373,7 +372,8 @@ judge('打断的返回里明说作业仍在后台继续运行、没有受到影�
 // 作业杀了，这里就取不回东西——那才是这条判据真正要防的。
 judge('打断之后**再等一次**仍能取回同一个作业的最终输出（实证：作业活着）',
   /PATIENCE/.test(waitTexts.join('\n'))
-    && !/exit code: [1-9]|退出码: [1-9]|killed by signal|被信号杀死/.test(waitTexts.join('\n')),
+    // 失败标记口径同上：退出码臂（场景复合值）＋KILLED_BY_SIGNAL（共享锚）。
+    && !(/exit code: [1-9]|退出码: [1-9]/.test(waitTexts.join('\n')) || MESSAGE_MARKERS.KILLED_BY_SIGNAL.test(waitTexts.join('\n'))),
   waitTexts.map((t) => JSON.stringify(t.slice(0, 70))).join(' | ').slice(0, 200));
 
 const failed = verdicts.filter((v) => !v.ok).length;

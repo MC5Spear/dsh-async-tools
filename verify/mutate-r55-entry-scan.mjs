@@ -363,7 +363,7 @@ try {
         return false;
       });
       if (misplaced) {
-        console.log(`  （${variant.name} 红面与名单不符——这不是 CAUGHT）`);
+        console.log(`  （${variant.name} 变红范围与名单不符——这不是 CAUGHT）`);
         ok = false;
       } else if (!passOk) {
         console.log(`MISPLACED-REDFACE  ${variant.name} expectPass（T2 两例）有变红——旧判据被殃及`);
@@ -379,6 +379,6 @@ try {
   restore();
 }
 console.log('');
-console.log(ok ? '变异被抓住且红面精确：R55 五判据都有能失败的判据（含两组负面对照与结束优先并存决定）。' : '**变异逃逸、没跑成或红面错置**——判据是恒真的，红面漂移了，或环境不可用。');
+console.log(ok ? '变异被抓住且变红范围精确：R55 五判据都有能失败的判据（含两组负面对照与结束优先并存决定）。' : '**变异逃逸、没跑成或变红范围错置**——判据是恒真的，变红范围漂移了，或环境不可用。');
 console.log('还原完成，摘要一致。');
 process.exitCode = ok ? 0 : 1;

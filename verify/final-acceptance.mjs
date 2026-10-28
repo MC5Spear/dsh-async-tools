@@ -7,7 +7,7 @@
  * 覆盖：
  *   1. 呈现模式 native（需求 §1.2：有 async_run/async_wait_job/async_wait_agent，无 run_code、无 pwsh）
  *   2. 预设隔离（需求 §1.2：standard 有 pwsh、无三个工具）
- *   3. 短命令直接返回、不注册作业（需求 §2.2.1）
+ *   3. 短命令在首次等待内直接返回完整输出（需求 §2.2.1：命令从执行起注册，首次等待内结算直回）
  *   4. 长命令让出且**不被杀**，句柄可复制粘贴（需求 §2.2.1）
  *   5. async_wait_job 取回输出（需求 §2.2.2）
  *   6. 插话打断等待、作业未被取消、最终仍取回完整输出（需求 §2.1.2）
@@ -18,8 +18,8 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { rpc, localConfig } from './_rpc.mjs';
-import { NS, elevateSession } from './_r28-helpers.mjs';
-import { WAIT_INTERRUPTED, SUBJECT_UNTOUCHED, YIELD_RUNNING } from './message-markers.mjs';
+import { readNs, patchNs, elevateSession } from './_r28-helpers.mjs';
+import { WAIT_INTERRUPTED, SUBJECT_UNTOUCHED, YIELD_RUNNING, NOT_TERMINATED } from './message-markers.mjs';
 
 const CWD = localConfig.workspaceDir;
 const OUT = join(localConfig.evidenceDir, 'logs', 'final-acceptance.json');
@@ -55,30 +55,21 @@ const FACTORY_DEFAULTS = {
   pollIntervalMs: 500, maxResultChars: 30000, jobKind: 'async-command'
 };
 
-// 命名空间取单一登记点 `_r28-helpers.mjs` 的 NS；ns 名必须在 describe 里逐字
-// 存在，写错则 settings 前置必炸。
-const SETTINGS_NS = NS;
-
 /**
- * 读当前生效的设置值。
+ * 读当前生效的设置值（经共享助手，嵌套 settings 形状；settings 子树形状漂移
+ * 直接失败，不做多形状回退——行定位的键名兼容见助手头注）。
  *
- * `settings/describe` **不接受 `namespace` 参数**（传了会被网关拒：
- * `unexpected "namespace"`）。正确形状是传空对象、再从返回的 `namespaces` 里按 `ns` 找。
- *
- * @returns {Promise<object>} 该命名空间的值。
+ * @returns {Promise<object>} 该命名空间的字段对象。
  */
 async function readSettings() {
-  const described = await rpc('settings/describe', {});
-  const ns = (described.namespaces ?? []).find((candidate) => candidate.ns === SETTINGS_NS);
-  if (ns === undefined) throw new Error(`settings/describe 里没有命名空间 ${SETTINGS_NS}`);
-  return ns.value ?? ns.resolved ?? {};
+  return (await readNs()).value;
 }
 
 const before = await readSettings();
 const drifted = Object.keys(FACTORY_DEFAULTS).filter((k) => before[k] !== FACTORY_DEFAULTS[k]);
 if (drifted.length > 0) {
   console.log(`起跑前发现设置漂移，先归位：${drifted.map((k) => `${k}=${String(before[k])}`).join(' ')}`);
-  await rpc('settings/update', { ns: SETTINGS_NS, patch: FACTORY_DEFAULTS });
+  await patchNs(FACTORY_DEFAULTS);
 }
 const after = await readSettings();
 const stillDrifted = Object.keys(FACTORY_DEFAULTS).filter((k) => after[k] !== FACTORY_DEFAULTS[k]);
@@ -203,13 +194,13 @@ console.log('=== 2) 执行、取回与插话行为 ===');
   const { calls, results } = parse(await transcript(sid));
   const runCalls = calls.filter((c) => c.name === 'async_run');
   const waitCalls = calls.filter((c) => c.name === 'async_wait_job');
-  record('短命令直接返回且不注册作业', results.some((t) => t.includes('SHORT_OK')), '见结果里的 SHORT_OK');
+  record('短命令在首次等待内直接返回完整输出', results.some((t) => t.includes('SHORT_OK')), '见结果里的 SHORT_OK；作业本身从执行起已注册（需求 §2.2.1）');
   record('长命令让出而非被杀',
-    results.some((t) => YIELD_RUNNING.test(t) && /没有被终止|was NOT terminated/.test(t)),
+    results.some((t) => YIELD_RUNNING.test(t) && NOT_TERMINATED.test(t)),
     `async_run 调用 ${String(runCalls.length)} 次`);
   record('async_wait_job 取回输出', results.some((t) => t.includes('LONG_DONE')), `async_wait_job 调用 ${String(waitCalls.length)} 次`);
   record('让出结果里给出可复制粘贴的 async_wait_job 调用句（带 job_id）',
-    results.some((t) => /async_wait_job\(job_id="async-command-\d+", wait_ms=\d+\)/.test(t)));
+    results.some((t) => /async_wait_job\(job_id="[^"]+", wait_ms=\d+\)/.test(t)));
 }
 
 console.log('');
@@ -247,7 +238,7 @@ console.log('=== 3) 插话打断等待而不打断后台作业 ===');
   record('等待被插话打断并说明作业未受影响',
     results.some((t) => WAIT_INTERRUPTED.test(t) && SUBJECT_UNTOUCHED.test(t)));
   record('job_list 显示作业仍在 running（未被取消）',
-    results.some((t) => /async-command-\d+ \[async-command\] running/.test(t)));
+    results.some((t) => /\S+ \[async-command\] running/.test(t)));
   record('60 秒作业最终仍输出完整结果', results.some((t) => t.includes('SURVIVED')));
 }
 

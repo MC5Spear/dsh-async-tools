@@ -4,7 +4,9 @@
  * 覆盖四条强制约束：
  * - **打断判定只能用 `source.kind === 'user'`**（role 陷阱）；
  * - 结算通知用 `source.senderSessionId` 精确关联，正文匹配只是降级路径；
- * - `agent/status` 的 `idle` 是可达的提前返回通道（设计 §3.4：命中且非 running 即立即交回）；
+ * - `agent/status` 的 `idle` 是停止证据，不是关系证据（设计 §3.4 证据分级）：
+ *   合法子代理关系（目录行）确认后立即按停止态交回；关系未证时只登记——
+ *   同组合兄弟作用域的同 id 事件可被监听器收到，不得据此结算；
  * - 屏障用"这个 id 在不在父会话的子代理目录里"判存在性，**两种行形状都认**：
  *   `listChildren()` 行没有 `kind`/`activity`，`kind: 'diagnostic'` 的判别联合
  *   是 `listDescendants()` 的形状。
@@ -1550,23 +1552,108 @@ hostTest('R55（判据 5b·注册表侧并存）：先到 user 插话 + 注册�
   agent.inbox.nextStep.length = 0; // 还原共享 fixture
 });
 
-hostTest('R55（判据 5b·屏障期 idle 信号）：存在性未证时 agent/status 转 idle → settled（信号对象不被切断标签压没）', async () => {
+hostTest('R55（判据 5b·屏障期 idle 信号）：存在性未证时 agent/status 转 idle → 只登记不行动，屏障查无后按 not_found 交回', async () => {
+  // 证据分级（设计 §3.4）：idle 事件不带关系证据——目录恒空（关系未证）时
+  // 到达的 idle 只登记：不结算、不承诺答案；屏障重试耗尽后查无断言照常交付，
+  // 登记的事件随调用结束弃置（不跨调用缓存）。关系证据到位后已登记事件立即
+  // 生效的路径由下方兄弟作用域组用例覆盖。
   const f = fakeCtx();
-  freezeTimers(f.ctx);
-  // 目录恒空：屏障查不到行（存在性未定），重试睡眠中 emit idle——旧的
-  // 字符串标签形态会把来源压成 'cut-settled' 再落重分类（not_found 谎报），
-  // 对象保存形态必须立即按停止态交回。
+  const quick = resolveConfig({ toolName: 'async_run', pollIntervalMs: 2 });
   const { calls } = installChildren(f, { children: [] });
-  const tool = createWaitAgentTool(f.ctx, config);
+  const tool = createWaitAgentTool(f.ctx, quick);
 
   const pending = tool.execute({ agent_id: CHILD, wait_ms: 600000 }, exec);
   await new Promise((resolve) => setTimeout(resolve, 3)); // 进入屏障重试睡眠
   f.emit('agent/status', { agent: { id: CHILD }, status: 'idle' });
 
-  const result = await withHangGuard(pending);
-  assert.notEqual(result.status, '__test-hang__', '屏障期 idle 信号必须及时结束等待');
-  assert.notEqual(result.status, 'not_found', '权威 idle 已到场就不得报 not_found（存在性未证不是否定证据）');
-  assert.equal(result.status, 'settled', 'via=agent-status-idle 是当次权威观察 → settled');
-  assert.match(result.note, /status turned idle/, 'via.idle 文案（与事件/轮询通道同款）');
-  assert.ok(calls.length >= 1, `确实进过屏障（实查 ${String(calls.length)} 次 listChildren）`);
+  const result = await withHangGuard(pending, 1000);
+  assert.notEqual(result.status, '__test-hang__', 'idle 登记不得挂死屏障循环——重试照常推进');
+  assert.equal(result.status, 'not_found', '关系未证：idle 只登记不结算，查无断言由屏障交付');
+  assert.equal(result.agent_id, CHILD);
+  assert.ok(Array.isArray(result.known_children), 'not_found 附已知子代理清单');
+  assert.ok(calls.length >= 2, `确实重试过（实查 ${String(calls.length)} 次）`);
+});
+
+// ---------------------------------------------------------------------------
+// 子代理关系证据与停止证据分离（设计 §3.4 证据分级）。
+//
+// 装置形态：同一组合内两个兄弟 Agent，目录查询持续挂起，兄弟作用域 emit
+// 的同 id agent/status idle 事件仍被组合层监听器收到——同 id 可见不证明
+// 与本主体的父子关系。fakeCtx 的 emit 对全部监听器广播，正是组合层监听
+// 收到兄弟事件的语义；目录替身挂起或延迟，构造关系证据缺席（挂起／查无）
+// 或在途的窗口。
+// ---------------------------------------------------------------------------
+
+hostTest('async_wait_agent（A-F09·兄弟作用域）：目录查询挂起 + 同 id 兄弟 idle 事件 → 登记不结算，按预算口径交回', async () => {
+  const f = fakeCtx();
+  installChildren(f, { children: [] });
+  f.ctx.subagents.listChildren = () => new Promise(() => {}); // 目录投影永悬
+  f.ctx.agents = { get: () => ({ status: 'running' }) };
+  const tool = createWaitAgentTool(f.ctx, resolveConfig({ toolName: 'async_run', pollIntervalMs: 1500 }));
+  const startedAt = Date.now();
+
+  const pending = tool.execute({ agent_id: CHILD, wait_ms: 400 }, exec);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  // 兄弟作用域的同 id idle 事件（组合层监听可收到，与本主体无父子关系）
+  f.emit('agent/status', { agent: { id: CHILD }, status: 'idle' });
+  const result = await pending;
+  const took = Date.now() - startedAt;
+
+  assert.equal(result.status, 'running', '关系未证（目录挂起）→ idle 只登记，不返回 settled');
+  assert.match(result.note, /unverified/, '按存在性未定的未证实口径交回');
+  assert.doesNotMatch(result.note, /status turned idle/, '不得套停止态文案');
+  assert.doesNotMatch(result.note, /separate message/, '不承诺最终回答另行到达');
+  assert.ok(took < 700, `总预算不扩大（实得 ${String(took)}ms，预算 400ms＋300ms 容差）`);
+});
+
+hostTest('async_wait_agent（A-F09·兄弟作用域）：挂起目录 + 已登记 idle + 调用取消 → 取消口径及时交回（登记不挡控制信号）', async () => {
+  const f = fakeCtx();
+  installChildren(f, { children: [] });
+  f.ctx.subagents.listChildren = () => new Promise(() => {});
+  f.ctx.agents = { get: () => ({ status: 'running' }) };
+  const controller = new AbortController();
+  const tool = createWaitAgentTool(f.ctx, resolveConfig({ toolName: 'async_run', pollIntervalMs: 1500 }));
+  const startedAt = Date.now();
+
+  const pending = tool.execute({ agent_id: CHILD, wait_ms: 2000 }, { agent, signal: controller.signal });
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  f.emit('agent/status', { agent: { id: CHILD }, status: 'idle' }); // 登记（关系未证）
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  controller.abort(new Error('用户点了停止'));
+
+  const result = await pending;
+  const took = Date.now() - startedAt;
+  assert.equal(result.status, 'interrupted', '取消照常切断挂起查询与登记中的 idle');
+  assert.match(result.note, /The wait was cancelled/);
+  assert.ok(took < 500, `取消后及时交回（实得 ${String(took)}ms）——登记不得把取消拖到预算尽头`);
+});
+
+hostTest('async_wait_agent（A-F09·兄弟作用域）：挂起后目录行返回（关系证据到位）→ 已登记 idle 立即生效 settled', async () => {
+  // 关系证据到位即兑现（设计 §3.4）：idle 在目录查询在途期间登记；查询返回
+  // 目录行 = 合法关系确认，登记事件立即按停止态交回——不等下一次轮询
+  // （pollIntervalMs 调到 4000ms，轮询拍在本窗口内永不到点）、不等事件重发、
+  // 不等预算。注册表恒 running：settled 只能来自已登记的 idle 事件本身，
+  // 不来自注册表现读。
+  const f = fakeCtx();
+  const { calls } = installChildren(f, { children: [runningChild()] });
+  const realList = f.ctx.subagents.listChildren.bind(f.ctx.subagents);
+  f.ctx.subagents.listChildren = async (...a) => {
+    await new Promise((resolve) => setTimeout(resolve, 250)); // 关系证据迟到
+    return realList(...a);
+  };
+  f.ctx.agents = { get: () => ({ status: 'running' }) };
+  const tool = createWaitAgentTool(f.ctx, resolveConfig({ toolName: 'async_run', pollIntervalMs: 4000 }));
+  const startedAt = Date.now();
+
+  const pending = tool.execute({ agent_id: CHILD, wait_ms: 4000 }, exec);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  f.emit('agent/status', { agent: { id: CHILD }, status: 'idle' }); // 关系未证期登记
+  const result = await pending;
+  const took = Date.now() - startedAt;
+
+  assert.equal(result.status, 'settled', '目录行返回 = 关系证据到位 → 已登记 idle 立即生效');
+  assert.match(result.note, /status turned idle/, 'via=idle（登记事件的停止证据）');
+  assert.ok(took >= 240, `目录行返回（250ms）前关系未证、不得提前结算（实得 ${String(took)}ms）`);
+  assert.ok(took < 1000, `及时交回（实得 ${String(took)}ms）——不等轮询拍（4000ms）、不等事件重发、不等预算`);
+  assert.ok(calls.length >= 1, '确实发起过目录查询（探针活性）');
 });

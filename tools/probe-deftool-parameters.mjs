@@ -1,16 +1,18 @@
 /**
  * 探针：`defineTool` 对 `parameters` 的**取值器**做了什么？
  *
- * 背景：三处工具工厂把 `parameters.<name>` 与 `description` 改成了取值器（getter），以便
- * "改设置后模型看到的描述立刻更新"（`dsh-tools` 按引用存 definition、投影时现读字段）。
- * 主描述已验证生效；但 `tool.parameters.yield_ms` 读到 `undefined`——
- * 需要先弄清 `defineTool` 是否原样保留参数对象，再决定怎么改。
+ * 核对 `defineTool` 是否把转换结果存成稳定属性（定义时转换一次，每次访问
+ * 同一对象、不随访问重建），以及参数的 `description` 被搬到哪里。描述的就地
+ * 刷新（`lib/index.js` 的 refreshToolDescriptions）按
+ * `parameters.properties[key].description` 改写，前提正是这份稳定属性——
+ * 本探针把这条前提打成可复核的输出。
  *
  * 用法：node --import ./tools/_host-hooks.mjs tools/probe-deftool-parameters.mjs
  */
 import { defineTool } from '@deepseek-ai/dsh-tools';
 
-/** `defineTool` 要求 `output` 带 `schema` 与 `render`，缺了即抛（`dsh-tools` 的 defineTool 入口校验）。 */
+/** `defineTool` 要求 `output.schema` 在场（缺席在入口抛）；`render` 缺席在
+ * 宿主首次渲染时才暴露——这里两样都带全。 */
 const output = {
   schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean', required: true } } },
   render: () => []
@@ -62,3 +64,9 @@ const withDescription = defineTool({
 const dumped = JSON.stringify(withDescription.parameters);
 console.log(`JSON 里有 THE-DESC   : ${dumped.includes('THE-DESC')}`);
 console.log(`JSON 片段            : ${dumped.slice(0, 200)}`);
+
+console.log('');
+console.log('--- 转换结果是否稳定存储 ---');
+// 就地刷新改写的是 properties[key].description——前提是 defineTool 把转换结果
+// 存成稳定属性：两次访问拿到同一对象，而不是按访问重建。
+console.log(`两次访问同一对象     : ${plain.parameters === plain.parameters}`);
