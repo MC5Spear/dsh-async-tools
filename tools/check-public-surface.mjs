@@ -81,7 +81,15 @@ const FINGERPRINTS = [
   // 服务名要**整体**匹配：`dsh-web-app` / `dsh-webhook` / `dsh-web-fetch-http` 是上游
   // 公开包名，按子串匹配会把它们误判成本机指纹（一次能误报 30+ 条）。
   // 判据是"它是不是这台机器的服务名"，所以边界必须挡住 `-` 与词字符。
-  { pattern: /(?<![\w-])dsh-web(?![\w-])/, why: '本机 NSSM 服务名（整体匹配；dsh-web-app 等上游包名不算）' },
+  //
+  // 官方 scope 下的同名包（`@deepseek-ai/dsh-web`）同样是**已发布的公开包**：`npm install`
+  // 生成的 `package-lock.json` 会在包键、依赖值、`node_modules/` 路径与 registry URL 里
+  // 引用它，按官方 scope 区分即可。只排除"紧邻已知官方 scope 前缀"这一种上下文——裸
+  // `dsh-web`、其他 scope 下的同名包、本机服务目录路径照旧按红处理。
+  {
+    pattern: /(?<![\w-])(?<!@deepseek-ai[\/\\])dsh-web(?![\w-])/,
+    why: '本机 NSSM 服务名（整体匹配；`dsh-web-app` 等上游包名与 `@deepseek-ai/dsh-web` 官方包不算）'
+  },
   { pattern: /(?<![\w-])dsh-service(?![\w-])/, why: '本机服务家目录名' },
   { pattern: /DESKTOP-[A-Z0-9]{4,}/i, why: '本机机器名前缀' }
 ];

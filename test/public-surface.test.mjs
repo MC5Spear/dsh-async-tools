@@ -229,3 +229,72 @@ test('P13 豁免零命中守卫：登记了却从未用上的豁免必须报', (
     box.cleanup();
   }
 });
+
+test('P14 指纹假阳性守卫：npm lock 里的官方包 `@deepseek-ai/dsh-web` 不算本机服务名', () => {
+  // `npm install` 生成的 lock 会在包键、依赖值、`node_modules/` 路径与 registry URL 里
+  // 引用这个**已发布的公开包**，按官方 scope 区分即可。文档里用 Windows 分隔符写同一段
+  // 包路径也是同一回事——判据只问"包名是不是紧邻已知官方 scope 前缀"。
+  const lock = [
+    '{',
+    '  "name": "dsh-async-tools",',
+    '  "lockfileVersion": 3,',
+    '  "packages": {',
+    '    "": {',
+    '      "dependencies": {',
+    '        "@deepseek-ai/dsh-web": "^0.2.1-rc.2"',
+    '      }',
+    '    },',
+    '    "node_modules/@deepseek-ai/dsh-web": {',
+    '      "version": "0.2.1-rc.2",',
+    '      "resolved": "https://registry.npmjs.org/@deepseek-ai/dsh-web/-/dsh-web-0.2.1-rc.2.tgz"',
+    '    }',
+    '  }',
+    '}',
+    ''
+  ].join('\n');
+  const result = inspect({
+    extra: {
+      'package-lock.json': lock,
+      'docs/notes.md': '# 文档\n\n打包产物在 `node_modules\\@deepseek-ai\\dsh-web\\lib\\index.js`。\n'
+    }
+  });
+  try {
+    assert.deepEqual(result.findings, [], `官方包不是本机指纹：\n${result.out}`);
+  } finally {
+    result.cleanup();
+  }
+});
+
+test('P15 指纹真阳性守卫：裸 `dsh-web` 与其他 scope 仍然红（豁免只认已知官方 scope）', () => {
+  // 豁免的是"包名紧邻官方 scope 前缀"这一种上下文，不是整个 lock、不是所有 JSON，
+  // 也不是所有同名串：裸依赖键、裸包目录、文档正文、别的 scope 都照旧红。
+  assertCaught(
+    { extra: { 'package-lock.json': '{\n  "dependencies": {\n    "dsh-web": "file:../dsh-web"\n  }\n}\n' } },
+    '指纹', /NSSM/, '裸 `dsh-web` 依赖键（如 file: 指向本机服务目录）必须报'
+  );
+  assertCaught(
+    { extra: { 'lib/paths.js': 'export const p = "node_modules/dsh-web/lib/index.js";\n' } },
+    '指纹', /NSSM/, '裸包目录不是官方 scope 形态，必须报'
+  );
+  assertCaught(
+    { doc: '# 文档\n\n本机服务 dsh-web 没起来时要先起它。\n' },
+    '指纹', /NSSM/, '文档正文里的服务名一样是机器事实'
+  );
+  assertCaught(
+    { extra: { 'lib/scoped.js': "export const a = '@acme/dsh-web';\n" } },
+    '指纹', /NSSM/, '别的 scope 下的同名包不能借官方包的名义豁免'
+  );
+});
+
+test('P16 同一行里官方包与裸 `dsh-web` 并存时，只豁免官方包那一次', () => {
+  // 判据是**逐次**匹配：负向上下文只看紧邻前缀，同一行里的合法包名不能豁免裸服务名。
+  const line = '  "deps": { "@deepseek-ai/dsh-web": "^0.2.1-rc.2", "dsh-web": "file:../dsh-web" },';
+  const result = inspect({ extra: { 'package.json': `{\n${line}\n}\n` } });
+  try {
+    const hits = result.findings.filter((f) => f.file === 'package.json');
+    assert.equal(hits.length, 1, `同一行里裸的那次必须报出来：\n${result.out}`);
+    assert.match(hits[0].why, /NSSM/);
+  } finally {
+    result.cleanup();
+  }
+});
