@@ -217,4 +217,4 @@ npm run check:agent-policy
 | 现有探针的覆盖和安全前提 | [验证说明](<verify/README.md>) |
 | 各发布版本记录 | [变更记录](<CHANGELOG.md>) |
 
-MIT，见[许可](<LICENSE>)。本包不重打包宿主源码，宿主包许可与出处由对应包提供。
+本项目采用 MIT 许可，见[许可](<LICENSE>)。两份预设及部分子代理策略助手改编自 DeepSeek Harness；对应内容的来源、上游版权和 MIT 许可全文见[第三方通知](<THIRD_PARTY_NOTICES.md>)，该通知随安装包一同分发。
