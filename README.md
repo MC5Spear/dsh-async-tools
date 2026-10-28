@@ -81,11 +81,13 @@
 
 ### 宿主安装通道
 
+本分支（`adapt/dsh-0.2.1-rc.4`）的适配宿主为 `@deepseek-ai/dsh@0.2.1-rc.4`；不同宿主版本的适配在其他分支（默认分支对应 0.2.1-rc.2）。按分支跟踪安装本分支适配的版本：
+
 ```powershell
-dsh plugin --profile web add github:MC5Spear/dsh-async-tools
+dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1-rc.4
 ```
 
-GUI 安装对话框可填写相同 spec；固定版本时在 GitHub spec 的 `#` 后指定已发布、已核验的完整标签，保留包版本的宿主构建元数据，不用 SemVer 范围选择适配版本。包不从 npm 分发。官方 bundle 声明提供宿主配置行与两预设，不需要手工生成用户预设目录，不改 shipped 文件。
+GUI 安装对话框可填写相同 spec。该写法跟踪分支头，不是固定版本；需要固定版本时，在 GitHub spec 的 `#` 后指定已发布、已核验的完整标签（`#` 后也可换具体提交以复现固定提交），保留包版本的宿主构建元数据，不用 SemVer 范围选择适配版本。包不从 npm 分发。官方 bundle 声明提供宿主配置行与两预设，不需要手工生成用户预设目录，不改 shipped 文件。
 
 装载组合和客户端入口变化需要重新装载实例并重新打开页面。重启从服务进程树外执行，先确认不会停止他人的活动会话。
 
@@ -94,6 +96,7 @@ GUI 安装对话框可填写相同 spec；固定版本时在 GitHub spec 的 `#`
 ```powershell
 git clone https://github.com/MC5Spear/dsh-async-tools.git
 cd dsh-async-tools
+git checkout adapt/dsh-0.2.1-rc.4
 npm install
 dsh plugin --profile web add <克隆目录的绝对路径>
 ```
