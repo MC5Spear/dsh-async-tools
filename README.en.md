@@ -17,7 +17,7 @@ This third-party plugin is unaffiliated with DeepSeek. It is personally maintain
 
 - **Use the exact DSH version above.** The rc4 adaptation does not mean every behavior has been verified on this line. Full target-host revalidation remains pending.
 - **Node.js 24 is recommended.** For other versions, check the [runtime prerequisites](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>). The plugin's declaration is not the minimum for the complete host.
-- **The account used for Git access needs repository read permission.** The repository is currently private. A 404 can mean that you are not signed in or lack access; check the account Git uses. Contact the maintainer who supplied the source for access or available installation artifacts.
+- **Installation source.** If the installation address does not yield the source, check the repository address and pinned commit, then the network or proxy. If it still fails, ask the maintainer who supplied the source about available installation artifacts.
 - **This line targets Windows, with full revalidation still pending.** Linux command execution and one-shot escalation, macOS, and remote execution are unverified. For these environments, send the maintainer your environment and intended use, then arrange isolated verification before deciding to deploy.
 
 ## Install

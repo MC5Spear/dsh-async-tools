@@ -9,7 +9,7 @@
 | Plugin version | `0.2.7+dsh.0.2.1-rc.4` |
 | Exact dsh host version | `0.2.1-rc.4` |
 
-The source repository is currently private. The account used for Git access needs read permission for this repository. A private repository may appear as 404 when not signed in or without read access; check the Git account's permission. Without permission, contact the maintainer who supplied the installation source to ask about access or available installation artifacts.
+If the installation address does not yield the source, check the repository address and pinned commit, then the network or proxy. If it still fails, contact the maintainer who supplied the installation source about available installation artifacts.
 
 The source repository spec is `github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1-rc.4`. That branch moves; use the verified full commit `ca8f65b39b7694f9e5a2b28cca7a29bc43485ecc` for reproducibility. The package is not distributed through npm. An unqualified GitHub spec does not select the right host adaptation.
 
@@ -32,7 +32,7 @@ If both tools and settings are missing:
 3. In the target profile, check both the dependency registration (installed package) and the bundle registration (host-row and preset composition declarations). They serve different purposes; one registration alone does not establish that every entry loaded.
 4. After composition or client-entry changes, reload the instance and reopen the page. Arrange for active sessions to finish safely before restarting, and restart outside the service process tree. Ordinary settings saves need no restart.
 
-Development links are for an explicit development environment. Keep stable deployments separate from the editing tree. With repository read permission, prepare the source as follows:
+Development links are for an explicit development environment. Keep stable deployments separate from the editing tree. Prepare the source as follows:
 
 ```powershell
 git clone https://github.com/MC5Spear/dsh-async-tools.git
