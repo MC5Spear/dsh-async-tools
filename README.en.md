@@ -21,7 +21,7 @@ Node 24 is recommended. Before using another version, check the [environment req
 
 Some Windows checks have been completed in isolated environments. Linux command execution and requests for broader permissions, macOS, and remote environments have not completed verification. If you need them, describe your platform and required features in an issue and ask about support progress.
 
-The package is not distributed through npm. Its source repository is private, so first check that the account used by Git has read access. If it does not, ask the maintainer who supplied the source about access or an available installation artifact.
+The package is not distributed through npm. If the installation address does not yield the source, check the repository address and pinned commit, then the network or proxy. If it still fails, ask the maintainer who supplied the source about an available installation artifact.
 
 The command below pins this line's commit, so its installation source does not move with a branch.
 
@@ -103,7 +103,7 @@ If the plugin is already removed and new sessions fail, go directly to **host de
 | Parameters, configuration, statuses, models, composition, recovery | [English reference](<docs/user-reference.en.md>) / [中文参考](<docs/user-reference.md>) |
 | Current documentation maintenance rules | Packaged [documentation principles (Chinese)](<docs/documentation-principles.md>) |
 
-Maintenance documents in the source checkout (Chinese) use the paths below. Obtain the matching-version checkout from the [source repository](<https://github.com/MC5Spear/dsh-async-tools>); these are source paths, not links inside the installed package. Repository read access is required.
+Maintenance documents in the source checkout (Chinese) use the paths below. Obtain the matching-version checkout from the [source repository](<https://github.com/MC5Spear/dsh-async-tools>); these are source paths, not links inside the installed package.
 
 ```text
 CONTRIBUTING.md          Development, review, and release

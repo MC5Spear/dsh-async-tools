@@ -21,7 +21,7 @@
 
 Windows 已完成部分隔离环境验证。Linux 的命令执行和申请更宽权限、macOS、远程环境尚未完成验证。需要这些环境时，请先通过 issue 说明平台和所需功能，询问支持进度。
 
-本包不从 npm 分发。源码仓库为私有，安装前须确认 Git 使用的账号有读取权限。没有权限时，请向提供安装来源的维护者询问访问方式或可用安装件。
+本包不从 npm 分发。安装地址取不到源码时，先核对仓库地址与固定提交号，再检查网络或代理；仍无法获取时，向提供安装来源的维护者询问可用安装件。
 
 以下命令固定本线提交，安装内容不会随分支移动。
 
@@ -103,7 +103,7 @@ async_wait_job(job_id="<返回的job_id>", wait_ms=30000)
 | 参数、配置、状态、模型、完整组合与恢复 | [用户参考](<docs/user-reference.md>) / [English reference](<docs/user-reference.en.md>) |
 | 当前文档维护规则 | 包内[文档原则](<docs/documentation-principles.md>) |
 
-源码检出中的维护资料（中文）位于下列路径。通过[源码仓库](<https://github.com/MC5Spear/dsh-async-tools>)取得对应版本源码后阅读；这些是源码路径，不是安装包内链接。仓库读取需要权限。
+源码检出中的维护资料（中文）位于下列路径。通过[源码仓库](<https://github.com/MC5Spear/dsh-async-tools>)取得对应版本源码后阅读；这些是源码路径，不是安装包内链接。
 
 ```text
 CONTRIBUTING.md          开发、审查与发布

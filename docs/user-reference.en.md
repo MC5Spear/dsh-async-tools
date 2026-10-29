@@ -15,7 +15,7 @@ The plugin declares Node `>=20`. The host CLI depends on commander `^15.0.0`, wh
 
 The package is not distributed through npm. The command below installs from the source repository at commit `97b7b27e8e66f225003dd80f85f7229b2372a3be`. The corresponding branch, `adapt/dsh-0.2.1`, can move; a branch name is not a fixed installation identity.
 
-The repository is currently private. The account used for Git access needs read permission. A missing sign-in or permission can appear as 404, so first check which account Git uses. If it lacks access, contact the maintainer who supplied the installation source about access or an available installation artifact.
+If the installation address does not yield the source, check the repository address and pinned commit, then the network or proxy. If it still fails, contact the maintainer who supplied the installation source about available installation artifacts.
 
 ```powershell
 dsh plugin --profile web add github:MC5Spear/dsh-async-tools#97b7b27e8e66f225003dd80f85f7229b2372a3be
