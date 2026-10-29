@@ -9,7 +9,7 @@
 | Plugin version | `0.2.6+dsh.0.2.1-rc.3` |
 | Exact dsh host version | `0.2.1-rc.3` |
 
-The source repository is currently private. The account used for Git access needs read permission for this repository. A private repository may appear as 404 when not signed in or without read access; check the Git account's permission. Without permission, contact the maintainer who supplied the installation source to ask about access or available installation artifacts.
+If the installation address does not yield the source, check the repository address and pinned commit, then the network or proxy. If it still fails, contact the maintainer who supplied the installation source about available installation artifacts.
 
 Choose an installation source first. The fixed commit below makes the source reproducible. The package is not distributed through npm. An unqualified GitHub spec does not select this adaptation.
 

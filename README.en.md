@@ -19,12 +19,12 @@ This is a personally maintained project. Issues are accepted, external PRs are n
 
 - **Match the host exactly.** An rc3 adaptation does not mean every behavior has been reverified. Mechanism-by-mechanism verification on this host is still pending; results from another version do not establish support here.
 - **Use Node.js 24 where possible.** Before choosing another version, check the [runtime prerequisites](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>) for both plugin and host dependencies.
-- **The Git account needs read access to the private repository.** An unsigned-in or unauthorized account may see a 404. Check the account used for Git access. Without permission, ask the maintainer who supplied the source about access or available installation artifacts.
+- **Installation source.** If the installation address does not yield the source, check the repository address and pinned commit, then the network or proxy. If it still fails, ask the maintainer who supplied the source about available installation artifacts.
 - **Platform verification is limited.** This line targets Windows, with target-host revalidation still pending. Linux command execution and one-shot escalation, macOS, and remote execution are unverified. If you need them, send the maintainer your environment and use case, and verify in isolation before using real tasks.
 
 ## Install
 
-The package is not distributed through npm. With repository read access, install from this fixed commit:
+The package is not distributed through npm. Install from this fixed commit:
 
 ```powershell
 dsh plugin --profile web add github:MC5Spear/dsh-async-tools#6c428de042a10f6af04a66e28fedab644184e5ad
