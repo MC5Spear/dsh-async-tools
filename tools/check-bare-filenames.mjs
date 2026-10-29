@@ -49,6 +49,10 @@ const DEFAULT_EXTRA_ROOTS = [];
 /** 文档清单，与 `tools/check-docs.mjs` 的 `DOCUMENTS` 责任表同集（含档案 CHANGELOG——文件名判据不分角色）。 */
 const CURRENT = [
   'README.md',
+  'README.en.md',
+  'docs/user-reference.md',
+  'docs/user-reference.en.md',
+  'docs/documentation-principles.md',
   'docs/requirements.md',
   'docs/design.md',
   'verify/README.md',

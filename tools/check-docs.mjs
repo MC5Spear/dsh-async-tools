@@ -32,7 +32,7 @@
  *
  * ## 两类检查输入
  *
- * 公开范围 `docs/` 只剩**需求稿与设计稿**——读者要能只凭仓库里的东西读懂产品。
+ * 公开范围 `docs/` 按责任表登记需求、设计、用户参考与文档原则。
  * 审查、修正、审计、调研与事实材料**不进入本公开仓**；本机的 `<LOCAL_DIR>/docs/`
  * 是可选检查输入。本脚本因此分两段：
  *
@@ -75,6 +75,10 @@ import { LOCAL_DIR } from './_local-config.mjs';
  */
 const DOCUMENTS = [
   { file: 'README.md', role: 'current' },
+  { file: 'README.en.md', role: 'current' },
+  { file: 'docs/user-reference.md', role: 'current' },
+  { file: 'docs/user-reference.en.md', role: 'current' },
+  { file: 'docs/documentation-principles.md', role: 'current' },
   { file: 'docs/requirements.md', role: 'current' },
   { file: 'docs/design.md', role: 'current' },
   // 验证目录的唯一脚本清单（`README.md` 明确指向它）。它**不在 `docs/` 下**，所以不受
@@ -97,13 +101,70 @@ const FILES = DOCUMENTS.map((doc) => doc.file);
 const HISTORICAL_WORDS = /勘误|原写|先前版本|已作废|曾经|以前是|此前误/g;
 
 /**
- * 已退役机制名：现行文档里不该出现（某个机制按新宿主改成事件上的
- * `awaited` 之后，设计稿与需求稿若还留着旧代的 `reported`/`waiters` 叙述，两处
- * 对不上而没有任何判据会红）。退役名的处置是**连禁令一起删净**，所以这里按名单判红。
- * 档案（role=archive）另按文件责任豁免：旧条目记录当时的状态，退役名在条目内
- * 合法、按份计数留痕（与历史叙述词同一套留痕口径，设计 §8.3）。
+ * 退役名只按技术标识识别，避免把普通英语的动词或形容词当成机制名。
+ * 代码标识、属性/键语法与紧邻的字段/机制称谓都是证据；禁令不豁免技术名称。
+ * 档案仍按同一判据计数，由文件角色决定是否告警。
  */
-const RETIRED_MECHANISM_WORDS = /\breported\b|\bwaiters\b/g;
+function retiredDescription(before, after) {
+  // 英语邻接本身不足以命名；技术称谓还须承担记录/跟踪等谓词，或明确说明用途。
+  const technicalAssertion = /^['"”’]?\s+(?:field|property|flag|event|counter|mechanism|list)\s+(?:(?:records?|tracks?|stores?|counts?|signals?|marks?)\b|(?:to\s+(?:record|track|store|count|signal|mark)|for\s+(?:completion|delivery|tracking|waiting))\b)/i.test(after);
+    return technicalAssertion
+      || /\b(?:key|list)\s+(?:named|called)\s+['"“‘]?$/i.test(before)
+      || /(?:\b(?:field|property|flag|event|counter|mechanism)\s+(?:named|called)\s+['"“‘]?|(?:字段|属性|键|标志|事件|计数|机制|列表)(?:名|名称)?[为是：:\s]*['"“‘]?)$/i.test(before)
+      || /^['"”’]?\s*(?:字段|属性|键|标志|事件|计数|机制|列表)/.test(after)
+      || (/(?:\b(?:do not use|never use|deprecated|retired)|禁止(?:使用)?|禁用|退役)\s*['"“‘]?$/i.test(before)
+        && /^['"”’]?(?:\s*[.。;；!！]|\s*$|\s+(?:for|to)\b|\s*(?:来|用于|用来))/.test(after))
+      || /^['"”’]?\s+(?:is|has been)\s+(?:deprecated|retired|obsolete)\b/i.test(after)
+      || /^['"”’]?\s*(?:已退役|已废弃|已弃用)/.test(after);
+}
+
+function retiredMechanisms(text) {
+  // JS 围栏中的名称按词法标识识别，字符串和注释里的普通英语不提供标识证据。
+  const js = [...text.matchAll(/^[ \t]*\x60{3}(?:js|javascript|mjs|cjs)\s*\n([\s\S]*?)^[ \t]*\x60{3}/gm)].map((block) => {
+    const start = block.index + block[0].indexOf('\n') + 1;
+    const source = block[1];
+    const quotedKeys = new Set();
+    const comments = [];
+    const masked = source.replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|\x60(?:\\[\s\S]|[^\x60\\])*\x60/g, (token, offset) => {
+      if (token.startsWith('//') || token.startsWith('/*')) {
+        comments.push({ start: start + offset, end: start + offset + token.length, text: token });
+      }
+      // 引号内只有对象成员键和方括号属性是技术名称，message 等值字符串不是。
+      if (/^['"](?:reported|waiters)['"]$/.test(token)
+        && ((/[{,]\s*$/.test(source.slice(0, offset)) && /^\s*:/.test(source.slice(offset + token.length)))
+          || /[\w$)\]]\s*(?:\?\.)?\[\s*$/.test(source.slice(0, offset)) && /^\s*\]/.test(source.slice(offset + token.length)))) {
+        quotedKeys.add(start + offset + 1);
+      }
+      return token.replace(/[^\n]/g, ' ');
+    });
+    return { start, end: start + source.length, masked, quotedKeys, comments };
+  });
+  const code = [...text.matchAll(/(`{1,2})(reported|waiters)\1/g)]
+    .map((m) => [m.index, m.index + m[0].length]);
+  return [...text.matchAll(/\b(?:reported|waiters)\b/g)].filter((m) => {
+    const block = js.find(({ start, end }) => start <= m.index && m.index < end);
+    if (block) {
+      const comment = block.comments.find(({ start, end }) => start <= m.index && m.index < end);
+      if (comment) {
+        const offset = m.index - comment.start;
+        return retiredDescription(comment.text.slice(0, offset), comment.text.slice(offset + m[0].length));
+      }
+      return block.quotedKeys.has(m.index)
+        || /^(?:reported|waiters)\b/.test(block.masked.slice(m.index - block.start));
+    }
+    const before = text.slice(0, m.index);
+    const after = text.slice(m.index + m[0].length);
+    return code.some(([start, end]) => start <= m.index && m.index < end)
+      || /\b(?:const|let|var|function|class)\s+$/.test(before)
+      || /[\w$)\]]\s*\??\.\s*$/.test(before)
+      // Markdown 段落不是代码接收者；正文属性访问只接受同一行横向空白。
+      || (/[\w$)\]][ \t]*(?:\?\.)?\[[ \t]*['"]$/.test(before) && /^['"][ \t]*\]/.test(after))
+      || /^\s*=(?!=)/.test(after)
+      // 冒号只有与对象成员起点或独占行键配对时才是键证据，报告动词也能接冒号。
+      || (/(?:[{,]\s*|(?:^|\n)[ \t]*)['"]?$/.test(before) && /^['"]?\s*:/.test(after))
+      || retiredDescription(before, after);
+  }).map((m) => m[0]);
+}
 
 const countFences = (text) => (text.match(/^```/gm) ?? []).length;
 
@@ -148,8 +209,8 @@ export function checkDocs(root = process.cwd(), { quiet = false } = {}) {
   const phantom = FILES.filter((file) => !onDisk.includes(file) && !OUTSIDE_DOCS.has(file));
 
   for (const file of unclassified) {
-    problem(file, '未分类：公开范围 `docs/` 只放需求稿与设计稿——'
-      + '过程稿、事实登记簿、交付索引一律下沉本机侧的语料目录，不进公开范围');
+    problem(file, '未分类：公开范围 `docs/` 下每份 Markdown 必须在 DOCUMENTS 责任表登记；'
+      + '请先确认文档职责，再登记现行文档或档案');
   }
   for (const file of phantom) {
     problem(file, '名单里的这份登记文档在盘上不存在——名单与现实漂移了，检查会静默失去作用');
@@ -175,7 +236,7 @@ export function checkDocs(root = process.cwd(), { quiet = false } = {}) {
     } else if (hits > 0) {
       problem(file, `历史叙述词 ${String(hits)} 处（现行文档应清零）`);
     }
-    const retired = [...text.matchAll(RETIRED_MECHANISM_WORDS)].map((m) => m[0]);
+    const retired = retiredMechanisms(text);
     if (role === 'archive') {
       // 档案：退役机制名同样合法（旧条目记录当时的状态），按份计数留痕。
       retiredHits.set(file, retired.length);
