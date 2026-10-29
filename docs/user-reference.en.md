@@ -13,7 +13,7 @@ It provides five tools: `async_run`, `async_wait_job`, `async_wait_agent`, `asyn
 
 The plugin declares Node.js `>=20`. The target host CLI depends on commander 15, which requires Node.js `>=22.12.0`. That is one dependency's lower bound, not a verified minimum for the complete host. Node.js 24 is recommended; also follow the target host's environment instructions. Linux commands and escalation, macOS, and remote execution lack complete validation. Ask about the required environment and known limitations through an issue before using it for important work.
 
-The source repository is currently private. The account used for Git access needs read permission for this repository. A private repository may appear as 404 when not signed in or without read access; check the Git account's permission. Without permission, contact the maintainer who supplied the installation source to ask about access or available installation artifacts.
+If the installation address does not yield the source, check the repository address and pinned commit, then the network or proxy. If it still fails, contact the maintainer who supplied the installation source about available installation artifacts.
 
 Install a fixed source:
 

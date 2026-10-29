@@ -16,7 +16,7 @@ This is a third-party plugin, not affiliated with DeepSeek. It is personally mai
 The host is the DSH installation that runs the plugin. For another DSH version, choose a plugin that explicitly targets it. The default branch does not establish compatibility.
 
 - **Node.js:** version 24 is recommended. Before choosing another version, check the [dependency lower bounds and host environment requirements](<docs/user-reference.en.md#1-version-installation-and-loading>).
-- **Repository access:** the source repository is currently private. The account used for Git needs read permission. A 404 may mean that you are not signed in or lack permission. Check the Git account, then ask the maintainer who supplied the installation source about access or available artifacts.
+- **Installation source:** if the installation address does not yield the source, check the repository address and pinned commit, then the network or proxy; if it still fails, ask the maintainer who supplied the installation source about available installation artifacts.
 - **Platforms:** Linux commands and escalation, macOS, and remote execution lack complete validation. Ask about validation and known limitations through an issue before using those environments for important work.
 
 ## Install and start
