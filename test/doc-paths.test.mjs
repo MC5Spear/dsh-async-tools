@@ -51,7 +51,8 @@ test('文档路径：https URL 里的伪盘符不是绝对路径（badge 假阳�
     // 但不能抄真件——真件里的几百条引用在沙箱里全是悬空指针，与本测试无关。
     // CHANGELOG 不在清单里（档案零路径判据）——它的存在性既不被要求也不被消费，
     // 由下方形态 3 的反例单独锁定。
-    for (const stub of ['docs/requirements.md', 'docs/design.md', 'verify/README.md',
+    for (const stub of ['README.en.md', 'docs/user-reference.md', 'docs/user-reference.en.md',
+      'docs/documentation-principles.md', 'docs/requirements.md', 'docs/design.md', 'verify/README.md',
       'CONTRIBUTING.md']) {
       writeFileSync(join(dir, ...stub.split('/')), '', 'utf8');
     }
@@ -86,3 +87,28 @@ test('文档路径：https URL 里的伪盘符不是绝对路径（badge 假阳�
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+for (const rel of ['README.en.md', 'docs/user-reference.md', 'docs/user-reference.en.md', 'docs/documentation-principles.md']) {
+  test(`文档路径：新增输入 ${rel} 的相对链接必须检查`, async (t) => {
+    const { checkDocPaths } = await import('../tools/check-doc-paths.mjs');
+    const dir = mkdtempSync(join(tmpdir(), 'docpaths-input-'));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const documents = ['README.md', 'README.en.md', 'docs/requirements.md', 'docs/design.md',
+      'docs/user-reference.md', 'docs/user-reference.en.md', 'docs/documentation-principles.md',
+      'verify/README.md', 'CONTRIBUTING.md'];
+    for (const file of documents) {
+      mkdirSync(dirname(join(dir, file)), { recursive: true });
+      writeFileSync(join(dir, file), '', 'utf8');
+    }
+    writeFileSync(join(dir, 'package.json'), '{"scripts":{}}', 'utf8');
+    const prefix = rel.startsWith('docs/') ? '../' : '';
+    for (const wrap of [(target) => `<${target}>`, (target) => target]) {
+      writeFileSync(join(dir, rel), `[valid](${wrap(`${prefix}README.md`)})\n`, 'utf8');
+      assert.equal(checkDocPaths(dir, { quiet: true }).code, 0, '按文档目录解析存在的目标');
+      writeFileSync(join(dir, rel), `[missing](${wrap(`${prefix}no-such-language.md`)})\n`, 'utf8');
+      const dirty = checkDocPaths(dir, { quiet: true });
+      assert.equal(dirty.code, 1);
+      assert.ok(dirty.out.includes(`${rel} →`), dirty.out);
+    }
+  });
+}

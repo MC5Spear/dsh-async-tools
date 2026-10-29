@@ -1,25 +1,25 @@
 /**
- * README 六工具示例中的 delegation 组（cordis:group＋
+ * docs/user-reference.md 高级组合示例中的 delegation 组（cordis:group＋
  * `isolate: { workflowEngine: true }`＋`dsh-workflow-ptc` 引擎行＋本包
- * `async_workflow` 行）按示例逐行装载，核对三件事：
+ * `async_workflow` 行）按相同结构装载，核对三件事：
  *
  * 1. 组合装载语义：引擎行与工具行都进组作用域——工具注册在 delegation 组的
  *    工具层（根作用域不可见），`workflowEngine` 服务被组隔离（根作用域取不到）；
  * 2. 缺引擎行对照：同形组合去掉 `workflow-ptc` 行后，`async_workflow` 仍注册
- *    但执行得到可读拒绝（指向引擎缺席）、零作业——与 README「缺引擎行时调用
+ *    但执行得到可读拒绝（指向引擎缺席）、零作业——与 用户参考「缺引擎行时调用
  *    得到可读拒绝、零作业」的说明一致；
  * 3. 正向执行腿不在此进程内伪造：`dsh-workflow-ptc` 激活还需要宿主应用侧的
  *    `ptcRuntime`（Node TypeScript 运行时提供者，不在本仓 peer 树内）。带引擎
  *    组合的纯编排执行属实例级取证（隔离实例＋官方 CLI 安装本包后执行；
- *    `presets/dsh-async.patch.yml` 的 delegation 组与 README 示例逐行同构）。
+ *    `presets/dsh-async.patch.yml` 的 delegation 组与 用户参考示例采用相同的组隔离结构）。
  *    用假 ptcRuntime 在此伪造正向腿会把引擎核心替换成替身，不做。
  *
  * 装置：真实 cordis-plugin-loader＋真实 cordis:group 隔离＋本包当前工作树；
- * 引擎行与产品行的进程内路径是指向同一插件的相对路径（README 写包名，装载语
+ * 引擎行与产品行的进程内路径是指向同一插件的相对路径（用户参考写包名，装载语
  * 义等价）。九项兄弟服务用最小替身（与宿主侧提供位置对应：宿主组合在根作用
  * 域提供）。
  *
- * 边界：证明 README 组合的装载语义与缺引擎拒绝形态；不替代实例级四预设装载
+ * 边界：证明用户参考组合的装载语义与缺引擎拒绝形态；不替代实例级四预设装载
  * 取证，也不派生子代理。
  *
  * 用法：node --import ./tools/_host-hooks.mjs verify/d05-readme-composition.mjs
@@ -34,7 +34,7 @@ const HERE = fileURLToPath(new URL('.', import.meta.url));
 const ROOT = join(HERE, '..');
 const WORK = join(ROOT, LOCAL_DIR, 'tmp', 'd05-readme');
 
-// 本机平面缺席（CI／外部 clone）＝文档化跳过：引擎行进程内路径取自本机配置的
+// 本机材料缺席（CI／外部 clone）＝文档化跳过：引擎行进程内路径取自本机配置的
 // 宿主树，不写机器事实进公开文件。
 if (!localPlanePresent(ROOT)) {
   console.log(`skip: 本机环境缺席（${LOCAL_DIR}/ 不存在）——引擎行进程内路径无来源，本脚本按文档化跳过`);
@@ -46,12 +46,12 @@ if (localConfig.hostModules === undefined) {
   process.exit(0);
 }
 
-/** 引擎行进程内路径：README 写包名 `@deepseek-ai/dsh-workflow-ptc`，进程内装载
+/** 引擎行进程内路径：用户参考写包名 `@deepseek-ai/dsh-workflow-ptc`，进程内装载
  * 用指向宿主模块树同包入口的相对路径（与产品行 `dsh-async-tools` → 工作树
  * lib/index.js 的替换同款：同一插件、可解析形态；宿主树取自本机配置）。 */
 const HOST_PTC_ENTRY = join(localConfig.hostModules, '@deepseek-ai', 'dsh-workflow-ptc', 'lib', 'index.js');
 
-/** delegation 组 YAML（README 示例 L48-L58 的逐行同形；去掉引擎行即对照形态）。
+/** delegation 组 YAML（docs/user-reference.md 高级组合的组隔离语义；本脚本不解析文档；去掉引擎行即对照形态）。
  * `fromDir`＝行名的解析基准目录（组合文件所在目录）。 */
 function delegationGroup(fromDir, { withEngine = true } = {}) {
   const toPosix = (target) => relative(fromDir, target).split(sep).join('/');
@@ -153,7 +153,7 @@ async function bootCase(tag, withEngine) {
 }
 
 const results = {
-  layer: 'README 示例组合进程内装载（真实 loader＋真实 cordis:group 隔离＋当前工作树）',
+  layer: '用户参考组合进程内装载（真实 loader＋真实 cordis:group 隔离＋当前工作树）',
   positiveLegEvidence: '带引擎组合的纯编排成功以真机 dsh-async 预设转录为证（live-workflow-transcript.json；进程内树无 ptcRuntime 提供者，不伪造）',
   cases: []
 };
@@ -177,7 +177,7 @@ const EXEC = { agent: { id: 'd05-parent', session: { id: 'd05-session' } }, sign
       engineEntryState: ptcEntry?.fiber?.state,
       engineActivationNeedsPtcRuntime: true,
       groupSchemas,
-      assertion: '含引擎行的 README 组合装载：async_workflow 注册进 delegation 组，workflowEngine 服务组外取不到（isolate 语义）；引擎插件激活需宿主 ptcRuntime（进程内树无提供者，如实记录）'
+      assertion: '含引擎行的用户参考组合装载：async_workflow 注册进 delegation 组，workflowEngine 服务组外取不到（isolate 语义）；引擎插件激活需宿主 ptcRuntime（进程内树无提供者，如实记录）'
     });
   } finally {
     await ctx.fiber.dispose();

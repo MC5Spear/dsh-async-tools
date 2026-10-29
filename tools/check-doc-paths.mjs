@@ -38,6 +38,10 @@ const MODULE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
  * （口径 #3「只查现行文档」的唯一例外来源就是它，干脆不进清单）。 */
 const CURRENT = [
   'README.md',
+  'README.en.md',
+  'docs/user-reference.md',
+  'docs/user-reference.en.md',
+  'docs/documentation-principles.md',
   'docs/requirements.md',
   'docs/design.md',
   'verify/README.md',
@@ -89,12 +93,12 @@ const REL_RE = new RegExp(
   'g'
 );
 
-// **markdown 链接的尖括号形态**（`[文字](<../lib/x.js>)`）：`REL_RE` 的负向后顾
+// Markdown 链接按文档目录解析；尖括号与普通形式都参与检查。`REL_RE` 的负向后顾
 // 把 `/` 前导路径排除，这种主流链接写法必须单列一趟——否则文档作者把引用改成
 // 链接形态就整片脱离检查（本仓 design.md 的文件链接全部是这一形态）。
 // 目标按文档所在目录解析（`../` 相对文档、不是相对仓根），锚点段（`#L24`）
 // 剥离后查存在性；扩展名过滤与 EXEMPT 沿用同一套口径。
-const MD_LINK_RE = /\]\(<([^<>]+)>\)/g;
+const MD_LINK_RE = /\]\((?:<([^<>]+)>|([^\s()]+))\)/g;
 
 /** 链接目标是否落在要查的文件扩展名集合里（与 ABS_RE/REL_RE 的扩展名集一致）。 */
 const hasKnownExtension = (raw) => /\.(?:json|yaml|mjs|ps1|yml|js|md|png|txt|log)$/i.test(raw);
@@ -167,7 +171,7 @@ export function checkDocPaths(root = MODULE_ROOT, { quiet = false } = {}) {
 
     // ── markdown 链接（`[文字](<目标>)`）─────────────────────────────────────
     for (const match of text.matchAll(MD_LINK_RE)) {
-      const target = match[1].replace(/\\/g, '/').split('#')[0].replace(/[.,;:]+$/, '');
+      const target = (match[1] ?? match[2]).replace(/\\/g, '/').split('#')[0].replace(/[.,;:]+$/, '');
       if (target.length === 0 || notAFilePath(target) || !hasKnownExtension(target)) continue;
       if (/^[a-z]+:\/\//i.test(target)) continue; // 外链（https:// 等）不是仓内文件
       const resolved = resolve(dirname(file), target);
