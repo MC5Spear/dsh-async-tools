@@ -33,13 +33,18 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const MODULE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** 现行文档清单，与 `tools/check-docs.mjs` 的 `CURRENT_DOCUMENTS` 一致。 */
+/** 文档清单，与 `tools/check-docs.mjs` 的 `DOCUMENTS` 责任表**现行子集**同集——
+ * 档案（CHANGELOG）零路径判据：历史档案记录当时的状态，指针本来就可能失效
+ * （口径 #3「只查现行文档」的唯一例外来源就是它，干脆不进清单）。 */
 const CURRENT = [
   'README.md',
+  'README.en.md',
+  'docs/user-reference.md',
+  'docs/user-reference.en.md',
+  'docs/documentation-principles.md',
   'docs/requirements.md',
   'docs/design.md',
   'verify/README.md',
-  'CHANGELOG.md',
   'CONTRIBUTING.md'
 ];
 
@@ -87,6 +92,16 @@ const REL_RE = new RegExp(
   `(?<![\\w./\\\\-])((?:${KNOWN_TOP.join('|')})[\\\\/][^\\s\`'"()|,，。；;：:]*?\\.(?:json|yaml|mjs|ps1|yml|js|md|png|txt|log))`,
   'g'
 );
+
+// Markdown 链接按文档目录解析；尖括号与普通形式都参与检查。`REL_RE` 的负向后顾
+// 把 `/` 前导路径排除，这种主流链接写法必须单列一趟——否则文档作者把引用改成
+// 链接形态就整片脱离检查（本仓 design.md 的文件链接全部是这一形态）。
+// 目标按文档所在目录解析（`../` 相对文档、不是相对仓根），锚点段（`#L24`）
+// 剥离后查存在性；扩展名过滤与 EXEMPT 沿用同一套口径。
+const MD_LINK_RE = /\]\((?:<([^<>]+)>|([^\s()]+))\)/g;
+
+/** 链接目标是否落在要查的文件扩展名集合里（与 ABS_RE/REL_RE 的扩展名集一致）。 */
+const hasKnownExtension = (raw) => /\.(?:json|yaml|mjs|ps1|yml|js|md|png|txt|log)$/i.test(raw);
 
 /**
  * 跑一遍文档路径检查。
@@ -152,6 +167,28 @@ export function checkDocPaths(root = MODULE_ROOT, { quiet = false } = {}) {
       if (existsSync(join(root, raw))) continue;
       if (EXEMPT.has(raw)) { exempted += 1; continue; }
       problems.push(`${rel} → ${raw}`);
+    }
+
+    // ── markdown 链接（`[文字](<目标>)`）─────────────────────────────────────
+    for (const match of text.matchAll(MD_LINK_RE)) {
+      const target = (match[1] ?? match[2]).replace(/\\/g, '/').split('#')[0].replace(/[.,;:]+$/, '');
+      if (target.length === 0 || notAFilePath(target) || !hasKnownExtension(target)) continue;
+      if (/^[a-z]+:\/\//i.test(target)) continue; // 外链（https:// 等）不是仓内文件
+      const resolved = resolve(dirname(file), target);
+      // `resolve()` 归一：调用方传入的 root 可能带尾分隔符（变异脚本经
+      // `fileURLToPath(new URL('..'))` 推根就会带），直接拼 `${root}/` 会把
+      // 仓内目标误判成「仓外」。
+      const rootNorm = resolve(root).replace(/\\/g, '/');
+      const resolvedNorm = resolved.replace(/\\/g, '/');
+      checked += 1;
+      if (existsSync(resolved)) continue;
+      if (EXEMPT.has(target)) { exempted += 1; continue; }
+      // 解析后仍在仓外的绝对目标与 ABS_RE 同款处置：报出来，不静默。
+      problems.push(
+        resolvedNorm.startsWith(`${rootNorm}/`)
+          ? `${rel} → ${target}（链接目标不存在）`
+          : `${rel} → ${target}（链接目标在本仓之外）`
+      );
     }
 
     // ── npm 脚本（`npm run <脚本>`）───────────────────────────────────────────

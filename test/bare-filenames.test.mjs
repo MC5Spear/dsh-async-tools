@@ -15,7 +15,9 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -25,5 +27,26 @@ test('文档路径：现行文档里的裸文件名引用必须能在盘上找�
   const { code, out, scanned } = checkBareFilenames(ROOT, { quiet: true });
   assert.equal(code, 0, `检查器报了悬空的光文件名（退出码 ${String(code)}）：\n${out.trim()}`);
   assert.ok(scanned !== null && scanned >= 30,
-    `扫到的光文件名引用应 ≥ 30（现行 5 份文档里有大量这种写法），实得 ${String(scanned)}——这个下界挡的是"提取规则被改坏"`);
+    `扫到的光文件名引用应 ≥ 30（已登记文档里有大量这种写法），实得 ${String(scanned)}——这个下界挡的是"提取规则被改坏"`);
 });
+
+for (const rel of ['README.en.md', 'docs/user-reference.md', 'docs/user-reference.en.md', 'docs/documentation-principles.md']) {
+  test(`裸文件名：新增输入 ${rel} 不能漏扫`, async (t) => {
+    const { checkBareFilenames } = await import('../tools/check-bare-filenames.mjs');
+    const dir = mkdtempSync(join(tmpdir(), 'bare-input-'));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    for (const file of ['README.md', 'README.en.md', 'docs/requirements.md', 'docs/design.md',
+      'docs/user-reference.md', 'docs/user-reference.en.md', 'docs/documentation-principles.md',
+      'verify/README.md', 'CONTRIBUTING.md', 'CHANGELOG.md']) {
+      mkdirSync(dirname(join(dir, file)), { recursive: true });
+      writeFileSync(join(dir, file), '', 'utf8');
+    }
+    writeFileSync(join(dir, rel), '`package.json`\n', 'utf8');
+    writeFileSync(join(dir, 'package.json'), '{}', 'utf8');
+    assert.equal(checkBareFilenames(dir, { quiet: true }).code, 0);
+    writeFileSync(join(dir, rel), '`missing-user-input.mjs`\n', 'utf8');
+    const dirty = checkBareFilenames(dir, { quiet: true });
+    assert.equal(dirty.code, 1);
+    assert.ok(dirty.out.includes(`${rel}:1 → missing-user-input.mjs`), dirty.out);
+  });
+}

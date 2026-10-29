@@ -25,6 +25,10 @@
     "client.js",
     "cordis.patch.yml",
     "README.md",
+    "README.en.md",
+    "docs/user-reference.md",
+    "docs/user-reference.en.md",
+    "docs/documentation-principles.md",
     "LICENSE"
   ],
   "engines": {
@@ -39,6 +43,7 @@
     "check:public-surface": "node tools/check-public-surface.mjs",
     "check:encoding": "node tools/check-encoding.mjs",
     "check:docs": "node tools/check-docs.mjs",
+    "check:user-docs": "node tools/check-user-docs.mjs",
     "check:alias-tokens": "node tools/check-alias-tokens.mjs",
     "check:agent-policy": "node verify/check-agent-policy.mjs",
     "acceptance": "node verify/final-acceptance.mjs",

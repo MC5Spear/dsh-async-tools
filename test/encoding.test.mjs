@@ -12,6 +12,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { inspectText, assertBaseline, COMMON_CHARS } from '../tools/_encoding-core.mjs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
+import { tmpdir } from 'node:os';
+import { runInNewContext } from 'node:vm';
+import { LOCAL_DIR } from '../tools/_local-config.mjs';
 
 /** 真实双重编码的一段样本（由 CP936 往返生成，汉字是"楠岃瘉瀹炰緥"这类）。 */
 const DOUBLE_ENCODED_SAMPLE = '楠岃瘉瀹炰緥绔埌绔瘉鎹';
@@ -89,6 +94,38 @@ test('编码判据：U+FFFD 只有带示例标记的行才豁免', () => {
   assert.equal(exempted.hardBroken, 0);
   assert.equal(exempted.excused, 1);
 });
+
+// 复用 CLI 的递归逻辑，以合成文件系统输入验证扫描范围，不启动子进程。
+function scanEncoding(root) {
+  const source = readFileSync(new URL('../tools/check-encoding.mjs', import.meta.url), 'utf8')
+    .replace(/^import .*;\r?\n/gm, '');
+  const lines = [];
+  let code;
+  runInNewContext(source, {
+    readFileSync: (file, ...args) => readFileSync(join(root, file), ...args),
+    readdirSync: (dir, ...args) => readdirSync(join(root, dir), ...args),
+    join, relative, inspectText, LOCAL_DIR,
+    console: { log: (...args) => lines.push(args.join(' ')) },
+    process: { exit: (value) => { code = value; } }
+  });
+  return { code, out: lines.join('\n') };
+}
+
+for (const rel of ['README.en.md', 'docs/user-reference.md', 'docs/user-reference.en.md', 'docs/documentation-principles.md']) {
+  test(`编码扫描：新增文档 ${rel} 不能漏扫`, (t) => {
+    const dir = mkdtempSync(join(tmpdir(), 'encoding-input-'));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    mkdirSync(dirname(join(dir, rel)), { recursive: true });
+    writeFileSync(join(dir, rel), '# Normal 文档\n', 'utf8');
+    assert.equal(scanEncoding(dir).code, 0);
+    for (const [sample, label] of [['broken \uFFFD\n', 'HARD-BROKEN'], ['line\r\n', 'CRLF']]) {
+      writeFileSync(join(dir, rel), sample, 'utf8');
+      const dirty = scanEncoding(dir);
+      assert.equal(dirty.code, 1);
+      assert.ok(dirty.out.includes(`${label}`) && dirty.out.includes(rel), dirty.out);
+    }
+  });
+}
 
 test('编码判据：正常中文与纯英文都不得被误报', () => {
   const normal = '这是一个正常的中文技术文档段落，用来作为基线。它包含标点、英文单词如 async_wait_job，以及一些数字 12345。';

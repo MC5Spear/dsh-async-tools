@@ -10,12 +10,12 @@
  * 无任何提示。白名单的问题不是"漏了某个名字"，而是"默认放行"这个姿态本身：
  * 它要求写检查的人**预先想到**每一份未来会出现的文档。
  *
- * 现在反过来：公开范围 `docs/` 下每个 `.md` 都必须在 `CURRENT_DOCUMENTS` 里显式登记，
+ * 现在反过来：公开范围 `docs/` 下每个 `.md` 都必须在 `FILES` 里显式登记，
  * 否则报未分类。加一份新文档时会被要求做一次明确判断，收益是**没有默认放行**。
  *
  * ## 输入契约（改这个脚本时必须一起改 `test/check-docs.test.mjs`）
  *
- * 本脚本读的输入**只有这几样**：`README.md`、公开范围 `docs/`（目录项与其中的 `.md`）、
+ * 本脚本读取责任表登记的全部文档、公开范围 `docs/` 的目录项、
  * 本机侧的语料目录（`<LOCAL_DIR>/docs/`，**可以整个不在**），以及自身的常量表。
  * 它的测试把这些铺到临时沙箱里**进程内**跑，所以：
  *
@@ -26,7 +26,7 @@
  *
  * ## 两类检查输入
  *
- * 公开范围 `docs/` 只剩**需求稿与设计稿**——读者要能只凭仓库里的东西读懂产品。
+ * 公开范围 `docs/` 按责任表登记需求、设计、用户参考与文档原则。
  * 审查、修正、审计、调研与事实材料**不进入本公开仓**；本机的 `<LOCAL_DIR>/docs/`
  * 是可选检查输入。本脚本因此分两段：
  *
@@ -58,30 +58,107 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { LOCAL_DIR } from './_local-config.mjs';
 
-/** 现行文档：承载"现在是什么"。查历史叙述词。 */
-const CURRENT_DOCUMENTS = [
-  'README.md',
-  'docs/requirements.md',
-  'docs/design.md',
+/**
+ * 文档责任表（设计 §8.3 按文件责任适用判据）：每份公开文档登记 `{file, role}`。
+ *
+ * - `current`：现行规范文档，承载"现在是什么"——历史叙述词与退役机制名清零。
+ * - `archive`：历史档案，职责就是记录过去——历史叙述词与退役机制名在其条目内
+ *   合法（档案记录的是当时的状态，退役名在旧条目里本来就是"当时的现役名"），
+ *   两类命中都按份计数写进输出留痕（不是静默跳过，也不进退出码）；围栏配对等
+ *   结构性判据仍按现行口径红。
+ */
+const DOCUMENTS = [
+  { file: 'README.md', role: 'current' },
+  { file: 'README.en.md', role: 'current' },
+  { file: 'docs/user-reference.md', role: 'current' },
+  { file: 'docs/user-reference.en.md', role: 'current' },
+  { file: 'docs/documentation-principles.md', role: 'current' },
+  { file: 'docs/requirements.md', role: 'current' },
+  { file: 'docs/design.md', role: 'current' },
   // 验证目录的唯一脚本清单（`README.md` 明确指向它）。它**不在 `docs/` 下**，所以不受
   // "未分类/幽灵"对账管辖，也就没有任何判据盯着它的漂移（工具计数、清理承诺与目录
   // 现实脱节这类问题不会自动红）。登记为现行文档，与 `README.md` 同规则。
-  'verify/README.md',
-  // 社区文件同样是"承载现在"的文档：版本变更与参与方式。它们也不在 `docs/` 下，
-  // 登记进来即受同一套管辖（围栏配对 + 历史叙述词归零 + 路径引用存在性）。
-  'CHANGELOG.md',
-  'CONTRIBUTING.md'
+  { file: 'verify/README.md', role: 'current' },
+  // 社区文件同样在这里登记：CONTRIBUTING 是参与方式的现行说明；CHANGELOG 是发布
+  // 历史（档案）——历史叙述词在其条目内合法，围栏配对仍严格。
+  { file: 'CHANGELOG.md', role: 'archive' },
+  { file: 'CONTRIBUTING.md', role: 'current' }
 ];
+
+/** 角色输出标签。 */
+const ROLE_LABEL = { current: '现行', archive: '档案' };
+
+/** 责任表里的全部文件（不分角色——未分类/幽灵对账与铺盘覆盖每一份）。 */
+const FILES = DOCUMENTS.map((doc) => doc.file);
 
 /** 历史叙述词：现行文档不该有这些。 */
 const HISTORICAL_WORDS = /勘误|原写|先前版本|已作废|曾经|以前是|此前误/g;
 
 /**
- * 已退役机制名：现行文档里不该出现（某个机制按新宿主改成事件上的
- * `awaited` 之后，设计稿与需求稿若还留着旧代的 `reported`/`waiters` 叙述，两处
- * 对不上而没有任何判据会红）。退役名的处置是**连禁令一起删净**，所以这里按名单判红。
+ * 退役名只按技术标识识别，避免把普通英语的动词或形容词当成机制名。
+ * 代码标识、属性/键语法与紧邻的字段/机制称谓都是证据；禁令不豁免技术名称。
+ * 档案仍按同一判据计数，由文件角色决定是否告警。
  */
-const RETIRED_MECHANISM_WORDS = /\breported\b|\bwaiters\b/g;
+function retiredDescription(before, after) {
+  // 英语邻接本身不足以命名；技术称谓还须承担记录/跟踪等谓词，或明确说明用途。
+  const technicalAssertion = /^['"”’]?\s+(?:field|property|flag|event|counter|mechanism|list)\s+(?:(?:records?|tracks?|stores?|counts?|signals?|marks?)\b|(?:to\s+(?:record|track|store|count|signal|mark)|for\s+(?:completion|delivery|tracking|waiting))\b)/i.test(after);
+    return technicalAssertion
+      || /\b(?:key|list)\s+(?:named|called)\s+['"“‘]?$/i.test(before)
+      || /(?:\b(?:field|property|flag|event|counter|mechanism)\s+(?:named|called)\s+['"“‘]?|(?:字段|属性|键|标志|事件|计数|机制|列表)(?:名|名称)?[为是：:\s]*['"“‘]?)$/i.test(before)
+      || /^['"”’]?\s*(?:字段|属性|键|标志|事件|计数|机制|列表)/.test(after)
+      || (/(?:\b(?:do not use|never use|deprecated|retired)|禁止(?:使用)?|禁用|退役)\s*['"“‘]?$/i.test(before)
+        && /^['"”’]?(?:\s*[.。;；!！]|\s*$|\s+(?:for|to)\b|\s*(?:来|用于|用来))/.test(after))
+      || /^['"”’]?\s+(?:is|has been)\s+(?:deprecated|retired|obsolete)\b/i.test(after)
+      || /^['"”’]?\s*(?:已退役|已废弃|已弃用)/.test(after);
+}
+
+function retiredMechanisms(text) {
+  // JS 围栏中的名称按词法标识识别，字符串和注释里的普通英语不提供标识证据。
+  const js = [...text.matchAll(/^[ \t]*\x60{3}(?:js|javascript|mjs|cjs)\s*\n([\s\S]*?)^[ \t]*\x60{3}/gm)].map((block) => {
+    const start = block.index + block[0].indexOf('\n') + 1;
+    const source = block[1];
+    const quotedKeys = new Set();
+    const comments = [];
+    const masked = source.replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|\x60(?:\\[\s\S]|[^\x60\\])*\x60/g, (token, offset) => {
+      if (token.startsWith('//') || token.startsWith('/*')) {
+        comments.push({ start: start + offset, end: start + offset + token.length, text: token });
+      }
+      // 引号内只有对象成员键和方括号属性是技术名称，message 等值字符串不是。
+      if (/^['"](?:reported|waiters)['"]$/.test(token)
+        && ((/[{,]\s*$/.test(source.slice(0, offset)) && /^\s*:/.test(source.slice(offset + token.length)))
+          || /[\w$)\]]\s*(?:\?\.)?\[\s*$/.test(source.slice(0, offset)) && /^\s*\]/.test(source.slice(offset + token.length)))) {
+        quotedKeys.add(start + offset + 1);
+      }
+      return token.replace(/[^\n]/g, ' ');
+    });
+    return { start, end: start + source.length, masked, quotedKeys, comments };
+  });
+  const code = [...text.matchAll(/(`{1,2})(reported|waiters)\1/g)]
+    .map((m) => [m.index, m.index + m[0].length]);
+  return [...text.matchAll(/\b(?:reported|waiters)\b/g)].filter((m) => {
+    const block = js.find(({ start, end }) => start <= m.index && m.index < end);
+    if (block) {
+      const comment = block.comments.find(({ start, end }) => start <= m.index && m.index < end);
+      if (comment) {
+        const offset = m.index - comment.start;
+        return retiredDescription(comment.text.slice(0, offset), comment.text.slice(offset + m[0].length));
+      }
+      return block.quotedKeys.has(m.index)
+        || /^(?:reported|waiters)\b/.test(block.masked.slice(m.index - block.start));
+    }
+    const before = text.slice(0, m.index);
+    const after = text.slice(m.index + m[0].length);
+    return code.some(([start, end]) => start <= m.index && m.index < end)
+      || /\b(?:const|let|var|function|class)\s+$/.test(before)
+      || /[\w$)\]]\s*\??\.\s*$/.test(before)
+      // Markdown 段落不是代码接收者；正文属性访问只接受同一行横向空白。
+      || (/[\w$)\]][ \t]*(?:\?\.)?\[[ \t]*['"]$/.test(before) && /^['"][ \t]*\]/.test(after))
+      || /^\s*=(?!=)/.test(after)
+      // 冒号只有与对象成员起点或独占行键配对时才是键证据，报告动词也能接冒号。
+      || (/(?:[{,]\s*|(?:^|\n)[ \t]*)['"]?$/.test(before) && /^['"]?\s*:/.test(after))
+      || retiredDescription(before, after);
+  }).map((m) => m[0]);
+}
 
 const countFences = (text) => (text.match(/^```/gm) ?? []).length;
 
@@ -107,7 +184,7 @@ export function checkDocs(root = process.cwd(), { quiet = false } = {}) {
     problemsByFile.set(file, list);
   };
 
-  /** 公开范围 `docs/` 下所有 `.md`，只与**现行**名单对账（语料不在这个层里）。 */
+  /** 公开范围 `docs/` 下所有 `.md`，与完整责任表对账。 */
   let onDisk;
   try {
     onDisk = readdirSync(join(root, 'docs'))
@@ -118,38 +195,48 @@ export function checkDocs(root = process.cwd(), { quiet = false } = {}) {
     onDisk = [];
   }
 
-  // `docs/` 之外的现行文档（根下 README/CHANGELOG/CONTRIBUTING 与 `verify/README.md`，
-  // 见 CURRENT_DOCUMENTS 表）不参与"未分类/幽灵"对账：
+  // `docs/` 之外登记的文档（根下两语 README/CHANGELOG/CONTRIBUTING 与 `verify/README.md`，
+  // 见 FILES 表）不参与"未分类/幽灵"对账：
   // 那两条判据的对象是"`docs/` 下每份 .md 都要有归属"。
-  const OUTSIDE_DOCS = new Set(CURRENT_DOCUMENTS.filter((file) => !file.startsWith('docs/')));
-  const unclassified = onDisk.filter((file) => !CURRENT_DOCUMENTS.includes(file));
-  const phantom = CURRENT_DOCUMENTS.filter((file) => !onDisk.includes(file) && !OUTSIDE_DOCS.has(file));
+  const OUTSIDE_DOCS = new Set(FILES.filter((file) => !file.startsWith('docs/')));
+  const unclassified = onDisk.filter((file) => !FILES.includes(file));
+  const phantom = FILES.filter((file) => !onDisk.includes(file) && !OUTSIDE_DOCS.has(file));
 
   for (const file of unclassified) {
-    problem(file, '未分类：公开范围 `docs/` 只放需求稿与设计稿——'
-      + '过程稿、事实登记簿、交付索引一律下沉本机侧的语料目录，不进公开范围');
+    problem(file, '未分类：公开范围 `docs/` 下每份 Markdown 必须在 DOCUMENTS 责任表登记；'
+      + '请先确认文档职责，再登记现行文档或档案');
   }
   for (const file of phantom) {
     problem(file, '名单里的这份现行文档在盘上不存在——名单与现实漂移了，检查会静默失去作用');
   }
 
-  // ── 现行文档：围栏配对 + 历史叙述词 ────────────────────────────────────────
-  for (const file of CURRENT_DOCUMENTS) {
+  // ── 登记文档：围栏配对（全角色）+ 历史叙述词与退役机制名（按责任）──────
+  const archiveHits = new Map();
+  const retiredHits = new Map();
+  for (const { file, role } of DOCUMENTS) {
     let text;
     try {
       text = readFileSync(join(root, file), 'utf8');
     } catch (error) {
-      problem(file, `读不到（现行文档必须存在）：${error instanceof Error ? error.message : String(error)}`);
+      problem(file, `读不到（登记文档必须存在）：${error instanceof Error ? error.message : String(error)}`);
       continue;
     }
     const fences = countFences(text);
     if (fences % 2 !== 0) problem(file, `代码围栏 ${String(fences)} 个（不配对）`);
     const hits = [...text.matchAll(HISTORICAL_WORDS)].length;
-    if (hits > 0) problem(file, `历史叙述词 ${String(hits)} 处（现行文档应清零）`);
-    const retired = [...text.matchAll(RETIRED_MECHANISM_WORDS)].map((m) => m[0]);
-    if (retired.length > 0) {
+    if (role === 'archive') {
+      // 档案：历史叙述词合法——不进 problemsByFile（不影响退出码），按份计数留痕。
+      archiveHits.set(file, hits);
+    } else if (hits > 0) {
+      problem(file, `历史叙述词 ${String(hits)} 处（现行文档应清零）`);
+    }
+    const retired = retiredMechanisms(text);
+    if (role === 'archive') {
+      // 档案：退役机制名同样合法（旧条目记录当时的状态），按份计数留痕。
+      retiredHits.set(file, retired.length);
+    } else if (retired.length > 0) {
       problem(file, `已退役机制名 ${String(retired.length)} 处（${[...new Set(retired)].join('、')}）——`
-        + '现行文档只描述现行机制；退役名连禁令一起删净');
+        + '现行文档应清零；档案豁免的只有历史叙述词与退役机制名');
     }
   }
 
@@ -180,12 +267,16 @@ export function checkDocs(root = process.cwd(), { quiet = false } = {}) {
   // 把真问题淹掉——这类"看起来更严、实际更吵"的检查比不做更糟。
 
   // ── 输出 ──────────────────────────────────────────────────────────────────
-  for (const file of CURRENT_DOCUMENTS) {
+  for (const { file, role } of DOCUMENTS) {
     const list = problemsByFile.get(file);
+    const tag = ROLE_LABEL[role];
     if (list === undefined) {
-      say(`OK    现行  ${file.padEnd(28)} ${String(readFileSync(join(root, file)).length).padStart(6)}B`);
+      const trace = role === 'archive'
+        ? `  历史叙述词 ${String(archiveHits.get(file) ?? 0)} 处、退役机制名 ${String(retiredHits.get(file) ?? 0)} 处（档案合法，留痕）`
+        : '';
+      say(`OK    ${tag}  ${file.padEnd(28)} ${String(readFileSync(join(root, file)).length).padStart(6)}B${trace}`);
     } else {
-      say(`WARN  现行  ${file}`);
+      say(`WARN  ${tag}  ${file}`);
       for (const item of list) say(`            ${item}`);
     }
   }
@@ -207,7 +298,7 @@ export function checkDocs(root = process.cwd(), { quiet = false } = {}) {
   // 挂在任意 key 上（例如语料目录本身）。漏打印的后果是**检查失败却不说为什么**——
   // 与"打印了却不失败"是同一枚硬币的两面，都让人只能靠猜。变异与单测都够不着这种
   // 形态，只能靠结构上不留缝：凡进了 `problemsByFile` 的，最后一定要被念出来。
-  const printed = new Set([...CURRENT_DOCUMENTS, ...corpusProblemFiles, ...unclassified]);
+  const printed = new Set([...FILES, ...corpusProblemFiles, ...unclassified]);
   const rest = [...problemsByFile.keys()].filter((key) => !printed.has(key));
   for (const key of rest) {
     say(`WARN  其他  ${key}`);
@@ -220,13 +311,19 @@ export function checkDocs(root = process.cwd(), { quiet = false } = {}) {
 
   // **任何**一项问题都算失败——包括语料的围栏不配对。
   //
-  // 若豁免某类文件（例如把档案的问题不算数）：给一份档案加一个未闭合围栏，脚本会打印
-  // WARN 但**退出码 0**。打印了却不失败，等于把检查降级成装饰。
-  // 档案豁免的是**历史叙述词**（它们本来就承载过去），不是结构性错误。
+  // 档案（role=archive）按文件责任豁免的**只有历史叙述词与退役机制名两类**：
+  // 豁免以角色建模、以命中计数留痕（见输出里的档案行），不是"打印 WARN 却退出 0"
+  // 那种把告警从退出码里摘除的形态。围栏配对等结构性判据对档案同样算失败——
+  // 档案记得再旧，结构坏了读者照样读不了。
   const bad = problemsByFile.size;
+  const currentCount = DOCUMENTS.filter((doc) => doc.role === 'current').length;
+  const archiveDocs = DOCUMENTS.filter((doc) => doc.role === 'archive');
+  const archiveHitTotal = archiveDocs.reduce((sum, doc) => sum + (archiveHits.get(doc.file) ?? 0), 0);
+  const retiredHitTotal = archiveDocs.reduce((sum, doc) => sum + (retiredHits.get(doc.file) ?? 0), 0);
   say('');
   say(bad === 0
-    ? `文档结构检查通过（现行 ${String(CURRENT_DOCUMENTS.length)} 份历史叙述词归零；`
+    ? `文档结构检查通过（现行 ${String(currentCount)} 份历史叙述词与退役机制名归零；`
+      + `档案 ${String(archiveDocs.length)} 份历史叙述词 ${String(archiveHitTotal)} 处、退役机制名 ${String(retiredHitTotal)} 处留痕；`
       + `公开范围 \`docs/\` 无未分类文档；语料${corpusPresent ? ` ${String(corpus.length)} 份围栏配对` : '缺席（跳过）'}）。`
     : `${String(bad)} 份文档有告警。`);
   return { ok: bad === 0, code: bad === 0 ? 0 : 1, out: lines.join('\n'), corpusPresent, corpusCount: corpus.length };

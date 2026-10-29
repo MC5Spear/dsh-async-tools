@@ -6,9 +6,9 @@
 
 ## 1. 配置、权限与安全前提
 
-脚本通过[本机配置加载器](<../tools/_local-config.mjs>)取宿主模块树、实例 URL、认证文件和证据目录；形状见[示例](<../tools/local-config.example.mjs>)。不在源码写机器坐标。
+依赖本机配置的探针通过[本机配置加载器](<../tools/_local-config.mjs>)取宿主模块树、实例 URL、认证文件和证据目录；形状见[示例](<../tools/local-config.example.mjs>)。不在源码写机器坐标。不依赖本机配置的静态入口，以及可单独使用 `DSAT_HOST_MODULES` 的宿主模块解析钩子，不受下面的本机配置检查条件限制。
 
-- 本机目录缺席时明确跳过；目录存在而配置缺失或加载失败时报错，不以环境变量绕过。准入后非空环境变量优先、文件值备用，缺必要字段说明没有来源。
+- 对依赖本机配置的探针，本机目录缺席时明确跳过；目录存在而配置缺失或加载失败时报错，环境变量不能绕过这些检查。配置可加载后，普通字符串字段优先取非空环境变量，再取文件值；缺必要字段时说明没有来源。`siblingBundles` 等字段另有规则，见[参与指南的配置例外与派生值](<../CONTRIBUTING.md#配置本机验证所需的信息>)；其中 `siblingBundles` 优先采用文件数组，不能用环境变量覆盖该数组。
 - 认证在授权的 helper 内部读取，输出不打印令牌、cookie、秘密或含 token 的 URL。证据脱敏后写配置的 evidenceDir，不进公开仓。
 - 优先默认权限执行；纯函数判断尽量进程内复用。确需子进程、浏览器或受限执行环境以外权限时，经正常审批，不能自动改会话全权限或绕过子代理限制。
 - EPERM、加载失败、超时终止、无输出且没有执行证据，属于未完成验证，不算产品通过或目标变异被捕获。外部命令先裸调用确认执行，不能把捕获形静默失败读成成功空输出。
@@ -18,20 +18,29 @@
 
 ## 2. 只读及离线入口
 
-```powershell
-npm run test:inproc
-npm run test:offline
-npm run check
-npm run check:preset
-npm run check:docs
-npm run check:encoding
-npm run check:model-text
-npm run check:public-surface
-npm run check:alias-tokens
-npm run check:agent-policy
-```
+先按所需环境选择入口，不要把下面所有命令当成无条件批处理。
 
-这些入口不替代当前功能的真实验收。宿主锚可使用 `DSAT_HOST_MODULES`；`test:offline`（离线安装形态，无宿主锚）下需要宿主锚的用例自跳过并打印统一理由（守卫唯一来源 [`test/_host-gate.mjs`](<../test/_host-gate.mjs>)）——合格读数为 fail 为 0、pass 与 skip 之和等于 `test:inproc` 的用例总数、每条跳过都带理由；静态看守 [`test/offline-import-guard.test.mjs`](<../test/offline-import-guard.test.mjs>) 两种形态都在场，拦截测试文件顶层静态依赖宿主链模块的漏网。无锚导致用例跳过时，单列未验证。是否能捕获子进程或启动浏览器由部署决定，不把权限噪声当被测对象失败。
+| 类别 | 入口 | 能证明什么 |
+| --- | --- | --- |
+| 静态检查 | `npm run check`、`npm run check:user-docs` | 分别检查语法和用户资料事实，不连接真实实例 |
+| 需要宿主主题源的静态检查 | `npm run check:alias-tokens` | 不连接实例，但须读取对应版本的 `dsh-client-ui-theme` 源；先显式指定并核对目标树，方法见下文 |
+| 文档及文件扫描 | `npm run check:docs`、`npm run check:encoding`、`npm run check:public-surface` | 检查职责、引用、编码和公开范围；运行前须确认读哪些目录 |
+| 无宿主锚测试 | `npm run test:offline` | 运行离线形态；依赖宿主模块的用例明确跳过 |
+| 需要宿主模块 | `npm run test:inproc`、`npm run check:preset`、`npm run check:model-text`、`npm run check:agent-policy` | 核对对应宿主接口、预设、文案或策略；不等于连接实例或真实模型验证 |
+
+**准备目标源**。主题别名检查须使用本线 DSH `0.2.0-rc.2` 对应的主题源。先核对目标 node_modules 目录下的 `@deepseek-ai/dsh-client-ui-theme/package.json` 版本及 `@deepseek-ai/dsh-client-ui-theme/lib/client.js` 源文件，再把当前终端的 `DSAT_HOST_MODULES` 显式设为该目录（含 `@deepseek-ai`）。上述包路径都相对于指定的 `DSAT_HOST_MODULES`，不是本插件仓内文件。此命令不导入 `_host-hooks`，不会从 `.local/config.mjs` 的 hostModules 取值。
+
+**确认没有取错候选**。命令依次尝试 `DSAT_HOST_MODULES`、`DSH_HOME/profiles/node_modules`、APPDATA 全局 DSH 的嵌套模块树。显式路径无效时仍可能读到其他候选，因此运行结果的“枚举自”须与预期源路径一致。完整候选路径、`DSH_HOME` 默认值和确认步骤见[参与指南的主题源说明](<../CONTRIBUTING.md#主题别名检查的宿主源>)。
+
+**区分缺源与违规**。缺少可枚举的主题源时退出 2，表示本项未验证，不是产品违规；修正路径和版本后再重试。完成枚举后发现未定义别名时退出 1，才是此检查检出的违规结果。
+
+“宿主锚”是用来核对接口的对应版本模块树，可通过 `DSAT_HOST_MODULES` 指定。它和真实运行实例是两个对象。没有锚时，相关测试由[统一守卫](<../test/_host-gate.mjs>)跳过并打印理由，所涉及功能仍须列为未验证。
+
+离线测试读数须满足：fail 为 0，pass 与 skip 之和等于 `test:inproc` 的用例总数，每条 skip 都有理由。[离线导入守卫](<../test/offline-import-guard.test.mjs>)在两种形态中都运行，用来发现测试顶层静态导入宿主依赖的问题。
+
+纯静态不等于可以忽略扫描范围。`check:docs` 会读取可选本机语料；公开范围和编码检查会递归扫描。仅验证公开交付时，先按明确文件清单建立新副本，不递归复制本机或旧运行材料，再在副本中检查。不要假定 scope 参数就能阻止遍历。
+
+子进程捕获和浏览器启动还受部署权限限制。无法启动、EPERM 或捕获形静默失败表示验证未完成，不能当作被测产品失败，也不能算通过。
 
 | 脚本 | 当前用途与边界 |
 | --- | --- |
@@ -46,7 +55,14 @@ npm run check:agent-policy
 
 ## 3. 真实实例与页面探针
 
-本表说明现有脚本的实际用途和风险，不是安全执行授权，也不是全部当前要求的完成表。对未覆盖的新目标，需要修改探针后重新验证。
+这些探针会连接真实实例，有些还会运行模型、启动浏览器或改共享状态。执行前按下面顺序准备：
+
+1. 读取所选脚本，确认目标 URL、宿主版本、认证来源及将写入的设置或声明。
+2. 取得该目标和操作的授权，记录共享状态起始值，只创建自己的隔离测试会话和浏览器资料目录。
+3. 对重启、安装卸载或权限变更，先确认维护窗口及恢复方法。不能把探针当作操作授权。
+4. 运行后核对自己的作业、会话、设置和声明是否恢复；未能清理或确认的部分明确报告。finally 代码存在不代表已经恢复。
+
+下表说明脚本的覆盖和副作用，不表示全部当前要求已经通过。新目标未被覆盖时，先修改探针，再重新验证。
 
 | 脚本 | 覆盖与副作用 |
 | --- | --- |
@@ -90,10 +106,31 @@ npm run check:agent-policy
 
 ## 5. 变异证明
 
-[README 实现变异索引](<../README.md#实现变异索引>)登记实现变异与目标测试文件，并由索引检查器双向核对。检查器输入变异包括文档路径、裸文件名、公开范围、模型文本、策略、界面及语言等。
+[实现变异索引](<#实现变异索引>)登记实现变异与目标测试文件，并由索引检查器双向核对。检查器输入变异包括文档路径、裸文件名、公开范围、模型文本、策略、界面及语言等。
 
 - 内存变异直接喂纯判断函数；写回型变异只在隔离副本，先读脚本，确认 ROOT 与目标指向副本。
 - 未变异基线须可运行且通过，变异必须让预期保护的断言失败。失败用例集合不符预期、未运行、加载失败和超时不能冒称 CAUGHT。
 - 执行文件必须与脚本声明一致，多文件输出归属和 Node 报告器形状变化均可能影响结果解析，需要明确识别不完整输出。
 - 权限不足可经正常审批执行同一无害测试，或用合适隔离环境；不能通过弱化断言取得通过。
 - 探针结束确认自己的作业、会话和设置状态，记录没有清理或没有验证的部分，不能仅以 finally 存在宣称恢复成功。
+
+### 实现变异索引
+
+此表是现有脚本与测试入口的机器核对索引，不表示这些脚本已经覆盖全部当前目标。仅在隔离副本使用写回型脚本，未运行不算变异被捕获。
+
+| 脚本 | 跑的测试文件 | 对象 |
+| --- | --- | --- |
+| `verify/mutate-escalation-removed.mjs` | `test/escalation.test.mjs` | 单次提权接线 |
+| `verify/mutate-steering.mjs` | `test/interrupt.test.mjs` | 消息落点与来源过滤 |
+| `verify/mutate-escalation-order.mjs` | `test/escalation.test.mjs` | 批准与启动顺序 |
+| `verify/mutate-card-theme.mjs` | `test/two-planes.test.mjs` | 主题样式 |
+| `verify/mutate-agent.mjs` | `test/agent.test.mjs` | 后台派生与 persona |
+| `verify/mutate-yield-example.mjs` | `test/output.test.mjs` | 预算示例 |
+| `verify/mutate-config-slot.mjs` | `test/two-planes.test.mjs` | 配置表单挂点 |
+| `verify/mutate-r27-form.mjs` | `test/two-planes.test.mjs` | 表单草稿与保存 |
+| `verify/mutate-lang.mjs` | `test/two-planes.test.mjs` | 双语言行为 |
+| `verify/mutate-list-children-shape.mjs` | `test/wait-agent.test.mjs` | 子代理目录形状 |
+| `verify/mutate-r55-entry-scan.mjs` | `test/wait-agent.test.mjs` | 等待入口扫描 |
+| `verify/mutate-atb01-final-result.mjs` | `test/wait-job.test.mjs` | 最终结果同次交付，另有真实注册表测试 |
+
+检查器输入变异包括路径、编码之外的公开范围、模型文案、主题、策略和界面判据等，分别由脚本自身声明入口；[变异索引检查器](<../tools/check-mutate-index.mjs>)核对上述实现表和具名例外，不以文档表代替执行结论。

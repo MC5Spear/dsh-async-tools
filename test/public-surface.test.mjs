@@ -209,3 +209,15 @@ test('P12 `scope` 只限定扫描范围，不改变判据', () => {
     box.cleanup();
   }
 });
+
+for (const rel of ['README.en.md', 'docs/user-reference.md', 'docs/user-reference.en.md', 'docs/documentation-principles.md']) {
+  test(`P17 新增文档 ${rel} 进入递归公开范围检查`, (t) => {
+    const clean = inspect({ extra: { [rel]: CLEAN_DOC } });
+    t.after(clean.cleanup);
+    assert.equal(clean.code, 0, clean.out);
+    const dirty = inspect({ extra: { [rel]: '# sample\nSee docs/facts.md.\n' } });
+    t.after(dirty.cleanup);
+    assert.equal(dirty.code, 1);
+    assert.ok(dirty.findings.some((finding) => finding.file === rel && finding.family === '引用'), dirty.out);
+  });
+}

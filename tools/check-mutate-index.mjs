@@ -1,5 +1,5 @@
 /**
- * README 的"变异脚本 ↔ 测试文件"表必须与盘上的文件一致。
+ * verify/README 的"变异脚本 ↔ 测试文件"表必须与盘上的文件一致。
  *
  * ## 这条判据挡什么
  *
@@ -26,9 +26,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const MODULE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
- * 不进 README 表的豁免项——**每条都要写清理由**。
+ * 不进 verify/README 表的豁免项——**每条都要写清理由**。
  *
- * 判据：README 那张表回答的是"**改坏哪个实现、跑哪个测试文件**"。
+ * 判据：verify/README 那张表回答的是"**改坏哪个实现、跑哪个测试文件**"。
  * 若一个脚本改的**不是交付实现**、而是**检查器自己**，它就没有"跑的测试文件"这一列可言，
  * 塞进表里会把表的语义搅浑。
  *
@@ -48,10 +48,10 @@ const EXEMPT_FROM_TABLE = new Map([
   ['verify/mutate-public-surface.mjs', '验证 tools/check-public-surface.mjs 的三类判据（结构 / 本机指纹 / 内部引用）都能失败——变异打在**合成树**上（不碰真仓），不改交付实现；判据语义的单测在 test/public-surface.test.mjs']
 ]);
 
-// ── 从 README 的表里抽出"脚本"列的路径 ────────────────────────────────────
+// ── 从 verify/README 的表里抽出"脚本"列的路径 ────────────────────────────────────
 //
 // 表行形如：`| verify/mutate-x.mjs | test/x.test.mjs | 覆盖 |`
-// 单元格**可以带反引号也可以不带**——若只认带反引号的形式，而 README 里
+// 单元格**可以带反引号也可以不带**——若只认带反引号的形式，而 verify/README 里
 // 那一列没加，于是基线就假红。两种都收。
 // 只认首列是 `verify/mutate-*.mjs` 的表格行，正文里的顺带提及不算。
 const unquote = (cell) => cell.replace(/^`/, '').replace(/`$/, '').trim();
@@ -77,24 +77,27 @@ export function checkMutateIndex(root = MODULE_ROOT, { quiet = false } = {}) {
       .map((name) => `verify/${name}`)
   );
 
+  const problems = [];
   const listed = new Map();
-  for (const line of readFileSync(join(root, 'README.md'), 'utf8').split('\n')) {
+  const document = readFileSync(join(root, 'verify/README.md'), 'utf8');
+  const section = /^#{2,6} 实现变异索引\s*\r?\n([\s\S]*?)(?=^#{1,6} |$(?![\s\S]))/m.exec(document)?.[1];
+  if (section === undefined) problems.push('verify/README.md 缺少实现变异索引节');
+  for (const line of (section ?? '').split('\n')) {
     const cells = line.split('|').map((c) => c.trim());
     if (cells.length < 4) continue;
     const script = /^(verify\/mutate-[^\s`]+\.mjs)$/.exec(unquote(cells[1]));
     if (script === null) continue;
     const test = /^(test\/[^\s`]+\.test\.mjs)$/.exec(unquote(cells[2]));
+    if (listed.has(script[1])) problems.push(`${script[1]} 重复登记`);
     listed.set(script[1], test === null ? null : test[1]);
   }
 
-  const problems = [];
-
   for (const script of listed.keys()) {
-    if (!onDisk.has(script)) problems.push(`README 列了 ${script}，但盘上不存在（读者会扑空）`);
+    if (!onDisk.has(script)) problems.push(`verify/README 列了 ${script}，但盘上不存在（读者会扑空）`);
   }
   for (const script of onDisk) {
     if (listed.has(script) || EXEMPT_FROM_TABLE.has(script)) continue;
-    problems.push(`盘上有 ${script}，但 README 的表里没登记（没人知道它跑哪个测试文件）`);
+    problems.push(`盘上有 ${script}，但 verify/README 的表里没登记（没人知道它跑哪个测试文件）`);
   }
   // 豁免项也必须真的在盘上——豁免一个不存在的文件说明名单烂了。
   for (const script of EXEMPT_FROM_TABLE.keys()) {
@@ -107,12 +110,22 @@ export function checkMutateIndex(root = MODULE_ROOT, { quiet = false } = {}) {
     if (test === null) { problems.push(`${script} 那一行的"跑的测试文件"列不是 \`test/*.test.mjs\` 形式`); continue; }
     try {
       readFileSync(join(root, test), 'utf8');
+      const source = readFileSync(join(root, script), 'utf8');
+      const declaration = /const\s+TESTS?\s*=\s*([^;]+);/.exec(source)?.[1];
+      if (declaration !== undefined) {
+        const declaredTests = [...declaration.matchAll(/['"](test\/[^'"]+\.test\.mjs)['"]/g)].map((match) => match[1]);
+        if (declaredTests.length > 0 && !declaredTests.includes(test)) {
+          problems.push(`${script} 声明的测试集合不含索引目标 ${test}`);
+        }
+      } else {
+        say(`  人工核查映射：${script} 无 TEST/TESTS 声明；存在性检查不证明语义对应。`);
+      }
     } catch {
       problems.push(`${script} 声明跑 ${test}，但那个文件不存在`);
     }
   }
 
-  say(`盘上的变异脚本 ${String(onDisk.size)} 个；README 表里登记 ${String(listed.size)} 个。`);
+  say(`盘上的变异脚本 ${String(onDisk.size)} 个；verify/README 表里登记 ${String(listed.size)} 个。`);
   for (const [script, test] of listed) say(`  ${script} → ${String(test)}`);
 
   let ok;
