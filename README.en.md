@@ -19,7 +19,7 @@ This third-party plugin is unaffiliated with DeepSeek. It is personally maintain
 
 - **Match the exact DSH version above.** A mismatch may prevent the entire plugin from loading.
 - **Node.js 24 is recommended.** Before using another version, check the [complete runtime prerequisites](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>). Do not treat the plugin declaration as a minimum for the complete DSH host.
-- **Your Git account needs read access to the private repository.** This package is not distributed through npm. Without permission, contact the maintainer who supplied the source. The [installation prerequisites](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>) explain access troubleshooting.
+- **Installation source.** This package is not distributed through npm. If the installation address does not yield the source, check the repository address and pinned commit, then the network or proxy. If it still fails, contact the maintainer who supplied the source. The [installation prerequisites](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>) explain access troubleshooting.
 - **This line targets Windows; full host revalidation remains pending.** Linux commands and one-shot escalation, macOS, and remote execution are unverified. Send the maintainer your environment and intended use to arrange isolated verification. Partial Windows results do not establish support for other platforms.
 
 ## Install

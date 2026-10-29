@@ -11,7 +11,7 @@ This alpha preparation worktree is not adapted for dsh `0.2.2-alpha.2` and must 
 | Plugin version | `0.2.7+dsh.0.2.1-rc.4` |
 | Exact dsh host version | `0.2.1-rc.4` |
 
-The source repository is currently private. The account used for Git access needs read permission for this repository. A private repository may appear as 404 when not signed in or without read access; check the Git account's permission. Without permission, contact the maintainer who supplied the installation source to ask about access or available installation artifacts.
+If the installation address does not yield the source, check the repository address and pinned commit, then the network or proxy. If it still fails, contact the maintainer who supplied the installation source about available installation artifacts.
 
 Before installation, match the exact DSH version above and check Node. The plugin's `>=20` declaration is not a minimum for the complete host. Its commander 15 dependency requires `>=22.12.0`, which is only a known lower bound. Node.js 24 is recommended; confirm that all target-host dependencies resolve on that runtime.
 

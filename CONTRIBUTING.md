@@ -6,7 +6,7 @@
 
 先确认要维护的版本线。本分支在准备 alpha 适配，当前包清单仍是 rc4，不能按分支名选择 alpha 宿主。已批准的目标见[需求 7.3](<docs/requirements.md#73-当前兼容基准与逐版本适配>)；当前实现和验证差距见[设计第 9 章](<docs/design.md#9-当前实施与验证状态>)。
 
-在有私有仓库读取权限的 Git 账号下克隆源码。下面是当前 rc4 开发链接的准备方法，不是 alpha 部署流程：
+克隆源码仓库。下面是当前 rc4 开发链接的准备方法，不是 alpha 部署流程：
 
 ```powershell
 git clone https://github.com/MC5Spear/dsh-async-tools.git
