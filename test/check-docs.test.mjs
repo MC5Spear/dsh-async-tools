@@ -45,7 +45,7 @@ const SCRIPT = 'tools/check-docs.mjs';
  * 静态导入有顺带执行整场检查的风险（函数形态只在调用时跑，但双份清单的漂移风险
  * 本来就是 C5 要盯的）。重复一份的代价是可能漂移，所以 C5 顺便断言这些文件都存在。
  */
-const CURRENT_DOCS = ['requirements.md', 'design.md'];
+const CURRENT_DOCS = ['requirements.md', 'design.md', 'user-reference.md', 'user-reference.en.md', 'documentation-principles.md'];
 
 /**
  * `docs/` **之外**的登记文档，同样必须与脚本的责任表一致（脚本里 CHANGELOG 是
@@ -56,7 +56,7 @@ const CURRENT_DOCS = ['requirements.md', 'design.md'];
  * 不覆盖它们——**但沙箱必须把它们也铺进去**，否则脚本会在沙箱里报"登记文档本身不存在"，
  * 而那条失败与代码无关。
  */
-const CURRENT_OUTSIDE_DOCS = ['verify/README.md', 'CHANGELOG.md', 'CONTRIBUTING.md'];
+const CURRENT_OUTSIDE_DOCS = ['README.en.md', 'verify/README.md', 'CHANGELOG.md', 'CONTRIBUTING.md'];
 
 /** 沙箱语料里铺的两份合成档案（**不**取真实语料——那是本机侧的数据，且会随轮次改名）。 */
 const SAMPLE_CORPUS = {
@@ -102,6 +102,8 @@ test('C1 check-docs：干净时退出 0（四态之③：正常文档全绿）',
   t.after(box.cleanup);
   const { code, out } = box.runChecker();
   assert.equal(code, 0, `干净的树必须退出 0，实际输出：${out.slice(-300)}`);
+  assert.match(out, /现行 9 份/);
+  assert.match(out, /档案 1 份/);
 });
 
 test('C2 check-docs：未分类的新文档必须让它退出 1（白名单默认放行的假绿）', async (t) => {
@@ -173,7 +175,7 @@ test('C5 check-docs：只准读那几个相对路径（新增输入必须同步�
     assert.ok(docs.includes(name), `docs/${name} 必须在盘上（脚本的现行名单里有它）`);
   }
   assert.ok(existsSync(join(ROOT, 'README.md')), 'README.md 必须在盘上（脚本的现行名单里有它）');
-  // 公开范围 `docs/` 只放需求稿与设计稿：多于现行名单就是有人把过程稿放回来了。
+  // 未登记的新文档必须失败，新增输入须同步责任表和夹具。
   assert.equal(docs.length, CURRENT_DOCS.length,
     `公开范围 docs/ 只应剩 ${String(CURRENT_DOCS.length)} 份现行文档，实际 ${String(docs.length)} 份：${docs.join('、')}`);
   void box;
@@ -293,3 +295,169 @@ test('C11 check-docs：档案的围栏损坏仍然必红（四态之④：结构
   assert.match(out, /WARN\s+档案\s+CHANGELOG\.md/, `输出必须点名档案文件，实际：${out.slice(-300)}`);
   assert.match(out, /代码围栏 \d+ 个（不配对）/, `输出必须点名围栏问题，实际：${out.slice(-300)}`);
 });
+
+
+const ORDINARY_MECHANISM_WORD_CASES = [
+  ["标题后裸数组","# Synthetic current document\n\n\n[\"reported\"]"],
+  ["段落后裸数组","A normal paragraph ends here\n\n[\"waiters\"]"],
+  ["JSON消息值数组","```json\n{\"messages\": [\"reported\"]}\n```"],
+  ["JSON等待词值数组","```json\n{\"messages\": [\"waiters\"]}\n```"],
+  ["普通裸数组","[\"reported\"]"],
+  ["普通注释技术词宾语","```js\n// Residents reported property damage.\n// The user reported field errors.\n```"],
+  ["普通字符串技术词宾语","```js\nconsole.log(\"The user reported key details.\");\n```"],
+  ["JS数组普通字符串", '```js\nconst messages = ["reported"];\n```'],
+  ["报告字段错误正文","The user reported field errors."],
+  ["报告字段错误注释","```js\n// The user reported field errors.\n```"],
+  ["报告字段错误字符串","```js\nconsole.log(\"The user reported field errors.\");\n```"],
+  ["报告财产损害正文","Residents reported property damage."],
+  ["报告财产损害注释","```js\n// Residents reported property damage.\n```"],
+  ["报告财产损害字符串","```js\nconsole.log(\"Residents reported property damage.\");\n```"],
+  ["报告关键细节正文","The user reported key details about the failure."],
+  ["报告关键细节JS注释","```js\n// The user reported key details about the failure.\n```"],
+  ["报告关键细节JS字符串","```js\nconsole.log(\"The user reported key details about the failure.\");\n```"],
+  ["服务员列菜品正文","The waiters list the available dishes."],
+  ["服务员列菜品JS注释","```js\n// The waiters list the available dishes.\n```"],
+  ["服务员列菜品JS字符串","```js\nconsole.log(\"The waiters list the available dishes.\");\n```"],
+  ["JS块注释普通英语","```js\n/* The user reported key details. */\n```"],
+  ["普通报告冒号","The user reported: the file was missing."],
+  ["注释普通报告冒号","```js\n// The user reported: the file was missing.\n```"],
+  ["字符串普通报告冒号","```json\n{\"message\": \"The user reported: the file was missing.\"}\n```"],
+  ["禁令中的 reported 形容词","Do not use reported paths as proof."],
+  ["禁令中的 reported 换行形容词","Do not use reported\npaths as proof."],
+  ["代码字符串普通 reported path", '```powershell\nWrite-Output "reported path"\n```'],
+  ["JSON 消息普通 reported", '```json\n{"message": "The user reported an error"}\n```'],
+  ["代码注释普通 reported", '```js\n// The user reported an error.\n```'],
+  [
+    "普通英语 reported path",
+    "A reported path also does not prove that the file is complete."
+  ],
+  [
+    "普通英语用户报告错误",
+    "The user reported an error. Check the log before retrying."
+  ],
+  [
+    "普通英语自然分段",
+    "A reported\npath can be checked later.\n\nThe user\nreported an error in the command."
+  ],
+  [
+    "普通英语 waiters 人员",
+    "The restaurant waiters reported an error in the order."
+  ],
+  [
+    "普通标识子串",
+    "ordinarywaiters and unreported are example words."
+  ]
+];
+const RETIRED_IDENTIFIER_CASES = [
+  ["同一行真实state属性","Read state[\"reported\"] before returning."],
+  ["JS合法跨行属性","```js\nconst value = state\n  [\"reported\"];\n```"],
+  ["原reported字段技术断言","The reported field records completion."],
+  ["原waiters机制技术断言","The waiters mechanism tracks pending calls."],
+  ["原跨行reported事件用途","Use the reported\nevent to track completion."],
+  ["非JS接收者方括号属性","Read state[\"reported\"] before returning."],
+  ["JSON真实对象键","```json\n{\"reported\": true}\n```"],
+  ["JS注释明确字段命名","```js\n// The field named reported records completion.\n```"],
+  ["JS注释用途禁令","```js\n// Do not use waiters for completion tracking.\n```"],
+  ["JS块注释明确字段命名","```js\n/* The field called reported records completion. */\n```"],
+  ["JS块注释用途禁令","```js\n/* Do not use waiters for completion tracking. */\n```"],
+  ["JS注释原字段断言","```js\n// The reported field records completion.\n```"],
+  ["技术机制其他谓词","The reported mechanism stores delivery state."],
+  ["技术事件其他用途","Use the waiters event for completion tracking."],
+  ["JS解构绑定","```js\nconst { reported } = event;\n```"],
+  ["JS对象简写","```js\nconst state = { reported };\n```"],
+  ["JS逗号声明","```js\nlet active = true, waiters;\n```"],
+  ["JS引号对象键","```js\nconst state = { \"reported\": true };\n```"],
+  ["JS引号属性","```js\nconst value = event[\"reported\"];\n```"],
+  ["明确命名key","The key named reported records completion."],
+  ["明确命名list","The list called waiters tracks pending calls."],
+  ["reported 用途禁令","Do not use reported for completion tracking."],
+  ["waiters 中文用途禁令","禁止使用 waiters 来记录等待者。"],
+  ["reported 后置退役谓语","reported is deprecated."],
+  ["waiters 后置退役谓语","waiters is retired for completion tracking."],
+  ["reported 多行对象键","```json\n{\n  \"reported\": true\n}\n```"],
+  ["waiters 后续对象成员键","{ active: true, waiters: [] }"],
+  [
+    "行内 reported 标识",
+    "`reported`"
+  ],
+  [
+    "行内 waiters 标识",
+    "`waiters`"
+  ],
+  [
+    "属性 reported",
+    "Read event.reported before returning."
+  ],
+  [
+    "可选链 waiters",
+    "Read job?.waiters before returning."
+  ],
+  [
+    "方括号 reported 属性",
+    "Read event[\"reported\"] before returning."
+  ],
+  [
+    "reported 对象键",
+    "{ \"reported\": true }"
+  ],
+  [
+    "waiters 对象键",
+    "{ waiters: [] }"
+  ],
+  [
+    "reported 字段称谓",
+    "The field called reported records completion."
+  ],
+  [
+    "reported 前置字段称谓",
+    "The field named reported records completion."
+  ],
+  [
+    "waiters 机制称谓",
+    "The mechanism named waiters tracks pending calls."
+  ],
+  [
+    "跨行 reported 事件名",
+    "Use the event named\nreported to track completion."
+  ],
+  [
+    "中文 reported 机制",
+    "使用 reported 机制处理结果。"
+  ],
+  [
+    "reported 英文禁令",
+    "Do not use reported."
+  ],
+  [
+    "waiters 中文禁令",
+    "禁止使用 waiters。"
+  ],
+  [
+    "reported 代码围栏",
+    "```js\nconst reported = true;\n```"
+  ],
+  [
+    "waiters 代码围栏",
+    "```js\nconst waiters = [];\n```"
+  ]
+];
+
+for (const [name, body] of [...ORDINARY_MECHANISM_WORD_CASES, ...RETIRED_IDENTIFIER_CASES]) {
+  const rejected = RETIRED_IDENTIFIER_CASES.some(([label]) => label === name);
+  test(`C12 check-docs：${name}${rejected ? '必须失败' : '必须通过'}`, async (t) => {
+    const box = await sandbox({ corpus: false });
+    t.after(box.cleanup);
+    const baseline = box.runChecker();
+    assert.equal(baseline.code, 0, `变异前基线必须通过：${baseline.out}`);
+    const target = join(box.dir, 'docs', 'user-reference.en.md');
+    const before = readFileSync(target, 'utf8');
+    appendFileSync(target, `\n\n${body}\n`, 'utf8');
+    assert.equal(readFileSync(target, 'utf8'), `${before}\n\n${body}\n`, '夹具必须实际写入目标正文');
+    const result = box.runChecker();
+    assert.equal(result.code, rejected ? 1 : 0, result.out);
+    if (rejected) {
+      assert.match(result.out, /WARN\s+现行\s+docs\/user-reference\.en\.md/);
+      assert.match(result.out, /已退役机制名 1 处/);
+    }
+  });
+}
