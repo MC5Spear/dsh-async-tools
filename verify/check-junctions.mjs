@@ -3,7 +3,7 @@
  *
  * 判据：六条 `@deepseek-ai` junction（cordis / dsh-jobs / dsh-sandbox / dsh-subagent /
  * dsh-tools / schemastery）必须逐条存在、逐条指向 0.2.1 线树的 `@deepseek-ai` 目录，
- * 且目标的版本串符合线（dsh* = 0.2.1-rc.2；cordis 4.0.5；schemastery 3.18.5）；
+ * 且目标的版本串符合线（dsh* = 0.2.1-rc.4；cordis 4.0.5；schemastery 3.18.5）；
  * 第七条 zod（**顶层平铺**，非 `@deepseek-ai` 域）锚树顶层 `node_modules\zod`，
  * 版本 4.6.7——投影 stateSchema 的注册表契约是 zod，与宿主同一物理实例、零版本漂移。
  *
@@ -55,13 +55,13 @@ if (TREE === undefined) {
   process.exit(2);
 }
 
-/** 期望表：junction 名 → 目标版本串（dsh* 精确锁 0.2.1-rc.2；平台包随上游）。 */
+/** 期望表：junction 名 → 目标版本串（dsh* 精确锁 0.2.1-rc.4；平台包随上游）。 */
 const EXPECTED = {
   cordis: '4.0.5',
-  'dsh-jobs': '0.2.1-rc.2',
-  'dsh-sandbox': '0.2.1-rc.2',
-  'dsh-subagent': '0.2.1-rc.2',
-  'dsh-tools': '0.2.1-rc.2',
+  'dsh-jobs': '0.2.1-rc.4',
+  'dsh-sandbox': '0.2.1-rc.4',
+  'dsh-subagent': '0.2.1-rc.4',
+  'dsh-tools': '0.2.1-rc.4',
   schemastery: '3.18.5'
 };
 

@@ -2,336 +2,273 @@
 
 [English](<user-reference.en.md>) · [中文首页](<../README.md>)
 
-## 1. 版本、安装与首次确认
+## 1. 安装身份与前提
 
 | 项目 | 当前适用版本 |
 | --- | --- |
-| 插件版本 | `0.2.5+dsh.0.2.1-rc.2` |
-| 精确宿主版本 | `0.2.1-rc.2` |
-
-本文适用于上表版本。DSH 是加载插件、运行 Agent 的宿主应用。插件的工具和预设由 bundle（随插件加载的一组配置）一起装入；宿主版本不匹配时，可能整组都不加载。安装前先核对版本，缺少工具或设置时再按[第8节](<#8-风险停用与排障>)排查。
-
-插件声明 Node `>=20`。宿主 CLI 依赖 commander `^15.0.0`，该依赖要求 Node `>=22.12.0`；这只证明部分依赖下界，不能据此认定整套宿主的完整最低版本。建议使用已有 CI 与实际运行依据的 Node 24 工具链。Windows 有部分隔离验证；Linux 命令与提权、macOS 和远程环境未完成验证。需要这些环境时，通过 issue 说明平台与所需功能，由维护者确认支持进度。
-
-包不从 npm 分发。以下命令从源码仓库安装，固定提交 `97b7b27e8e66f225003dd80f85f7229b2372a3be`；对应分支 `adapt/dsh-0.2.1` 会移动，不能用分支名代替固定提交来确认安装内容。
+| 插件版本 | `0.2.7+dsh.0.2.1-rc.4` |
+| 精确宿主版本 | `0.2.1-rc.4` |
 
 安装地址取不到源码时，先核对仓库地址与固定提交号，再检查网络或代理；仍无法获取时，联系提供安装来源的维护者，询问可用安装件。
 
-```powershell
-dsh plugin --profile web add github:MC5Spear/dsh-async-tools#97b7b27e8e66f225003dd80f85f7229b2372a3be
-```
+安装来源为 `github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1-rc.4`。分支会移动；需要固定来源时，将 `#` 后内容换为完整提交 `ca8f65b39b7694f9e5a2b28cca7a29bc43485ecc`。包不从 npm 分发，无分支的 GitHub spec 不能替你选择正确的宿主适配。
 
-在 DSH 界面的插件安装对话框中，也可粘贴命令中 `add` 后的完整安装地址：
+安装前先确认运行环境：建议 Node.js 24。插件清单的 `>=20` 只是插件声明；宿主依赖 commander 15 要求 `>=22.12.0`，也只是已知下界，不是整套宿主经验证的最低版本。确认目标宿主依赖能在所选运行时解析后，再安装。
 
-```text
-github:MC5Spear/dsh-async-tools#97b7b27e8e66f225003dd80f85f7229b2372a3be
-```
+本线面向 Windows，但目标宿主上的逐项重验尚未完成。Linux 命令与单次提权、macOS、远程执行均未验证。需要这些环境时，向维护者提供环境与使用需求，安排隔离验证后再决定部署。rc4 适配不等于所有行为已在 rc4 通过验证。
 
-安装完成后，按以下位置确认：
-
-1. 在插件列表打开本包，确认完整版本与上表相同，且详情页有设置表单。
-2. 新建会话，确认预设选择器中有 `dsh-async` 和 `dsh-async-create`。
-3. 选择其中一个预设，确认会话工具列表包含第3节的六个工具。
-
-`dsh-async` 用于通用编码，`dsh-async-create` 保留创作工具；插件不改变原有预设。
-
-**开发时从已有源码目录安装**：已有对应提交的源码目录也可通过宿主安装：
+确认上述前提后，在终端安装：
 
 ```powershell
-dsh plugin --profile web add <源码目录的绝对路径>
+dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1-rc.4
 ```
 
-目录须能解析上述宿主依赖。稳定部署使用独立安装目录，不把编辑中的工作树作为安装件。安装组合或客户端入口变化需要重新装载实例并重新打开页面；重启前确认其他会话无活动，从服务进程树外操作。普通设置保存无需重启。
+也可以在 DSH 插件管理页打开安装对话框，将上面的 GitHub spec 填入安装地址。安装结束后，在本包详情页确认设置表单可见；再新建会话，确认可选择 `dsh-async` 和 `dsh-async-create`。选择其中一个后，Agent 应能使用本参考列出的六个工具。
 
-首次试用时，可请 Agent 运行第3节 `async_run` 中的无害示例。收到 `job_id`（作业编号）表示要保留这个编号，稍后读取，不是命令失败。正常完成长任务示例后应看到 `LONG_DONE`；退出是否成功还要看退出标记。
+若设置与工具都缺席，按以下顺序排查：
 
-## 2. 设置入口、保存与恢复
+1. 核对 DSH 精确版本与本节身份表。
+2. 查看宿主装载日志，确认是否因版本不匹配而跳过本包。
+3. 在目标 profile 中核对本包的 dependency（安装依赖登记）与 bundle（宿主行和预设的组合声明）。两种登记不同，只有一处登记不足以确认全部入口已加载。
+4. 若更改了组合或客户端入口，重新装载实例并重新打开页面。重启前先安排活动会话收尾，从服务进程树外执行。普通设置保存无需重启。
 
-打开插件列表 → dsh-async-tools 详情。表单位于描述与组件行之间，无需切换预设。写入使用宿主本机回环入口；非回环、只读或入口不可用时，先切回可写的本机管理入口，保留草稿再处理连接问题。
+开发链接只用于明确的开发环境，稳定部署与编辑树分开。准备源码：
 
-按以下步骤修改设置：
+```powershell
+git clone https://github.com/MC5Spear/dsh-async-tools.git
+cd dsh-async-tools
+git checkout adapt/dsh-0.2.1-rc.4
+npm install
+dsh plugin --profile web add <克隆目录的绝对路径>
+```
 
-1. 编辑需要改变的字段。此时只改变草稿，工具仍使用原值。
-2. 检查字段提示和秒数读数，再点击保存。保存成功后，后续调用使用新值；保存失败时草稿保留。
-3. 需要撤销字段的用户设置时，点击恢复默认，再保存。离开页面会丢弃未保存草稿。
+链接目录须能解析匹配的宿主依赖。裸 Node 导入只能检查部分模块解析，不能证明宿主服务、工具和页面接入完整。
 
-“覆盖”表示用户层明确保存过这个字段，即使数值恰好等于默认值也算覆盖。恢复默认移除这一层的值，之后使用宿主配置行的值；宿主也没有设置时才用出厂默认。毫秒字段同时显示当前生效值和草稿折算的秒数。点击问号可展开帮助，不会改变设置。
+## 2. 首次使用与设置
 
-配置按 `schema 默认值 → 宿主行配置 → 用户覆盖` 依次覆盖。schema 是字段类型、范围和默认值的定义。手写宿主配置时，设置路径为 `config.settings.<字段>`。工具读取宿主当前生效的配置快照；快照缺席时才使用合法的本行备用值，并提示设置未接线。以下五个键用于组合配置，不属于17项可编辑设置：`toolName`、`owningPreset`、`agentOptions`、`agentPreset`、`allowedAgentPresets`。
-
-### 设置表
-
-| 字段 | 类型 | 默认 | 范围 | 单位 | 生效 |
-| --- | --- | --- | --- | --- | --- |
-| `defaultYieldMs` | number | `20000` | `[1,2147483647]`，可小数 | ms | 下次 run/workflow 省略 `yield_ms` 时 |
-| `minYieldMs` | number | `1000` | `[1,2147483647]`，可小数 | ms | 下次首次等待请求下限 |
-| `maxYieldMs` | number | `600000` | `[1,2147483647]`，可小数 | ms | 下次首次等待请求上限 |
-| `defaultWaitMs` | number | `30000` | `[1,2147483647]`，可小数 | ms | 等待提示及示例；实际 `wait_ms` 仍必填 |
-| `minWaitMs` | number | `250` | `[1,2147483647]`，可小数 | ms | 下次等待请求下限 |
-| `maxWaitMs` | number | `600000` | `[1,2147483647]`，可小数 | ms | 下次等待请求上限 |
-| `pollIntervalMs` | number | `500` | `[1,2147483647]`，可小数 | ms | 新等待的子代理备用状态检查及存在重试 |
-| `maxResultChars` | integer | `30000` | `[1,1000000]` | JS `String.length` | 结果正文裁剪 |
-| `jobKind` | string | `async-command` | 非空字符串 | — | 新命令作业的类型标识 |
-| `subagentProvider` | string | `spawn` | 修剪后空串回 `spawn`；后端须已注册 | — | 下次创建；这是执行后端，不是 LLM provider |
-| `uiLang` | string | `auto` | `auto` / `zh` / `en` | — | 设置和待答界面；auto 跟随宿主 |
-| `agentLang` | string | `en` | `en` / `zh` | — | 选择工具描述、结果及本包执行指引的语言 |
-| `silentFailureGuard` | boolean | `false` | `true` / `false` | — | 本包两预设的静默失败提示 |
-| `askTakeover` | boolean | `false` | `true` / `false` | — | 每次普通提问请求 |
-| `askTimeoutMs` | number | `60000` | `[10000,600000]`，可小数 | ms | 新接管批次的初始期限 |
-| `askExtendMs` | number | `60000` | `[1,2147483647]`，可小数 | ms | 每次增加等待时间，追加到原期限 |
-| `askUiSeat` | string | `sidebar` | `sidebar` / `overlay` | — | 侧边栏底栏徽标 / 右下角浮窗 |
-
-所有数值必须有限，不能是 `Infinity` 或 `NaN`。除各字段范围外，还须同时满足：
-
-- `minYieldMs <= defaultYieldMs <= maxYieldMs`
-- `minWaitMs <= defaultWaitMs <= maxWaitMs`
-- `pollIntervalMs <= maxWaitMs`
-
-表中的“范围”是设置本身允许保存的范围。单次调用的等待预算另受当前 min/max 设置限制：超出时取最近边界值，这称为“夹紧”。出厂两个 max 都是 `600000`。`defaultWaitMs` 只用于提示与示例，不能让等待工具省略 `wait_ms`。
-
-非法新设置会被拒绝。已有持久配置损坏时，按发生时机处理：
-
-| 现象 | 实际采用的值 | 修复方法 |
-| --- | --- | --- |
-| 启动时布尔值或跨字段关系损坏，进入降级 | 合法出厂默认；保留设置入口 | 修改提示中的非法字段后保存；只重存同一损坏值可能收到成功应答，但不会结束降级 |
-| 运行中收到非法新值 | 保持上一合法值并告警 | 修正字段后重新保存 |
-| 数值类型、范围或枚举不合法，整行装配失败 | 该行无法加载，设置入口可能缺席 | 在宿主组合配置中修正类型、范围或枚举，再安全重新装载 |
-
-## 3. 工具参数
-
-以下调用为工具调用示意，不是 PowerShell 函数。预算单位均为毫秒。参数表列出的默认是本包出厂值；有自定义设置时按当前生效值执行。
-
-### `async_run`
-
-| 参数 | 类型 | 必填条件 | 默认 | 范围与含义 |
-| --- | --- | --- | --- | --- |
-| `command` | string | 必填 | 无 | 命令原文，作为任务名称 |
-| `description` | string | 必填 | 无 | 主动语态5–10词，活动进度说明 |
-| `yield_ms` | number | 可选 | `20000` | 按 `minYieldMs` / `maxYieldMs` 夹紧，出厂 `[1000,600000]` |
-| `workdir` | string | 可选 | 会话当前有效目录 | 相对路径基于当前目录；绝对路径保留 |
-| `sandbox_permissions` | string | 仅有约束执行器时声明；使用时与理由成对 | 无 | 取宿主声明的枚举；仅刚被拒的同命令同轮一次加宽重试 |
-| `justification` | string | 与 `sandbox_permissions` 一起提供 | 无 | 非空理由，须经正常审批；许可不改变会话后续权限 |
+选择 `dsh-async` 进行通用编码，或选择保留插件和预设创作工具的 `dsh-async-create`。两个预设直接提供六个工具；检查、消息、显式停止继续使用宿主管理工具。它们不改写原有预设。
 
 ```text
 async_run(command="Write-Output SHORT_OK", description="Print a harmless test marker")
 async_run(command="Start-Sleep -Seconds 30; Write-Output LONG_DONE",
-          description="Wait then print a harmless marker", yield_ms=1000)
-```
-
-命令从启动起就是宿主作业，可以在任务面板查看。首次等待预算内完成时直接给结果；否则返回 `job_id`，Agent 可继续独立工作，需要结果时再等待，不重新启动命令。
-
-工作目录解析失败、审批拒绝或并发准入失败时，不会启动进程。显式指定目录却准备失败时，错误会列出请求目录、解析后的路径、会话当前目录，以及失败时核实的结论和修正方法。先核实目录；`ENOENT` 也可能来自可执行文件缺失，不能只凭这个错误就认定目录不存在。
-
-### `async_wait_job`
-
-| 参数 | 类型 | 必填条件 | 默认 | 范围与含义 |
-| --- | --- | --- | --- | --- |
-| `job_id` | string | 必填 | 无 | 返回的作业标识符，不透明字符串 |
-| `wait_ms` | number | 必填 | 无 | 当前等待上下限夹紧，出厂 `[250,600000]` |
-
-```text
+          description="Wait then print completion marker", yield_ms=1000)
 async_wait_job(job_id="<返回的job_id>", wait_ms=30000)
 ```
 
-预算包括一次存在快照及等待。终态在同次返回中读取结果。`running` 后仍需要结果时可再次有界等待；查无或不可见先用宿主 `job_list` 核对 owner 与标识符。查询失败应重查，不重新执行命令。
+上面是 Agent 工具调用示意，不是终端命令。短命令应直接显示 `SHORT_OK`；长命令在首次等待后通常返回作业编号 `job_id`。保留编号，继续独立工作；需要结果时调用 `async_wait_job`，每次显式填写 `wait_ms`。看到 `LONG_DONE` 后仍须核对退出信息，不重复执行原命令来查进度。
 
-### `async_agent`
+设置入口：插件列表 → 本包详情页 → 描述与组件行之间的表单。写入需宿主本机回环入口；非回环或只读时按页面提示切换到可写入口。编辑只产生草稿，保存才生效；恢复默认也须保存，离开丢弃未保存草稿。保存失败保留草稿。帮助按钮展开说明，不提交设置。
 
-| 参数 | 类型 | 必填条件 | 默认 | 范围与含义 |
-| --- | --- | --- | --- | --- |
-| `description` | string | 必填 | 无 | 3–5词任务标签 |
-| `prompt` | string | 必填 | 无 | 完整任务书；独立 spawn 看不到父对话，继承型后端可见 |
-| `cwd` | string | 可选 | 父代理当前有效目录 | 相对路径基于父目录；创建后两侧目录变化互不影响 |
-| `provider` | string | 与 `model` 成对提供 | 配置默认或继承 | 非空准确 LLM provider ID |
-| `model` | string | 与 `provider` 成对提供 | 配置默认或继承 | 非空准确 model ID |
-| `reasoning_effort` | string | 可选，可单独指定 | 兼容继承或模型默认 | 非空且为有效路由支持的强度 ID |
-| `agent_preset` | string | 仅行有 `allowedAgentPresets` 且后端支持独立预设、非继承父上下文时声明 | 行 `agentPreset` 或继承 | 必须属于允许集合；本包默认两预设不暴露此参数 |
+每个字段的“恢复默认”只在草稿中暂存清除该字段的用户覆盖，保存后才生效，不清除其他字段的覆盖。保存后重新采用宿主组合为该字段配置的值；组合也未配置时，才采用下表的出厂默认值，不是强制写入表中数值。正常合法配置下，保存后检查该字段不再显示“已覆盖”，并确认字段值符合预期。例如组合值为 `45000`、用户覆盖为 `90000`，清除覆盖并保存后恢复到 `45000`，不是 `20000`。若仍有降级警示，继续按表后的恢复说明处理；普通恢复动作不等于修好损坏配置。
 
-```text
-async_agent(description="Inspect one isolated module", prompt="Inspect the named module for the stated bug; report findings without changing files.")
-```
+高级配置写在宿主行的 `config.settings.<字段>`，不要把字段直接放在 `config` 根上。取值优先级从高到低为：用户覆盖、组合层配置、schema 默认值（配置定义中的默认值）。是否覆盖取决于用户层有没有该字段，而不是值是否等于默认值。
 
-创建只有后台方式，不接受 `run_in_background` 或等待时长参数。宿主接受启动后，工具立即返回 `started` 和 `agent_id`，Agent 可以继续其他工作。
+工具优先读取宿主发布的当前配置快照。只有快照缺席时，才使用合法的工具行备用值，并提示设置未接入。`toolName`、`owningPreset` 和委托行配置是固定的行配置，不在下面的 17 项界面设置中。
 
-需要结果时，用 `async_wait_agent` 等待；最终答案仍由独立消息送达。要追问或显式停止，分别用宿主 `send_message`、`interrupt_agent`。
+### 2.1 全部17项设置
 
-后端未注册、不支持可续运行、不支持请求参数，或策略读取失败时，按错误提示修正配置；路由被拒时保留目标工具重新查询模型。未知参数会被拒绝，不会传给后端尝试执行。
+表中“范围”表示允许保存的配置值。单次调用超出当前 min/max 时，工具把请求值调到对应边界，这叫“夹紧”。新的非法配置保存会被拒绝，不会自动改成边界值；已有损坏配置的原样重存例外见表后的恢复说明。毫秒（ms）是存储单位，1000 ms 等于 1 秒。
 
-### `async_wait_agent`
+| 字段 | 类型 | 默认 | 范围 | 单位 | 生效 |
+| --- | --- | --- | --- | --- | --- |
+| `defaultYieldMs` | number | `20000` | 1..2147483647，可小数 | ms | 下次run/workflow省略yield_ms时 |
+| `minYieldMs` | number | `1000` | 1..2147483647，可小数 | ms | 下次首次等待请求下限 |
+| `maxYieldMs` | number | `600000` | 1..2147483647，可小数 | ms | 下次首次等待请求上限 |
+| `defaultWaitMs` | number | `30000` | 1..2147483647，可小数 | ms | 等待示例基准；wait_ms仍必填 |
+| `minWaitMs` | number | `250` | 1..2147483647，可小数 | ms | 下次wait请求下限 |
+| `maxWaitMs` | number | `600000` | 1..2147483647，可小数 | ms | 下次wait请求上限 |
+| `pollIntervalMs` | number | `500` | 1..2147483647，可小数 | ms | 新等待的状态轮询及存在检查间隔 |
+| `maxResultChars` | integer | `30000` | 1..1000000 | JS String.length | 结果渲染 |
+| `jobKind` | string | `async-command` | 非空 | — | 新命令作业的类型标识 |
+| `subagentProvider` | string | `spawn` | 后端名；trim后空值回spawn | — | 下次子代理创建；不是LLM provider |
+| `uiLang` | enum | `auto` | auto / zh / en | — | 界面；auto跟随宿主 |
+| `agentLang` | enum | `en` | en / zh | — | 描述、结果和执行纪律的语言 |
+| `silentFailureGuard` | boolean | `false` | true / false | — | 两预设的命令诊断与提示 |
+| `askTakeover` | boolean | `false` | true / false | — | 每次普通提问请求 |
+| `askTimeoutMs` | number | `60000` | 10000..600000，可小数 | ms | 新接管批次的初始期限 |
+| `askExtendMs` | number | `60000` | 1..2147483647，可小数 | ms | 每次延长动作，在原期限上追加 |
+| `askUiSeat` | enum | `sidebar` | sidebar / overlay | — | 待答面板位置，不重置期限 |
 
-| 参数 | 类型 | 必填条件 | 默认 | 范围与含义 |
-| --- | --- | --- | --- | --- |
-| `agent_id` | string | 必填 | 无 | 有权等待的子代理标识符 |
-| `wait_ms` | number | 必填 | 无 | 当前等待上下限夹紧，出厂 `[250,600000]` |
+跨字段须满足 `minYieldMs <= defaultYieldMs <= maxYieldMs`、`minWaitMs <= defaultWaitMs <= maxWaitMs`、`pollIntervalMs <= maxWaitMs`。预算数字须有限。出厂上限是600000。`defaultWaitMs` 不补全缺失的 `wait_ms`。
 
-```text
-async_wait_agent(agent_id="<返回的agent_id>", wait_ms=30000)
-```
+**出现配置降级警示时，工具采用哪些值？** 启动时，损坏的布尔值或不满足跨字段约束的配置可进入可修复降级：表单仍显示原配置，工具改用合法出厂默认值。运行期间遇到新的非法配置，则继续使用上一份合法值；普通新非法写入在保存前被拒绝，不会替换合法配置。数值或枚举的 schema 校验失败还可能使插件行无法加载，此时先查看装载日志，修正日志指出的字段。
 
-同一份预算包含存在检查和等待；存在检查最多按 `pollIntervalMs` 重试三次，不在预算外额外等候。工具先确认目标在当前 Agent 有权等待的子代理范围内，再判断是否运行。
+**保存成功不一定表示已修复。** 若把已有损坏配置原样重存，可能得到成功应答，但工具仍处于降级状态，警示和回退取值不会因此解除。这不表示可以保存其他新的非法值。
 
-- `running`：本次等待结束，需要结果时可再次有界等待。
-- `settled`：本次不再观察到目标运行，不证明任务成功，也不证明最终答案已到。最终回答经独立消息送达。
-- `not_found`：附带 `known_children`，先核对已知子代理目录和准确编号，不要为查进度重复委托。
-- 查询失败：状态未证实，不等于目标不存在；按提示重查。
+要恢复正常，先修正全部非法字段和跨字段关系，使整份配置合法，再保存。保存后检查降级警示是否解除，并核对工具描述中的实际采用值是否符合预期；不要只看保存成功或表单中的“生效”读数。若警示仍在，按警示或装载日志继续修正。正常合法设置保存无需重启。
 
-### `async_workflow`
+## 3. 六工具参数与返回
 
-仅在用户明确要求 workflow 或大规模编排时使用；一两个委托用 `async_agent`。
+参数表中的“必填”适用于每次调用。未知键不能当作任意宿主配置透传。预算取当前设置夹紧后的值。
 
-| 参数 | 类型 | 必填条件 | 默认 | 范围与含义 |
-| --- | --- | --- | --- | --- |
-| `script` | string | 必填 | 无 | 纯 JavaScript 函数体，可顶层 await，以 return 返回 JSON 可序列化值 |
-| `meta` | object | 必填 | 无 | 元数据对象，见下表 |
-| `args` | object | 可选 | 无 | 脚本全局 args；裸列表包成对象字段 |
-| `yield_ms` | number | 可选 | `20000` | 首次等待夹紧，出厂 `[1000,600000]` |
+### 3.1 async_run
 
-| 参数 | 类型 | 必填条件 | 默认 | 范围与含义 |
-| --- | --- | --- | --- | --- |
-| `meta.name` | string | 必填 | 无 | 短 kebab-case 展示名；名称说明不是正则校验承诺 |
-| `meta.description` | string | 必填 | 无 | 一行用途 |
-| `meta.whenToUse` | string | 可选 | 无 | 使用条件 |
-| `meta.phases` | array<object> | 可选 | 无 | 阶段声明 |
-| `meta.phases[].title` | string | 有阶段项时必填 | 无 | phase 精确匹配的标题 |
-| `meta.phases[].detail` | string | 可选 | 无 | 阶段说明 |
-| `meta.phases[].provider` | string | 可选 | 无 | 阶段 LLM 路由覆盖 |
-| `meta.phases[].model` | string | 可选 | 无 | 阶段模型覆盖 |
+| 参数 | 类型 | 必填/默认 | 规则 |
+| --- | --- | --- | --- |
+| `command` | string | 必填 | 执行的命令原文 |
+| `description` | string | 必填 | 主动语态5—10词进度说明 |
+| `yield_ms` | number | defaultYieldMs | 有限数字，夹紧至minYieldMs..maxYieldMs |
+| `workdir` | string | 会话当前有效目录 | 相对路径以当前有效目录解析；启动后目录固定 |
+| `sandbox_permissions` | string enum | 条件可选 | 仅有约束执行器时出现，模式取宿主工具声明 |
+| `justification` | string | 与上一键一起提供 | 解释同轮刚被拒命令的一次性重试为何需要更宽权限 |
 
-当前工具 schema 允许 meta 和阶段项的额外属性；引擎仍按自己的契约校验运行。不在 script 中写 TypeScript、`export const meta` 或重新声明元数据参数。
+权限仍走宿主审批；不得拿更宽权限启动另一个任意任务。目录解析失败在启动前可读拒绝，不偷偷换目录。显式 workdir 准备失败的诊断保留请求值、解析路径、会话目录、失败时核实结论和修正出路；ENOENT本身不证明目录不存在。
 
-```text
-async_workflow(meta={name:"review-modules", description:"Review independently selected modules"},
-  args={items:["module-a","module-b"]},
-  script="return await pipeline(args.items, (_, item) => agent('Review ' + item));")
-```
+首次等待完成返回 `{status, output, truncated, exit_code?, signal?, note?}`；`completed` 不代表退出码为0，读取退出标记。`signal` 是进程终止信号。被终止可返回 `{status:'killed', detail?, output?, truncated?}`。后台返回 `{status:'running', job_id, elapsed_ms, note}`。作业从启动时注册，不等到首次等待到期才出现。
 
-脚本钩子：
+### 3.2 async_wait_job
 
-| 钩子 | 参数及结果 |
+| 参数 | 类型 | 必填/默认 | 规则 |
+| --- | --- | --- | --- |
+| `job_id` | string | 必填 | 原作业的不透明编号 |
+| `wait_ms` | number | 必填，无默认 | 夹紧至minWaitMs..maxWaitMs |
+
+终态返回 `{status, job_id, output, truncated, detail?}`，终态是 completed / killed / failed；stopping仍未结。等待类返回 `{status, job_id, waited_ms, note}`。查无或不可见按错误处理；查询失败按提示重试，不重启原命令。读取消费规则见第4节。
+
+### 3.3 async_agent
+
+| 参数 | 类型 | 必填/默认 | 规则 |
+| --- | --- | --- | --- |
+| `description` | string | 必填 | 3—5词展示标签 |
+| `prompt` | string | 必填 | 完整任务；spawn独立子代理看不到父对话 |
+| `cwd` | string | 继承父当前有效目录 | 相对父当前目录解析；后续目录变化互不影响 |
+| `provider` | string | 可选，与model成对 | 非空准确LLM供应商ID |
+| `model` | string | 可选，与provider成对 | 非空准确模型ID |
+| `reasoning_effort` | string | 可选 | 非空、模型支持的强度ID；可单独指定 |
+| `agent_preset` | string | 条件可选 | 仅行配置allowedAgentPresets且后端支持独立预设时暴露；须在允许集合中 |
+
+无 `run_in_background` 参数，也不等待最终答案。成功立即返回 `{status:'started', agent_id, note}`，说明实际路由来源及等待入口；拒绝不返回虚构编号。默认两预设未配置允许预设集合，因此不暴露agent_preset。继承上下文型后端的子代理可见父上下文；任务书按实际后端编写。
+
+通常只需填写任务书。需要指定模型时，先按第 5 节查询准确 ID，再提供成对的 `provider`／`model`。`reasoning_effort` 可单独提供，但仍按最终有效模型校验。`agentOptions`、`agentPreset`、`allowedAgentPresets` 是高级组合中的固定行配置，不能当作调用参数，也不属于 17 项界面设置。
+
+**支持预检何时运行：** 显式提供路由或推理强度，或行 `agentOptions` 中配置了 `provider`、`model`、`reasoningEffort`，都会触发创建前的支持预检。仅配置 `maxTokens` 等非路由选项不会触发。后端 `agentRouteDefaults` 只在触发预检时参与合并；显式参数覆盖行选项，行选项覆盖后端默认，缺少的路由部分由父路由补齐。允许名单检查仍只针对显式选择请求，行默认触发预检不等于显式请求。
+
+**最终创建携带什么：** 任何一层贡献选项时，创建请求携带合并后的 `agentOptions`；没有贡献时省略它，由宿主继承父选项，不额外套用后端路由默认。支持预检临时采用的兼容父推理强度或模型默认，不会被预检结果回填到创建请求。最终子代理继承以实际请求和宿主合并为准，不能仅凭预检值推断。换路由而未指定强度时，预检不沿用旧路由不兼容的值。
+
+### 3.4 async_wait_agent
+
+| 参数 | 类型 | 必填/默认 | 规则 |
+| --- | --- | --- | --- |
+| `agent_id` | string | 必填 | 有权等待的子代理编号 |
+| `wait_ms` | number | 必填，无默认 | 夹紧至minWaitMs..maxWaitMs |
+
+返回 `{status, agent_id, waited_ms, note}`；查无返回 `{status:'not_found', agent_id, known_children}`。存在检查最多三拍pollIntervalMs重试，仍计入同一预算。settled只表示当次不再观察到运行，最终回答另以消息到达，无答案返回字段。not_found先核目录与编号；查询故障不等于查无，勿重新派发同任务。
+
+### 3.5 async_workflow
+
+仅在用户明确要求workflow或大规模编排时使用；一两项委托用async_agent。
+
+| 参数 | 类型 | 必填/默认 | 规则 |
+| --- | --- | --- | --- |
+| `script` | string | 必填 | 纯JavaScript函数体，允许顶层await，以return返回JSON可序列化值 |
+| `meta` | object | 必填 | name、description必填字符串；whenToUse可选；phases可选数组 |
+| `args` | object | 可选 | 脚本内args原样可用；裸列表包在对象字段中 |
+| `yield_ms` | number | defaultYieldMs | 与run同样夹紧 |
+
+meta名称建议短kebab-case；阶段项title必填，detail/provider/model可选字符串。当前公共schema允许meta和阶段额外属性；需求中的更严格目标不等于已执行校验。script不是TypeScript或模块，不写`export const meta`。
+
+| 脚本钩子 | 合同 |
 | --- | --- |
-| `agent(prompt, opts?)` | Promise；无 schema 取最终文本，有 schema 取校验对象，普通子代理失败为 null。opts 仅 `label`、`phase`、`provider`、`model`、`schema`；两个路由覆盖可分别传 |
-| `opts.schema` | 对象根 JSON Schema；支持 `type`、`properties`、`required`、`additionalProperties`、`items`、`enum`、`const`、`oneOf`；不支持 pattern、format、数值边界。宿主允许的无约束注解不增加校验条件 |
-| `pipeline(items, ...stages)` | 条目独立流过阶段，无跨条目阶段屏障；阶段 `(prev,item,index)`；普通异常使该条目 null 并跳过余下阶段 |
-| `parallel(thunks)` | 并发零参函数，等待全部；普通异常对应 null |
-| `phase(title)` | 按 meta 阶段标题精确匹配，声明本身不自动排序或更改路由 |
+| `agent(prompt, opts?)` | Promise；无schema返回最终文本，有schema返回校验对象；普通子代理失败为null。opts仅label/phase/provider/model/schema；provider/model可独立覆盖，不套成对规则 |
+| `schema` | 对象根JSON Schema，支持type/properties/required/additionalProperties/items/enum/const/oneOf；不支持pattern/format/数值边界 |
+| `pipeline(items,...stages)` | 条目独立逐阶段推进，无跨阶段全体屏障；stage(prev,item,index)普通异常将本条目置null并跳过余下阶段 |
+| `parallel(thunks)` | 并发零参函数并全体await；普通异常对应null |
+| `phase(title)` | 精确匹配meta阶段标题 |
 | `log(message)` | 报告进度 |
 
-先区分普通任务失败和脚本误用。表中的普通失败只让对应结果变为 `null`，其他条目可继续；以下误用则终止整个脚本，`pipeline`、`parallel` 也不能把它变成局部 `null`：
+坏钩子参数、未知选项（含effort/isolation/agentType）、不支持schema及触发总量/组合上限会终止整脚本，不化成局部null。并发与总量由宿主约束，无固定通用数值。脚本没有文件系统、网络、定时器或Node API；子代理执行实际工作。
 
-- 钩子参数不合法，或使用未知选项，例如 `effort`、`isolation`、`agentType`。
-- 使用不支持的 schema。
-- 超过宿主配置的总量上限。
+```javascript
+const results = await pipeline(args.items,
+  async (_, item) => agent(`Review this item: ${item}`, { label: 'Review item' }));
+return results.filter(value => value !== null);
+```
 
-并发与总量限制由宿主管理，没有适用于所有部署的固定数值。脚本只能协调，不能直接使用文件系统、网络、计时器或 Node API；具体工作交给子代理。缺少编排引擎时，调用会被拒绝，不创建作业；可用组合见第7节。
+完成返回 `{status:'completed', result}`，result是渲染后的字符串，并非直接返回JSON对象；终止返回 `{status:'killed', detail?}`，后台返回 `{status:'running', job_id, elapsed_ms, note}`。用async_wait_job读整次运行，job_kill才请求取消。缺编排引擎时可读拒绝且零作业，正确组合见第7节。
 
-### `async_list_subagent_models`
+### 3.6 async_list_subagent_models
 
-| 参数 | 类型 | 必填条件 | 默认 | 范围与含义 |
-| --- | --- | --- | --- | --- |
-| `provider` | string | 可选；有 model 时必填 | 无 | 非空准确供应商 ID |
-| `model` | string | 可选；须有 provider | 无 | 非空准确模型 ID；与非空 query 冲突 |
-| `query` | string | 可选 | 无 | 修剪空白、忽略大小写，按 ID 或显示名包含匹配；纯空白视为未提供 |
-| `target_tool` | string | 可选 | 唯一可识别创建工具，若有 | 非空可见工具名称；多目标或无目标时适用性未确认 |
-| `page` | integer | 可选 | `1` | `>=1`；大于1须有 version |
-| `page_size` | integer | 可选 | `20` | `[1,100]`，非法拒绝 |
-| `version` | string | page>1 时必填 | 无 | 非空上一页不透明版本令牌 |
+| 参数 | 类型 | 必填/默认 | 规则 |
+| --- | --- | --- | --- |
+| `provider` | string | 可选 | 准确供应商ID；省略可浏览供应商或跨供应商搜索 |
+| `model` | string | 可选 | 必须同时有provider；准确模型详情 |
+| `query` | string | 可选 | 去首尾空白后搜索；全空白视为省略，非空时与model详情冲突 |
+| `target_tool` | string | 可选 | 当前会话可见的创建工具名称，含用户配置名称 |
+| `page` | integer | 1 | >=1；大于1须带version |
+| `page_size` | integer | 20 | 1..100 |
+| `version` | string | 首页可省略 | 续页必须绑定同一筛选与目标版本 |
 
 ```text
-async_list_subagent_models(target_tool="async_agent")
-async_list_subagent_models(query="<名称片段>", target_tool="async_agent", page_size=20)
+async_list_subagent_models(query="coding", target_tool="async_agent", page_size=20)
+→ 继续查询时复用返回的next对象，不自行拼接旧页。
 async_list_subagent_models(provider="<准确ID>", model="<准确ID>", target_tool="async_agent")
 ```
 
-按需要选择查询方式：
+结果固定包含 `mode`、`entries`、`total`、`version`、`complete`、`target`、`verdict`、`basis`。它们分别说明查询模式、本页条目、匹配数、版本、完整性、目标、适用结论和依据。其他可能字段为 `page`、`page_size`、`provider`、`query`、`has_next`、`beyond_end`、`failed_providers`、`example`、`unlisted_provider`、`unlisted_had_routes`、`next`。
 
-- 不填 `provider` 和 `query`：浏览供应商。
-- 填 `provider`：浏览该供应商的模型。
-- 填 `query`：搜索名称或 ID；可同时填 `provider` 限定供应商。供应商的 ID 或名称命中时，其模型整组参与结果。
-- 成对填 `provider`、`model`：查看准确模型详情和推理强度选项。
+需要下一页时，直接复用 `next`。它带有 `page`、`page_size`、`version`，以及本次使用的 `provider`、`query`、`target_tool`。结果先筛选后分页，同版本内按 ID 字典序稳定排列。版本失效就从第一页按相同条件重查，不拼接新旧页；超过末页会得到空页和总数，不自动回到首页。
 
-结果先筛选，再按 ID 字典序分页。需要下一页时，直接复用返回的 `next` 参数，其中包含原筛选、目标、`page_size`、`version` 和下一页码。版本失效时，保持筛选条件从第1页重查，不拼接新旧版本。越过末页会返回空页、总数和重查指引。
+搜索匹配 ID 与显示名，忽略大小写。部分供应商读取失败时，`complete=false`，`total` 只计算已取得的结果，不能理解成失败供应商没有模型。允许名单中的准确 ID 即使未列入目录，仍可查询和列入结果；目录缺席本身不证明模型不受支持。
 
-## 4. 状态、结果读取与停止
+## 4. 等待状态与消费式输出
 
-| 返回形态 | 含义与下一步 |
+先看返回状态，再决定下一步。预算到期通常返回 `running`，表示这次等待结束，后台工作没有因此停止。两个等待工具的入口查询、存在检查、重试和等待共用一份 `wait_ms`，不是每段各等一次。
+
+等待也可能因消息提前结束。发给当前 Agent 的用户插话、可领取的通知（notice）、代理转达（relay）和本包迟到答案都会触发检查；开始前已经到达的消息同样有效。排队消息留到下一轮，不打断本次等待。收到消息只说明 Agent 有新内容可处理，不证明等待目标完成。
+
+| 看到什么 | 怎样处理 |
 | --- | --- |
-| run `completed` | `output`、`truncated`，可含 `exit_code`、`signal`、`note`。completed 不等于退出码0，读退出标记；signal 是进程终止信号 |
-| run `killed` | 可含 `detail`、`output`、`truncated`；按终止原因处置 |
-| run/workflow `running` | `job_id`、`elapsed_ms`、`note`；首次等待结束，按句柄读取 |
-| wait_job `completed` / `killed` / `failed` | `job_id`、`output`、`truncated`，可含 detail；同次交付读取内容 |
-| wait_job 非终态 | `status`、`job_id`、`waited_ms`、`note`；stopping 也未终态 |
-| wait_agent | `status`、`agent_id`、`waited_ms`、`note`；not_found 为 `status`、`agent_id`、`known_children`；没有最终答案字段 |
-| agent `started` | `agent_id`、`note`；只证明启动接受 |
-| workflow `completed` | `result` 是渲染后的字符串，不是直接 JSON 对象；killed 可含 detail |
-| list | 必有 `mode`、`entries`、`total`、`version`、`complete`、`target`、`verdict`、`basis`；按模式可含 `page`、`page_size`、`provider`、`query`、`has_next`、`beyond_end`、`failed_providers`、`example`、`unlisted_provider`、`unlisted_had_routes`、`next` |
+| `running` 或因消息交回 | 先处理消息或独立工作，需要结果时用原编号再等待 |
+| 作业 `completed` | 阅读结果并检查退出码；完成不等于退出 0 |
+| 作业 `failed`／`killed` | 保留错误、信号和已有输出，再决定修正或停止 |
+| 子代理 `settled` | 查看独立结算消息和最终回答，不当作成功证明 |
+| 查询或读取失败 | 按错误重试原编号，不重新启动原任务 |
 
-等待到期时会返回 `running`，但任务不会因此停止。插话、通知（`notice`）、代理转达（`relay`）或迟到答案到达当前 Agent 时，也可能提前结束等待；开始等待前已经到达、尚未领取的消息同样会被检查。排队到下一轮的消息不打断等待。收到消息只说明 Agent 有新内容要处理，不能据此判断等待目标已经完成。
+取消等待或停止当前回合只结束等待，不杀后台命令或编排。宿主可能把取消出口改成取消错误，模型没收到job_id时，从job_list或完成通知找回；不要直接重跑可能有副作用的命令。真正停止用job_kill；子代理通过宿主interrupt_agent/管理入口停止，通过send_message续谈。
 
-取消等待或停止本轮也只结束等待。宿主可能把本次工具返回替换为取消错误，导致 `job_id` 没有送达。此时先用 `job_list` 或完成通知找回编号，再读取原作业，不要重新启动有副作用的命令。
+子代理settled表示这次不再观察到运行，不代表任务成功、最终答案已到或永远不会再运行。读取独立结算消息；最终文本迟到时处理其他工作，再等待消息。目标关系与状态分别确认，查询失败不能当not_found或settled。
 
-**成功读过的内容不能重新领取。** 作业按增量读取：每次成功读取只交付尚未读过的输出，并推进读取位置。最终 `result` 只在首次成功读取终态时交付一次，接在本次增量之后。需要保存的内容请及时复制；读取失败时按提示重试原编号，不把读失败当空输出。
+输出读取会推进增量游标。首次成功终态read的最终result只交付一次，并入同次文本；再次读取不重复已消费内容。读取失败按错误重试，不能当空输出。完成也需检查退出码、信号、failed/killed提示。
 
-以下三种结果提示要分别处理：
+结果过长有两种情况。`maxResultChars` 只裁剪交给模型的正文，按 JavaScript `String.length` 计数，保留首尾并标出省略量。宿主的 `lossy` 标记则表示缓冲内容已经丢失，两者不能混为一谈。状态、丢失说明和临时文件线索不占正文预算。
 
-| 提示 | 含义 | 下一步 |
-| --- | --- | --- |
-| `truncated` | 本次正文超过 `maxResultChars`，仅保留首尾 | 查看裁剪说明，确认所需内容是否被省略；状态和诊断文字不占正文预算 |
-| `lossy` | 较早的输出已经丢失，不只是本次显示被裁剪 | 不把当前文本当作完整记录；检查是否另有 spill 路径 |
-| `spillPaths` | 宿主报告了保存溢出输出的临时文件绝对路径 | 文件可能含秘密。尽快复制到安全位置，核实文件仍存在且内容完整，分享前脱敏 |
+宿主可能将输出写入临时文件（spill），并通过 `spillPaths` 返回系统临时目录中的绝对路径。只在有权限的环境打开这些路径，及时把必要内容保存到合适位置。输出和文件可能含敏感信息，分享前检查并脱敏。临时文件可能被清理；没有返回路径时，不要假定磁盘上有完整副本。
 
-没有报告路径时，不要假定磁盘上还有完整副本。
+## 5. 模型目录、授权与继承
 
-显式终止命令或编排用宿主 `job_kill`，停止子代理用宿主管理入口。先核 owner、准确标识符与是否仍需要结果。作业属于发起会话，卸载工具行不自动取消 owner 作业；重启可能终止活动进程。
+模型选择使用宿主现有子代理设置。后续async_agent显式路由/强度在每次创建时读取当前开关及允许名单，已有会话也生效；启动前再次确认许可。关闭开关拒绝显式选择；全部省略仍按默认/继承处理，运行中的子代理不换模型。读取失败、名单非法或许可撤回时按真实错误拒绝，不自动换模型。
 
-## 5. 模型选择与查询授权
+查询目录不创建代理、不推理，也不验证凭据或远端可用性。verdict的allowed/not-allowed/unconfirmed是对选定目标的适用性，不是通用授权。原生创建工具仍按自己的会话策略，不能套本包实时规则；workflow的agent()也有自己的合同。
 
-需要指定模型时，按以下顺序操作：
-
-1. 在 dsh 子代理设置中开启模型选择，并保存允许使用的路由。路由是 `provider` 与 `model` 这一对准确 ID。
-2. 用 `async_list_subagent_models(target_tool="async_agent")` 浏览或搜索，查看该目标是否允许选择所需路由。
-3. 创建时把准确 `provider`、`model` 成对传给 `async_agent`。需要推理强度时，再填该模型支持的 `reasoning_effort`。
-
-每次显式请求模型或推理强度时，`async_agent` 都实时读取当前策略。保存后，已有会话的下次创建也使用新策略；运行中的子代理不换模型。关闭开关会拒绝显式选择。全部省略时使用配置默认或父代理继承，不因允许名单变化而拒绝这条默认路径。
-
-省略参数时，默认值按以下条件参与：
-
-- 显式请求路由或推理强度，或者工具行配置了路由类默认时，会先预检（创建前确认路由和模型支持情况）。只有这些情况才合入后端路由默认。
-- 合入时，工具行 `agentOptions` 覆盖后端默认，显式参数再覆盖工具行值。没有触发预检、也没有携带值时，继承父路由。
-- 更换路由时不沿用不兼容的推理强度。预检使用的强度值与最终创建请求是两个阶段；不能把预检补出的值直接当作子代理最终继承的值。最终创建仍由宿主按请求和父值解析。
-
-查询结果中的 `allowed`、`not-allowed`、`unconfirmed` 分别表示对所选目标允许、不允许或尚未确认。**目录能列出模型，不等于有权使用，也不证明凭据有效或远端服务可用。** 具名但不可见的目标会是 `not-allowed`，仍可能返回目录信息。查询不创建子代理，也不发送推理请求。
-
-原生创建工具按自己的会话策略判断，可能与当前全局名单不同。`async_workflow` 的 `agent()` 钩子也不自动采用 `async_agent` 的参数和实时策略。创建时只填目标接受的准确 ID 等参数，不把 `query`、分页或 `target_tool` 传给创建工具。被拒绝后，保留目标重新查询，不自动换模型或工具绕过限制。
-
-允许名单中的准确 ID 即使未被目录列出，也可加入浏览和搜索，并标明来源，不编造显示名称。部分供应商读取失败时，`complete=false`，`total` 只表示已取得的数量，不能理解成全量或失败供应商有零模型。修复供应商配置后重新查询。
+明确target_tool可避免多入口歧义。省略时仅一个可识别候选才自动采用，多或零候选为unconfirmed。具名目标不可见时为not-allowed但仍可返回目录。使用准确ID和目标接受的强度，分页/搜索参数不传给创建工具。被拒时保留目标重新查询，勿换入口绕过限制。
 
 ## 6. 提问接管与静默失败
 
-`askTakeover` 默认关。开启后仅本包两预设根 Agent 的普通提问进入待答面板；计划评审、审批和其他预设仍走原生。sidebar 显示底栏未处理数，点击展开；overlay 直接显示右下角问题。可作答、忽略、跳转所属会话和增加等待时间。
+要在待答面板回答问题，先在设置中开启 `askTakeover` 并保存；它默认关闭。开启后，仅本包两预设根 Agent 的普通提问进入面板。计划评审、审批和其他预设仍使用宿主流程。
 
-**选择并提交答案**：问题初始没有选中项，推荐标记也不是已选答案。按题型操作：
+选择 `sidebar` 时，侧边栏底栏显示未处理问题数，点击可展开；选择 `overlay` 时，问题显示在右下角。面板可以跳转原会话、作答、忽略或增加等待时间。
 
-- 单选：预设选项与自定义回答只能选一个。
-- 多选：可同时选预设选项和自定义回答，编辑自定义文本不会取消其他已选项。
-- 点击自定义输入框或输入有效文本，会选中自定义回答。仅用键盘移动焦点不会选择它。
-- 取消自定义选择后，文本可作为草稿保留，但不会提交。清空仍被选中的自定义文本会阻止提交，即使多选题还有其他答案；请填写文本或取消该项。
-- 不想回答时，单独选择忽略，无需先填有效答案。服务端也会拒绝未知选项、违反单多选关系、空答案或空白自定义内容。
+回答时先确认题型。单选只能选预设选项或自定义回答中的一项；多选可以组合，自定义文本也作为独立答案提交，不是附注。初始没有任何选择，“推荐”不是已选中。点击自定义输入框或输入非空白文本，会选中自定义项；仅移动键盘焦点不会选中。
 
-**需要更多时间**：同一次提问调用中的多题是一批，共用初始期限。点击“增加等待时间”，会给该会话当时未到期的批次，在原期限上追加 `askExtendMs`。每次点击都会累加；没有收到确认时，先等待面板读回真实期限，不要立即重试。新批次使用自己的初始窗口，已到期批次不会重新进入原调用等待。
+取消自定义选择后，草稿可以保留，但不会提交。再次点击输入框或输入有效文本会重新选中；清空已选自定义文本不会恢复旧选择。没有选择或选中了空白自定义项时，不能提交，即使多选题还有其他已选项也一样。确实不答时使用独立的“忽略”。服务端同样校验选项和选择关系。
 
-**到期后补答**：已答内容保留；未答题向 Agent 返回 `selected=[]` 和超时 `custom` 说明，Agent 继续任务，不代选答案。你仍可在面板补答。迟到通知包含完整题干、选项及说明、多选关系、实际答案或忽略状态和时延，Agent 无需靠记忆猜答案。
+一次提问调用中的题目共用期限。到期保留已答和忽略状态；未答题返回 `selected=[]` 和说明超时的 `custom`，Agent 继续处理任务，不替用户选择答案。
 
-迟到答案先投递，再唤醒。Agent 空闲且没有本包待领通知时，用 `followup` 开始一轮；其他情况用 `inject` 放到下一消息领取点。只有宿主接受投递后才发出唤醒。
+需要更多时间时，点击该会话组的增加等待时间。它给点击时尚未到期的批次在原期限上增加 `askExtendMs`，不影响新批次，也不能使已到期批次重新等待。若未收到明确确认，先刷新并核对实际期限，再决定是否重试，避免重复累加。
 
-**记录何时消失**：已到期超过24小时的记录，只在下一次新批接管时才清理，这称为惰性清扫。没有新批时可能保留更久，迟到提交本身不会因超过24小时直接被拒。记录只在内存中，不跨重启或卸载保留；卸载时未结请求交还原生流程。
+到期后仍可在面板补答。迟到通知送回原会话，包含完整题干、全部选项与说明、多选关系、实际答案或忽略状态，以及时间。题目选项与实际选择分开，未选中的自定义草稿不会进入答案。
 
-**确认答案是否送达**：看到 `failed`、带 `undelivered` 的 `gone`，或丢失通知名单时，打开所属会话直接回复答案。已在别处回答的题只显示 `gone`。没有收到 RPC（界面向宿主发出的请求）确认时，结果尚未确定；先等状态刷新，不把连接中断直接当作未送达。
+原会话空闲且没有本包待启动投递时，宿主通过 `followup` 开启回合；否则通过 `inject` 放到下一领取点。只有宿主接受投递后，本包才唤醒等待。
 
-`silentFailureGuard` 默认关，仅两预设内提供结果提示、描述警示和纪律。在受限执行器、未提权、捕获形命令出现空白输出时，若预期内容缺失，先裸调用无害等价命令确认是否执行；普通管道不属于捕获形。拒绝签名提示只是诊断，不能代替宿主审批。不能用重复执行危险命令来判断空输出；先查任务状态、退出标记和日志。
+提交后先看确认结果。明确失败时，按显示的原因打开原会话直接回复；记录缺席且标有 `undelivered` 时也这样处理。若只是未收到确认，先等面板刷新核对，不直接断言未送达。`gone` 若表示其他客户端已经回答，不要重复提交。
+
+24小时是惰性清扫阈值：超过到期24小时的expired记录仅在下一次新批接管时清扫，没有新批可保留更久；迟到提交自身不按24小时拒收。重启或卸载会丢内存过期记录，未结请求交回原生流程；需要保留的答案及时写入原会话。
+
+silentFailureGuard默认false，仅本包两预设。启用后按条件提供结果诊断、描述警示和执行纪律。受限环境的捕获形命令可能在创建前静默失败；无输出、无退出标记时先用无害裸调用确认执行，查宿主日志，不把空结果当成功。不据提醒断言所有捕获都失败；更宽权限重试仍需同轮授权审批。
 
 ## 7. 高级组合
 
-工具可独立挂载，查询可与原生查询共存。每行 `config.toolName` 选一个工具，无该键为不注册工具的宿主配置角色。自建组合不会自动禁用已有同步工具。以下是六工具完整挂载；编排必须在隔离 delegation 组内，同时有引擎提供行：
+工具可独立挂入自建预设，查询可与原生查询并存；自建组合不会自动禁掉原有同步工具。每行config.toolName选工具，无toolName为宿主配置角色。workflow必须在隔离delegation组取得引擎；下例包含全部六工具，不是完整预设的其他功能清单。
 
 ```yaml
 - id: async-run
@@ -362,33 +299,23 @@ async_list_subagent_models(provider="<准确ID>", model="<准确ID>", target_too
       config: { toolName: async_workflow }
 ```
 
-引擎还须能解析 subagents、ptcRuntime、sandboxPolicy、workingDirectory。引擎无法执行当前受限策略时按真实错误拒绝，不自动升权或换无沙箱引擎。组合及客户端入口变动需要安全地重新装载；普通设置保存不需要。
+引擎上下文还须能解析 `subagents`、`ptcRuntime`、`sandboxPolicy`、`workingDirectory` 四项宿主服务。缺少服务时，查看宿主组合和引擎装载日志，补齐合法的服务提供行。重新装载前先确认活动会话与作业已安全收尾。若引擎无法执行当前受限策略，保留真实错误；选择支持该策略的引擎与宿主条件，或停止该编排，不自动升权或绕开沙箱。
 
-## 8. 风险、停用与排障
+## 8. 停用、恢复与报障
 
-运行命令前，确认命令在当前权限和沙箱内可以做什么。命令使用宿主提供的环境键集，可能访问网络或秘密；本包不会自行收集遥测或读写凭据，模型目录访问交给宿主接口及适配器。
+**移除前先改默认预设。** 默认若指向dsh-async/dsh-async-create，停用或卸载后新会话报`agent-preset/not-found`，宿主不自动清除。先在宿主设置改为可用预设。已经移除时，在宿主默认预设入口清空或重选，再建会话验证。
 
-分享结果或报障前，先脱敏环境、命令、spill 路径和日志。提供插件、宿主、Node版本，所选预设、工具参数、`job_id` 或 `agent_id`，以及真实状态、退出标记和必要日志片段。不要提交令牌、cookie、密码或带 token 的 URL。模型看到的宿主错误会合成单行，最多500字符；需要完整原因时，由操作者查看 stderr 日志后提供脱敏片段。
+停用或移除按以下顺序进行：
 
-**默认预设为 `dsh-async` / `dsh-async-create` 时，停用或卸载会使新会话出现 `agent-preset/not-found`，宿主不会自动清除此选择。**
+1. 用 `job_list` 检查自己的活动作业，完成所需读取，显式停止不需要的任务。重启可能终止活动进程，先安排收尾。
+2. 按上一段更改默认预设。
+3. 在宿主 GUI 管理本包的安装依赖登记（dependency）与组合声明（bundle），按页面提示重新装载。CLI 操作使用对应宿主版本的管理说明。
+4. 新建会话确认可用预设正常；需要恢复时清空或重选默认预设。
 
-1. 卸载前在宿主设置把默认预设切到可用预设。
-2. 收取需要的作业结果，显式停止不再需要的自有任务。
-3. 通过宿主 GUI 管理 dependency 与 bundle；按该宿主提示完成重新装载。开发链接还需移除 bundle 声明，删除联接不等于卸载内存模块。
-4. 已卸载而新会话报错时，直接在宿主默认预设入口清空或重选可用预设，不依赖本插件设置页。
-5. 旧活动组合可能继续持有版本引用，owner作业也可能继续。需要重启时先核所有活动会话，从进程树外操作，不把重启当无风险清理。
+删除开发链接不会卸载已经加载的模块。旧会话可能仍引用原组合版本。工具生产行（producer）与发起会话（owner）的生命周期不同，卸载工具行不会自动取消会话拥有的作业。
 
-按看到的现象排查，不要先重复运行任务或重启实例：
+命令继承宿主权限、审批、沙箱及shellEnv.collect(exec)环境键集，输出和命令自身可能含敏感信息。模型可见注册错误最多500字符并单行化，完整错误在操作者日志。检查日志时避免把令牌、cookie、密码、私有URL和秘密环境值贴入issue。
 
-| 现象 | 先检查 | 接着处理 |
-| --- | --- | --- |
-| 工具、预设和设置全都缺席 | 对照第1节核插件完整版本和精确宿主版本 | 在宿主插件管理中检查 dependencies（已安装依赖）与 bundles（加载的配置包），再查装载日志；不要放宽 peer 版本要求强行加载 |
-| 只有工具缺席 | 当前会话是否选择了异步预设，bundle 是否已加载 | 选择正确预设后新建会话；自建组合对照第7节逐行检查 |
-| 只有设置表单缺席 | 本包宿主配置行是否加载、客户端入口是否成功装载 | 查看客户端装载日志；组合或客户端入口有变化时，按安全维护步骤重新装载并重新打开页面 |
-| 设置保存失败 | 是否使用可写的本机回环入口；字段范围和跨字段关系是否有效 | 保留草稿，修复连接或字段后重试；配置降级按第2节处理 |
-| 长任务没有结果，或原编号查不到 | 用 `job_list` 核对发起会话（owner）、编号和状态 | 按原编号读取，查询失败就重查；不要重新执行有副作用命令 |
-| 答案未确认送达 | 面板刷新后的状态及所属会话 | 按第6节处理；明确未送达时到原会话直接回复 |
-
-不认识的配置项或残留 OS 进程，应在宿主设置和系统进程管理中逐项确认。不要批量清除无关配置或停止他人任务。
+报障使用[项目issue](<https://github.com/MC5Spear/dsh-async-tools/issues>)，提供：完整插件/宿主/Node版本、OS、预设、已脱敏相关设置、最小无害复现、预期与实际状态、job_id/agent_id及时间关系、真实退出标记和脱敏日志片段。保留原任务身份便于查找，不重复运行破坏性命令。个人维护接受issue、不接受外部PR，响应和修复没有固定时限。
 
 文档维护遵循[文档原则](<documentation-principles.md>)。

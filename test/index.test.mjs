@@ -662,15 +662,15 @@ test('T14：lib/ 的裸包 import 清单 ⊆ package.json 的 deps∪peers——
     `lib/ import 了未声明的包（R15 代际核查覆盖不到）：${undeclared.join(', ')}`);
 });
 
-test('T15（R38；R44 换钉）：peer 版本锁定整体换代——九个 dsh* 精确锁 0.2.1-rc.2，cordis/timer 随目标树升窗；本包 version 随窗', async () => {
+test('T15（R38；R44 换钉）：peer 版本锁定整体换代——九个 dsh* 精确锁 0.2.1-rc.4，cordis/timer 随目标树升窗；本包 version 随窗', async () => {
   // 为什么需要：peer 校验只看 @deepseek-ai/dsh 与 dsh-* 前缀，精确锁让
   // 「宿主代际不对 → 行拒载」为本包工作。任一条漏改，在 0.2.0 实例上
   // 就是中间态（failed to import / skipping profile bundle）——本用例把
-  // 「漏改」在仓库里就地打红，不用等真机。0.2.1-rc.2 → 正式版/rc.3 再升时本用例
+  // 「漏改」在仓库里就地打红，不用等真机。0.2.1-rc.4 → 正式版再升时本用例
   // 先红，强迫整表同步换代。version 断言：
   // 把「tag 已打而 version 漏改」拦在 tag 之前，不再只靠切换穿指读回退。
   const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'));
-  const DSH_LINE = '0.2.1-rc.2';
+  const DSH_LINE = '0.2.1-rc.4';
   const expected = {
     '@deepseek-ai/cordis': '~4.0.5',
     '@deepseek-ai/cordis-plugin-timer': '~1.1.7',
@@ -688,8 +688,8 @@ test('T15（R38；R44 换钉）：peer 版本锁定整体换代——九个 dsh*
     `peerDependencies 必须与需求 §7.3 兼容基准逐键逐值一致（实际：${JSON.stringify(pkg.peerDependencies)}）`);
   assert.equal(pkg.dependencies?.['@deepseek-ai/schemastery'], '~3.18.5',
     'schemastery 叶子依赖形态不变（~ 窗随目标树）');
-  assert.equal(pkg.version, '0.2.5+dsh.0.2.1-rc.2',
-    '本包 version 必须按需求 §7.3.1 带构建元数据全标识（核心 0.2.5 + 目标宿主 dsh.0.2.1-rc.2）——漏元数据会让用户失去兼容信息');
+  assert.equal(pkg.version, '0.2.7+dsh.0.2.1-rc.4',
+    '本包 version 必须按需求 §7.3.1 带构建元数据全标识（核心 0.2.7 + 目标宿主 dsh.0.2.1-rc.4）——漏元数据会让用户失去兼容信息');
 });
 
 
