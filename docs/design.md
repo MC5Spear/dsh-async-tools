@@ -8,14 +8,14 @@
 
 ### 1.1 单包两角色
 
-一个入口按行配置中 `toolName` 是否存在分派：
+宿主把插件配置组织成“行”，每行负责一次装配。本包使用同一个入口，再根据行配置是否有 `toolName` 选择角色：
 
 - 无 `toolName`：宿主配置角色，提供生效配置快照、浏览器入口和提问接管服务，不注册工具。
 - 有 `toolName`：工具角色，每行注册指定工具；命令、两个等待和派生工具在预设顶层，编排行在 delegation 组内取得隔离的 `workflowEngine`。
 
 `toolName` 可选且无默认值，不标 volatile。缺字段不能等于自动装上命令执行器。宿主行由本包的 [bundle 声明](<../cordis.patch.yml>)提供；[包清单](<../package.json>)声明宿主行和两份预设补丁，以及浏览器入口。
 
-bundle patch 是官方组合树 overlay，不修改宿主源码或随宿主发布的文件。预设由宿主注册表声明，不由插件自管用户目录。
+bundle patch 是宿主支持的组合树覆盖配置。它把本包声明加入宿主组合，不修改宿主源码或随宿主发布的文件。预设由宿主注册表管理，插件不另建用户预设目录。
 
 ### 1.2 模块职责
 
@@ -38,7 +38,11 @@ bundle patch 是官方组合树 overlay，不修改宿主源码或随宿主发�
 
 ### 1.3 服务声明与作用域
 
-目标入口静态声明 `tools`、`jobs`、`shell`、`shellEnv`、`subagents`、`timer`、`sessionProjections`、`agents`、`workingDirectory` 九项服务。声明同时作用于宿主行和工具行；任一固定依赖缺席时插件等待服务，不启动，也不绕过注入直接读取上下文。`sessionProjections` 用于只读读取原生子代理模型选择策略的会话投影（3.7 的目标适用性判断），`agents` 用于子代理运行状态查询，`workingDirectory` 用于命令启动前取得有效目录。新增依赖的宿主行和预设行可见范围须由真实 cordis 接线验证，不能由替身字段在场推断。
+入口静态声明九项必需服务：`tools`、`jobs`、`shell`、`shellEnv`、`subagents`、`timer`、`sessionProjections`、`agents`、`workingDirectory`。宿主行和工具行都采用该声明。任一服务缺席时，插件等待服务而不启动，不能绕过依赖注入直接读取上下文。
+
+其中，`sessionProjections` 只读原生子代理模型策略的会话投影，用于 3.7 的目标适用性判断；`agents` 查询子代理当前运行状态；`workingDirectory` 在命令启动前提供有效目录。
+
+新增依赖是否在宿主行和预设行可见，必须通过真实 cordis 装配验证。替身对象上有同名字段，只能证明替身准备了该字段。
 
 `agents` 是公开 Agent 注册表（服务键 `agents`，dsh-agent 的 `AgentRegistry`）：`get(id)` 返回当前驻留的 Agent 或 `undefined`；Agent 的公开 `status` getter 只取 `running` 或 `idle`，`idle` 含维护阶段；状态转换发布 `agent/status` 事件，载荷 `{agent, status}`。目录条目只证明会话存在过，注册表驻留才证明当前有驱动；两者分开消费。`startActivation` 接受的 parent 必须是注册表中同一活 Agent 对象。工具只在先确认合法子代理关系后查询目标注册表，不读子代理私有日志；查询失败不伪造非运行状态。
 
@@ -579,7 +583,11 @@ ASK-01是需求9.1的合同；其实现与验证状态仍按第9章及检查结�
 
 服务键 `asyncToolsAsk`，namespace `async-tools-ask`，使用公开 `TypertRemoteService` 与 `Remote` 标记。方法为 state、answer、ignore、extend，逐一登记进服务侧标记与客户端 strict descriptor 表；参数名 `submission` 与 descriptor 的 wire 名一致，裸载荷不另包一层。
 
-state 返回 serverNow、按题展平 items 和待显示失败项。item 含 batchId、sessionId、questionId、题干、选项、multiSelect、receivedAt、expiresAt、phase；同批次重复期限供展示，不存一份客户端独立计时事实。answer／ignore 返回 delivered、late、gone 或 failed；extend 返回 `{extended: n}`。outcome 枚举不变，gone 分两口径：题已在他处落定返回普通 `{outcome:'gone'}`，界面交轮询收敛；批次或题记录缺席（清扫、结清出列或交还）返回 `{outcome:'gone', undelivered:true}`，客户端以可消除报错名单显示未送达（与迟到投递失败名单同一方式，需求 4.4）；忽略提交命中缺席批次同判。failed 表示本次没有送达。非法作答不产生新返回值：answer 在记录与分发之前按原题校验，拒绝经 RPC 错误回执返回（本节作答校验，客户端按明确拒绝档显示）。客户端对 gone 与 failed 给可见说明，不以成功提示清掉未送达事实。RPC 动作在客户端的表述分三类：明确成功（服务端回执）、明确拒绝（服务端可达的失败回执）、未收到确认（请求已发出但无响应——超时、连接中断或响应丢失）。未收到确认不得断言动作未执行：提交不说“答案未送达”，延长不说“未生效”；不确定结果以既有 state 轮询与丢失名单收敛，不为此建通用网络恢复系统。
+state 返回 serverNow、按题展平 items 和待显示失败项。item 含 batchId、sessionId、questionId、题干、选项、multiSelect、receivedAt、expiresAt、phase；同批次重复期限供展示，不存一份客户端独立计时事实。answer／ignore 返回 delivered、late、gone 或 failed；extend 返回 `{extended: n}`。outcome 枚举不变，gone 分两口径：题已在他处落定返回普通 `{outcome:'gone'}`，界面交轮询收敛；批次或题记录缺席（清扫、结清出列或交还）返回 `{outcome:'gone', undelivered:true}`，客户端以可消除报错名单显示未送达（与迟到投递失败名单同一方式，需求 4.4）；忽略提交命中缺席批次同判。failed 表示本次没有送达。非法作答不产生新返回值：answer 在记录与分发之前按原题校验，拒绝经 RPC 错误回执返回（本节作答校验，客户端按明确拒绝档显示）。
+
+客户端对 gone 与 failed 给可见说明，不以成功提示清掉未送达事实。
+
+**客户端怎样解释动作结果。** RPC 动作在客户端的表述分三类：明确成功（服务端回执）、明确拒绝（服务端可达的失败回执）、未收到确认（请求已发出但无响应——超时、连接中断或响应丢失）。未收到确认不得断言动作未执行：提交不说“答案未送达”，延长不说“未生效”；不确定结果以既有 state 轮询与丢失名单收敛，不为此建通用网络恢复系统。
 
 浏览器轮询 state 的设计间隔为 1000 ms，页面恢复可见及每次提交后立即刷新；后台页节流不当作服务端停止计时。overlay 挂 `shell.overlay` 全帧浮层槽（条目自定位右下），sidebar 挂 `sidebar.footer.action` 槽，复用 AskList 与 AskItem。徽标计数为未处理问题数，全部处理后消隐；徽标与组头入口跳转所属会话。每个会话组的组头提供“增加等待时间”按钮，与既有组头动作并列；点击只发本组 sessionId，成功后立即补一次 state 轮询，新期限经 serverNow 校准显示，题 key 保持 batchId/questionId，期限刷新不丢本地答案草稿。extend 未收到确认时提示只说明结果未知、以面板状态为准：延长每次成功都会累加（4.2），重试前先等 state 读回真实期限，期限已延长不再补点，未延长才重试，不把重复累加改成伪幂等。明确拒绝走面板顶报错通道，可重试，不假报加时成功。按钮文案 `ask.extend` 两语对应。
 
