@@ -191,12 +191,16 @@ jobs:
 
       # 兼容检查在没有宿主树时按环境不足退出 2：这是离线形态的正常读数，不是失败，
       # 也不能借它通过三宿主矩阵的判据。
+      # 预期非零必须在段内**归一化**：pwsh 步骤的收尾退出码取自最后一条原生命令，
+      # 不显式 `exit 0` 的话，已核对过的 2 仍会让作业红（实测就是「打印跳过 ✔ 后
+      # Process completed with exit code 1」）。核对 → 记日志 → `exit 0`，三步都不能少。
       - name: 兼容检查在离线形态按环境不足退出
         shell: pwsh
         run: |
           node tools/check-host-compat.mjs --host-root node_modules
           if ($LASTEXITCODE -ne 2) { throw "离线形态下应以环境不足（2）退出，实际 $LASTEXITCODE" }
           Write-Host "兼容检查跳过 ✔ 环境不足与判据失败分开记录"
+          exit 0
 
       # 公开层边界与编码体检不依赖宿主，两种形态都要过。逐项检查退出码，防止后续
       # 成功覆盖失败（理由同上）。
