@@ -12,10 +12,10 @@ This third-party plugin is unaffiliated with DeepSeek. It is personally maintain
 
 | Component | Current applicable version |
 | --- | --- |
-| Plugin version | `0.2.7+dsh.0.2.1-rc.4` |
-| Exact dsh host version | `0.2.1-rc.4` |
+| Plugin version | `0.2.8+dsh.0.2.1-rc` |
+| Supported dsh host versions | `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4` |
 
-- **Use the exact DSH version above.** The rc4 adaptation does not mean every behavior has been verified on this line. Full target-host revalidation remains pending.
+- **Your DSH version must be one of the three listed above.** These three share one compatibility line and one peer support set. The final `0.2.1`, `0.2.0`, `0.2.2`, and any new rc not in the set are rejected. A support set does not mean every behavior has been verified on each host: item-by-item real-host revalidation remains pending.
 - **Node.js 24 is recommended.** For other versions, check the [runtime prerequisites](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>). The plugin's declaration is not the minimum for the complete host.
 - **Installation source.** If the installation address does not yield the source, check the repository address and pinned commit, then the network or proxy. If it still fails, ask the maintainer who supplied the source about available installation artifacts.
 - **This line targets Windows, with full revalidation still pending.** Linux command execution and one-shot escalation, macOS, and remote execution are unverified. For these environments, send the maintainer your environment and intended use, then arrange isolated verification before deciding to deploy.
@@ -25,16 +25,16 @@ This third-party plugin is unaffiliated with DeepSeek. It is personally maintain
 The package is not distributed through npm. Run in a terminal:
 
 ```powershell
-dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1-rc.4
+dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
 ```
 
-Alternatively, open DSH's plugin manager and enter `github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1-rc.4` as the installation address in its install dialog.
+Alternatively, open DSH's plugin manager and enter `github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1` as the installation address in its install dialog.
 
-This address follows a moving branch. To pin the source, replace everything after `#` with full commit `ca8f65b39b7694f9e5a2b28cca7a29bc43485ecc`.
+This address follows a moving maintenance branch. To pin the source, check the source out locally, run `git rev-parse HEAD` in that checkout to obtain the full commit, and replace everything after `#` with that commit. After installation, you can verify the installed source against the same commit.
 
 After installation, open this package's detail page in the plugin list: its settings form should be visible. In a new session's preset selector, check that `dsh-async` and `dsh-async-create` are available. After selecting one, the Agent should have the six tools listed below. A preset defines which tools an Agent uses; you do not need to create preset directories manually.
 
-If settings, presets, or tools are missing, check the exact host version first, then follow the [installation troubleshooting steps](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>) to inspect load logs. The reference also covers development links and reloading after installation-composition changes.
+If settings, presets, or tools are missing, first check whether your host version is in the table above, then follow the [installation troubleshooting steps](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>) to inspect load logs. The reference also covers development links and reloading after installation-composition changes.
 
 ## Start a background task
 
@@ -86,7 +86,7 @@ AI maintainers include:
 
 ## Documentation and licensing
 
-See the [user reference](<docs/user-reference.en.md>) for operating details. Maintenance documents are in Chinese in the [rc4 source branch](<https://github.com/MC5Spear/dsh-async-tools/tree/adapt/dsh-0.2.1-rc.4>). The branch moves; use a checkout corresponding to your installed source:
+See the [user reference](<docs/user-reference.en.md>) for operating details. Maintenance documents are in Chinese in the [maintenance branch source](<https://github.com/MC5Spear/dsh-async-tools/tree/adapt/dsh-0.2.1>). The branch moves; use a checkout corresponding to your installed source:
 
 ```text
 CONTRIBUTING.md          Development, review, and release

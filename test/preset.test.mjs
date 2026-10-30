@@ -17,7 +17,7 @@
  * dsh-async-create 专属用例：P1 基线绿、P2/P3 基线行缺/多、P4 派生入口翻活、
  * P5 plugin-manager 回归布尔禁用（⑧b）、P6 词典纪律锚句（⑤b）、P7 pwsh 挂回、
  * P8 tool-bash 表达式、P9 未知 config.id、P10 护栏、P11 互斥判据复合、
- * P12 嵌套行缺失、P13 toolName、P14 期望集与 0.2.1-rc.4 证据树对账、
+ * P12 嵌套行缺失、P13 toolName、P14 期望集与 0.2.1 兼容线证据树对账、
  * P15 provider 形态、P16 词典公共纪律段同源。
  * 第五行工具与禁用改动专属用例：P17 tool-workflow 翻活、P18 dsh-async 的
  * tool-subagent 翻活、P19 删 async-workflow 行、P20 async-workflow 挪出
@@ -66,7 +66,7 @@ const baselineCreate = readFileSync(PATCH_CREATE, 'utf8');
  *  出处 = 宿主安装树里的 `@deepseek-ai/dsh-web-app/presets/`，目录按
  *  `DSAT_HOST_MODULES` → `DSH_HOME/profiles` → `%APPDATA%/npm` 次序推导
  *  （与 `tools/_host-resolve.mjs` 同一套候选），**不写死机器路径**——公开仓的 CI 用
- *  `npm install @deepseek-ai/dsh@0.2.1-rc.4` 提供这个包。
+ *  `npm install @deepseek-ai/dsh@<精确宿主版本>`（支持集合逐宿主）提供这个包。
  *
  *  npm 安装树（本机与 CI 同源装出）的两份基线文件字节固定（standard 6799 B、
  *  cordis 7406 B——基线漂移会先在这里露头）。锚点取哪边期望集都一致。 */
@@ -428,7 +428,7 @@ hostTest('validate-preset：期望集必须与 shipped 基线的真实行集合�
   const { load } = await loadYaml();
   for (const { configId, baselineFile, baselineName } of RECONCILE) {
     if (baselineFile === undefined || !existsSync(baselineFile)) {
-      assert.fail(`P14 对账依赖的基线补丁读不到：@deepseek-ai/dsh-web-app/presets/${baselineName}（期望集 ${configId} 的出处就是它）。候选锚 = DSAT_HOST_MODULES → DSH_HOME/profiles → %APPDATA%/npm 全局树；CI 上由 npm install @deepseek-ai/dsh@0.2.1-rc.4 提供。锚缺失不许静默跳过。`);
+      assert.fail(`P14 对账依赖的基线补丁读不到：@deepseek-ai/dsh-web-app/presets/${baselineName}（期望集 ${configId} 的出处就是它）。候选锚 = DSAT_HOST_MODULES → DSH_HOME/profiles → %APPDATA%/npm 全局树；CI 上由 npm install @deepseek-ai/dsh@<精确宿主版本>（支持集合逐宿主）提供。锚缺失不许静默跳过。`);
     }
     const doc = load(readFileSync(baselineFile, 'utf8'));
     const exp = EXPECTATIONS[configId];

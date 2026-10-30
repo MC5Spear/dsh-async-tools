@@ -50,17 +50,44 @@ export function checkUserDocs(root = ROOT, { quiet = false, packageFiles } = {})
   }
   const version = manifest.version;
   const peer = manifest.peerDependencies['@deepseek-ai/dsh'];
+  // 支持集合的唯一权威是包清单的 dsh peer 原文：逐项精确版本，不写范围、不重复列。
+  const hostMembers = typeof peer === 'string' ? peer.split('||').map(item => item.trim()).filter(Boolean) : [];
+  if (hostMembers.length === 0 || hostMembers.some(item => !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(item))) {
+    fail('包清单的 dsh peer 支持集合不是逐项精确版本，用户资料无从核对');
+  }
+  if (new Set(hostMembers).size !== hostMembers.length) fail('包清单的 dsh peer 支持集合重复列同一版本，用户资料无从核对');
   for (const file of USER_DOCUMENTS.slice(0, 4)) {
     const text = docs.get(file) ?? '';
     const identityRows = rows(text);
-    const identityFields = file.endsWith('.en.md')
-      ? [['Plugin version', version], ['Exact dsh host version', peer]]
-      : [['插件版本', version], ['精确宿主版本', peer]];
-    for (const [field, expected] of identityFields) {
+    const english = file.endsWith('.en.md');
+    // 两行身份表：插件版本逐字符等于包清单；支持的宿主版本按集合核对（不是逐字符长串比对——
+    // 文档要写成人能读的列表，且 Markdown 表格单元格里不能出现 OR 管道）。
+    const identityFields = [
+      [english ? 'Plugin version' : '插件版本', cell => (cell === version ? undefined : `应唯一声明 ${version}`)],
+      [english ? 'Supported dsh host versions' : '支持的宿主版本', cell => {
+        const parts = cell.split(/[、,，]|\s*\/\s*|\s+(?:或|or)\s+/).map(part => part.trim()).filter(Boolean);
+        const unique = new Set(parts);
+        // 去重后必须与包清单集合**完全相等**：只比项数与“无集合外项”会让
+        // 「同一宿主写三遍」通过（集合其实少了两项）。
+        if (unique.size !== hostMembers.length) {
+          return `去重后应恰为 ${hostMembers.length} 个不同宿主版本，实际 ${unique.size} 个（列出 ${parts.length} 项）`;
+        }
+        if (parts.length !== unique.size) return `重复列出同一宿主（${parts.length} 项，去重后 ${unique.size} 项）`;
+        const outside = [...unique].filter(part => !hostMembers.includes(part));
+        if (outside.length > 0) return `混入支持集合外宿主 ${outside.join('、')}（支持集合 ${hostMembers.join('、')}）`;
+        const missing = hostMembers.filter(member => !unique.has(member));
+        if (missing.length > 0) return `缺少支持集合内的宿主 ${missing.join('、')}（集合 ${hostMembers.join('、')}）`;
+        return undefined;
+      }]
+    ];
+    for (const [field, verdict] of identityFields) {
       const matches = identityRows.filter(row => row[0] === field);
-      if (matches.length !== 1 || matches[0][1] !== expected) fail(`${file} 当前身份字段 ${field} 应唯一声明 ${expected}`);
+      if (matches.length !== 1) { fail(`${file} 身份字段 ${field} 应唯一出现，实际 ${matches.length} 行`); continue; }
+      if (matches[0].length !== 2) { fail(`${file} 身份字段 ${field} 必须是一行两列的表格行`); continue; }
+      const reason = verdict(matches[0][1]);
+      if (reason !== undefined) fail(`${file} 身份字段 ${field} ${reason}`);
     }
-    const packageVersions = text.match(/\b0\.2\.\d+\+dsh\.0\.2\.[01]-rc\.\d+\b/g) ?? [];
+    const packageVersions = text.match(/\b0\.2\.\d+\+dsh\.0\.2\.\d+-rc(?:\.\d+)?\b/g) ?? [];
     if (packageVersions.some(value => value !== version)) fail(`${file} 混入其它产品线包版本`);
     const expectedSwitch = file === 'README.md' ? 'README.en.md' : file === 'README.en.md' ? 'README.md' : file.endsWith('.en.md') ? 'user-reference.md' : 'user-reference.en.md';
     const links = [...text.matchAll(/\]\(<?([^\s)>]+)>?\)/g)].map(m => m[1]);

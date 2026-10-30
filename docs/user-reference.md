@@ -6,28 +6,28 @@
 
 | 项目 | 当前适用版本 |
 | --- | --- |
-| 插件版本 | `0.2.7+dsh.0.2.1-rc.4` |
-| 精确宿主版本 | `0.2.1-rc.4` |
+| 插件版本 | `0.2.8+dsh.0.2.1-rc` |
+| 支持的宿主版本 | `0.2.1-rc.2`、`0.2.1-rc.3`、`0.2.1-rc.4` |
 
-安装地址取不到源码时，先核对仓库地址与固定提交号，再检查网络或代理；仍无法获取时，联系提供安装来源的维护者，询问可用安装件。
+安装地址取不到源码时，先核对仓库地址与提交号，再检查网络或代理；仍无法获取时，联系提供安装来源的维护者，询问可用安装件。
 
-安装来源为 `github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1-rc.4`。分支会移动；需要固定来源时，将 `#` 后内容换为完整提交 `ca8f65b39b7694f9e5a2b28cca7a29bc43485ecc`。包不从 npm 分发，无分支的 GitHub spec 不能替你选择正确的宿主适配。
+安装来源为 `github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1`。分支会移动；需要固定来源时，先在本地检出源码，用 `git rev-parse HEAD` 取得完整提交，再把 `#` 后内容换为该提交，安装后可用同一提交核对安装件来源。包不从 npm 分发，无分支的 GitHub spec 不能替你选择正确的宿主适配。
 
 安装前先确认运行环境：建议 Node.js 24。插件清单的 `>=20` 只是插件声明；宿主依赖 commander 15 要求 `>=22.12.0`，也只是已知下界，不是整套宿主经验证的最低版本。确认目标宿主依赖能在所选运行时解析后，再安装。
 
-本线面向 Windows，但目标宿主上的逐项重验尚未完成。Linux 命令与单次提权、macOS、远程执行均未验证。需要这些环境时，向维护者提供环境与使用需求，安排隔离验证后再决定部署。rc4 适配不等于所有行为已在 rc4 通过验证。
+上表三个宿主版本共用同一条兼容线与同一份 peer 支持集合，集合外的正式 `0.2.1`、`0.2.0`、`0.2.2` 与未列入的新 rc 都不放行。本线面向 Windows，但三个宿主版本上的逐项重验尚未完成。Linux 命令与单次提权、macOS、远程执行均未验证。需要这些环境时，向维护者提供环境与使用需求，安排隔离验证后再决定部署。兼容线支持不等于所有行为已在每个宿主上通过验证。
 
 确认上述前提后，在终端安装：
 
 ```powershell
-dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1-rc.4
+dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
 ```
 
 也可以在 DSH 插件管理页打开安装对话框，将上面的 GitHub spec 填入安装地址。安装结束后，在本包详情页确认设置表单可见；再新建会话，确认可选择 `dsh-async` 和 `dsh-async-create`。选择其中一个后，Agent 应能使用本参考列出的六个工具。
 
 若设置与工具都缺席，按以下顺序排查：
 
-1. 核对 DSH 精确版本与本节身份表。
+1. 核对 DSH 版本是否在本节支持集合内。
 2. 查看宿主装载日志，确认是否因版本不匹配而跳过本包。
 3. 在目标 profile 中核对本包的 dependency（安装依赖登记）与 bundle（宿主行和预设的组合声明）。两种登记不同，只有一处登记不足以确认全部入口已加载。
 4. 若更改了组合或客户端入口，重新装载实例并重新打开页面。重启前先安排活动会话收尾，从服务进程树外执行。普通设置保存无需重启。
@@ -37,7 +37,7 @@ dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1-rc.
 ```powershell
 git clone https://github.com/MC5Spear/dsh-async-tools.git
 cd dsh-async-tools
-git checkout adapt/dsh-0.2.1-rc.4
+git checkout adapt/dsh-0.2.1
 npm install
 dsh plugin --profile web add <克隆目录的绝对路径>
 ```

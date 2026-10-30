@@ -662,34 +662,40 @@ test('T14：lib/ 的裸包 import 清单 ⊆ package.json 的 deps∪peers——
     `lib/ import 了未声明的包（R15 代际核查覆盖不到）：${undeclared.join(', ')}`);
 });
 
-test('T15（R38；R44 换钉）：peer 版本锁定整体换代——九个 dsh* 精确锁 0.2.1-rc.4，cordis/timer 随目标树升窗；本包 version 随窗', async () => {
-  // 为什么需要：peer 校验只看 @deepseek-ai/dsh 与 dsh-* 前缀，精确锁让
-  // 「宿主代际不对 → 行拒载」为本包工作。任一条漏改，在 0.2.0 实例上
-  // 就是中间态（failed to import / skipping profile bundle）——本用例把
-  // 「漏改」在仓库里就地打红，不用等真机。0.2.1-rc.4 → 正式版再升时本用例
-  // 先红，强迫整表同步换代。version 断言：
+test('T15（R38；R44 换钉）：九个 dsh* peer 共用同一支持集合——集合外宿主拒载；cordis/timer 随宿主树升窗；本包 version 随核心版本', async () => {
+  // 为什么需要：peer 校验只看 @deepseek-ai/dsh 与 dsh-* 前缀，支持集合让
+  // 「集合内任一宿主可装、集合外拒载」为本包工作。任一条漏改或写成不同集合，
+  // 在集合外宿主上就是中间态（failed to import / skipping profile bundle）——
+  // 本用例把「漏改」在仓库里就地打红，不用等真机。新增 rc 时先扩集合，本用例
+  // 与支持集合一起红，强迫整表同步换代。version 断言：
   // 把「tag 已打而 version 漏改」拦在 tag 之前，不再只靠切换穿指读回退。
   const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'));
-  const DSH_LINE = '0.2.1-rc.4';
+  // 这里的期望串是**测试侧的需求固定副本**：按需求 §7.3 固定预期支持集合，用来发现
+  // 包清单被悄悄改写（声明漂移）。测试期望作为需求副本，与包清单的 peer 原文并存是合理的；
+  // 运行期判据（准入、junction、安装说明）一律从包清单取集合。集合变化时本用例变红，
+  // 提示同步需求、版本与文档。
+  const SUPPORT = '0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4';
   const expected = {
     '@deepseek-ai/cordis': '~4.0.5',
     '@deepseek-ai/cordis-plugin-timer': '~1.1.7',
-    '@deepseek-ai/dsh': DSH_LINE,
-    '@deepseek-ai/dsh-jobs': DSH_LINE,
-    '@deepseek-ai/dsh-llm': DSH_LINE,
-    '@deepseek-ai/dsh-sandbox': DSH_LINE,
-    '@deepseek-ai/dsh-shell': DSH_LINE,
-    '@deepseek-ai/dsh-shell-env': DSH_LINE,
-    '@deepseek-ai/dsh-subagent': DSH_LINE,
-    '@deepseek-ai/dsh-typert-protocol': DSH_LINE,
-    '@deepseek-ai/dsh-tools': DSH_LINE
+    '@deepseek-ai/dsh': SUPPORT,
+    '@deepseek-ai/dsh-jobs': SUPPORT,
+    '@deepseek-ai/dsh-llm': SUPPORT,
+    '@deepseek-ai/dsh-sandbox': SUPPORT,
+    '@deepseek-ai/dsh-shell': SUPPORT,
+    '@deepseek-ai/dsh-shell-env': SUPPORT,
+    '@deepseek-ai/dsh-subagent': SUPPORT,
+    '@deepseek-ai/dsh-typert-protocol': SUPPORT,
+    '@deepseek-ai/dsh-tools': SUPPORT
   };
   assert.deepEqual(pkg.peerDependencies, expected,
     `peerDependencies 必须与需求 §7.3 兼容基准逐键逐值一致（实际：${JSON.stringify(pkg.peerDependencies)}）`);
+  assert.equal(pkg.engines?.dsh, undefined,
+    '不得声明 engines.dsh——宿主在场时它会顶替九条 peer 单独裁决，支持集合因此失效');
   assert.equal(pkg.dependencies?.['@deepseek-ai/schemastery'], '~3.18.5',
-    'schemastery 叶子依赖形态不变（~ 窗随目标树）');
-  assert.equal(pkg.version, '0.2.7+dsh.0.2.1-rc.4',
-    '本包 version 必须按需求 §7.3.1 带构建元数据全标识（核心 0.2.7 + 目标宿主 dsh.0.2.1-rc.4）——漏元数据会让用户失去兼容信息');
+    'schemastery 叶子依赖形态不变（~ 窗随宿主树）');
+  assert.equal(pkg.version, '0.2.8+dsh.0.2.1-rc',
+    '本包 version 必须按需求 §7.3.1 带构建元数据全标识（核心 0.2.8 + 兼容线 dsh.0.2.1-rc）——漏元数据会让用户失去兼容信息');
 });
 
 

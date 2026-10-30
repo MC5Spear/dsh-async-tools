@@ -6,28 +6,28 @@
 
 | Component | Current applicable version |
 | --- | --- |
-| Plugin version | `0.2.7+dsh.0.2.1-rc.4` |
-| Exact dsh host version | `0.2.1-rc.4` |
+| Plugin version | `0.2.8+dsh.0.2.1-rc` |
+| Supported dsh host versions | `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4` |
 
-If the installation address does not yield the source, check the repository address and pinned commit, then the network or proxy. If it still fails, contact the maintainer who supplied the installation source about available installation artifacts.
+If the installation address does not yield the source, check the repository address and commit, then the network or proxy. If it still fails, contact the maintainer who supplied the installation source about available installation artifacts.
 
-The source repository spec is `github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1-rc.4`. That branch moves; use the verified full commit `ca8f65b39b7694f9e5a2b28cca7a29bc43485ecc` for reproducibility. The package is not distributed through npm. An unqualified GitHub spec does not select the right host adaptation.
+The source repository spec is `github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1`. The branch moves; for a reproducible source, check the source out locally, take the full commit from `git rev-parse HEAD`, replace everything after `#` with that commit, and verify the installed source against the same commit. The package is not distributed through npm. An unqualified GitHub spec does not select the right host adaptation.
 
 Check the runtime before installing. Node.js 24 is recommended. The plugin's `>=20` declaration applies only to the plugin. The host's commander 15 dependency requires `>=22.12.0`, but this is only a known lower bound, not a verified minimum for the complete host. Confirm that the target host's dependencies resolve on the chosen runtime.
 
-This line targets Windows, with full target-host revalidation still pending. Linux command execution and one-shot escalation, macOS, and remote execution are unverified. Send the maintainer your environment and intended use, then arrange isolated verification before deciding to deploy there. The rc4 adaptation does not mean every behavior has passed verification on rc4.
+The three host versions above share one compatibility line and one peer support set. The final `0.2.1`, `0.2.0`, `0.2.2`, and any new rc not in the set are rejected. This line targets Windows, with item-by-item revalidation on all three hosts still pending. Linux command execution and one-shot escalation, macOS, and remote execution are unverified. Send the maintainer your environment and intended use, then arrange isolated verification before deciding to deploy there. Compatibility-line support does not mean every behavior has passed verification on each host.
 
 After checking these prerequisites, install from a terminal:
 
 ```powershell
-dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1-rc.4
+dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
 ```
 
 Alternatively, in DSH's plugin manager, open the install dialog and paste the GitHub spec above into the installation address. When installation finishes, open this package's detail page and check that its settings form is visible. Create a session and confirm that `dsh-async` and `dsh-async-create` are available. After selecting either preset, the Agent should have the six tools documented here.
 
 If both tools and settings are missing:
 
-1. Compare the exact DSH version with this section's identity table.
+1. Check whether the DSH version is in this section's support set.
 2. Inspect host load logs to see whether a version mismatch caused the package to be skipped.
 3. In the target profile, check both the dependency registration (installed package) and the bundle registration (host-row and preset composition declarations). They serve different purposes; one registration alone does not establish that every entry loaded.
 4. After composition or client-entry changes, reload the instance and reopen the page. Arrange for active sessions to finish safely before restarting, and restart outside the service process tree. Ordinary settings saves need no restart.
@@ -37,7 +37,7 @@ Development links are for an explicit development environment. Keep stable deplo
 ```powershell
 git clone https://github.com/MC5Spear/dsh-async-tools.git
 cd dsh-async-tools
-git checkout adapt/dsh-0.2.1-rc.4
+git checkout adapt/dsh-0.2.1
 npm install
 dsh plugin --profile web add <absolute-clone-directory>
 ```

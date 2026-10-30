@@ -1,16 +1,24 @@
-# CI：两个作业，两种"宿主锚"形态
+# CI：三个形态、一条兼容线
 #
-# 为什么是**两个**作业而不是一个：本包的九个 `@deepseek-ai/dsh*` 是 peer，而"有没有那棵树"
-# 是两种真实的使用形态——贡献者多半装了 DSH，外部读者多半没装。只测一种的话，
-# 另一种会在别人机器上第一次跑就红。
+# 为什么是**三个形态**：
 #
-# - `with-host`：装出宿主树当锚，跑**全量**测试套件与全部检查器。
+# - `with-host`：按支持集合展开**三宿主矩阵**（rc.2 / rc.3 / rc.4），每个作业显式安装
+#   该精确宿主版本，跑**全量**测试套件与全部检查器。集合里的一个宿主通过不等于集合
+#   通过，所以不能用一个宿主的绿代替其余两个。
 # - `offline`：**故意不装**宿主，跑离线形态——需要宿主锚的用例必须**自跳过并打印理由**，
 #   而不是整片崩掉。守卫的唯一来源是 `test/_host-gate.mjs`（动态 import 只吞
 #   `@deepseek-ai/` 的 `ERR_MODULE_NOT_FOUND`，其余错误原样红，防假跳过）；
 #   静态看守 `test/offline-import-guard.test.mjs` 在两种形态都拦截「测试文件
 #   顶层静态 import 宿主链模块」的漏网。离线作业的合格读数：fail = 0、
 #   pass + skip = 在线形态总用例数、每条 skip 都带统一理由。
+#
+# **九条 dsh peer 必须逐个钉到 `matrix.dsh`，别删这项。**
+# 本包九个 `@deepseek-ai/dsh*` 的 peer 声明是**支持集合**（`rc.2 || rc.3 || rc.4`）。
+# 交给 npm 从集合里自选时，它取最高的一个（rc.4）——于是 rc.2 / rc.3 作业会装出
+# 「rc.2 的 dsh + rc.4 的其余八个」这种混代树，用例照样跑，读数却不属于任何单个
+# 宿主版本。所以这里把九个包全部写成 `@<版本>` 显式安装（并带 `--no-save`，否则
+# npm 会把精确版本写回包清单、把支持集合改成作业版本），装完后逐个核对版本，
+# 再用 `tools/check-host-compat.mjs` 断言九个 peer 与配套 peer 在宿主树上同代同树。
 #
 # **`--legacy-peer-deps` 是离线作业的要害，别删。**
 # 本包的九个 `@deepseek-ai/dsh*` 是 `peerDependencies`，而 **npm 7+ 默认自动安装 peer**：
@@ -42,7 +50,7 @@ concurrency:
 
 jobs:
   with-host:
-    name: 全量测试套件（宿主锚 ${{ matrix.node }}）
+    name: 全量测试套件（宿主锚 ${{ matrix.dsh }} / Node ${{ matrix.node }}）
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -51,30 +59,63 @@ jobs:
         # flag）与 `node --test "test/*.test.mjs"` 的 glob 位置参数（Node 21+ 才支持）；
         # 开发与本机基线即 24。engines >=20 是插件运行时口径，不约束 CI 测试工具链。
         node: ['24']
+        # 支持集合的三个精确宿主（需求 7.3）。新增 rc 时先扩 peer 集合，再在这里加一项。
+        dsh: ['0.2.1-rc.2', '0.2.1-rc.3', '0.2.1-rc.4']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
 
-      # 一条 `npm install` 就把宿主树一起装进来了——九个 peer 由 npm 自动安装，
-      # 而它们各自又拖着整个 DSH 依赖图。`--ignore-scripts` 跳过依赖的 postinstall
-      # （本仓不需要它们，且更快）。
-      - name: 装依赖（含 peer 带来的宿主树）
-        run: npm install --ignore-scripts
-
-      - name: 断言宿主锚在场且版本对
+      # 九个 dsh 包逐个钉到精确版本；不能只钉 `@deepseek-ai/dsh`，其余八个会按 OR
+      # 集合取最高项，装出混代树（文件头有完整理由）。
+      # **`--no-save` 不可少**：不加它，npm 会把实际装的精确版本写回包清单的
+      # peerDependencies，支持集合（OR 原文）当场被改成作业版本，T15 与安装说明随之失真。
+      # 安装只改 node_modules，不改包清单；下一步核对这一点。
+      - name: 装依赖（九个 dsh 包显式钉到 ${{ matrix.dsh }}）
         shell: pwsh
         run: |
+          $dsh = '${{ matrix.dsh }}'
+          $names = @('dsh', 'dsh-jobs', 'dsh-llm', 'dsh-sandbox', 'dsh-shell',
+            'dsh-shell-env', 'dsh-subagent', 'dsh-typert-protocol', 'dsh-tools')
+          $packages = $names | ForEach-Object { "@deepseek-ai/$_@$dsh" }
+          npm install --no-save --ignore-scripts @packages
+          if ($LASTEXITCODE -ne 0) { throw "安装 $dsh 依赖失败（exit $LASTEXITCODE）" }
+
+      - name: 断言包清单未被安装改写（九条 peer 仍是 OR 支持集合）
+        shell: pwsh
+        run: |
+          $manifest = Get-Content 'package.json' -Raw | ConvertFrom-Json
+          $declared = $manifest.peerDependencies.'@deepseek-ai/dsh'
+          $bad = @()
+          if ($declared -notmatch '\|\|') { $bad += "dsh peer 已不是支持集合：$declared" }
+          foreach ($name in @('dsh', 'dsh-jobs', 'dsh-llm', 'dsh-sandbox', 'dsh-shell',
+            'dsh-shell-env', 'dsh-subagent', 'dsh-typert-protocol', 'dsh-tools')) {
+            $range = $manifest.peerDependencies."@deepseek-ai/$name"
+            if ($range -ne $declared) { $bad += "peer @deepseek-ai/$name 与 dsh 不一致：$range" }
+          }
+          if ($bad.Count -gt 0) { throw "作业改写了包清单：$($bad -join '；')" }
+          Write-Host "包清单未被改写 ✔ 九条 peer 仍是同一支持集合（本作业安装 ${{ matrix.dsh }}）"
+
+      - name: 断言宿主锚在场且九个 dsh 包版本全等 ${{ matrix.dsh }}
+        shell: pwsh
+        run: |
+          $dsh = '${{ matrix.dsh }}'
           $anchor = 'node_modules/@deepseek-ai/dsh-tools/package.json'
           if (-not (Test-Path $anchor)) {
             throw "宿主锚缺席（$anchor）——接线用例会全部自跳过，这个作业就白跑了"
           }
-          $dsh = Get-Content 'node_modules/@deepseek-ai/dsh/package.json' -Raw | ConvertFrom-Json
-          if ($dsh.version -ne '0.2.1-rc.4') {
-            throw "宿主版本不是 0.2.1-rc.4，而是 $($dsh.version)"
+          $names = @('dsh', 'dsh-jobs', 'dsh-llm', 'dsh-sandbox', 'dsh-shell',
+            'dsh-shell-env', 'dsh-subagent', 'dsh-typert-protocol', 'dsh-tools')
+          $bad = @()
+          foreach ($name in $names) {
+            $version = (Get-Content "node_modules/@deepseek-ai/$name/package.json" -Raw | ConvertFrom-Json).version
+            if ($version -ne $dsh) { $bad += "$name=$version" }
           }
-          Write-Host "宿主锚在场 ✔ dsh@$($dsh.version)"
+          if ($bad.Count -gt 0) {
+            throw "宿主树混代：本次作业期望 $dsh，实际 $($bad -join '；')"
+          }
+          Write-Host "宿主锚在场 ✔ 九个 dsh 包全等 $dsh"
 
       # 解析钩子按 DSAT_HOST_MODULES 找锚。这里用 Actions 的 env 给，
       # **不要**用 --env-file：Node 的 --env-file 不覆盖已存在的同名环境变量。
@@ -82,6 +123,14 @@ jobs:
         run: npm run test:inproc
         env:
           DSAT_HOST_MODULES: ${{ github.workspace }}/node_modules
+
+      # 兼容声明与解析来源：显式给宿主根与本次作业安装的精确版本，支持集合与
+      # 集合外拒载由包清单的九条 peer 原文判定。
+      - name: 兼容声明与解析来源（${{ matrix.dsh }}）
+        shell: pwsh
+        run: |
+          node tools/check-host-compat.mjs --host-root node_modules --host-version '${{ matrix.dsh }}'
+          if ($LASTEXITCODE -ne 0) { throw "兼容检查失败（exit $LASTEXITCODE）" }
 
       # 一段里连跑多条命令时，后面命令的成功可能盖掉前面的失败。逐项检查退出码，
       # 防止后续成功覆盖失败：任一项非零即整段失败（不中断后续项，收尾统一 throw）。
@@ -139,6 +188,15 @@ jobs:
 
       - name: 测试套件（离线）
         run: npm run test:offline
+
+      # 兼容检查在没有宿主树时按环境不足退出 2：这是离线形态的正常读数，不是失败，
+      # 也不能借它通过三宿主矩阵的判据。
+      - name: 兼容检查在离线形态按环境不足退出
+        shell: pwsh
+        run: |
+          node tools/check-host-compat.mjs --host-root node_modules
+          if ($LASTEXITCODE -ne 2) { throw "离线形态下应以环境不足（2）退出，实际 $LASTEXITCODE" }
+          Write-Host "兼容检查跳过 ✔ 环境不足与判据失败分开记录"
 
       # 公开层边界与编码体检不依赖宿主，两种形态都要过。逐项检查退出码，防止后续
       # 成功覆盖失败（理由同上）。

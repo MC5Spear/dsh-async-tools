@@ -41,6 +41,7 @@
 | --- | --- | --- |
 | 纯静态检查 | `check`、`check:docs`、`check:encoding`、`check:public-surface`、`check:user-docs` | 不连接真实实例；检查源码、文档或定义。部分检查会读取本机语料或递归目录，执行前确认读取范围；只需公开材料时用明确文件清单建立隔离副本 |
 | 主题别名静态检查 | `check:alias-tokens` | 不连接实例，但必须读取目标版本主题源；按下方“主题别名检查的来源确认”准备并核对实际来源 |
+| 宿主兼容声明检查 | `check:host-compat` | 不连接实例；需显式给出宿主安装树与宿主版本（`--host-root`、`--host-version`）。缺宿主树按环境不足退出 `2`，与判据失败分开；见下表 |
 | 单元测试 | `test:offline`、`test:inproc` | 可能创建临时夹具或启动测试进程；后者加载宿主解析钩子。不能仅凭名称推断全部测试都纯静态 |
 | 需要宿主模块 | `check:preset`、`check:model-text`、`check:agent-policy`，以及测试中的宿主用例 | 准备版本匹配的宿主模块树；缺锚跳过的部分单列未验证，不连接真实实例也不能证明实际投递和界面 |
 | 真实或有状态操作 | 第 3、4 节的实例、浏览器、恢复和拆装脚本 | 先确认授权、隔离目标、起始状态与收尾方法；不在下列常规命令中批量追加 |
@@ -64,6 +65,7 @@ npm run check:alias-tokens
 | `npm run check:preset` | 对应版本宿主模块 | 检查预设装载，不证明实例已加载同一份模块 |
 | `npm run check:model-text` | 脚本依赖可解析，含宿主模块要求 | 检查模型文案及构造结果，不代替页面和真实工具验证 |
 | `npm run check:agent-policy` | 明确的宿主源码 | 只检查有限锚集，覆盖边界见下表 |
+| `npm run check:host-compat -- --host-root <树> --host-version <版本>` | 显式宿主安装树与精确宿主版本；CI 按支持集合逐宿主跑 | 用宿主官方准入判定核对支持集合内外，并核对九个 dsh peer 与两个配套 peer 在给定宿主树上的解析来源；缺宿主树退出 `2` 属环境不足。只覆盖宿主树的解析，不代替已安装插件在真实 runtime 的路径观测。`--leaf-layout profile` 允许 dependencies 叶子为 profile 本地同版副本，真实安装按实际解析记录来源 |
 
 宿主模块解析钩子可单独使用 `DSAT_HOST_MODULES`，不代表真实探针已满足第 1 节前提。策略检查器接受显式 `--host-file` 或 `DSAT_HOST_MODULES`，此时不加载本机配置；没有显式来源时仍按第 1 节区分缺席与损坏。显式宿主源缺失或锚错误会失败，不回退或跳过。
 
@@ -79,7 +81,8 @@ npm run check:alias-tokens
 | --- | --- |
 | [`check-agent-policy.mjs`](<check-agent-policy.mjs>) | 钉版看守本包 `lib/agent-policy.js` 的形状副本与宿主 `dsh-tool-subagent` 现行源同形（有限锚集，宿主侧 H1–H8 对本包侧 O1–O14，其中两锚钉行号）；不注册投影、不锚定采样链——派生路径现读宿主模型选择服务（`subagentModelSelection.current()`），会话投影只用于原生目标的适用性判断；锚外漂移不红，也不证明语义等价或代替实际指定路由验证 |
 | [`d05-readme-composition.mjs`](<d05-readme-composition.mjs>) | 用户参考 delegation 组示例（cordis:group＋workflow-ptc 引擎行＋async_workflow 行）的进程内装载语义：工具进组、workflowEngine 组隔离、缺引擎行可读拒绝＋零作业；带引擎组合的纯编排成功以真机 dsh-async 预设转录为证（进程内树无 ptcRuntime 提供者，不伪造激活）；需要宿主锚 |
-| [`check-junctions.mjs`](<check-junctions.mjs>) | 开发树接线目标与声明版本核对；缺席、错树、错版分开，不证明内存已加载同一模块 |
+| [`check-junctions.mjs`](<check-junctions.mjs>) | 开发树接线目标与声明版本核对；dsh* 接受支持集合内任一 rc，但要求四条同 rc、全部 junction 指向同一棵宿主树；缺席、错树、错版、混 rc 分开，不证明内存已加载同一模块 |
+| [`../tools/check-host-compat.mjs`](<../tools/check-host-compat.mjs>) | 宿主兼容声明与**给定宿主树**的解析来源：官方 `evaluatePluginCompatibility` 放行支持集合三项、拒载集合外边界（并确认拒载来自九条 peer、无 `engines.dsh`、无版本豁免），再核对九个 dsh peer 与 cordis／timer 两个 peer 在宿主树顶层、九个 dsh peer 同 rc；dependencies 叶子按 `--leaf-layout` 判（host 全同树；profile 允许同版本地副本）。支持集合只读包清单 peer 原文，不另存版本表。**不覆盖**已安装插件在真实 runtime 实际取得的 peer 路径——那由运行期观测核对，不用本检查的通过代替 |
 | [`diff-trees.mjs`](<diff-trees.mjs>) | 安装树包级字节差异，属于调研，不以零差异代替行为回归 |
 | [`check-facts-anchors.mjs`](<check-facts-anchors.mjs>) | 维护者事实条目四字段及文件／行号可解析性，不判引用语义正确；缺来源与坏引用分开 |
 | [`message-markers.mjs`](<message-markers.mjs>) | 从当前双语文案取得判断标记，不能让用例只在一种语言成立 |
@@ -89,9 +92,9 @@ npm run check:alias-tokens
 
 ### 主题别名检查的来源确认
 
-`check:alias-tokens` 不连接实例，但不是只读本仓就能完成的检查。它每次从宿主模块树枚举主题定义，不检查主题包版本。先确认来源属于本线精确目标 `0.2.1-rc.4`，再运行：
+`check:alias-tokens` 不连接实例，但不是只读本仓就能完成的检查。它每次从宿主模块树枚举主题定义，不检查主题包版本。先确认来源属于支持集合内的一个宿主版本（`0.2.1-rc.2`、`0.2.1-rc.3`、`0.2.1-rc.4` 之一），再运行：
 
-1. 选定目标宿主模块树的 `node_modules`。核对该树下 `@deepseek-ai/dsh-client-ui-theme/package.json` 的版本为 `0.2.1-rc.4`，并确认主题源是同一树下的 `@deepseek-ai/dsh-client-ui-theme/lib/client.js`。没有匹配的源时，先取得正确来源，不以另一宿主替代本线结论。
+1. 选定目标宿主模块树的 `node_modules`。核对该树下 `@deepseek-ai/dsh-client-ui-theme/package.json` 的版本就是这个宿主版本，并确认主题源是同一树下的 `@deepseek-ai/dsh-client-ui-theme/lib/client.js`。没有匹配的源时，先取得正确来源，不以另一宿主替代本线结论。
 2. 在运行命令的终端显式设置 `DSAT_HOST_MODULES` 为该模块树的绝对路径，再运行 `npm run check:alias-tokens`。此脚本不加载 `_host-hooks`，也不通过本机配置把 `hostModules` 转成环境变量；只填写本机配置文件不够。
 3. 检查输出“枚举自”的完整路径，必须正是预期模块树下的 `@deepseek-ai/dsh-client-ui-theme/lib/client.js`。若不一致，即使退出码为 0，也不能记为本线通过；修正来源后重试。
 

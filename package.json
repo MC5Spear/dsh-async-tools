@@ -1,6 +1,6 @@
 {
   "name": "dsh-async-tools",
-  "version": "0.2.7+dsh.0.2.1-rc.4",
+  "version": "0.2.8+dsh.0.2.1-rc",
   "description": "Async execution plugin for DSH: `async_run` moves long commands to background jobs instead of killing them, `async_agent` delegates in the background, `async_wait_job` reads job results with a bounded wait, `async_wait_agent` bounds the wait on a subagent's running status while its final answer arrives as a separate message, `async_workflow` runs script orchestration as a background job, and every bounded wait returns early on user messages while background work keeps running.",
   "license": "MIT",
   "author": "MC5Spear (https://github.com/MC5Spear)",
@@ -46,6 +46,7 @@
     "check:docs": "node tools/check-docs.mjs",
     "check:user-docs": "node tools/check-user-docs.mjs",
     "check:alias-tokens": "node tools/check-alias-tokens.mjs",
+    "check:host-compat": "node tools/check-host-compat.mjs",
     "check:agent-policy": "node verify/check-agent-policy.mjs",
     "acceptance": "node verify/final-acceptance.mjs",
     "acceptance:e2e": "node verify/async-e2e.mjs",
@@ -90,14 +91,14 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.5",
     "@deepseek-ai/cordis-plugin-timer": "~1.1.7",
-    "@deepseek-ai/dsh": "0.2.1-rc.4",
-    "@deepseek-ai/dsh-jobs": "0.2.1-rc.4",
-    "@deepseek-ai/dsh-llm": "0.2.1-rc.4",
-    "@deepseek-ai/dsh-sandbox": "0.2.1-rc.4",
-    "@deepseek-ai/dsh-shell": "0.2.1-rc.4",
-    "@deepseek-ai/dsh-shell-env": "0.2.1-rc.4",
-    "@deepseek-ai/dsh-subagent": "0.2.1-rc.4",
-    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.4",
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.4"
+    "@deepseek-ai/dsh": "0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4",
+    "@deepseek-ai/dsh-jobs": "0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4",
+    "@deepseek-ai/dsh-sandbox": "0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4",
+    "@deepseek-ai/dsh-shell": "0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4",
+    "@deepseek-ai/dsh-shell-env": "0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4",
+    "@deepseek-ai/dsh-subagent": "0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4"
   }
 }

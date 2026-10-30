@@ -23,14 +23,25 @@ test('用户资料：本线真实基线', () => {
 const cases = [
   ['仅英文默认值写错但其它位置保留正确值', box => box.edit('docs/user-reference.en.md', text => text.replace(/^(\|\s*`?defaultYieldMs`?\s*\|[^|]+\|)\s*`?20000`?\s*\|/m, '$1 20001 |'))],
   ['仅中文版本错误', box => box.edit('README.md', text => text.replaceAll(JSON.parse(readFileSync(join(box.root, 'package.json'))).version, '0.0.0-invalid'))],
-  ['操作宿主错误但正确子串仍在插件版本', box => box.edit('docs/user-reference.en.md', text => {
-    const peer = JSON.parse(readFileSync(join(box.root, 'package.json'))).peerDependencies['@deepseek-ai/dsh'];
-    assert.ok(text.includes(peer));
-    const changed = text.replace(/^(\| Exact dsh host version \|) [^|]+\|/m, '$1 `0.2.1-rc.9` |');
-    assert.notEqual(changed, text, '必须实际改动操作身份行');
-    assert.ok(changed.includes(peer), '正确宿主仍作为插件版本子串出现');
+  ['支持集合只写一个宿主而正确集合仍在正文别处', box => box.edit('docs/user-reference.en.md', text => {
+    const members = JSON.parse(readFileSync(join(box.root, 'package.json'))).peerDependencies['@deepseek-ai/dsh'].split('||').map(item => item.trim());
+    const changed = text.replace(/^(\| Supported dsh host versions \|) [^|]+\|/m, `$1 ${members.at(-1)} |`);
+    assert.notEqual(changed, text, '必须实际改动支持集合身份行');
+    return changed + `\nSupported hosts elsewhere: ${members.join(' and ')}.\n`;
+  })],
+  ['支持集合同一宿主写三遍（去重后只剩一项）', box => box.edit('docs/user-reference.en.md', text => {
+    const members = JSON.parse(readFileSync(join(box.root, 'package.json'))).peerDependencies['@deepseek-ai/dsh'].split('||').map(item => item.trim());
+    const changed = text.replace(/^(\| Supported dsh host versions \|) [^|]+\|/m, `$1 ${Array.from({ length: members.length }, () => members[0]).join(', ')} |`);
+    assert.notEqual(changed, text, '必须实际改动支持集合身份行');
     return changed;
   })],
+  ['支持集合重复列同一宿主（集合相等但项数多一项）', box => box.edit('docs/user-reference.en.md', text => {
+    const members = JSON.parse(readFileSync(join(box.root, 'package.json'))).peerDependencies['@deepseek-ai/dsh'].split('||').map(item => item.trim());
+    const changed = text.replace(/^(\| Supported dsh host versions \|) [^|]+\|/m, `$1 ${[...members, members[0]].join(', ')} |`);
+    assert.notEqual(changed, text, '必须实际改动支持集合身份行');
+    return changed;
+  })],
+  ['支持集合写成范围写法', box => box.edit('docs/user-reference.en.md', text => text.replace(/^(\| Supported dsh host versions \|) [^|]+\|/m, '$1 `^0.2.1-rc.2` |'))],
   ['操作插件错误而附录保留正确值', box => box.edit('docs/user-reference.en.md', text => {
     const version = JSON.parse(readFileSync(join(box.root, 'package.json'))).version;
     const changed = text.replace(/^(\| Plugin version \|) [^|]+\|/m, '$1 `0.0.0` |');
