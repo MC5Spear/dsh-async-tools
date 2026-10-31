@@ -47,7 +47,7 @@
       config:
         id: dsh-async
         name: 异步模式
-        description: 在标准模式基础上改用异步命令执行的编码 Agent：async_run 的命令超出首次等待时转入后台并返回作业编号（job_id），稍后用 async_wait_job 取回结果；async_wait_agent 有界等待后台子代理；async_agent 后台派生子代理并支持按 dsh 模型选择设置指定路由，async_list_subagent_models 只读查询可用路由。用户插话时等待立即结束，后台工作继续运行。
+        description: 在标准模式基础上改用异步命令执行的编码 Agent：async_run 的命令超出首次等待时转入后台并返回作业编号（job_id）；async_wait 统一等待后台作业与子代理，作业结算时结果正文直接附在返回里，无需再调用取回；async_agent 后台派生子代理并支持按 dsh 模型选择设置指定路由，async_list_subagent_models 只读查询可用路由。用户插话时等待立即结束，后台工作继续运行。
         order: 5
         plugins:
           # ── 身份（改动项 5：persona prefix 与基线身份句逐字一致，纪律走运行时
@@ -66,20 +66,20 @@
           - id: tool-bash
             name: '@deepseek-ai/dsh-tool-bash'
             disabled: true
+          # 作业管理三件套（基线原行；行序前移到本包交付类行之前——async_run 等
+          # 行装载时的 job_output 隐藏登记要求 job_output 已在册，需求 9.3.5；
+          # job_list / job_kill 等非阻塞管理入口保留在场）。
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
           - id: async-run
             name: dsh-async-tools
             config:
               toolName: async_run
               owningPreset: dsh-async
-          - id: async-wait-job
+          - id: async-wait
             name: dsh-async-tools
             config:
-              toolName: async_wait_job
-              owningPreset: dsh-async
-          - id: async-wait-agent
-            name: dsh-async-tools
-            config:
-              toolName: async_wait_agent
+              toolName: async_wait
               owningPreset: dsh-async
           - id: async-agent
             name: dsh-async-tools
@@ -100,8 +100,6 @@
             name: '@deepseek-ai/dsh-tool-fs-search'
             config:
               sampleOverCapGlobResults: false
-          - id: tool-jobs
-            name: '@deepseek-ai/dsh-tool-jobs'
           - id: tool-schedule
             name: '@deepseek-ai/dsh-tool-schedule'
           - id: skill-filesystem

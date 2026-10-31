@@ -86,7 +86,6 @@ const DRIVE_LITERAL_ALLOW = new Map([
   ['test/_helpers.mjs', '替身夹具：假路径是数据，从不落到 node:fs 上'],
   ['test/interrupt.test.mjs', '同上'],
   ['test/jobs.test.mjs', '同上'],
-  ['test/wait-job.test.mjs', '同上'],
   ['test/index.test.mjs', '同上（挂载级假件的 workingDirectory 目录与 fakeAgent 会话头同源）'],
   ['test/two-planes.test.mjs', '同上（挂载级假件的 workingDirectory 目录与 fakeAgent 会话头同源）'],
   ['tools/probe-e2e.mjs', '同上（接线自检的替身夹具）'],

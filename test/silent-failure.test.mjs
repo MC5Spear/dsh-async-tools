@@ -32,7 +32,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
-import { BUDGET_FIELD_KEYS, LANG_FIELD_KEYS, FLAG_FIELD_KEYS, ASK_FIELD_KEYS, resolveConfig } from '../lib/config.js';
+import { BUDGET_FIELD_KEYS, LANG_FIELD_KEYS, FLAG_FIELD_KEYS, DISPLAY_FIELD_KEYS, ASK_FIELD_KEYS, resolveConfig } from '../lib/config.js';
 import { DENIAL_ANCHOR_PAIRS, hasCaptureForm, hasDenialAnchors, silentFailureNotes } from '../lib/silent-failure.js';
 import { resetGuardOwnershipEvidence } from '../lib/descriptions.js';
 import { t } from '../lib/text.js';
@@ -819,14 +819,15 @@ realLayerTest('执行纪律 section：注册落在宿主组稿会收集的 globa
   for (const fiber of [...fibers].reverse()) await fiber.dispose();
 });
 
-test('R28 判据13：设置界面 17 字段逐项在场 + flag spec 矩阵 + resolveConfig 归一', async () => {
-  // —— 键集身份核对：FIELDS = 预算 + 语言 + 开关 + 提问四组之和（顺序也一致；
-  // 开关组 2 枚、ASK 组 3 枚，合计 17）。
-  const expectedKeys = [...BUDGET_FIELD_KEYS, ...LANG_FIELD_KEYS, ...FLAG_FIELD_KEYS, ...ASK_FIELD_KEYS];
-  assert.equal(expectedKeys.length, 17, '17 = 10 预算 + 2 语言 + 2 开关 + 3 提问');
+test('R28 判据13：设置界面 19 字段逐项在场 + flag spec 矩阵 + resolveConfig 归一', async () => {
+  // —— 键集身份核对：FIELDS = 预算 + 语言 + 开关 + 展示 + 提问五组之和（顺序也一致；
+  // 开关组 2 枚、展示组 2 枚、ASK 组 3 枚，合计 19）。
+  const expectedKeys = [...BUDGET_FIELD_KEYS, ...LANG_FIELD_KEYS, ...FLAG_FIELD_KEYS, ...DISPLAY_FIELD_KEYS, ...ASK_FIELD_KEYS];
+  assert.equal(expectedKeys.length, 19, '19 = 10 预算 + 2 语言 + 2 开关 + 2 展示 + 3 提问');
   assert.equal(FLAG_FIELD_KEYS.length, 2);
   assert.equal(FLAG_FIELD_KEYS[0], 'silentFailureGuard');
   assert.equal(FLAG_FIELD_KEYS[1], 'askTakeover');
+  assert.deepEqual(DISPLAY_FIELD_KEYS, ['workflowProgressLog', 'fullCommandEcho']);
   assert.deepEqual(ASK_FIELD_KEYS, ['askTimeoutMs', 'askExtendMs', 'askUiSeat']);
 
   // —— 加载 client.js（CJS 包裹，浏览器侧无转译器——two-planes 的装载成例）。
@@ -843,7 +844,7 @@ test('R28 判据13：设置界面 17 字段逐项在场 + flag spec 矩阵 + res
   const double = makePrimitivesDouble(reactStub);
   const product = loaded.factory((name) => (name === 'react' ? reactStub : double));
   assert.deepEqual(product.FIELDS.map((field) => field.key), expectedKeys,
-    '设置卡 17 项逐项在场（缺一项即红，不只数个数）');
+    '设置卡 19 项逐项在场（缺一项即红，不只数个数）');
   assert.deepEqual(product.makeSpecs().map((spec) => spec.field), expectedKeys,
     'spec 列表与 FIELDS 逐项相等（顺序 = FIELDS 顺序）');
 

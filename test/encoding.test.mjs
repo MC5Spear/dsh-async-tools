@@ -20,7 +20,7 @@ import { LOCAL_DIR } from '../tools/_local-config.mjs';
 
 /** 真实双重编码的一段样本（由 CP936 往返生成，汉字是"楠岃瘉瀹炰緥"这类）。 */
 const DOUBLE_ENCODED_SAMPLE = '楠岃瘉瀹炰緥绔埌绔瘉鎹';
-const DOUBLE_ENCODED_LONG = '杩欐槸涓€涓甯哥殑涓枃鎶€鏈枃妗ｆ钀斤紝鐢ㄦ潵浣滀负鍩虹嚎銆傚畠鍖呭惈鏍囩偣銆佽嫳鏂囧崟璇嶅 async_wait_job';
+const DOUBLE_ENCODED_LONG = '杩欐槸涓€涓甯哥殑涓枃鎶€鏈枃妗ｆ钀斤紝鐢ㄦ潵浣滀负鍩虹嚎銆傚畠鍖呭惈鏍囩偣銆佽嫳鏂囧崟璇嶅 async_wait';
 
 test('编码判据（#7 断言 A）：短的双重编码文件必须被判 DOUBLE-ENC', () => {
   const verdict = inspectText(DOUBLE_ENCODED_SAMPLE);
@@ -35,7 +35,7 @@ test('编码判据（#7 断言 A2）：长的双重编码文件同样必须被�
 });
 
 test('编码判据（#7 断言 B）：合法繁体不得被误报', () => {
-  const traditional = '這是一個正常的中文技術文檔段落，用來作為基準。它包含標點、英文單詞如 async_wait_job，以及一些數字 12345 和代碼。';
+  const traditional = '這是一個正常的中文技術文檔段落，用來作為基準。它包含標點、英文單詞如 async_wait，以及一些數字 12345 和代碼。';
   const verdict = inspectText(traditional);
   // 繁体占比天然比简体低（实测 0.675），但仍在安全带内，不该报。
   assert.equal(verdict.doubleEncoded, false, `合法繁体被误报：占比=${verdict.ratio.toFixed(3)}`);
@@ -62,7 +62,7 @@ test('编码判据（D02 豁免边界）：标记豁免占比判定，不豁免 
     'ENCODING-OK 不豁免非法字节检查（两类判据照常全量生效）'
   );
   // ③ 合法文本：无标记、占比正常 → 全绿（不因标记机制误伤）。
-  const legit = inspectText('这是一段正常中文正文，包含常用字与 async_wait_job 等标识。');
+  const legit = inspectText('这是一段正常中文正文，包含常用字与 async_wait 等标识。');
   assert.equal(legit.doubleEncoded, false);
   assert.equal(legit.hardBroken, 0);
   // ④ 损坏文本：真双重编码 + 恰好带 ENCODING-OK 行 → 占比通道被豁免（这是
@@ -128,7 +128,7 @@ for (const rel of ['README.en.md', 'docs/user-reference.md', 'docs/user-referenc
 }
 
 test('编码判据：正常中文与纯英文都不得被误报', () => {
-  const normal = '这是一个正常的中文技术文档段落，用来作为基线。它包含标点、英文单词如 async_wait_job，以及一些数字 12345。';
+  const normal = '这是一个正常的中文技术文档段落，用来作为基线。它包含标点、英文单词如 async_wait，以及一些数字 12345。';
   assert.equal(inspectText(normal).doubleEncoded, false);
   assert.ok(inspectText(normal).ratio > 0.85, '正常中文占比应显著高于阈值');
   assert.equal(inspectText('plain english only, no han characters here.').doubleEncoded, false);

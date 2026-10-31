@@ -3,7 +3,7 @@
  * 供回归判据（`verify/probe-queue-delivery.mjs`）作对照。
  *
  * 要回答的两个问题（都不设断言，只记录——这是取证，不是回归判据）：
- *  1. queue 消息（落 `next-turn`）会不会打断 async_wait_job 的等待？
+ *  1. queue 消息（落 `next-turn`）会不会打断 async_wait 的等待？
  *     （只判 `source.kind === 'user'`、不区分落点的实现会打断——本探针可取证该形态。）
  *  2. 本轮结束（turn/end）之后，宿主会不会把 `next-turn` 里排队的消息领取进新轮次
  *     （user/message 出现）？——这是"收窄后 queue 消息还能不能被投递"的宿主侧地基。
@@ -41,8 +41,8 @@ console.log(`sessionId=${sessionId}`);
 
 const TASK = [
   '请严格按两步做：',
-  '第 1 步：用 async_run 执行 `Start-Sleep -Seconds 300; Write-Output PATIENCE`，传 yield_ms=1500。拿到 job_id 后立刻用 async_wait_job 等它，wait_ms=120000。',
-  '第 2 步：那次 async_wait_job 返回后（无论 status 是什么），不要再调用任何工具，直接用一句话原样引用返回里"等待被打断"或"仍在运行"那句，然后结束回合。'
+  '第 1 步：用 async_run 执行 `Start-Sleep -Seconds 300; Write-Output PATIENCE`，传 yield_ms=1500。拿到 job_id 后立刻用 async_wait 等它（targets=[{kind:"job", id:...}]），wait_ms=120000。',
+  '第 2 步：那次 async_wait 返回后（无论 status 是什么），不要再调用任何工具，直接用一句话原样引用返回里"等待被打断"或"仍在运行"那句，然后结束回合。'
 ].join('\n');
 
 await rpc('session/prompt', {
@@ -105,7 +105,7 @@ for (;;) {
 
   // 定位长等待（wait_ms=120000），两拍后发 queue 消息（窗口定位法与 async-e2e 同款）。
   const longWaitActive = page.records.some((r) => {
-    if (r.event?.type !== 'tool/call' || r.event.data?.name !== 'async_wait_job') return false;
+    if (r.event?.type !== 'tool/call' || r.event.data?.name !== 'async_wait') return false;
     return /wait_ms"\s*:\s*120000/.test(String(r.event.data.arguments ?? ''));
   });
   if (longWaitActive && waitFirstSeenPoll < 0) waitFirstSeenPoll = pollCount;

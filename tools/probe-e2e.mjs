@@ -5,14 +5,14 @@
  *
  * 本脚本**不启动任何进程、不连任何 dsh 实例、不碰验证实例**。它做四件事：
  * 1. 断言入口的 inject 与九项固定服务逐项一致（严格比长度，多一项少一项都红）；
- * 2. 真 `@deepseek-ai/cordis` 起最小 Context，注册**替身**服务，把六个工具行
- *    （`config.toolName` = async_run / async_wait_job / async_wait_agent /
- *    async_agent / async_workflow / async_list_subagent_models）各挂载一次：
+ * 2. 真 `@deepseek-ai/cordis` 起最小 Context，注册**替身**服务，把五个工具行
+ *    （`config.toolName` = async_run / async_wait / async_agent /
+ *    async_workflow / async_list_subagent_models）各挂载一次：
  *    fiber 进入 ACTIVE、只注册本工具、描述断言生效预算数字（路由查询行除外——
  *    它没有预算字段）、output.schema 形状合法；卸载后工具注销；
- * 3. 用替身 shell / jobs / subagents / agents 走一遍四个核心工具的**返回值形状**
- *    （async_run 完成与让出、async_wait_job 终态读取、async_wait_agent 停止态
- *    两语、async_agent 立返 started）；
+ * 3. 用替身 shell / jobs / subagents / agents 走一遍核心工具的**返回值形状**
+ *    （async_run 完成与让出、async_wait 作业目标终态读取、async_wait 子代理
+ *    目标停止态两语、async_agent 立返 started）；
  * 4. workdir 断言核 workingDirectory.ensure 的返回值——会话头里的 cwd 是对照
  *    假值：目录取自 ensure（会话当前有效目录），不取会话头。
  *
@@ -36,6 +36,7 @@
  */
 import { Context } from '@deepseek-ai/cordis';
 import { apply, Config, inject, name } from '../lib/index.js';
+import { resetAgentBaselines } from '../lib/wait-agent-target.js';
 
 /** cordis 的 `FiberState.ACTIVE`（`@deepseek-ai/cordis` 4.0.5，`lib/types/fiber.d.ts:67-74` 的 const enum，ACTIVE = 2）。 */
 const ACTIVE = 2;
@@ -290,7 +291,7 @@ await verify('inject 恰好是九项服务', () => {
 });
 
 // --- 逐行挂载：注册名 / schema 形状 / 描述数字 ---------------------------------
-for (const toolName of ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent', 'async_workflow', 'async_list_subagent_models']) {
+for (const toolName of ['async_run', 'async_wait', 'async_agent', 'async_workflow', 'async_list_subagent_models']) {
   const env = makeContext();
   const { fork, state } = await mount(env, toolName);
 
@@ -365,7 +366,7 @@ await verify('async_run：首次等待内结束 → completed + output，请求�
   return true;
 });
 
-await verify('async_run：超出首次等待 → running + job_id + 可照抄的 async_wait_job 示例', async () => {
+await verify('async_run：超出首次等待 → running + job_id + 可照抄的 async_wait 示例', async () => {
   const env = makeContext();
   // 让命令永远不结束 → 走让出分支；jobs.wait 替身按真 setTimeout 超时回 running
   // 视图，竞速确定性收敛（async_run 不走 ctx.timer——让出窗口走宿主 jobs.wait，
@@ -386,7 +387,7 @@ await verify('async_run：超出首次等待 → running + job_id + 可照抄的
   );
   if (result.status !== 'running') throw new Error(`status=${result.status}`);
   if (typeof result.job_id !== 'string' || result.job_id.length === 0) throw new Error('缺少 job_id');
-  if (!result.note.includes(`async_wait_job(job_id="${result.job_id}"`)) throw new Error('note 里没有可照抄的 async_wait_job 调用');
+  if (!result.note.includes(`async_wait(targets=[{kind:"job", id:"${result.job_id}"}]`)) throw new Error('note 里没有可照抄的 async_wait 调用');
   if (env.jobs.entries.size !== 1) throw new Error('没有注册作业');
   // run(job) 同步回调且 progress 行写 description（注册时点即任务面板可见）。
   if (!env.jobs.progress.includes('probe long command')) throw new Error('progress 行没有写 description');
@@ -395,12 +396,12 @@ await verify('async_run：超出首次等待 → running + job_id + 可照抄的
   return true;
 });
 
-await verify('async_wait_job：作业已终态 → completed + output（chunks 与 result 两通道合并）', async () => {
+await verify('async_wait（作业目标）：作业已终态 → completed + output（chunks 与 result 两通道合并）', async () => {
   const env = makeContext();
-  const { fork } = await mount(env, 'async_wait_job');
-  // wait_job 不创建作业：预置终态条目（不经 start），read 按该 id 应答。
+  const { fork } = await mount(env, 'async_wait');
+  // 统一等待不创建作业：预置终态条目（不经 start），read 按该 id 应答。
   env.jobs.seedCompleted('async-command-1');
-  const result = await env.registered[0].execute({ job_id: 'async-command-1', wait_ms: 1000 }, stubExec());
+  const result = await env.registered[0].execute({ targets: [{ kind: 'job', id: 'async-command-1' }], wait_ms: 1000 }, stubExec());
   if (result.status !== 'completed') throw new Error(`status=${result.status}`);
   if (result.job_id !== 'async-command-1') throw new Error(`job_id=${JSON.stringify(result.job_id)}`);
   if (!result.output.includes('stub job output')) throw new Error('output 缺 chunks 通道文本');
@@ -409,10 +410,10 @@ await verify('async_wait_job：作业已终态 → completed + output（chunks �
   return true;
 });
 
-await verify('async_wait_agent：注册表读出 idle → settled（观察证据口径——最终回答作为独立消息到达，不在本返回值中）', async () => {
+await verify('async_wait（子代理目标）：注册表读出 idle → settled（观察证据口径——最终回答作为独立消息到达，不在本返回值中）', async () => {
   const env = makeContext();
-  const { fork } = await mount(env, 'async_wait_agent');
-  const result = await env.registered[0].execute({ agent_id: 'child-probe', wait_ms: 1000 }, stubExec());
+  const { fork } = await mount(env, 'async_wait');
+  const result = await env.registered[0].execute({ targets: [{ kind: 'agent', id: 'child-probe' }], wait_ms: 1000 }, stubExec());
   if (result.status !== 'settled') throw new Error(`status=${result.status}`);
   if (!result.note.includes('no longer observed running')) throw new Error('note 缺少「不再被观察到在运行」的英文事实句');
   if (!result.note.includes('it is not part of this return value')) throw new Error('note 没说清最终回答不在返回值里');
@@ -420,10 +421,13 @@ await verify('async_wait_agent：注册表读出 idle → settled（观察证据
   return true;
 });
 
-await verify('async_wait_agent（zh 档）：注册表读出 idle → settled，note 为中文', async () => {
+await verify('async_wait（子代理目标·zh 档）：注册表读出 idle → settled，note 为中文', async () => {
   const env = makeContext();
-  const { fork } = await mount(env, 'async_wait_agent', { settings: { agentLang: 'zh' } });
-  const result = await env.registered[0].execute({ agent_id: 'child-probe', wait_ms: 1000 }, stubExec());
+  const { fork } = await mount(env, 'async_wait', { settings: { agentLang: 'zh' } });
+  // 跨调用已报告登记是模块级单例：en 档用例已把 child-probe 登记 idle，同 id
+  // 再查按「已报告静止」进等待——这里清登记拿干净的首次确认形态。
+  resetAgentBaselines();
+  const result = await env.registered[0].execute({ targets: [{ kind: 'agent', id: 'child-probe' }], wait_ms: 1000 }, stubExec());
   if (result.status !== 'settled') throw new Error(`status=${result.status}`);
   if (!result.note.includes('不再被观察到在运行')) throw new Error('note 缺少「不再被观察到在运行」');
   if (!result.note.includes('不在本返回值中')) throw new Error('note 没说清最终回答不在返回值里');
@@ -431,7 +435,7 @@ await verify('async_wait_agent（zh 档）：注册表读出 idle → settled，
   return true;
 });
 
-await verify('async_agent：替身 provider 派生 → started + agent_id + 可照抄的 async_wait_agent 示例', async () => {
+await verify('async_agent：替身 provider 派生 → started + agent_id + 可照抄的 async_wait 示例', async () => {
   const env = makeContext();
   const { fork } = await mount(env, 'async_agent');
   const result = await env.registered[0].execute(
@@ -440,8 +444,8 @@ await verify('async_agent：替身 provider 派生 → started + agent_id + 可�
   );
   if (result.status !== 'started') throw new Error(`status=${result.status}`);
   if (result.agent_id !== 'child-probe-spawned') throw new Error(`agent_id=${JSON.stringify(result.agent_id)}`);
-  if (!result.note.includes(`async_wait_agent(agent_id="${result.agent_id}"`)) {
-    throw new Error('note 里没有可照抄的 async_wait_agent 调用');
+  if (!result.note.includes(`async_wait(targets=[{kind:"agent", id:"${result.agent_id}"}]`)) {
+    throw new Error('note 里没有可照抄的 async_wait 调用');
   }
   await fork.dispose();
   return true;

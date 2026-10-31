@@ -6,7 +6,7 @@
  *   node --import ./tools/_host-hooks.mjs --test "test/*.test.mjs"
  *
  * 0.2.1 兼容线：本包的九个 `@deepseek-ai/dsh*` peer 共用同一支持集合
- * （`0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4`，以包清单原文为准），
+ * （`0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5`，以包清单原文为准），
  * `@deepseek-ai/schemastery` 需要 `~3.18.5` 的 `.volatile()`——把
  * `DSAT_HOST_MODULES` 指向集合内任一宿主安装树的 node_modules 即可。
  * 落到旧版本运行树时 `.volatile is not a function` 就是「锚点错了」的

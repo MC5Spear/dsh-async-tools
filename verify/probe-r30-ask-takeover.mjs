@@ -27,7 +27,7 @@
  * - ④ `askUiSeat='sidebar'` 后再问 → 徽标（`.ats-ask-badge`）在场、浮框缺席；
  *   点徽标浮框出现（纯呈现层切换，实例环境同 ③）。
  * - ⑤ 重启验证实例 → 设置与行为不变（开关仍开、提问仍被接管）；复原到探针固定档。
- * - ⑥ 等待期间作答：Agent 发长跑作业 → 提问（超时放行）→ 进入 `async_wait_job`
+ * - ⑥ 等待期间作答：Agent 发长跑作业 → 提问（超时放行）→ 进入 `async_wait`
  *   长等待；此时对超时批作答 → 迟到作答事件（需求 §4.4：插件事件 + 起始检查）
  *   唤醒等待 → 工具**提前返回运行句柄**（tool/result 渲染文含 note 锚句「迟到作答已到/A late answer
  *   has arrived」+「仍在运行」语义；无打断锚——非 interrupted、非终态；真
@@ -99,7 +99,7 @@ let A = ANCHORS.en;
 // 迟到作答通知形（设计 §4.4）：迟到作答消息的自声明源（与 lib/interrupts.js LATE_ANSWER_SOURCE 同串）。
 const LATE_KIND = 'async-tools-late-answer';
 const ASK_TOOL = 'ask_user_question';
-const WAIT_JOB_TOOL = 'async_wait_job';
+const WAIT_JOB_TOOL = 'async_wait';
 // ⑦ 语言四组合的期望标题（与 client.js 词典 zh/en 的 ask.title 逐字一致）。
 const TITLE_ZH = '待答问题';
 const TITLE_EN = 'Pending questions';
@@ -333,7 +333,7 @@ async function mainPhase() {
       `被答 qid=${String(answeredQid)} 组内余条=${String(s2ItemsAfter.length)}（重问会产生新条目）`);
 
     // —— ⑥ 等待期间作答（迟到作答唤醒，需求 §4.4）——
-    // 流程：长跑作业（150 s）→ 提问（10 s 超时放行）→ async_wait_job 长等待；
+    // 流程：长跑作业（150 s）→ 提问（10 s 超时放行）→ async_wait 长等待；
     // 轮询转录见到 wait 的 tool/call（订阅已挂）后对超时批作答 → followup 通知
     // 唤醒等待 → 工具提前返回运行句柄 + note（非 interrupted、非终态）。
     console.log('· ⑥ 等待期间作答：wait 中 followup 唤醒 → 运行句柄 + note');
@@ -344,7 +344,7 @@ async function mainPhase() {
       + 'If that command looks killed at the process-creation layer (empty output, no exit-code marker), '
       + 'retry the exact same call once with sandbox_permissions set to danger-full-access. '
       + 'Step 2: call ask_user_question with exactly one question: question text "Pick a flavor", two options "mint" and "vanilla", no multiSelect. '
-      + 'Step 3: call async_wait_job on the job from step 1 with wait_ms=180000. '
+      + 'Step 3: call async_wait on the job from step 1 (targets=[{kind:"job", id:...}]) with wait_ms=180000. '
       + 'After the wait call returns, reply with one short sentence about what happened.';
     await prompt(s6, ASK_PROMPT_6);
     // 面板出现本会话组并等到超时徽标（10 s 窗口耗尽、批转 expired）。
@@ -360,7 +360,7 @@ async function mainPhase() {
       waitCallSeen = (t6.records ?? []).some((r) => r.event?.type === 'tool/call'
         && r.event.data?.name === WAIT_JOB_TOOL);
     }
-    check('⑥-a async_wait_job 已进入等待（tool/call 在转录）', waitCallSeen,
+    check('⑥-a async_wait 已进入等待（tool/call 在转录）', waitCallSeen,
       `wait 调用=${String(waitCallSeen)}`);
     await screenshot(page, join(SHOTS, 'r30-6-waiting.png'));
     await clickFirstOptionAndSubmit(page, s6);
@@ -416,12 +416,12 @@ async function mainPhase() {
       + 'retry the exact same call once with sandbox_permissions set to danger-full-access); label it "sleeper8a". '
       + 'Step 2: call ask_user_question with exactly one question: question text "Pick a season", '
       + 'two options "spring" and "winter", no multiSelect. '
-      + 'Step 3: call async_wait_agent on that subagent with wait_ms=180000. '
+      + 'Step 3: call async_wait on that subagent (targets=[{kind:"agent", id:...}]) with wait_ms=180000. '
       + 'After the wait call returns, reply with one short sentence naming the season you were told.';
     await prompt(s8a, ASK_PROMPT_8A);
     await waitFor(page, expiredIn(s8a), (n) => Number(n) >= 1, 40_000);
-    // 关键时序：等 async_wait_agent 的 tool/call 进转录（订阅已挂）再点作答。
-    const WAIT_AGENT_TOOL = 'async_wait_agent';
+    // 关键时序：等 async_wait 的 tool/call 进转录（订阅已挂）再点作答。
+    const WAIT_AGENT_TOOL = 'async_wait';
     let t8a = await transcriptOf(s8a);
     let waitAgentSeen = (t8a.records ?? []).some((r) => r.event?.type === 'tool/call'
       && r.event.data?.name === WAIT_AGENT_TOOL);
@@ -431,8 +431,8 @@ async function mainPhase() {
       waitAgentSeen = (t8a.records ?? []).some((r) => r.event?.type === 'tool/call'
         && r.event.data?.name === WAIT_AGENT_TOOL);
     }
-    check('⑧-a-1 async_wait_agent 已进入等待（tool/call 在转录）', waitAgentSeen,
-      `wait_agent 调用=${String(waitAgentSeen)}`);
+    check('⑧-a-1 async_wait 已进入等待（tool/call 在转录）', waitAgentSeen,
+      `wait 调用=${String(waitAgentSeen)}`);
     await screenshot(page, join(SHOTS, 'r30-8a-waiting.png'));
     const t8aClick = Date.now();
     await clickFirstOptionAndSubmit(page, s8a);

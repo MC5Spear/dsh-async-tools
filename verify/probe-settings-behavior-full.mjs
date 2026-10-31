@@ -116,7 +116,7 @@ async function transcriptOf(sessionId) {
 }
 
 /**
- * 从转录里取 `async_wait_job` 的工具结果原文。
+ * 从转录里取 `async_wait` 的工具结果原文。
  *
  * 字段与形状以转录实测为准：`tool/call` 的调用号在 `data.callId`；
  * `tool/result` 的调用号在 `message.toolCallId`（`message.source.callId` 同值）；
@@ -130,7 +130,7 @@ function waitResults(page) {
   const wanted = new Set();
   for (const record of page.records ?? []) {
     const event = record.event;
-    if (event?.type === 'tool/call' && event.data?.name === 'async_wait_job') wanted.add(event.data.callId);
+    if (event?.type === 'tool/call' && event.data?.name === 'async_wait') wanted.add(event.data.callId);
   }
   return resultTexts(page, wanted);
 }
@@ -296,7 +296,7 @@ try {
   const pageClamp = await sessionWith(
     '请严格执行两步：\n'
     + '① 用 async_run 执行 `Start-Sleep -Seconds 45; Write-Output SLOWDONE`，传 yield_ms=1500；\n'
-    + '② 拿到 job_id 后立刻用 async_wait_job 等它，**wait_ms 传 600000**。\n'
+    + '② 拿到 job_id 后立刻用 async_wait 等它（targets=[{kind:"job", id:...}]），**wait_ms 传 600000**。\n'
     + '两步做完后用一句话报告第 ② 步返回的 status 字段。'
   );
   const clampElapsed = Date.now() - t0;
@@ -328,7 +328,7 @@ try {
   const pageFloor = await sessionWith(
     '请严格执行两步：\n'
     + '① 用 async_run 执行 `Start-Sleep -Seconds 30; Write-Output FLOORDONE`，传 yield_ms=1500；\n'
-    + '② 拿到 job_id 后立刻用 async_wait_job 等它，**wait_ms 传 1**。\n'
+    + '② 拿到 job_id 后立刻用 async_wait 等它（targets=[{kind:"job", id:...}]），**wait_ms 传 1**。\n'
     + '两步做完后用一句话报告第 ② 步返回的 status 字段。'
   );
   const floorText = waitResults(pageFloor).join('\n');
@@ -381,7 +381,7 @@ try {
   const descOf = (name) => tools.find((t) => t?.name === name)?.description;
   evidence.runs.push({
     label: '描述',
-    ranges: Object.fromEntries(['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent']
+    ranges: Object.fromEntries(['async_run', 'async_wait', 'async_agent']
       .map((n) => [n, (descOf(n) ?? '').match(/\d+–\d+ ms/g) ?? []]))
   });
 
@@ -393,15 +393,15 @@ try {
       ? 'async_run 正文里找不到让出区间'
       : `实得 ${yieldBody[1]}–${yieldBody[2]}（让出区间本轮未改，应仍是默认 1000–600000）`);
 
-  const tailTools = ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent']
+  const tailTools = ['async_run', 'async_wait', 'async_agent']
     .map((n) => ({ n, hit: /等待预算必须显式传入，范围 (\d+)–(\d+) ms/.exec(descOf(n) ?? '') }))
     .filter((x) => x.hit === null || x.hit[2] !== '2000');
-  check('(b) 四个工具的尾摘要等待区间都已换成新值',
+  check('(b) 三个工具的尾摘要等待区间都已换成新值',
     tools.length > 0 && tailTools.length === 0,
     tools.length === 0
       ? '请求体里没有工具清单'
       : tailTools.length === 0
-        ? '四个工具的尾摘要均为 250–2000'
+        ? '三个工具的尾摘要均为 250–2000'
         : `未换的：${tailTools.map((x) => x.n).join('、')}`);
 
   // ── ④ 让出区间**也要跟着变**（补上第 (a) 条的区分力）────────────────────────

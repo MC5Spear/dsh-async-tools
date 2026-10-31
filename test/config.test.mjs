@@ -74,7 +74,7 @@ test('resolveConfig：默认值符合需求 §5 的约定', () => {
   assert.ok(Object.isFrozen(c), '生效配置应被冻结');
 });
 
-test('根形态：settings 子树是唯一的 volatile 节点，17 字段默认齐（设计 §5.1）', () => {
+test('根形态：settings 子树是唯一的 volatile 节点，19 字段默认齐（设计 §5.1）', () => {
   setConfigValidationArmed(false);
   const empty = Config({});
   assert.equal(typeof empty?.settings?.get, 'function',
@@ -84,10 +84,11 @@ test('根形态：settings 子树是唯一的 volatile 节点，17 字段默认�
     defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
     defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000, pollIntervalMs: 500,
     maxResultChars: 30000, jobKind: 'async-command', subagentProvider: 'spawn',
-    uiLang: 'auto', agentLang: 'en', silentFailureGuard: false, askTakeover: false,
-    askTimeoutMs: 60000, askExtendMs: 60000, askUiSeat: 'sidebar'
+    uiLang: 'auto', agentLang: 'en', silentFailureGuard: false,
+    workflowProgressLog: false, fullCommandEcho: false,
+    askTakeover: false, askTimeoutMs: 60000, askExtendMs: 60000, askUiSeat: 'sidebar'
   };
-  assert.deepEqual({ ...settings }, expected, '17 字段默认值一项不差');
+  assert.deepEqual({ ...settings }, expected, '19 字段默认值一项不差');
 });
 
 test('双向输入形态：活根（settings 为 Ref）与平铺输入等价（设计 §5.1）', () => {
@@ -170,7 +171,7 @@ test('schemastery 嵌套禁令：volatile 子树内的字段再挂 volatile 在 
   const { default: z } = await import('@deepseek-ai/schemastery');
   // 反面形态：字段逐个 volatile 且整体包 volatile——schemastery 校验
   // "volatile 字段要求无包围 volatile 的固定对象路径"，resolve 整棵根时即抛
-  // （与输入数据无关）。这是 17 字段搬进 settings 子树、字段级摘掉 volatile
+  // （与输入数据无关）。这是 19 字段搬进 settings 子树、字段级摘掉 volatile
   // 标记的直接原因。
   const nested = z.object({
     settings: z.transform(
@@ -278,7 +279,7 @@ test('降级态（回调三形＋降级基线）：基线等值放行、不同�
   const legal = callback({ ...baseline, defaultWaitMs: 30000 });
   assert.equal(legal.defaultWaitMs, 30000, '不同合法值照常放行');
 
-  // ④ 键集不同（多键/少键）不算基线等值——深度相等按 17 键全集判。
+  // ④ 键集不同（多键/少键）不算基线等值——深度相等按 19 键全集判。
   assert.throws(() => callback({ ...baseline, extra: 1 }), /cross-field violation/,
     '多出未知键不按基线等值放行');
 
@@ -382,7 +383,7 @@ test('两形同值对账：武装与降级基线（非基线值）对同一组�
   setConfigValidationArmed(true);
   try {
     for (const value of cases) {
-      // 两形必须吃同一份输入：先在容忍形下把用例解析成完整 17 键值（与武装
+      // 两形必须吃同一份输入：先在容忍形下把用例解析成完整 19 键值（与武装
       // 形经 Config 的确定性解析给回调的输入逐键相同），再分别投给两形——
       // 否则默认值补齐差异会混进消息聚合，对账就不是同值对账。
       const resolved = resolveSettingsValue({ settings: { ...value } });
@@ -593,7 +594,7 @@ test('resolveYield：缺省取默认值，超出范围被夹紧', () => {
   assert.equal(resolveYield(1, c), c.minYieldMs);
 });
 
-test('Config schema 暴露 toolName 且只接受登记的全部工具名（六个）', () => {
+test('Config schema 暴露 toolName 且只接受登记的全部工具名（五个）', () => {
   setConfigValidationArmed(false);
   // 遍历 `TOOL_NAMES` 而**不是手抄五个名字**：手抄清单在新增工具名时跟不上，
   // "从登记表里删掉一个工具名"这类变异就**抓不住**（手抄清单里那个名字照样能过 `Config()`）。
@@ -602,9 +603,9 @@ test('Config schema 暴露 toolName 且只接受登记的全部工具名（六�
   for (const toolName of TOOL_NAMES) {
     assert.equal(Config({ toolName }).toolName, toolName);
   }
-  assert.equal(TOOL_NAMES.length, 6,
+  assert.equal(TOOL_NAMES.length, 5,
     '工具名清单变了：同步这条断言、README 的取值列表与预设补丁的行数');
-  assert.throws(() => Config({ toolName: 'nope' }), /async_run.*async_wait_job.*async_wait_agent.*async_agent/s, '错误文案必须列出可选值，便于排查');
+  assert.throws(() => Config({ toolName: 'nope' }), /async_run.*async_wait.*async_agent/s, '错误文案必须列出可选值，便于排查');
 });
 
 test('Config 根接受委托行级键：agentOptions／agentPreset／allowedAgentPresets（§2.3.1，非 volatile）', () => {
@@ -727,7 +728,7 @@ test('toolName 缺省 = 宿主角色：不得抛错，也不得回填默认值�
   assert.equal(empty.toolName, undefined, '缺省 toolName 必须保持缺省，不得回填默认值');
   assert.equal('toolName' in empty, false, '结果里干脆不该有这个键（宿主角色的行没有工具身份）');
   // 反向：显式给了就必须原样保留（证明上面那条不是"什么都吞"）。
-  assert.equal(Config({ toolName: 'async_wait_agent' }).toolName, 'async_wait_agent');
+  assert.equal(Config({ toolName: 'async_wait' }).toolName, 'async_wait');
 });
 
 test('resolveConfig：未知配置键不得进入生效配置——embedBudgetsInDescription 不被读取', () => {
@@ -874,14 +875,14 @@ test('进程内（真实链）：投影形态、写入拒绝与行身份字段�
     const view = settings.describe().find((row) => row.ns === ns);
     assert.ok(view !== undefined, 'describe 必须含本 ns（宿主行卡片在场）');
 
-    // ② form 投影：根 object 只有 settings 键；settings 为 transform、内层 17 键、无 volatile 残留。
+    // ② form 投影：根 object 只有 settings 键；settings 为 transform、内层 19 键、无 volatile 残留。
     const { default: z } = await import('@deepseek-ai/schemastery');
     const rehydrated = z(view.schema);
     const settingsNode = rehydrated.dict?.settings;
     const innerKeys = Object.keys(settingsNode?.inner?.dict ?? {}).sort();
     assert.equal(rehydrated.type, 'object', 'form 根为普通对象');
     assert.equal(settingsNode?.type, 'transform', 'settings 子树是 transform 节点');
-    assert.equal(innerKeys.length, 17, '内层 17 字段键齐');
+    assert.equal(innerKeys.length, 19, '内层 19 字段键齐');
     assert.equal(Object.keys(rehydrated.dict ?? {}).join(','), 'settings', '根只挂 settings（身份字段不进表单）');
     const volatileResidue = [];
     const walkNode = (node, path) => {
@@ -893,10 +894,10 @@ test('进程内（真实链）：投影形态、写入拒绝与行身份字段�
     walkNode(rehydrated, '$');
     assert.deepEqual(volatileResidue, [], 'form 无 volatile 残留');
 
-    // ③ 值投影：settings 键下 17 字段、无身份键；客户端 decode 近似可校验。
+    // ③ 值投影：settings 键下 19 字段、无身份键；客户端 decode 近似可校验。
     const valueKeys = Object.keys(view.value ?? {});
     assert.deepEqual(valueKeys, ['settings'], '值投影只有 settings 一键');
-    assert.equal(Object.keys(view.value?.settings ?? {}).length, 17, 'settings 下 17 字段齐');
+    assert.equal(Object.keys(view.value?.settings ?? {}).length, 19, 'settings 下 19 字段齐');
     assert.equal('toolName' in (view.value ?? {}), false, '值投影不带身份键');
     const decode = await clientValidate(view.schema, view.value);
     assert.equal(decode.ok, true, `客户端 decode 近似必须通过：${decode.message ?? ''}`);

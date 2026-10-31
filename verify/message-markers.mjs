@@ -41,7 +41,7 @@ export const WAIT_INTERRUPTED = /等待被打断|Wait interrupted/;
 export const SUBJECT_UNTOUCHED = /结束等待没有终止[\s\S]{0,60}的工作|Ending the wait did not stop/;
 
 /**
- * `async_wait_agent` 的**结局**标记——三选一即可，两语都要认（agentLang 是设置项，
+ * `async_wait`（子代理目标）的**结局**标记——三选一即可，两语都要认（agentLang 是设置项，
  * 与 `WAIT_INTERRUPTED` 同一条纪律：单语标记红的是语言，不是被测对象）。
  *
  * | 标记 | 出处（zh / en 同键） |
@@ -57,9 +57,9 @@ export const CHILD_SETTLED = [
 ];
 
 /**
- * `async_wait_job` 的**结局**标记：取回的是终态输出。
+ * `async_wait`（作业目标）的**结局**标记：取回的是终态输出。
  *
- * 出处 `lib/wait-job.js` 的 `settledResult`——终态时在输出正文前拼一行终态状态行
+ * 出处 `lib/wait-job-target.js` 的终态出口——终态时在输出正文前拼一行终态状态行
  * （文案键 `render.jobStatus.<completed|failed|killed>` 在 `lib/text.js`，两语都有），
  * 这是三种终态**都出现**的稳定特征。输出末尾的退出码行（`lib/jobs.js` 的
  * `exitStatusMarker`/`exitLine`，文案键 `render.exitCode`/`detail.exitCode`）只标记
@@ -113,7 +113,7 @@ export const START_REFUSED = /refused before the process launched|进程启动�
 export const WORKFLOW_P2_PHRASE = /large multi-agent orchestration|大规模多代理编排/;
 
 /**
- * `async_wait_agent` 被**用户消息唤醒**的文案。出处 `lib/text.js` 的
+ * `async_wait`（子代理目标）被**用户消息唤醒**的文案。出处 `lib/text.js` 的
  * `wait.wokeByMessage`（两语逐字）。
  */
 export const WAIT_WOKE_BY_MESSAGE = /A processable message arrived|一条可处理消息已到/;

@@ -20,16 +20,16 @@ import { resolveConfig } from '../lib/config.js';
 import { LATE_ANSWER_EVENT } from '../lib/interrupts.js';
 import { checkedTool, fakeAgent, fakeCtx, freezeTimers, inboxPayload } from './_helpers.mjs';
 
-// 宿主链动态守卫（lib/workflow.js、lib/wait-job.js → dsh-tools/descriptions）：
+// 宿主链动态守卫（lib/workflow.js、lib/wait.js → dsh-tools/descriptions）：
 // 离线形态锚缺席时本文件仍可加载，全部用例自跳过并打印理由（ci.yml offline 作业的契约）。
 const workflowModule = await loadOfflineSafe('../lib/workflow.js');
-const waitJobModule = await loadOfflineSafe('../lib/wait-job.js');
+const waitModule = await loadOfflineSafe('../lib/wait.js');
 const { createWorkflowTool: buildWorkflowTool } = workflowModule ?? {};
-const { createWaitJobTool: buildWaitJobTool } = waitJobModule ?? {};
-const hostTest = await hostTestFor('../lib/workflow.js', '../lib/wait-job.js');
+const { createWaitTool: buildWaitTool } = waitModule ?? {};
+const hostTest = await hostTestFor('../lib/workflow.js', '../lib/wait.js');
 
 const createWorkflowTool = (ctx, config) => checkedTool(buildWorkflowTool(ctx, config));
-const createWaitJobTool = (ctx, config) => checkedTool(buildWaitJobTool(ctx, config));
+const createWaitTool = (ctx, config) => checkedTool(buildWaitTool(ctx, config));
 
 /**
  * 引擎替身：`start(spec)` 返回 run（result 悬置到测试调 `_resolve`）。探针：
@@ -261,7 +261,7 @@ hostTest('async_workflow（R34-c·插话）：让出窗口内用户消息 → �
   const result = await pending;
   assert.equal(result.status, 'running', '插话 → 转后台句柄（恢复通道 = 完成通知）');
   assert.match(result.note, /ended early: a user message arrived/);
-  assert.match(result.note, /async_wait_job\(job_id="/, '恢复示例照带');
+  assert.match(result.note, /async_wait\(targets=\[\{kind:"job", id:"/, '恢复示例照带');
   // elapsed 双向域：下界 = 触发前的 5 ms 等待（t0 必须在引擎启动
   // 之前的 execute 入口），上界 = 首次等待预算（这条路不是预算到期退出的）。
   assert.ok(result.elapsed_ms >= 5, `t0 取点在 execute 入口（实得 ${String(result.elapsed_ms)}）`);
@@ -274,20 +274,26 @@ hostTest('async_workflow（R34-c·插话）：让出窗口内用户消息 → �
   assert.equal(f.jobsFake.wasAwaited(result.job_id), false, '撤销后的结算 → 完成通知照发');
 });
 
-hostTest('async_workflow（R34-c·迟到作答）：让出窗口内迟到作答 → 句柄 + lateArrived 键', async () => {
-  const { f, agent, tool } = rig();
+hostTest('async_workflow（R34-c·迟到作答）：迟到作答不提前结束首次等待（9.3.1 收紧）——正文留收件箱，结算才交回', async () => {
+  const { f, runs, agent, tool } = rig();
   freezeTimers(f.ctx);
   const exec = { agent, signal: new AbortController().signal };
   const pending = tool.execute(BASE_ARGS, exec);
   await new Promise((r) => { setTimeout(r, 5); });
   f.emit(LATE_ANSWER_EVENT, { agentId: agent.id, questionId: 'color', kind: 'answer', summary: 'Late answer for color: red' });
 
+  // 迟到作答到达后一小段：等待不得收敛（非目标消息不提前结束首次等待）。
+  let concluded = false;
+  pending.then(() => { concluded = true; }, () => { concluded = true; });
+  await new Promise((r) => { setTimeout(r, 10); });
+  assert.equal(concluded, false, '迟到作答不再秒回句柄（旧形态已按 9.3.1 移除）');
+
+  // 编排终态才是合法交回点：结算 → 直接交付（不是句柄）。
+  runs[0]._resolve({ stopReason: 'completed', agentsStarted: 1, value: 'done' });
   const result = await pending;
-  assert.equal(result.status, 'running');
-  assert.match(result.note, /A late answer has arrived \(Late answer for color: red\)/, '与 wait 工具同键（需求 §4.4）');
-  assert.ok(result.elapsed_ms >= 5, `t0 取点在 execute 入口（实得 ${String(result.elapsed_ms)}）`);
-  assert.ok(result.elapsed_ms < 600000, '迟到先于预算到期返回');
-  assert.equal(f.jobsFake.waitersOf(result.job_id), 0);
+  assert.equal(result.status, 'completed', '结算路径直接交付');
+  assert.ok(!/lateArrived|Late answer/i.test(String(result.result ?? '') + String(result.note ?? '')),
+    '作答摘要不进返回——留在收件箱按宿主节奏领取');
 });
 
 hostTest('async_workflow（R34-c·abort）：GUI 停止 → 句柄形状、run 存活、cancel 零调用', async () => {
@@ -319,7 +325,7 @@ hostTest('async_workflow（R34-c·预算）：yield 到期 → 句柄 + 预算�
 
   assert.equal(result.status, 'running', '首次等待到期 → 作业编号（默认首次等待 20 s 的同款语义）');
   assert.match(result.note, /first wait/, 'note 说明按首次等待到期让出');
-  assert.match(result.note, /async_wait_job\(job_id="/);
+  assert.match(result.note, /async_wait\(targets=\[\{kind:"job", id:"/);
   // 与 async_run 的 elapsed 口径同款：elapsed 覆盖整个**生效**首次等待窗口（t0 挪到
   // 等待开始之后、或没等满 5 ms 的变异在此必红）。
   assert.ok(result.elapsed_ms >= 5, `elapsed 覆盖生效首次等待窗口（实得 ${String(result.elapsed_ms)}）`);
@@ -342,7 +348,7 @@ hostTest('async_workflow（F-C·未证实档）：yield 到期且复查读取失
   assert.match(result.note, /could not confirm/, '未证实档：复查失败不作「仍在运行」断言');
   assert.match(result.note, /workflow/, '主体称谓是 workflow（共享模板分档）');
   assert.doesNotMatch(result.note, /\bcommand\b/, '编排不冒称 command');
-  assert.match(result.note, /async_wait_job\(job_id="/);
+  assert.match(result.note, /async_wait\(targets=\[\{kind:"job", id:"/);
   assert.equal(runs[0].cancelCalls, 0, '复查失败不影响 run 存活');
 });
 
@@ -504,7 +510,13 @@ hostTest('async_workflow（R34-g·zh）：完成渲染与截断标注随 agentLa
 // 预算不被实施两次）；取消与预算到期分别说明。
 // ---------------------------------------------------------------------------
 
-hostTest('async_workflow（F8）：注册表收原始 JSON，一次内容预算不被实施两次', async () => {
+hostTest('async_workflow（F8）：注册表收原始 JSON；已直付的最终结果不再重复交付', async () => {
+  // 账本跨用例残留隔离：假注册表的作业 id 每用例从 1 重编，同 id 的上一用例条目
+  // 会把「一次性 result 已消费」事实带进本用例——本用例专门钉这个读取通道，开头
+  // 重置账本获得干净基线。动态 import：lib/delivery.js 静态依赖宿主链
+  // （@deepseek-ai/dsh-llm），顶层引入会破离线形态（离线守卫判据 C）。
+  const { resetDeliveryLedger } = await import('../lib/delivery.js');
+  resetDeliveryLedger();
   const { f, runs, agent, tool } = rig({ maxResultChars: 5 });
   agent.session.append = () => {};
   const exec = { agent, signal: new AbortController().signal };
@@ -517,23 +529,26 @@ hostTest('async_workflow（F8）：注册表收原始 JSON，一次内容预算�
   assert.match(result.result, /\[output truncated: 23 chars omitted\]/,
     '直接结算的省略量按原始 JSON 计算（28−5=23）');
 
-  // 注册表：outcome 存**原始序列化值**——由后台首次终态读取的省略量反推：
-  // 23＝28−5 只在原始整串上成立；若注册表存「完成头＋已裁文本」，省略量会按
-  // 那份更长文本重算（旧缺陷形态）。
+  // 注册表：outcome 存**原始序列化值**——一次性通道的消费事实由裸读反推
+  //（见用例末）。**已直付的最终结果不再进任何后续载体**（需求 9.3.2「同一
+  // 最终结果在正常交付中只出现一次」——原始 JSON 与渲染文本算同一最终结果的
+  // 两种形态）：再次等待同一作业只回终态事实，不重复展开正文。
   const views = f.jobsFake.views();
   const jobId = views[0].id;
   await new Promise((resolve) => { setTimeout(resolve, 5); });
-  const waiter = createWaitJobTool(f.ctx, resolveConfig({ toolName: 'async_wait_job', maxResultChars: 5 }));
-  const again = await waiter.execute({ job_id: jobId, wait_ms: 30000 }, exec);
-  assert.equal(again.status, 'completed');
-  assert.equal(again.truncated, true, '原始 28 字符对预算 5 必须置 truncated');
-  assert.match(again.output, /\[output truncated: 23 chars omitted\]/,
-    '后台读取对「增量＋result」整体只裁一次——省略量不因前置裁剪膨胀（需求 §2.2.3）');
-  assert.ok(!again.output.includes('Return value:'), '完成头不进后台读取路径（它在直接结算路径渲染）');
+  const waiter = createWaitTool(f.ctx, resolveConfig({ toolName: 'async_wait', maxResultChars: 5 }));
+  const again = await waiter.execute({ wait_ms: 30000, targets: [{ kind: 'job', id: jobId }] }, exec);
+  assert.equal(again.status, 'completed', '终态事实照常返回（入口快照终态分支）');
+  assert.equal(again.output, '',
+    '已直付的正文不再重复交付（deliveredFact 阻断批次装配；重复交付是旧缺陷形态）');
+  assert.ok(!JSON.stringify(again).includes('x'.repeat(5)),
+    '原始 JSON 的任何片段都不得再次出现');
 
-  // 一次性通道已消费：后续裸读无 result。
+  // 一次性通道被「再次等待」的入口终态读取消费（终态事实的读取管线照常运转，
+  // 只是装配被 deliveredFact 阻断——正文不重复展开，通道不再有 result）。
   const rawNext = f.jobsFake.service.read(jobId, agent.id);
-  assert.equal(rawNext.result, undefined, '注册表裸读不再有 result（一次性通道已被首次终态读取消费）');
+  assert.equal(rawNext.result, undefined,
+    '再次等待消费一次性 result（读取照常、装配被阻断——这才是「只出现一次」的完整形态）');
 });
 
 hostTest('async_workflow（F9）：取消与预算到期分别说明——abort 的 note 不冒称超出预算', async () => {

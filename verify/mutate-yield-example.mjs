@@ -59,9 +59,9 @@ function restore() {
 }
 
 /** 锚点：示例那一行（取生效配置的那个插值）。 */
-const ANCHOR = '    `  async_wait_job(job_id="${jobId}", wait_ms=${String(defaultWaitMs)})`,';
+const ANCHOR = '    `  async_wait(targets=[{kind:"job", id:"${jobId}"}], wait_ms=${String(defaultWaitMs)})`,';
 /** 变异体：缺陷原形——写死成插件的默认值。 */
-const MUTATED = '    `  async_wait_job(job_id="${jobId}", wait_ms=30000)`,';
+const MUTATED = '    `  async_wait(targets=[{kind:"job", id:"${jobId}"}], wait_ms=30000)`,';
 
 const baseline = runTests();
 if (baseline.red) {

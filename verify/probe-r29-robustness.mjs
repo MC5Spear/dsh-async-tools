@@ -15,13 +15,13 @@
  *    跨字段违例由 settings 子树的 transform 回调在 resolve 处拒绝（回调三形，设计
  *    §5.1：武装态在 edit 落盘前／loader 就地提交改 refs 前拒绝；降级态仅放行与
  *    降级基线深度相等的重存，与基线不同的非法值照常拒绝）。
- * 4. **等待总耗时上界**：20 秒命令（提权档真跑）+ yield 后 async_wait_job
+ * 4. **等待总耗时上界**：20 秒命令（提权档真跑）+ yield 后 async_wait
  *    (wait_ms=1500) → running 结局，渲染句 "Waited N ms; the job is still
  *    running" 在场且 N ∈ [0.9×wait_ms, wait_ms + 3×pollIntervalMs + 容差]
  *    （wait-job 屏障是一次快照，不睡；容差吃 RTT/轮机抖动）。**执行档走提权**
  *    （async_run 起新进程，受限档在验证实例死于 CreateRestrictedToken 前置；
  *    sandbox_permissions + justification 经批准 allowed-once），
- *    async_wait_job 本身不碰执行器。命令取 20 秒——提权批准往返会吃掉数秒，
+ *    async_wait 本身不碰执行器。命令取 20 秒——提权批准往返会吃掉数秒，
  *    更短的命令会在第 2 步前已完结。
  *
  * 状态复原：起手先把四个等待/轮询字段归位出厂默认并读回核对；探针只在 3 组做
@@ -195,18 +195,18 @@ try {
   // 执行档（用户裁定「走提权」，与 probe-r28 系探针同款口径）：async_run 起的是**新进程**，
   // 受限档在验证实例（托管服务 LocalSystem 无 logon SID）死于 CreateRestrictedToken
   // 前置。因此本组走提权档（sandbox_permissions + justification，
-  // 经批准 allowed-once）；async_wait_job 本身不碰执行器，无需提权。
+  // 经批准 allowed-once）；async_wait 本身不碰执行器，无需提权。
   // 解析侧：模型看到的是工具的**渲染文本**（running 结局 = note.waitAgain：
   // "Waited N ms; the job is still running"），不是原始 JSON——锚定渲染句。
   // 命令取 20 秒：提权批准往返 + 模型出话延迟可能吃掉数秒，6 秒会在第 2 步前
   // 已完结（实测翻车形态）；20 秒保证等待窗口内仍在运行。
-  console.log('· 4/4 真机 3：async_wait_job 总耗时上界（20s 命令 + wait_ms=1500 → running）');
+  console.log('· 4/4 真机 3：async_wait 总耗时上界（20s 命令 + wait_ms=1500 → running）');
   const sid2 = await newSession(PRESET);
   const t0 = Date.now();
   await prompt(sid2, '依次做两步，一步一个工具调用。第 1 步：async_run 运行命令 "Start-Sleep -Seconds 20"，'
     + 'yield_ms 传 1000，并带 sandbox_permissions（设为该工具声明的最宽档）与它要求的一句 justification'
-    + '（本次验收探针的提权已获用户预批准）。第 2 步：拿到 job_id 后**立即**调用 async_wait_job（wait_ms 传 1500，'
-    + '不带任何提权参数）。然后把 async_wait_job 返回给你的那段文本原样粘贴出来，不要做别的。');
+    + '（本次验收探针的提权已获用户预批准）。第 2 步：拿到 job_id 后**立即**调用 async_wait（targets=[{kind:"job", id:...}]，wait_ms 传 1500，'
+    + '不带任何提权参数）。然后把 async_wait 返回给你的那段文本原样粘贴出来，不要做别的。');
   const tr2 = await waitTurnEnd(sid2, 180000);
   const turnMs = Date.now() - t0;
   const approvals2 = approvalOutcomes(tr2);

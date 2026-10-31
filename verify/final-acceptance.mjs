@@ -5,11 +5,11 @@
  * 在几份 JSON 与文档之间对账。这份脚本把**强制要求 → 可观察判据**固化成一张表。
  *
  * 覆盖：
- *   1. 呈现模式 native（需求 §1.2：有 async_run/async_wait_job/async_wait_agent，无 run_code、无 pwsh）
+ *   1. 呈现模式 native（需求 §1.2：有 async_run/async_wait/async_agent，无 run_code、无 pwsh）
  *   2. 预设隔离（需求 §1.2：standard 有 pwsh、无三个工具）
  *   3. 短命令在首次等待内直接返回完整输出（需求 §2.2.1：命令从执行起注册，首次等待内结算直回）
  *   4. 长命令让出且**不被杀**，句柄可复制粘贴（需求 §2.2.1）
- *   5. async_wait_job 取回输出（需求 §2.2.2）
+ *   5. async_wait 取回输出（需求 §2.2.2）
  *   6. 插话打断等待、作业未被取消、最终仍取回完整输出（需求 §2.1.2）
  *   7. 反复调用不累积（3 轮）
  *
@@ -150,8 +150,8 @@ console.log('=== 1) 呈现模式与预设隔离 ===');
   const { assistantText, calls } = parse(await transcript(sid));
   const match = assistantText.match(/TOOLS=([^\n`]+)/);
   const names = match === null ? [] : match[1].split(',').map((s) => s.trim()).filter(Boolean);
-  record('四个工具都在（async_run/async_wait_job/async_wait_agent/async_agent）',
-    ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent'].every((n) => names.includes(n)),
+  record('三个工具都在（async_run/async_wait/async_agent）',
+    ['async_run', 'async_wait', 'async_agent'].every((n) => names.includes(n)),
     `工具清单=${names.join(',') || '(读不到)'}；模型调用数=${String(calls.length)}`);
   record('呈现模式是 native（无 run_code）', !names.includes('run_code'));
   record('未挂同步 shell（无 pwsh）', !names.includes('pwsh'));
@@ -176,7 +176,7 @@ console.log('=== 1) 呈现模式与预设隔离 ===');
   // 它会被读成"这三个工具不许出现在 standard 里"，也就是把**模板**读成了**限制**。
   // 而它在这里真正证明的是"本插件那一行没有落到宿主侧"。
   record('本插件**没有把工具强行装进所有预设**（standard 里不出现，即未泄漏到全局工具层）',
-    !['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent'].some((n) => names.includes(n)),
+    !['async_run', 'async_wait', 'async_agent'].some((n) => names.includes(n)),
     '这条不表示"只有 dsh-async 预设能有它们"——别的预设自己加同样的行就能得到（需求 §1.2）');
 }
 
@@ -188,19 +188,19 @@ console.log('=== 2) 执行、取回与插话行为 ===');
     '严格按顺序做四步，不要做别的事情：',
     '① 用 async_run 执行 `Write-Output SHORT_OK`；',
     '② 用 async_run 执行 `Start-Sleep -Seconds 6; Write-Output LONG_DONE`，传 yield_ms=1500；',
-    '③ 用返回的 job_id 调 async_wait_job（wait_ms=30000）；',
+    '③ 用返回的 job_id 调 async_wait（targets=[{kind:"job", id:...}]，wait_ms=30000）；',
     '④ 只回复一行 ALL_DONE，不要总结。'
   ].join('\n'));
   const { calls, results } = parse(await transcript(sid));
   const runCalls = calls.filter((c) => c.name === 'async_run');
-  const waitCalls = calls.filter((c) => c.name === 'async_wait_job');
+  const waitCalls = calls.filter((c) => c.name === 'async_wait');
   record('短命令在首次等待内直接返回完整输出', results.some((t) => t.includes('SHORT_OK')), '见结果里的 SHORT_OK；作业本身从执行起已注册（需求 §2.2.1）');
   record('长命令让出而非被杀',
     results.some((t) => YIELD_RUNNING.test(t) && NOT_TERMINATED.test(t)),
     `async_run 调用 ${String(runCalls.length)} 次`);
-  record('async_wait_job 取回输出', results.some((t) => t.includes('LONG_DONE')), `async_wait_job 调用 ${String(waitCalls.length)} 次`);
-  record('让出结果里给出可复制粘贴的 async_wait_job 调用句（带 job_id）',
-    results.some((t) => /async_wait_job\(job_id="[^"]+", wait_ms=\d+\)/.test(t)));
+  record('async_wait 取回输出', results.some((t) => t.includes('LONG_DONE')), `async_wait 调用 ${String(waitCalls.length)} 次`);
+  record('让出结果里给出可复制粘贴的 async_wait 调用句（带 job_id）',
+    results.some((t) => /async_wait\(targets=\[\{kind:"job", id:"[^"]+"\}\]/.test(t)));
 }
 
 console.log('');
@@ -213,18 +213,18 @@ console.log('=== 3) 插话打断等待而不打断后台作业 ===');
       requestId: `req-${Math.random().toString(36).slice(2, 10)}`,
       sessionId: sid, mode: 'queue',
       content: [{ type: 'text', text: '用 async_run 执行 `Start-Sleep -Seconds 60; Write-Output SURVIVED`，传 yield_ms=1500；'
-        + '拿到 job_id 后**立刻**用 async_wait_job 等它（wait_ms=120000）。期间不要做别的。' }],
+        + '拿到 job_id 后**立刻**用 async_wait 等它（targets=[{kind:"job", id:...}]，wait_ms=120000）。期间不要做别的。' }],
       clientTimeZone: 'Asia/Shanghai'
     }
   });
-  // 等到出现一次 async_wait_job 调用（说明它已经进入长等待），再发插话。
+  // 等到出现一次 async_wait 调用（说明它已经进入长等待），再发插话。
   let waiting = false;
   for (let i = 0; i < 60 && !waiting; i++) {
     await sleep(1000);
     const { calls } = parse(await transcript(sid));
-    waiting = calls.some((c) => c.name === 'async_wait_job');
+    waiting = calls.some((c) => c.name === 'async_wait');
   }
-  record('场景搭建成功（模型已进入 async_wait_job 长等待）', waiting);
+  record('场景搭建成功（模型已进入 async_wait 长等待）', waiting);
   await rpc('session/prompt', {
     request: {
       requestId: `req-${Math.random().toString(36).slice(2, 10)}`,
@@ -233,7 +233,7 @@ console.log('=== 3) 插话打断等待而不打断后台作业 ===');
       clientTimeZone: 'Asia/Shanghai'
     }
   });
-  await ask(sid, '继续：用 async_wait_job 把那个作业的输出取回来（wait_ms=90000），然后只回复它打印的那一行。');
+  await ask(sid, '继续：用 async_wait 把那个作业的输出取回来（targets=[{kind:"job", id:...}]，wait_ms=90000），然后只回复它打印的那一行。');
   const { results } = parse(await transcript(sid));
   record('等待被插话打断并说明作业未受影响',
     results.some((t) => WAIT_INTERRUPTED.test(t) && SUBJECT_UNTOUCHED.test(t)));
@@ -249,7 +249,7 @@ console.log('=== 4) 反复调用不累积（3 轮）===');
   const rounds = [];
   for (let n = 1; n <= 3; n++) {
     await ask(sid, `用 async_run 执行 \`Start-Sleep -Seconds 4; Write-Output REPEAT${String(n)}\`，传 yield_ms=1500；`
-      + `拿到 job_id 后用 async_wait_job 等它（wait_ms=30000），然后只回复它打印的那一行。`);
+      + `拿到 job_id 后用 async_wait 等它（targets=[{kind:"job", id:...}]，wait_ms=30000），然后只回复它打印的那一行。`);
     const { results } = parse(await transcript(sid));
     const y = results.map((t) => t.match(/已运行约 (\d+) ms|about (\d+) ms elapsed/)).filter((m) => m !== null).map((m) => Number(m[1] ?? m[2]));
     rounds.push({ n, got: results.some((t) => t.includes(`REPEAT${String(n)}`)), yieldMs: y.at(-1) ?? null });

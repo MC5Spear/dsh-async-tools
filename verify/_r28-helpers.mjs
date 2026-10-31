@@ -187,7 +187,7 @@ export function runDescriptionOf(transcript) {
  *
  * 形状（验证实例实测定案）：`tool/result` 的 `message.toolCallId` 与 `tool/call`
  * 的 `callId` 配对；文本在 `message.content` 的 `type:'text'` 块里。同时兼容旧
- * `tool-result` 块嵌套形（`async_wait_job` 通道用过），两种形状都收。
+ * `tool-result` 块嵌套形（旧等待通道用过），两种形状都收。
  */
 export function runResultText(transcript) {
   const records = transcript.records ?? [];

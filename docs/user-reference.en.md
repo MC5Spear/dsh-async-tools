@@ -7,7 +7,7 @@
 | Component | Current applicable version |
 | --- | --- |
 | Plugin version | `0.2.8+dsh.0.2.1-rc` |
-| Supported dsh host versions | `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4` |
+| Supported dsh host versions | `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4`, `0.2.1-rc.5` |
 
 If the installation address does not yield the source, check the repository address and commit, then the network or proxy. If it still fails, contact the maintainer who supplied the installation source about available installation artifacts.
 
@@ -15,7 +15,7 @@ The source repository spec is `github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1`.
 
 Check the runtime before installing. Node.js 24 is recommended. The plugin's `>=20` declaration applies only to the plugin. The host's commander 15 dependency requires `>=22.12.0`, but this is only a known lower bound, not a verified minimum for the complete host. Confirm that the target host's dependencies resolve on the chosen runtime.
 
-The three host versions above share one compatibility line and one peer support set. The final `0.2.1`, `0.2.0`, `0.2.2`, and any new rc not in the set are rejected. This line targets Windows, with item-by-item revalidation on all three hosts still pending. Linux command execution and one-shot escalation, macOS, and remote execution are unverified. Send the maintainer your environment and intended use, then arrange isolated verification before deciding to deploy there. Compatibility-line support does not mean every behavior has passed verification on each host.
+The four host versions above share one compatibility line and one peer support set. The final `0.2.1`, `0.2.0`, `0.2.2`, and any new rc not in the set are rejected. This line targets Windows; `0.2.1-rc.2` and `0.2.1-rc.5` have passed item-by-item real-host verification on isolated instances (independent acceptance passed 2026-10-31), while `0.2.1-rc.3` and `0.2.1-rc.4` rely on static contract checks of the same implementation plus the CI matrix, with per-host real-host revalidation still pending. Linux command execution and one-shot escalation, macOS, and remote execution are unverified. Send the maintainer your environment and intended use, then arrange isolated verification before deciding to deploy there. Compatibility-line support does not mean every behavior has passed verification on each host.
 
 After checking these prerequisites, install from a terminal:
 
@@ -23,7 +23,7 @@ After checking these prerequisites, install from a terminal:
 dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
 ```
 
-Alternatively, in DSH's plugin manager, open the install dialog and paste the GitHub spec above into the installation address. When installation finishes, open this package's detail page and check that its settings form is visible. Create a session and confirm that `dsh-async` and `dsh-async-create` are available. After selecting either preset, the Agent should have the six tools documented here.
+Alternatively, in DSH's plugin manager, open the install dialog and paste the GitHub spec above into the installation address. When installation finishes, open this package's detail page and check that its settings form is visible. Create a session and confirm that `dsh-async` and `dsh-async-create` are available. After selecting either preset, the Agent should have the five tools documented here.
 
 If both tools and settings are missing:
 
@@ -46,16 +46,16 @@ The linked directory must resolve matching host dependencies. A bare Node import
 
 ## 2. First use and settings
 
-Choose `dsh-async` for general coding or `dsh-async-create` to retain plugin and preset authoring tools. Both presets expose all six tools directly. Inspection, messaging, and explicit stopping remain host management operations. Existing presets are unchanged.
+Choose `dsh-async` for general coding or `dsh-async-create` to retain plugin and preset authoring tools. Both presets expose all five tools directly. Inspection, messaging, and explicit stopping remain host management operations. Existing presets are unchanged.
 
 ```text
 async_run(command="Write-Output SHORT_OK", description="Print a harmless test marker")
 async_run(command="Start-Sleep -Seconds 30; Write-Output LONG_DONE",
           description="Wait then print completion marker", yield_ms=1000)
-async_wait_job(job_id="<returned job_id>", wait_ms=30000)
+async_wait(targets=[{kind:"job", id:"<returned job_id>"}], wait_ms=30000)
 ```
 
-These are Agent tool calls, not terminal commands. The short command should return `SHORT_OK` directly. The long command will usually return a job identifier, `job_id`, after its first wait. Keep it and continue independent work. Read the result with `async_wait_job` when needed, explicitly supplying `wait_ms` every time. Even after seeing `LONG_DONE`, inspect exit information. Do not repeat the command to check progress.
+These are Agent tool calls, not terminal commands. The short command should return `SHORT_OK` directly. The long command will usually return a job identifier, `job_id`, after its first wait. Keep it and continue independent work. When the job settles, its result body is delivered directly — attached to an in-flight async_wait return or as a completion message; no separate retrieve call is required. Use `async_wait` when you need to block on a result, explicitly supplying `wait_ms` every time. Even after seeing `LONG_DONE`, inspect exit information. Do not repeat the command to check progress.
 
 Open the plugin list, select this package, and use the form between its description and component rows. Writes require the host's local loopback settings endpoint. If the page is read-only or accessed through a non-loopback address, follow its guidance to a writable endpoint. Editing creates a draft; Save applies it. Restoring defaults also requires Save. Leaving discards unsaved drafts; a failed save retains them. Expanding field help does not submit settings.
 
@@ -63,9 +63,9 @@ A field's Restore default action stages removal of only that field's user overri
 
 For advanced configuration, put fields under the host row's `config.settings.<field>`, not directly under `config`. Values are selected in this order: user override, composition configuration, then schema default (the default in the configuration definition). A user-layer field counts as an override even when its value equals the default.
 
-Tools first read the current configuration snapshot published by the host. Only if it is absent do they use valid tool-row fallback values and report that settings are not connected. `toolName`, `owningPreset`, and delegation-row options are fixed row configuration, not part of the 17 UI settings below.
+Tools first read the current configuration snapshot published by the host. Only if it is absent do they use valid tool-row fallback values and report that settings are not connected. `toolName`, `owningPreset`, and delegation-row options are fixed row configuration, not part of the 19 UI settings below.
 
-### 2.1 All 17 settings
+### 2.1 All 19 settings
 
 The Range column describes values that can be saved. If a call's budget falls outside the current min/max, the tool moves it to the nearest boundary; this is clamping. A new invalid configuration is rejected, not clamped. Resaving an existing damaged configuration unchanged is an exception explained after the table. Values are stored in milliseconds (ms): 1000 ms is one second.
 
@@ -84,6 +84,8 @@ The Range column describes values that can be saved. If a call's budget falls ou
 | `uiLang` | enum | `auto` | auto / zh / en | — | UI; auto follows the host |
 | `agentLang` | enum | `en` | en / zh | — | Language for tool descriptions, results, and instructions |
 | `silentFailureGuard` | boolean | `false` | true / false | — | Command diagnostics and warnings in the two package presets |
+| `workflowProgressLog` | boolean | `false` | true / false | — | Whether orchestration results keep per-phase progress lines |
+| `fullCommandEcho` | boolean | `false` | true / false | — | Whether command job listings echo the full command text |
 | `askTakeover` | boolean | `false` | true / false | — | Each ordinary question request |
 | `askTimeoutMs` | number | `60000` | 10000..600000; fractions allowed | ms | Initial deadline for a new intercepted batch |
 | `askExtendMs` | number | `60000` | 1..2147483647; fractions allowed | ms | Each extension, added to the existing deadline |
@@ -116,14 +118,18 @@ Escalation still follows host approval. It does not authorize a different arbitr
 
 Completion during the first wait returns `{status, output, truncated, exit_code?, signal?, note?}`. `completed` does not imply exit code zero; inspect the exit marker. `signal` means a process termination signal. A killed process may return `{status:'killed', detail?, output?, truncated?}`. A background handle is `{status:'running', job_id, elapsed_ms, note}`. Registration starts with execution, not when the initial wait expires.
 
-### 3.2 async_wait_job
+### 3.2 async_wait
+
+The unified wait entry: wait for messages and job results without targets, or wait on job and subagent targets.
 
 | Argument | Type | Required/default | Rules |
 | --- | --- | --- | --- |
-| `job_id` | string | Required | Original opaque job identifier |
-| `wait_ms` | number | Required; no default | Clamped to minWaitMs..maxWaitMs |
+| `wait_ms` | number | Required; no default | Positive values clamped to minWaitMs..maxWaitMs; 0 is legal and means an immediate check |
+| `targets` | array | Optional; defaults to no targets | Elements are `{kind, id}`; kind enumerates job/agent, id nonempty; duplicates deduplicate to one target |
 
-Terminal results contain `{status, job_id, output, truncated, detail?}`. Terminal states are completed / killed / failed; stopping is not terminal. Wait results contain `{status, job_id, waited_ms, note}`. Missing or inaccessible jobs produce an error. A query failure calls for a retry, not a new execution. See section 4 for consuming reads.
+Without targets, the wait may return on processable messages and this package's job results. With targets, it waits for target terminal states (jobs) or changes (subagents); non-target messages do not end the wait. `wait_ms=0` returns current states and any undelivered content immediately, without a wait segment.
+
+A job terminal result is `{status:'completed'|'killed'|'failed', job_id, output, truncated, waited_ms}`. A subagent change is `{status:'changed'|'settled', agent_id, waited_ms, note}`. Wait-shaped results are `{status:'running'|'budget'|'interrupted'|'message'|'cancelled', waited_ms, note}`. Multi-target results carry the other targets' proven states in `targets`. Other jobs settling in the same batch are carried in `outputs` entries; `delivered` is batch metadata. A missing or inaccessible job target is reported with a `not_found` status. A query failure calls for a retry, not a new execution. See section 4 for consuming reads and delivery.
 
 ### 3.3 async_agent
 
@@ -139,22 +145,13 @@ Terminal results contain `{status, job_id, output, truncated, detail?}`. Termina
 
 There is no `run_in_background` argument and no wait for the final answer. Success immediately returns `{status:'started', agent_id, note}`, with the effective route source and wait guidance. Rejection does not invent an ID. The shipped presets do not configure an allowed preset set, so agent_preset is not exposed. A context-inheriting backend can expose the parent conversation to its child; write tasks according to the actual backend.
 
-Usually, a task prompt is sufficient. To choose a model, query exact IDs as described in section 5, then supply `provider` and `model` together. `reasoning_effort` may be supplied alone but is checked against the effective model. `agentOptions`, `agentPreset`, and `allowedAgentPresets` are fixed row configuration for advanced composition, not call arguments or part of the 17 UI settings.
+Usually, a task prompt is sufficient. To choose a model, query exact IDs as described in section 5, then supply `provider` and `model` together. `reasoning_effort` may be supplied alone but is checked against the effective model. `agentOptions`, `agentPreset`, and `allowedAgentPresets` are fixed row configuration for advanced composition, not call arguments or part of the 19 UI settings.
 
 **When support preflight runs:** an explicit route or effort choice, or row `agentOptions` containing `provider`, `model`, or `reasoningEffort`, triggers a support check before creation. Non-route options such as `maxTokens` alone do not. Backend `agentRouteDefaults` join the merge only when preflight is triggered. Explicit arguments override row options, row options override backend defaults, and missing route components come from the parent. Allowed-set checks still apply only to explicit choices; a row default triggering preflight does not make the request explicit.
 
 **What creation receives:** if any layer contributes options, the creation request carries the merged `agentOptions`. Otherwise it omits that field and lets the host inherit parent options, without additionally applying backend route defaults. A compatible parent effort or model default used temporarily by preflight is not copied back from the preflight result into the creation request. Actual child inheritance depends on that request and the host merge, not merely on the preflight values. When the route changes without an explicit effort, preflight does not reuse an incompatible effort from the old route.
 
-### 3.4 async_wait_agent
-
-| Argument | Type | Required/default | Rules |
-| --- | --- | --- | --- |
-| `agent_id` | string | Required | Child the caller is permitted to wait for |
-| `wait_ms` | number | Required; no default | Clamped to minWaitMs..maxWaitMs |
-
-Returns `{status, agent_id, waited_ms, note}`, or `{status:'not_found', agent_id, known_children}`. The existence check can retry for at most three pollIntervalMs ticks, within the same total budget. settled means the child is no longer observed running during this call; the final answer is a separate message. There is no answer field. For not_found, check the child directory and exact ID first. A failed query is not proof of absence; do not duplicate the delegation.
-
-### 3.5 async_workflow
+### 3.4 async_workflow
 
 Use this only for an explicitly requested workflow or large-scale orchestration. Use async_agent for one or two delegations.
 
@@ -184,9 +181,9 @@ const results = await pipeline(args.items,
 return results.filter(value => value !== null);
 ```
 
-Completion returns `{status:'completed', result}`; result is a rendered string, not the original JSON object. A killed run returns `{status:'killed', detail?}`; a background run returns `{status:'running', job_id, elapsed_ms, note}`. Read the whole run with async_wait_job; job_kill requests cancellation. Missing workflow wiring yields a readable refusal and zero jobs. See section 7 for composition.
+Completion returns `{status:'completed', result}`; result is a rendered string, not the original JSON object. A killed run returns `{status:'killed', detail?}`; a background run returns `{status:'running', job_id, elapsed_ms, note}`. A background run's result is delivered through async_wait or a completion message; job_kill requests cancellation. Missing workflow wiring yields a readable refusal and zero jobs. See section 7 for composition.
 
-### 3.6 async_list_subagent_models
+### 3.5 async_list_subagent_models
 
 | Argument | Type | Required/default | Rules |
 | --- | --- | --- | --- |
@@ -210,21 +207,23 @@ For another page, reuse `next` directly. It contains `page`, `page_size`, `versi
 
 Search matches IDs and display names case-insensitively. If some providers cannot be read, `complete=false` and `total` counts only obtained results. This does not mean the failed providers have no models. Exact IDs in the allowed set remain queryable and listable even when absent from the catalog; absence alone does not establish unsupported routing.
 
-## 4. Wait states and consuming output
+## 4. Wait states and direct delivery
 
-Read the returned state before choosing the next action. Budget expiry usually returns `running`: this wait ended without stopping the background work. Entry queries, existence checks, retries, and waiting all share one `wait_ms` budget, rather than each receiving a fresh budget.
+Read the returned state before choosing the next action. Budget expiry usually returns `running` (with targets) or `budget` (without): this wait ended without stopping the background work. Entry queries, existence checks, retries, and the wait segment all share one `wait_ms` budget, rather than each receiving a fresh budget.
 
-Messages can also end a wait early. User steering addressed to the current Agent, claimable notices, relayed Agent messages, and package late answers are checked, including messages already present at entry. Queued messages remain for the next turn and do not interrupt this wait. A message means there is new content to process, not that the target completed.
+Job results are delivered directly: when a job settles, its result body is attached to an in-flight wait return (`output` and `outputs` entries) or arrives as a completion message; no separate retrieve call is required. Deferred entries are claimed with `async_wait(wait_ms=0)`.
+
+Messages can also end a wait early. User steering addressed to the current Agent, claimable notices, relayed Agent messages, and package late answers are checked, including messages already present at entry. Queued messages remain for the next turn and do not interrupt this wait. A targeted wait ends only on target changes, target messages, or user steering; a message means there is new content to process, not that the target completed.
 
 | Result | Next action |
 | --- | --- |
-| `running` or a message wakeup | Handle the message or independent work; wait again with the same identifier when needed |
+| `running`/`budget` or a message wakeup | Handle the message or independent work; wait again on the same targets when blocking is needed |
 | Job `completed` | Read the result and check the exit code; completion does not imply exit zero |
 | Job `failed` / `killed` | Keep the error, signal, and available output before deciding how to proceed |
-| Child `settled` | Read the separate settlement message and final answer; do not treat it as proof of success |
-| Query or read failure | Retry the original identifier as instructed, without restarting the task |
+| Child `changed` / `settled` | Read the separate settlement message and final answer; do not treat it as proof of success |
+| Query or read failure | Retry the original target as instructed, without restarting the task |
 
-Canceling a wait or stopping the current turn ends only the wait, not the background command or workflow. The host may replace the cancellation return with an error. If the model never received job_id, recover it from job_list or the completion notice; do not repeat a possibly side-effecting command. Use job_kill to stop a job. Use the host's interrupt_agent/management entry to stop a child, and send_message to continue its conversation.
+Canceling a wait or stopping the current turn ends only the wait, not the background command or workflow. The host may replace the cancellation return with an error. If the model never received job_id, recover it from job_list or the completion message; do not repeat a possibly side-effecting command. Use job_kill to stop a job. Use the host's interrupt_agent/management entry to stop a child, and send_message to continue its conversation.
 
 settled means the child is not currently observed running. It does not mean success, answer delivery, or permanent termination. Read the separate settlement message. If final text has not arrived, do independent work and await delivery. Child relationship and running state are separate checks; query failure cannot establish not_found or settled.
 
@@ -268,18 +267,15 @@ silentFailureGuard defaults to false and applies only within the two package pre
 
 ## 7. Advanced composition
 
-Tools can be mounted independently in custom presets, and discovery can coexist with native discovery. Custom composition does not automatically disable existing synchronous tools. Each config.toolName chooses one tool; a row without it is the host-configuration role. Workflow requires an engine in an isolated delegation group. This example includes all six tools, not the other features of a complete preset.
+Tools can be mounted independently in custom presets, and discovery can coexist with native discovery. Custom composition does not automatically disable existing synchronous tools. Each config.toolName chooses one tool; a row without it is the host-configuration role. Workflow requires an engine in an isolated delegation group. This example includes all five tools, not the other features of a complete preset.
 
 ```yaml
 - id: async-run
   name: dsh-async-tools
   config: { toolName: async_run }
-- id: async-wait-job
+- id: async-wait
   name: dsh-async-tools
-  config: { toolName: async_wait_job }
-- id: async-wait-agent
-  name: dsh-async-tools
-  config: { toolName: async_wait_agent }
+  config: { toolName: async_wait }
 - id: async-agent
   name: dsh-async-tools
   config: { toolName: async_agent }

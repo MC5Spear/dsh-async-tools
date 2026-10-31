@@ -373,7 +373,7 @@ hostTest('R11：让出后的作业结局**同样**带沙箱标记（"让出后�
   const view = f.jobsFake.views().at(-1);
   assert.equal(view.status, 'completed');
   assert.match(view.detail, /\[sandbox: file access denied under workspace-write mode\]/,
-    '模型是通过 async_wait_job 读到这个 detail 的——标记不给出来，那条路就仍然没有线索');
+    '模型是通过 async_wait 读到这个 detail 的——标记不给出来，那条路就仍然没有线索');
   assert.match(view.detail, /escalation available/);
 });
 

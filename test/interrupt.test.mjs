@@ -19,7 +19,8 @@ const CHILD = 'child-42';
 test('wakesWait/classifyWake：user 插话命中 via=user，summary 缺席为空串', () => {
   assert.equal(wakesWait({ source: { kind: 'user' } }), true, 'user 插话命中');
   const wake = classifyWake({ id: 'm1', source: { kind: 'user' } });
-  assert.deepEqual(wake, { kind: 'wake', via: 'user', messageId: 'm1', summary: '' });
+  // user 分支不带身份（sender 恒 undefined，无目标过滤意义）——键存在但值缺席。
+  assert.deepEqual(wake, { kind: 'wake', via: 'user', messageId: 'm1', summary: '', sender: undefined });
 });
 
 test('wakesWait/classifyWake：form notice / relay 命中（结算通知与转达消息参与唤醒）', () => {

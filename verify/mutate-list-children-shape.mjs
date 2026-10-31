@@ -1,5 +1,5 @@
 /**
- * 变异：把 `listChildren()` 的行形状消费改回**只认判别联合**，要求 `test/wait-agent.test.mjs` 变红。
+ * 变异：把 `listChildren()` 的行形状消费改回**只认判别联合**，要求 `test/wait-delivery.test.mjs` 变红。
  *
  * ## 为什么必须做这一步
  *
@@ -12,7 +12,7 @@
  * - **M3 不排除诊断行**：`kind: 'diagnostic'` 的行被当成可等待的子代理
  *   ⇒ 对一条读不出来的记录进入等待，而不是给出 not_found。
  *
- * **本脚本会原地改写真实的 `lib/wait-agent.js`**，跑完在
+ * **本脚本会原地改写真实的 `lib/wait-agent-target.js`**，跑完在
  * `finally` 里写回并核对摘要。
  *
  * 用法：node verify/mutate-list-children-shape.mjs
@@ -25,8 +25,8 @@ import { fileURLToPath } from 'node:url';
 
 // 从模块自身位置推仓根（verify/ 上一级）——变异脚本要在任意 cwd 下都能跑。
 const PKG = fileURLToPath(new URL('..', import.meta.url));
-const TARGET = join(PKG, 'lib', 'wait-agent.js');
-const TEST = 'test/wait-agent.test.mjs';
+const TARGET = join(PKG, 'lib', 'wait-agent-target.js');
+const TEST = 'test/wait-delivery.test.mjs';
 
 const original = readFileSync(TARGET, 'utf8');
 const hashBefore = createHash('sha256').update(original, 'utf8').digest('hex');
@@ -44,8 +44,8 @@ const MUTATIONS = [
     id: 'M2',
     what: '纠错清单按 kind === "child" 过滤（真机现象：Known children 为空）',
     apply: (text) => text.replace(
-      '    return entries.map((entry) => describeEntry(entry, lang));',
-      "    return entries.filter((entry) => entry?.kind === 'child').map((entry) => describeEntry(entry, lang));")
+      'return entries.map((entry) => describeEntry(entry, this.config.agentLang, t));',
+      "return entries.filter((entry) => entry?.kind === 'child').map((entry) => describeEntry(entry, this.config.agentLang, t));")
   },
   {
     id: 'M3',

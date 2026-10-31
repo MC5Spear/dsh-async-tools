@@ -20,7 +20,7 @@
  * timeout / didnt-run / incomplete——超时不算 CAUGHT（挂起护栏 250 ms 让真红快过
  * 超时），没跑成（spawn EPERM）与摘要不完整统一 fail-closed，不产生假 CAUGHT。
  *
- * **本脚本会原地改写 `lib/interrupts.js`、`lib/wait-agent.js`、`lib/wait-job.js`**，
+ * **本脚本会原地改写 `lib/interrupts.js`、`lib/wait.js`**，
  * 跑完在 `finally` 里写回并逐文件核对摘要。受限沙箱会杀 node→node spawn
  * （EPERM）——按"没跑成不算 CAUGHT"fail-closed，换宽松环境或提权重跑。
  * **逐文件各跑一次**（不加 `--test-isolation` 旗标）：node v24.x 的 tap reporter 在
@@ -40,8 +40,8 @@ import { fileURLToPath } from 'node:url';
 
 // 从模块自身位置推仓根（verify/ 上一级）——变异脚本要在任意 cwd 下都能跑。
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const TARGET_FILES = ['lib/interrupts.js', 'lib/wait-agent.js', 'lib/wait-job.js'];
-const TESTS = ['test/interrupt.test.mjs', 'test/wait-job.test.mjs', 'test/wait-agent.test.mjs'];
+const TARGET_FILES = ['lib/interrupts.js', 'lib/wait.js'];
+const TESTS = ['test/interrupt.test.mjs', 'test/wait-delivery.test.mjs'];
 
 const originals = new Map(TARGET_FILES.map((rel) => {
   const path = join(ROOT, rel);
@@ -191,79 +191,72 @@ function applyVariant(patches) {
 }
 
 // ── 锚点（含缩进的完整字面量；多行锚用来撞开「同句不同缩进」的子串撞车）──
-// 入口检查现行拆成两段：unclaimedSettlement（结算优先）＋ classifyWake(preexistingWakeMessage(...))（唤醒分流）。
+// 入口检查现行拆成两段：unclaimedSettlement（结算优先）＋ classifyWake(preexistingWakeMessage(...))（唤醒分流），
+// 都在统一等待 lib/wait.js 的入口段；单元判据在 lib/interrupts.js。
 const INTERRUPT_LIST = `    const nextStep = agent?.inbox?.nextStep;
     if (!Array.isArray(nextStep)) return null;`;
-const AGENT_SETTLED = `        if (unclaimedSettlement(agent, agentId) !== null) {
-          return {
-            status: 'settled',`;
-const AGENT_SCAN = '        const earlyWake = classifyWake(preexistingWakeMessage(agent));';
-const AGENT_USER = "        if (earlyWake !== null && earlyWake.via === 'user') {";
-const JOB_SCAN = '        const earlyWake = classifyWake(preexistingWakeMessage(exec.agent));';
-const JOB_USER = "        if (earlyWake !== null && earlyWake.via === 'user') {";
-const JOB_TERMINAL = '        if (TERMINAL.has(barrier.status)) return settledResult(barrier);';
+const INTERRUPT_SCAN_FN = `export function preexistingWakeMessage(agent, lang = 'en', targetAgentIds = []) {`;
+const WAIT_SETTLED = '          if (unclaimedSettlement(agent, spec.id) !== null) {';
+const WAIT_USER = `        // 先到消息（等待尚未开始）：user → interrupted；目标消息（sender 命中）
+        // → 目标变化；无目标时 notice/relay → message 出口。
+        if (earlyWake !== null && earlyWake.via === 'user') {`;
+const WAIT_TERMINAL = '          if (snapshot.terminal) {';
 
-// 期望失败用例集合（多一条少一条都算 MISPLACED）与期望通过用例集合（T2 两例）。
+// 期望失败用例集合（多一条少一条都算 MISPLACED）与期望通过用例集合。
+// EXPECT_PASS 用 R57①（纯交付回归，不涉入口检查——五个变异下都必须保持绿：
+// 入口判据的拆除不得殃及交付通道）。
 const EXPECT_PASS = [
-  { file: 'test/wait-agent.test.mjs', name: 'async_wait_agent（T2）：用户插话 → interrupted，子代理一次都没被碰过' },
-  { file: 'test/wait-job.test.mjs', name: 'async_wait_job（T2）：用户插话 → interrupted，作业一次都没被碰过' }
+  { file: 'test/wait-delivery.test.mjs', name: 'R57 真实注册表①：workflow 先让出，wait 覆盖结算 → 最终 JSON 在返回中出现恰一次' }
 ];
 
 const variants = [
   {
     name: 'MA',
-    note: '纯事件驱动回潮（先到检查判定层整体拆除＋入口结算优先拆除）→ C1a/C1b/C2b 与复查族红、既有 T2 仍绿（C5a 由 MD 专测；挂起护栏 250 ms 承接回潮形态，红得快不是挂死）',
+    note: '纯事件驱动回潮（先到检查判定层整体拆除＋入口结算优先拆除）→ 单元 R55 两条与判据 1/2/2b 红、判据 3 仍绿（它守的是「不命中」方向）',
     timeoutMs: 120000,
     expectFail: [
       { file: 'test/interrupt.test.mjs', name: 'preexistingWakeMessage（R55）：nextStep 已有 user 插话 → 命中该消息（user 优先）' },
       { file: 'test/interrupt.test.mjs', name: 'preexistingWakeMessage（R55）：转达/结算通知在 next-step 命中（§2.2 集合扩展），迟到作答与上下文不命中' },
-      { file: 'test/wait-agent.test.mjs', name: 'R55（判据 1）：等待开始时 next-step 已有 user 插话 → 立即 interrupted，不订阅不进屏障' },
-      { file: 'test/wait-job.test.mjs', name: 'R55（判据 1）：等待开始时 next-step 已有 user 插话 → 立即 interrupted，不接线不创建 waiter' },
-      { file: 'test/wait-agent.test.mjs', name: 'async_wait_agent（有界查询·r3）：唤醒收敛后复查只拿剩余预算——插话后不等挂起的目录查询' },
-      { file: 'test/wait-agent.test.mjs', name: 'R29-a（判据 1·屏障睡眠）：用户插话在重试睡眠中到达 → 及时 interrupted，不等满重试' },
-      { file: 'test/wait-agent.test.mjs', name: 'R29-a（判据 1·屏障 not_found 复核）：重试耗尽的最后一轮查询赢得竞速 → 已到插话仍须交回' },
-      { file: 'test/wait-agent.test.mjs', name: 'R55（判据 2·注册表读不到）：入口唤醒收敛时 agents.get 抛错 → 未证实文案，不宣称"尚未结束"' },
-      { file: 'test/wait-agent.test.mjs', name: 'R55（判据 2b·入口优先级）：next-step 滞留目标结算通知 → 结束优先于一切唤醒（含迟到作答）' }
+      { file: 'test/wait-delivery.test.mjs', name: 'R55（判据 1·统一等待）：wait 开始时 next-step 已有 user 插话 → 立即 interrupted' },
+      { file: 'test/wait-delivery.test.mjs', name: 'R55（判据 2·负面）：next-step 滞留的是转达消息 → message 出口，不冒充打断' },
+      { file: 'test/wait-delivery.test.mjs', name: 'R55（判据 2b·子代理侧）：next-step 滞留目标子代理的未领取结算通知 → settled（结束优先于插话）' }
     ],
     patches: [
       {
         file: 'lib/interrupts.js',
-        anchor: `export function preexistingWakeMessage(agent) {
-  try {`,
-        mutated: `export function preexistingWakeMessage(agent) {
-  return null; // mutated MA: 先到检查整体拆除（纯事件驱动回潮）
-  try {`
+        anchor: INTERRUPT_SCAN_FN,
+        mutated: `export function preexistingWakeMessage(agent, lang = 'en', targetAgentIds = []) {
+  return null; // mutated MA: 先到检查整体拆除（纯事件驱动回潮）`
       },
       {
-        file: 'lib/wait-agent.js', anchor: AGENT_SETTLED,
-        mutated: `        if (false) { // mutated MA: 入口结算检查拆除
-          return {
-            status: 'settled',`
+        file: 'lib/wait.js', anchor: WAIT_SETTLED,
+        mutated: '          if (false) { // mutated MA: 入口结算检查拆除'
       }
     ]
   },
   {
     name: 'MB',
-    note: '拆唤醒分流（一切先到唤醒都按插话打断）→ C2a/C2b 红（转达/结算/迟到作答滞留不得打断）',
+    note: '拆唤醒分流（一切先到唤醒都按插话打断）→ 判据 2 负面红（转达滞留不得打断）',
     timeoutMs: 120000,
     expectFail: [
-      { file: 'test/wait-agent.test.mjs', name: 'R55（判据 2·负面对照一）：next-step 滞留的是转达/迟到作答 → 不打断，迟到作答照旧唤醒' },
-      { file: 'test/wait-agent.test.mjs', name: 'R55（判据 2·注册表读不到）：入口唤醒收敛时 agents.get 抛错 → 未证实文案，不宣称"尚未结束"' },
-      { file: 'test/wait-job.test.mjs', name: 'R55（判据 2·负面对照一）：next-step 滞留的是转达/结算/迟到作答 → 不打断，迟到作答照旧唤醒' }
+      { file: 'test/wait-delivery.test.mjs', name: 'R55（判据 2·负面）：next-step 滞留的是转达消息 → message 出口，不冒充打断' }
     ],
     patches: [
-      { file: 'lib/wait-agent.js', anchor: AGENT_USER, mutated: '        if (earlyWake !== null) { // mutated MB: 一切先到唤醒都打断' },
-      { file: 'lib/wait-job.js', anchor: JOB_USER, mutated: '        if (earlyWake !== null) { // mutated MB: 一切先到唤醒都打断' }
+      {
+        file: 'lib/wait.js', anchor: WAIT_USER,
+        mutated: `        // mutated MB: 一切先到唤醒都按插话打断（拆除 user 分流）
+        // → 目标变化；无目标时 notice/relay → message 出口。
+        if (earlyWake !== null) {`
+      }
     ]
   },
   {
     name: 'MC',
-    note: '加扫 next-turn（排队消息也命中）→ 读侧一例＋C3a/C3b 红（R12 不回归）',
+    note: '加扫 next-turn（排队消息也命中）→ 单元 next-turn 一例＋判据 3 负面红（R12 不回归）',
     timeoutMs: 120000,
     expectFail: [
       { file: 'test/interrupt.test.mjs', name: 'preexistingWakeMessage（R55）：next-turn 的 user 排队消息不命中（排队不唤醒，R12 不回归）' },
-      { file: 'test/wait-agent.test.mjs', name: 'R55（判据 3·负面对照二）：next-turn 排队 user 消息、next-step 干净 → 不打断（R12 不回归）' },
-      { file: 'test/wait-job.test.mjs', name: 'R55（判据 3·负面对照二）：next-turn 排队 user 消息、next-step 干净 → 不打断（R12 不回归）' }
+      { file: 'test/wait-delivery.test.mjs', name: 'R55（判据 3·负面）：next-turn 的排队 user 消息不命中（排队不唤醒，R12 不回归）' }
     ],
     patches: [
       {
@@ -275,32 +268,29 @@ const variants = [
   },
   {
     name: 'MD',
-    note: 'wait-agent 去结算并存决定（入口命中即不再结算优先）→ C2b/C5a 红',
+    note: '去结算并存决定（入口命中即不再结算优先）→ 判据 2b 红（结束优先于打断的入口侧）',
     timeoutMs: 120000,
     expectFail: [
-      { file: 'test/wait-agent.test.mjs', name: 'R55（判据 2b·入口优先级）：next-step 滞留目标结算通知 → 结束优先于一切唤醒（含迟到作答）' },
-      { file: 'test/wait-agent.test.mjs', name: 'R55（判据 5）：先到插话与未领取结算通知并存 → settled（结束优先于打断，入口侧）' }
+      { file: 'test/wait-delivery.test.mjs', name: 'R55（判据 2b·子代理侧）：next-step 滞留目标子代理的未领取结算通知 → settled（结束优先于插话）' }
     ],
     patches: [
       {
-        file: 'lib/wait-agent.js', anchor: AGENT_SETTLED,
-        mutated: `        if (false) { // mutated MD: 去结算并存决定
-          return {
-            status: 'settled',`
+        file: 'lib/wait.js', anchor: WAIT_SETTLED,
+        mutated: '          if (false) { // mutated MD: 去结算并存决定'
       }
     ]
   },
   {
     name: 'ME',
-    note: 'wait-job 停点前移（终态判定对插话在场让路）→ C5b 红',
+    note: '作业终态停点对插话在场让路 → 判据 5 红（完成结果优先，入口侧）',
     timeoutMs: 120000,
     expectFail: [
-      { file: 'test/wait-job.test.mjs', name: 'R55（判据 5）：作业已终态 + 先到插话并存 → 完成结果（结束优先于打断，入口侧）' }
+      { file: 'test/wait-delivery.test.mjs', name: 'R55（判据 5·作业侧）：作业已终态 + 先到 user 插话并存 → 完成结果（结束优先于打断）' }
     ],
     patches: [
       {
-        file: 'lib/wait-job.js', anchor: JOB_TERMINAL,
-        mutated: '        if (TERMINAL.has(barrier.status) && preexistingWakeMessage(exec.agent) === null) return settledResult(barrier); // mutated ME: 停点前移'
+        file: 'lib/wait.js', anchor: WAIT_TERMINAL,
+        mutated: '          if (snapshot.terminal && earlyWake === null) { // mutated ME: 停点前移'
       }
     ]
   }

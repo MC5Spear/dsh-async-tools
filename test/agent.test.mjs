@@ -190,7 +190,7 @@ hostTest('async_agent：立返 started + agent_id，note 含可复制的等待�
   assert.equal(result.status, 'started');
   assert.equal(result.agent_id, 'child-1');
   // note 里的数字现读现取（默认 defaultWaitMs=30000）；改设置后必须跟着变（下一条用例）。
-  assert.match(result.note, /async_wait_agent\(agent_id="child-1", wait_ms=30000\)/,
+  assert.match(result.note, /async_wait\(targets=\[\{kind:"agent", id:"child-1"\}\], wait_ms=30000\)/,
     'note 必须给出可复制的下一步调用，数字取自生效配置');
   assert.match(result.note, /arrives as its own message in the conversation/);
   // 模型只看得见 render——agent_id 必须出现在 render 文本里。
@@ -757,7 +757,7 @@ hostTest('async_agent：零前台（哨兵不动）+ 零等待原语（timer/on 
   // 实现约束"不注册任何定时器、监听器、作业"：删掉这层保护（实现里加个定时器）
   // 会让这里变红。
   assert.deepEqual(env.timerUses, [], 'async_agent 不得使用任何定时器（不等待就没有打断问题）');
-  assert.deepEqual(env.onUses, [], 'async_agent 不得注册任何监听器（等待交给 async_wait_agent）');
+  assert.deepEqual(env.onUses, [], 'async_agent 不得注册任何监听器（等待交给 async_wait）');
 });
 
 hostTest('async_agent：三种基础错误态互相可区分，且一个子代理都不派生（R13）', async () => {

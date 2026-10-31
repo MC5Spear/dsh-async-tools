@@ -449,9 +449,9 @@ export function fakeAgent(id = 'session-1') {
 }
 
 /**
- * **守卫式** ctx：只放行 `async_wait_agent` 有权使用的公共接口，其余一律抛错。
+ * **守卫式** ctx：只放行 `async_wait`（子代理目标）有权使用的公共接口，其余一律抛错。
  *
- * 需求 §2.3.3 要求 `async_wait_agent` **不得读会话日志、内部状态或越界数据**。
+ * 需求 §2.3.3 要求子代理等待路径**不得读会话日志、内部状态或越界数据**。
  * 本函数把这条要求**行为化**：把 ctx 包成 Proxy，**只有明确列出的属性可读**，
  * 读别的立刻抛错并记下名字——"碰了内部状态"当场变红并指出碰的是哪个属性。
  *
@@ -485,7 +485,7 @@ export function guardedWaitAgentCtx() {
       if (typeof key === 'symbol' || key in target) return target[key];
       denied.push(`subagents.${String(key)}`);
       throw new Error(
-        `越界读取违规（需求 §2.3.3）：async_wait_agent 读了 ctx.subagents.${String(key)}——`
+        `越界读取违规（需求 §2.3.3）：async_wait（子代理目标）读了 ctx.subagents.${String(key)}——`
         + '只允许公共查询 listChildren()'
       );
     }
@@ -509,7 +509,7 @@ export function guardedWaitAgentCtx() {
         if (typeof key === 'symbol' || key in target) return target[key];
         denied.push(`agents.${String(key)}`);
         throw new Error(
-          `越界读取违规（需求 §2.3.3）：async_wait_agent 读了 ctx.agents.${String(key)}——`
+          `越界读取违规（需求 §2.3.3）：async_wait（子代理目标）读了 ctx.agents.${String(key)}——`
           + '只允许公共查询 agents.get(id)'
         );
       }
@@ -527,7 +527,7 @@ export function guardedWaitAgentCtx() {
       }
       denied.push(String(key));
       throw new Error(
-        `越界读取违规（需求 §2.3.3）：async_wait_agent 读了 ctx.${String(key)}——`
+        `越界读取违规（需求 §2.3.3）：async_wait（子代理目标）读了 ctx.${String(key)}——`
         + '只允许公共事件 ctx.on 与公共查询 ctx.subagents.listChildren / ctx.agents.get'
       );
     },

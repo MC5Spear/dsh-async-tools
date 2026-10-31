@@ -92,7 +92,7 @@ npm run check:alias-tokens
 
 ### 主题别名检查的来源确认
 
-`check:alias-tokens` 不连接实例，但不是只读本仓就能完成的检查。它每次从宿主模块树枚举主题定义，不检查主题包版本。先确认来源属于支持集合内的一个宿主版本（`0.2.1-rc.2`、`0.2.1-rc.3`、`0.2.1-rc.4` 之一），再运行：
+`check:alias-tokens` 不连接实例，但不是只读本仓就能完成的检查。它每次从宿主模块树枚举主题定义，不检查主题包版本。先确认来源属于支持集合内的一个宿主版本（`0.2.1-rc.2`、`0.2.1-rc.3`、`0.2.1-rc.4`、`0.2.1-rc.5` 之一；rc.5 已完成兼容验收），再运行：
 
 1. 选定目标宿主模块树的 `node_modules`。核对该树下 `@deepseek-ai/dsh-client-ui-theme/package.json` 的版本就是这个宿主版本，并确认主题源是同一树下的 `@deepseek-ai/dsh-client-ui-theme/lib/client.js`。没有匹配的源时，先取得正确来源，不以另一宿主替代本线结论。
 2. 在运行命令的终端显式设置 `DSAT_HOST_MODULES` 为该模块树的绝对路径，再运行 `npm run check:alias-tokens`。此脚本不加载 `_host-hooks`，也不通过本机配置把 `hostModules` 转成环境变量；只填写本机配置文件不够。
@@ -110,7 +110,7 @@ npm run check:alias-tokens
 
 | 脚本 | 覆盖与副作用 |
 | --- | --- |
-| [`final-acceptance.mjs`](<final-acceptance.mjs>) | 当前覆盖四个基础工具（async_run / async_wait_job / async_wait_agent / async_agent）；路由查询与实时选择由 acceptance-017 承担，workflow 另由专门探针承担。会重置共享设置，运行前确认授权和起始值 |
+| [`final-acceptance.mjs`](<final-acceptance.mjs>) | 当前覆盖三个基础工具（async_run / async_wait / async_agent）；路由查询与实时选择由 acceptance-017 承担，workflow 另由专门探针承担。会重置共享设置，运行前确认授权和起始值 |
 | [`async-e2e.mjs`](<async-e2e.mjs>) | 命令让出、作业取回及插话；可能修改共享设置，不能直接当无副作用批处理 |
 | [`probe-queue-delivery.mjs`](<probe-queue-delivery.mjs>) | 下一轮与下一步领取的区别、插话不杀作业；状态需真实工具结果证明 |
 | [`probe-queue-baseline.mjs`](<probe-queue-baseline.mjs>) | 记录实际投递行为，不作为独立通过判据 |
@@ -175,8 +175,8 @@ npm run check:alias-tokens
 | `verify/mutate-config-slot.mjs` | `test/two-planes.test.mjs` | 配置表单挂点 |
 | `verify/mutate-r27-form.mjs` | `test/two-planes.test.mjs` | 表单草稿与保存 |
 | `verify/mutate-lang.mjs` | `test/two-planes.test.mjs` | 双语言行为 |
-| `verify/mutate-list-children-shape.mjs` | `test/wait-agent.test.mjs` | 子代理目录形状 |
-| `verify/mutate-r55-entry-scan.mjs` | `test/wait-agent.test.mjs` | 等待入口扫描 |
-| `verify/mutate-atb01-final-result.mjs` | `test/wait-job.test.mjs` | 最终结果同次交付，另有真实注册表测试 |
+| `verify/mutate-list-children-shape.mjs` | `test/wait-delivery.test.mjs` | 子代理目录形状 |
+| `verify/mutate-r55-entry-scan.mjs` | `test/wait-delivery.test.mjs` | 等待入口扫描 |
+| `verify/mutate-atb01-final-result.mjs` | `test/wait-delivery.test.mjs` | 最终结果同次交付，另有真实注册表测试 |
 
 检查器输入变异包括路径、编码之外的公开范围、模型文案、主题、策略和界面判据等，分别由脚本自身声明入口；[变异索引检查器](<../tools/check-mutate-index.mjs>)核对上述实现表和具名例外，不以文档表代替执行结论。

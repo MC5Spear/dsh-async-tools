@@ -4,9 +4,9 @@
  * 为什么必须有这个文件：其余测试文件的 `ctx` 都是 `test/_helpers.mjs` 自己捏的替身，
  * **替身要什么有什么**，所以"`inject` 漏声明某个服务"这类缺陷在假件测试里永远绿。
  * 真实 cordis 上下文上，漏声明的服务访问会以 `cannot get property "<svc>"
- * without inject` 在插件树加载期暴露——例如 `timer` 只被 `async_wait_job` 与
- * `async_wait_agent` 消费（`async_run` 的让出走宿主 `jobs.wait`、请求显式
- * `onExpiry: 'none'`，不经 `ctx.timer`），漏声明它时红的正是那两个等待工具。
+ * without inject` 在插件树加载期暴露——例如 `timer` 只被 `async_wait` 消费
+ * （`async_run` 的让出走宿主 `jobs.wait`、请求显式 `onExpiry: 'none'`，
+ * 不经 `ctx.timer`），漏声明它时红的正是等待入口。
  *
  * 本文件做两件事，缺一不可：
  * 1. **静态扫描** `lib/` 下所有 `.js` 里的 `ctx.<服务>` 访问，断言它们是 `inject` 的子集
@@ -259,6 +259,8 @@ const BUILTIN_CTX_MEMBERS = new Set(['effect', 'on', 'emit', 'get', 'logger', 'i
  */
 function makeContext(Context) {
   const registered = [];
+  const restrictCalls = [];
+  const restrictDisposed = [];
   const ctx = new Context();
   ctx.provide('tools', {
     register(definition) {
@@ -267,6 +269,12 @@ function makeContext(Context) {
         const index = registered.indexOf(definition);
         if (index >= 0) registered.splice(index, 1);
       };
+    },
+    // `restrict`（宿主 dsh-tools 的工具隐藏服务）记录器：断言 job_output 隐藏
+    // 的调用参数与 disposer 接线（T19）——不是真隐藏，只验证本包的调用形态。
+    restrict(policy) {
+      restrictCalls.push(policy);
+      return () => { restrictDisposed.push(policy); };
     }
   });
   ctx.provide('jobs', {
@@ -293,7 +301,7 @@ function makeContext(Context) {
   // 第九服务：会话当前有效目录（async_run 启动前 ensure；挂载级假件只需
   // 返回固定目录——目录解析行为由 test/jobs.test.mjs 专测）。
   ctx.provide('workingDirectory', { ensure: async () => 'D:\\work' });
-  return { ctx, registered };
+  return { ctx, registered, restrictCalls, restrictDisposed };
 }
 
 /**
@@ -353,7 +361,7 @@ test('T6：lib/ 里访问的每个 ctx.<服务> 都必须在 inject 里声明', 
 });
 
 test('T8：作废措辞"唯一途径"只许出现在标注其作废的上下文里', () => {
-  // 需求 §2.1.3：`async_wait_job` 是本包规定的后台结果读取途径，但不能宣称它
+  // 需求 §2.1.3：`async_wait` 是本包规定的后台结果读取途径，但不能宣称它
   // 排除宿主的其他读取工具——"唯一途径"把规定途径夸大成排他断言。`lib/` 里若有
   // 注释把它当作**生效口径**引用，照注释改代码的人会把现行口径理解错。
   //
@@ -416,7 +424,7 @@ test('T3：inject 恰为九项服务；apply 按 config.toolName 注册工具；
   // 工具行分派判据——真 cordis 上下文里按名注册成功、卸载后注销。构造时不查
   // provider 注册表（描述里的名字取自配置），所以 makeContext 的假 subagents
   // 不需要 getProvider；查询行也不查 llm（按调用可选读取）。
-  for (const toolName of ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent', 'async_list_subagent_models']) {
+  for (const toolName of ['async_run', 'async_wait', 'async_agent', 'async_list_subagent_models']) {
     const { ctx, registered } = makeContext(Context);
     const fork = ctx.plugin(
       { name: host.name, inject: host.inject, Config: host.Config, apply: host.apply },
@@ -434,6 +442,73 @@ test('T3：inject 恰为九项服务；apply 按 config.toolName 注册工具；
 
     await fork.dispose();
     assert.deepEqual(registered, [], 'ctx.effect 的 disposer 必须在 fiber 卸载时注销工具（R4 可逆性）');
+  }
+});
+
+test('T19：job_output 隐藏——agent/created 挂 agent 作用域 restrict，查询行不挂；去重与回收（9.3.5）', async (t) => {
+  const host = await loadHost();
+  if (host === undefined || Context === undefined) {
+    t.skip(HOST_SKIP_REASON);
+    return;
+  }
+  // 四个交付类工具行（async_run/async_wait/async_agent/async_workflow）装载后监听
+  // `agent/created`，在 **Agent 作用域**上调 agent.ctx.tools.restrict({deny:['job_output']})
+  // ——真机首测暴露「行装载 ctx 上 restrict 必报 unknown global tool」（同层注册不进
+  // 本层可限制名单，与行序无关），宿主语义要求挂在 Agent 继承面上（installJobOutputHide
+  // 文档串）；查询行（async_list_subagent_models）不挂——9.3.5 末条「查询类工具不受影响」。
+  const deliveryRows = ['async_run', 'async_wait', 'async_agent', 'async_workflow'];
+  for (const toolName of [...deliveryRows, 'async_list_subagent_models']) {
+    const { ctx } = makeContext(Context);
+    const fork = ctx.plugin(
+      { name: host.name, inject: host.inject, Config: host.Config, apply: host.apply },
+      { toolName }
+    );
+    await activate(fork);
+    // 假 Agent：agent.ctx.tools.restrict 与 agent.ctx.effect 都是 per-agent 记录器
+    //（effect 记录器锚定句柄归属——挂行 ctx 则行卸载会连带摘在世 Agent 的隐藏，
+    // 复审 L-1/N-B 的缺陷形态）。
+    const agentRestrictCalls = [];
+    const agentEffectDisposers = [];
+    const fakeAgent = {
+      id: `agent-${toolName}`,
+      ctx: {
+        tools: { restrict(policy) { agentRestrictCalls.push(policy); return () => {}; } },
+        effect(fn) { agentEffectDisposers.push(fn); }
+      }
+    };
+    ctx.emit('agent/created', { agent: fakeAgent });
+    if (deliveryRows.includes(toolName)) {
+      assert.deepEqual(
+        agentRestrictCalls,
+        [{ deny: ['job_output'] }],
+        `${toolName} 行应在 agent/created 后对 agent.ctx 恰一次 restrict({deny:['job_output']})（装载期不再直接 restrict——真机 unknown-tool 失败形态即红）`
+      );
+      assert.equal(agentEffectDisposers.length, 1, '句柄必须挂 agent.ctx.effect（随 Agent 世代回收；挂行 ctx 则行单独卸载摘除在世 Agent 的隐藏——L-1）');
+      // 同一 Agent 再次 created（多行监听/重复事件）：模块级去重，只挂一次。
+      ctx.emit('agent/created', { agent: fakeAgent });
+      assert.equal(agentRestrictCalls.length, 1, '同一 Agent 重复 created 不重复挂（WeakSet 去重）');
+      // 故障形态：agent.ctx 缺席或 restrict 抛错——监听器不外抛（dsh-agent 对
+      // created 监听器失败按 reject 处理，会阻断 Agent 创建）、降级 warn、不挡
+      // 后续 Agent。
+      const bare = { id: 'agent-bare' };
+      ctx.emit('agent/created', { agent: bare });
+      const throwing = { id: 'agent-throw', ctx: { tools: { restrict() { throw new Error('boom'); } } } };
+      ctx.emit('agent/created', { agent: throwing });
+      const afterFault = [];
+      ctx.emit('agent/created', {
+        agent: { id: 'agent-after-fault', ctx: { tools: { restrict(p) { afterFault.push(p); return () => {}; } } } }
+      });
+      assert.equal(afterFault.length, 1, '故障 Agent 不阻断后续 Agent 的隐藏登记（3.5.1 故障注入语义）');
+    } else {
+      assert.equal(agentRestrictCalls.length, 0, '查询行不挂隐藏（9.3.5：查询类工具不受影响）');
+    }
+    await fork.dispose();
+    // 行卸载后监听器摘除：新 Agent 的 created 不再触发。
+    const lateCalls = [];
+    ctx.emit('agent/created', {
+      agent: { id: 'agent-late', ctx: { tools: { restrict(p) { lateCalls.push(p); return () => {}; } } } }
+    });
+    assert.equal(lateCalls.length, 0, '行卸载后不再对新 Agent 挂隐藏（可逆性）');
   }
 });
 
@@ -609,9 +684,9 @@ test('T12b：降级登记的模型可见侧——seedDegraded/readDegraded/clear
     // 缺任一半边即红，钉住警示段不回退为单一来源断言。
     assert.ok(enDesc.includes('factory defaults') && enDesc.includes('the last valid values'),
       'en 警示段两态来源并列：factory defaults ＋ the last valid values');
-    for (const name of ['async_wait_job', 'async_wait_agent', 'async_agent', 'async_workflow', 'async_list_subagent_models']) {
+    for (const name of ['async_wait', 'async_agent', 'async_workflow', 'async_list_subagent_models']) {
       assert.ok(buildToolText(name, resolveConfig({ toolName: name })).description.includes('Live config self-check failed'),
-        `${name} 的描述同样拼警示段（六个工具一律）`);
+        `${name} 的描述同样拼警示段（五个工具一律）`);
     }
     const zhConfig = resolveConfig({ toolName: 'async_run', agentLang: 'zh' });
     const zhDesc = buildToolText('async_run', zhConfig).description;
@@ -674,7 +749,7 @@ test('T15（R38；R44 换钉）：九个 dsh* peer 共用同一支持集合—�
   // 包清单被悄悄改写（声明漂移）。测试期望作为需求副本，与包清单的 peer 原文并存是合理的；
   // 运行期判据（准入、junction、安装说明）一律从包清单取集合。集合变化时本用例变红，
   // 提示同步需求、版本与文档。
-  const SUPPORT = '0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4';
+  const SUPPORT = '0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5';
   const expected = {
     '@deepseek-ai/cordis': '~4.0.5',
     '@deepseek-ai/cordis-plugin-timer': '~1.1.7',

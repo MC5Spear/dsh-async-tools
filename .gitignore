@@ -11,3 +11,5 @@ node_modules/
 .vscode/
 Thumbs.db
 Desktop.ini
+
+.local-tmp/

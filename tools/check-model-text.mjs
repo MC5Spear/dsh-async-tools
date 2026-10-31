@@ -292,11 +292,21 @@ const PROSE_ALLOWLIST = {
     { needle: 'sweep reminder failed for agent', why: '同上（补醒提醒失败的审计行）' },
     { needle: 'hand-back failed for batch', why: '同上（可逆卸载交还失败的审计行）' }
   ],
-  'wait-job.js': [
-    { needle: 'wait concluded', why: '内部中止原因（喂给 raceAbort 的 Error，只在进程内传播）' }
+  'wait.js': [
+    { needle: 'wait concluded', why: '内部中止原因（喂给 raceAbort 的 Error，只在进程内传播；原 wait-job 同款条目随文件并入）' },
+    { needle: 'returning as budget-exhausted', why: '操作者一侧诊断（ctx.logger.warn——自旋防线兜底触发的缺陷信号行的尾段字面量，不进模型上下文；needle 须与被抽取字面量同段）' }
   ],
-  'wait-agent.js': [
-    { needle: 'total budget exhausted', why: '内部中止原因（总截止 AbortController 的 abort 理由，只在进程内传播；同 wait-job 的 wait concluded 一类）' }
+  'index.js': [
+    { needle: 'the tool-jobs row must be part of', why: '操作者一侧诊断（ctx.logger.warn——job_output 隐藏登记降级行的尾段字面量，不进模型上下文；agent/created 挂点改版后的新措辞，needle 须与被抽取字面量同段）' },
+    { needle: 'agent.ctx.tools.restrict unavailable', why: '操作者一侧诊断（同上降级路径 throw 的 Error 消息——只在进程内被 catch 转 warn，不进模型上下文）' },
+    { needle: 'async-tools: job_output hide', why: 'cordis effect 卸载标签（行卸载时摘限制句柄的登记名，宿主日志一侧，不进模型上下文）' }
+  ],
+  'delivery.js': [
+    { needle: 'claimed listener attach failed', why: '操作者一侧 stderr 诊断（log() 通道——attachClaimedListener 的防御路径，不进模型上下文）' },
+    { needle: 'keep-alive beat', why: '同上（预注册心跳被注册表拒绝的 warn 行；jobId 与错误文本来自变量插值）' },
+    { needle: 'settled read', why: '同上（结算读取失败的 warn 行）' },
+    { needle: 'incremental read', why: '同上（增量读取失败的 warn 行）' },
+    { needle: 'completion delivery for', why: '同上（完成消息投递失败/registry miss 的 warn 行——owner 与错误文本来自变量插值，两条同前缀合并登记）' }
   ],
   // 宿主副本豁免类：assertRoutes 三条 + fold 空名单 throw 一条，全部是宿主
   // `dsh-tool-subagent` 源码的逐字同形串——verify/check-agent-policy.mjs 钉版看守
@@ -339,9 +349,9 @@ const PROSE_ALLOW_NEEDLES = Object.values(PROSE_ALLOWLIST).flat().map((entry) =>
   }
 }
 
-// ── 运行时层：两档各构造四个工具，另对编排取端到端渲染样例 ────────────────
+// ── 运行时层：两档各构造三个工具，另对编排取端到端渲染样例 ────────────────
 //
-// 构造 async_run / async_wait_job / async_wait_agent / async_agent 四个工具，取
+// 构造 async_run / async_wait / async_agent 三个工具，取
 // description / 参数说明 / render 输出 / 全部 note 与 digest 函数的样例串——这些
 // 正是模型看到的串；编排工具的完成分支渲染经下方端到端取样，查询工具的模型可见
 // 文本全部由词典键组装、由表层逐键判据覆盖。en 档零 CJK；zh 档与 en 同位串不同
@@ -410,8 +420,7 @@ async function collectWorkflowCompletedRender(agentLang) {
 async function collectSamples(agentLang) {
   const { resolveConfig, resolveWait } = await import('../lib/config.js');
   const { createRunTool } = await import('../lib/jobs.js');
-  const { createWaitJobTool } = await import('../lib/wait-job.js');
-  const { createWaitAgentTool } = await import('../lib/wait-agent.js');
+  const { createWaitTool } = await import('../lib/wait.js');
   const { createAgentTool } = await import('../lib/agent.js');
   const output = await import('../lib/output.js');
   const { t } = await import('../lib/text.js');
@@ -420,8 +429,7 @@ async function collectSamples(agentLang) {
   const ctx = { shell: { sandboxMode: 'workspace-write' } };
   const tools = {
     run: createRunTool(ctx, { ...config }),
-    wait_job: createWaitJobTool(ctx, { ...config }),
-    wait_agent: createWaitAgentTool(ctx, { ...config }),
+    wait: createWaitTool(ctx, { ...config }),
     agent: createAgentTool(ctx, { ...config })
   };
   const samples = [];
@@ -436,14 +444,11 @@ async function collectSamples(agentLang) {
     const noteValues = key === 'run'
       ? [{ status: 'completed', output: 'ok', truncated: true, exit_code: 1 },
         { status: 'running', note: output.yieldNote({ lang: agentLang, jobId: 'async-command-1', yieldMs: config.defaultYieldMs, maxWaitMs: config.maxWaitMs, defaultWaitMs: config.defaultWaitMs, elapsedMs: 1, mode: 'user' }) }]
-      : key === 'wait_job'
-        ? [{ status: 'completed', job_id: 'j', output: 'ok', truncated: true, detail: t(agentLang, 'detail.exitCode', { code: 0 }) },
+      : key === 'wait'
+        ? [{ status: 'completed', job_id: 'j', output: t(agentLang, 'detail.exitCode', { code: 0 }), truncated: true, detail: t(agentLang, 'detail.exitCode', { code: 0 }) },
           { status: 'running', job_id: 'j', waited_ms: 1, note: output.waitAgainNote({ lang: agentLang, jobId: 'j', waitedMs: 1, maxWaitMs: config.maxWaitMs }) },
-          { status: 'interrupted', job_id: 'j', waited_ms: 1, note: output.interruptedNote({ lang: agentLang, subject: 'job j', waitedMs: 1, resume: 'async_wait_job(...)' }) }]
-        : key === 'wait_agent'
-          ? [{ status: 'running', agent_id: 'sa-1', waited_ms: 1, note: output.agentWaitAgainNote({ lang: agentLang, agentId: 'sa-1', waitedMs: 1, maxWaitMs: config.maxWaitMs }) },
-            { status: 'not_found', agent_id: 'sa-x', known_children: [t(agentLang, 'via.idle')] }]
-          : [{ agent_id: 'sa-1', note: t(agentLang, 'note.agentStarted', { agentId: 'sa-1', defaultWaitMs: config.defaultWaitMs }) + t(agentLang, 'route.inherits') }];
+          { status: 'interrupted', job_id: 'j', waited_ms: 1, note: output.interruptedNote({ lang: agentLang, subject: 'job j', waitedMs: 1, resume: 'async_wait(...)' }) }]
+        : [{ agent_id: 'sa-1', note: t(agentLang, 'note.agentStarted', { agentId: 'sa-1', defaultWaitMs: config.defaultWaitMs }) + t(agentLang, 'route.inherits') }];
     for (const value of noteValues) {
       for (const block of renders({}, value)) samples.push([`render(${key})`, String(block?.text ?? '')]);
     }
@@ -453,7 +458,7 @@ async function collectSamples(agentLang) {
     ['agentWaitAgainNote', output.agentWaitAgainNote({ lang: agentLang, agentId: 'sa-1', waitedMs: 1, maxWaitMs: config.maxWaitMs })],
     ['recheckFailedNote', output.recheckFailedNote({ lang: agentLang, jobId: 'async-command-1', waitedMs: 1, maxWaitMs: config.maxWaitMs })],
     ['agentRecheckFailedNote', output.agentRecheckFailedNote({ lang: agentLang, agentId: 'sa-1', waitedMs: 1, maxWaitMs: config.maxWaitMs })],
-    ['interruptedNote(agent)', output.interruptedNote({ lang: agentLang, subject: 'subagent sa-1', waitedMs: 1, resume: 'async_wait_agent(...)' })],
+    ['interruptedNote(agent)', output.interruptedNote({ lang: agentLang, subject: 'subagent sa-1', waitedMs: 1, resume: 'async_wait(...)' })],
     ['yieldDigest', output.yieldDigest(config)],
     ['waitDigest', output.waitDigest(config)]
   );

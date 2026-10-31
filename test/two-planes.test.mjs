@@ -72,7 +72,7 @@ test('T2（R6）：宿主入口不注册任何工具', () => {
   // 宿主入口也不该把工具的工厂 import 进来——import 了迟早会被用上。
   // （这条正则必须覆盖 agent.js——光改注释不改正则，
   // 宿主半边悄悄引入第四个工厂会全绿放行。）
-  assert.doesNotMatch(code, /from '\.\/(jobs|wait-job|wait-agent|agent)\.js'/, '宿主入口不得引入任何工具的工厂');
+  assert.doesNotMatch(code, /from '\.\/(jobs|wait|wait-job-target|wait-agent-target|agent)\.js'/, '宿主入口不得引入任何工具的工厂');
 });
 
 test('T2b（R6）：单包两角色——默认入口按 toolName 分派，./host 子路径入口不得复活', () => {
@@ -95,15 +95,14 @@ test('T2b（R6）：单包两角色——默认入口按 toolName 分派，./hos
 
 test('T3：改设置后模型看到的数字真的跟着变（行为差异，不是文本匹配；英文锚）', async (t) => {
   // 宿主入口（lib/index.js → ask-takeover.js → @deepseek-ai/dsh-llm）在离线环境
-  // 不可解析时跳过——jobs/wait-job/wait-agent 本身离线可跑，但本用例的核心判据
+  // 不可解析时跳过——jobs/wait 本身离线可跑，但本用例的核心判据
   // （refreshToolDescriptions 的行为）依赖宿主入口，跳过即丢判据，交给 test:inproc。
   const hostIndex = await loadOfflineSafe('../lib/index.js');
   if (hostIndex === undefined) { t.skip(HOST_SKIP_REASON); return; }
   // "源码里出现 makeConfigView"式文本匹配在把实现退化成构造时快照后
   // **仍然全绿**——它对行为一无所知，本判据必须断言行为。
   const { createRunTool } = await import('../lib/jobs.js');
-  const { createWaitJobTool } = await import('../lib/wait-job.js');
-  const { createWaitAgentTool } = await import('../lib/wait-agent.js');
+  const { createWaitTool } = await import('../lib/wait.js');
   const { refreshToolDescriptions } = hostIndex;
 
   let current = {
@@ -124,8 +123,7 @@ test('T3：改设置后模型看到的数字真的跟着变（行为差异，不
 
   for (const [name, tool, param] of [
     ['async_run', createRunTool(ctx, view), 'yield_ms'],
-    ['async_wait_job', createWaitJobTool(ctx, view), 'wait_ms'],
-    ['async_wait_agent', createWaitAgentTool(ctx, view), 'wait_ms']
+    ['async_wait', createWaitTool(ctx, view), 'wait_ms']
   ]) {
     const topBefore = tool.description;
 
@@ -143,7 +141,7 @@ test('T3：改设置后模型看到的数字真的跟着变（行为差异，不
     // | 工具 | 正文里有 | 英文锚 |
     // |---|---|---|
     // | `async_run` | 只有首次等待区间 | `The first wait defaults to N ms (pass yield_ms, range N–M ms)` |
-    // | `async_wait_job` / `async_wait_agent` / `async_agent` | 等待区间只在尾部摘要 | 已由锚④覆盖 |
+    // | `async_wait` / `async_agent` | 等待区间只在尾部摘要 | 已由锚④覆盖 |
     if (name === 'async_run') {
       const yieldBody = /The first wait defaults to (\d+) ms \(pass yield_ms, range (\d+)–(\d+) ms\)/.exec(tool.description);
       assert.deepEqual([yieldBody?.[1], yieldBody?.[2], yieldBody?.[3]], ['5000', '1000', '120000'],
@@ -315,7 +313,7 @@ test('T7（R10）：校验只有一套判据 —— 非法值必须在 schema �
 test('T7b（R10）：跨字段约束必须覆盖**每一个**默认值字段（活路径直测）', async () => {
   // 缺陷形态：只查 `defaultYieldMs` 落在区间内，
   // 漏了 `defaultWaitMs`。后果是设置页放行 `defaultWaitMs: 999999`、存进设置文档，
-  // 然后在某次 async_wait_job 调用里被夹紧——使用者看到的是"我设了但没效果"。
+  // 然后在某次 async_wait 调用里被夹紧——使用者看到的是"我设了但没效果"。
   // 本用例直测**活路径** resolveConfig（跨字段判据内联在 resolveConfig 里）——
   // 连同 assertCrossFieldOrder 的导出集（探针直测入口）一起钉住单一事实源。
   const { resolveConfig, assertCrossFieldOrder } = await import('../lib/config.js');
@@ -560,7 +558,7 @@ test('T10：宿主侧的 volatile 提交必须真的到达预设工具的描述'
   assert.match(tool.description, /pass yield_ms, range 1000–600000 ms/, '快照缺席时描述用本行默认值');
 
   // ② 宿主侧（同一插件、行配置没有 toolName）：首播快照。settings 子树形态：
-  //    17 个可编辑字段住在 `settings` 键下（设计 §5.1——新根形态）。
+  //    19 个可编辑字段住在 `settings` 键下（设计 §5.1——新根形态）。
   const hostCtx = new Context();
   for (const [name, value] of Object.entries(services)) hostCtx.provide(name, value);
   const hostFork = await mount(
@@ -857,7 +855,7 @@ test('T16：plugins.bundle.config keyed 槽契约 + 毫秒换算秒读数', asyn
  *
  * **hook 存储按组件函数＋元素 key 分槽**：卡片组件自己也有 hook（模型句柄、订阅、
  * 卸载清理），与表单组件共用一个游标会互相踩（两个组件的 `hooks[0]` 互相覆盖）；
- * 而 17 个字段壳是**同一个组件函数的 17 个实例**，只按函数分槽会让它们的
+ * 而 19 个字段壳是**同一个组件函数的 19 个实例**，只按函数分槽会让它们的
  * `helpOpen` 互踩（点一个字段的开全部字段的）——真实 React 按「组件类型＋元素
  * key」复用 fiber 局部状态，替身照抄这条语义（`begin(component, key)`；无 key
  * 的组件归入 `''` 槽）。
@@ -1016,7 +1014,7 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   // 控制器替身：真实形态是 `ctx.configForms.get(<entryId>)` 返回的 `ConfigFormController`
   // （`getSnapshot` / `subscribe` / `mutate`）。假件必须给**完整** SettingsFormScope
   // ——模型构造时就 subscribe（T9 ② 验过缺成员会抛错）。value/user 层给**全字段**
-  // 嵌套形状（真机 describe 把 17 字段展平在 `settings` 键下——毫秒说明行的读数
+  // 嵌套形状（真机 describe 把 19 字段展平在 `settings` 键下——毫秒说明行的读数
   // 才有东西可换算；client.js 经 makeSettingsScopeView 适配官方模型的平铺寻址）。
   const DEFAULTS = {
     defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
@@ -1117,16 +1115,23 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   // （两语言 + askUiSeat）。
   assert.equal(inputs.length, 12, '十二个值字段必须以官方 input 在场（10 预算 + R30 askTimeoutMs + askExtendMs）');
   assert.equal(selects.length, 3, '三个枚举字段必须以 select 在场（两语言 + R30 askUiSeat；控件本体自绘，裁定 B）');
-  // 两个布尔开关（静默失败防护 + 提问接管）：控件本体是官方 Switch（可见标签长在壳上），
-  // 不进 input/select 的 id 清单——按无障碍属性（role/aria-label/aria-checked）钉在场。
+  // 四个布尔开关（静默失败防护 + 提问接管 + 两个展示开关）：控件本体是官方 Switch
+  // （可见标签长在壳上），不进 input/select 的 id 清单——按无障碍属性
+  // （role/aria-label/aria-checked）钉在场。
   const switchButtons = collectByType(tree, 'button').filter((node) => node.props.role === 'switch');
-  assert.equal(switchButtons.length, 2, 'silentFailureGuard 与 askTakeover 必须以 role=switch 的按钮在场');
+  assert.equal(switchButtons.length, 4, '四个布尔开关必须以 role=switch 的按钮在场（silentFailureGuard/askTakeover/workflowProgressLog/fullCommandEcho）');
   assert.equal(switchButtons[0].props['aria-label'], 'silentFailureGuard|',
     '开关的无障碍名 = 可见标签（桩词典约定键 + \'|\'）');
   assert.equal(switchButtons[0].props['aria-checked'], false, '默认关：无覆盖时开关显示生效姿态 false');
   assert.equal(switchButtons[1].props['aria-label'], 'askTakeover|',
     'R30 总开关同形：无障碍名 = 可见标签');
   assert.equal(switchButtons[1].props['aria-checked'], false, 'R30 总开关默认关（零行为硬边界的界面证据）');
+  assert.equal(switchButtons[2].props['aria-label'], 'workflowProgressLog|',
+    '展示开关同形：无障碍名 = 可见标签');
+  assert.equal(switchButtons[2].props['aria-checked'], false, 'workflowProgressLog 默认关（需求 9.3.4）');
+  assert.equal(switchButtons[3].props['aria-label'], 'fullCommandEcho|',
+    '展示开关同形：无障碍名 = 可见标签');
+  assert.equal(switchButtons[3].props['aria-checked'], false, 'fullCommandEcho 默认关（需求 9.3.4）');
   // 开关字段的说明行与值/枚举字段同形（p + id），文案走同一条 hint 通道——在此钉住，
   // 补足 ② 循环豁免后的结构覆盖。
   const flagMessage = findNode(tree, (node) =>
@@ -1158,7 +1163,8 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   // 布尔开关不进此循环：可见标签是壳上的 div + Switch 的 aria-label（偏离 ③；client.js
   // FlagField 头注——Switch 不收 id/aria-* 摆位，for 绑定与 aria-describedby 不适用），
   // 其说明行由上面 ① 段的 flagMessage 断言单独钉住。
-  for (const key of expectedKeys.filter((k) => k !== 'silentFailureGuard' && k !== 'askTakeover')) {
+  for (const key of expectedKeys.filter((k) => k !== 'silentFailureGuard' && k !== 'askTakeover'
+    && k !== 'workflowProgressLog' && k !== 'fullCommandEcho')) {
     const control = inputById(tree, `plugin-config-${key}`);
     const label = findNode(tree, (node) =>
       node.type === 'label' && node.props.htmlFor === `plugin-config-${key}`);
@@ -1458,11 +1464,11 @@ test('T18h（R24/R27·设计 §5.5）：字段帮助——问号按钮、开合�
     findNode(tree, (node) => node.type === 'button' && node.props.className === 'ats-help-button'
       && node.props['aria-controls'] === `plugin-config-${key}-help`);
 
-  // ① 17 个字段各有问号按钮（type=button、aria-controls 指向 <id>-help、
+  // ① 19 个字段各有问号按钮（type=button、aria-controls 指向 <id>-help、
   //    aria-label 含字段名称——help.a11yName 模板）。
   let tree = renderCard();
   const buttons = helpButtons(tree);
-  assert.equal(buttons.length, 17, '17 个字段必须各有一个帮助按钮（需求 §5.5）');
+  assert.equal(buttons.length, 19, '19 个字段必须各有一个帮助按钮（需求 §5.5）');
   for (const button of buttons) {
     assert.equal(button.props.type, 'button', '帮助按钮必须 type=button（不提交表单）');
     assert.ok(typeof button.props['aria-controls'] === 'string'
@@ -1478,7 +1484,7 @@ test('T18h（R24/R27·设计 §5.5）：字段帮助——问号按钮、开合�
     '默认首次等待时长（毫秒） 的说明', '可访问名必须含字段名称（需求 §5.6）');
 
   // ② 点击展开 region#<id>-help（role=region、分段渲染），再点收起；开合只影响本字段
-  //    （替身 hook 槽按组件＋元素 key 分槽——17 个同函数实例互踩时这条必红）。
+  //    （替身 hook 槽按组件＋元素 key 分槽——19 个同函数实例互踩时这条必红）。
   helpButtonOf(tree, 'defaultYieldMs').props.onClick();
   tree = renderCard();
   let region = regionOf(tree, 'defaultYieldMs');
@@ -1632,7 +1638,10 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     pollIntervalMs: '子代理状态检查间隔', maxResultChars: '结果内容字符上限',
     jobKind: '命令作业类型标识', subagentProvider: '子代理创建后端',
     uiLang: '插件界面语言', agentLang: 'Agent 文案语言',
-    silentFailureGuard: '命令静默失败提示', askTakeover: '在待答面板处理提问',
+    silentFailureGuard: '命令静默失败提示',
+    workflowProgressLog: '编排进度行保留',
+    fullCommandEcho: '作业列表回显完整命令',
+    askTakeover: '在待答面板处理提问',
     askTimeoutMs: '首次提问等待时长', askExtendMs: '每次增加的等待时长',
     askUiSeat: '待答问题显示方式'
   };
@@ -1640,7 +1649,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     'minWaitMs', 'maxWaitMs', 'pollIntervalMs', 'askTimeoutMs', 'askExtendMs']);
   for (const [key, name] of Object.entries(NAMES_ZH)) {
     const expected = MS_KEYS.has(key) ? `${name}（毫秒）` : name;
-    assert.equal(DICT.zh[key], expected, `zh 字段名必须逐字对齐需求 §5.5 表：${key}`);
+    assert.equal(DICT.zh[key], expected, `zh 字段名必须逐字对齐设置表（user-reference §2 / 需求 §5.5）：${key}`);
   }
 
   // ② hint 事实组断言（设计 §5.6）：每个 hint 字段按「必要事实」组织——语义
@@ -1674,19 +1683,19 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
       ['省略时报错', '缺省报错', '省略会报错']
     ],
     minWaitMs: [
-      ['适用于两个等待工具', '作用于两个等待工具', '两个等待工具的 wait_ms'],
+      ['适用于等待入口', '作用于等待入口', '等待入口的 wait_ms'],
       ['低于此值时按下限取值', '低于下限时按下限取值', '低于下限会被钳到下限'],
       ['结束本次等待', '等待到时结束', '提前交回控制权'],
       ['后台任务继续运行', '后台继续运行']
     ],
     maxWaitMs: [
-      ['适用于两个等待工具', '作用于两个等待工具', '两个等待工具的 wait_ms'],
+      ['适用于等待入口', '作用于等待入口', '等待入口的 wait_ms'],
       ['高于此值时按上限取值', '高于上限时按上限取值', '超过上限被钳回上限'],
       ['结束本次等待', '等待到时结束', '提前交回控制权'],
       ['后台任务继续运行', '后台继续运行']
     ],
     pollIntervalMs: [
-      ['async_wait_agent'],
+      ['async_wait'],
       ['定期检查', '周期性检查', '按间隔检查'],
       ['备用判断', '备用检查', '作为备用检查手段']
     ],
@@ -1717,6 +1726,18 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
       ['命令可能未执行', '可能没有执行', '命令没跑'],
       ['诊断提醒', '诊断提示', '诊断说明'],
       ['仅本包两预设生效', '只对两预设生效', '仅两预设'],
+      ['默认关', '默认关闭', '默认不开启']
+    ],
+    workflowProgressLog: [
+      ['编排结果', '编排作业', '编排'],
+      ['进度行', '进度日志'],
+      ['默认关', '默认关闭', '默认不开启'],
+      ['结果正文', '结果更长', '结果相应变长']
+    ],
+    fullCommandEcho: [
+      ['作业列表'],
+      ['进度说明'],
+      ['完整命令原文', '命令原文'],
       ['默认关', '默认关闭', '默认不开启']
     ],
     askTakeover: [
@@ -1770,20 +1791,20 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
       ['omitting it errors', 'omission errors', 'leaving it out errors']
     ],
     minWaitMs: [
-      ['both wait tools', 'the two wait tools', 'on both wait tools'],
+      ['wait entry', 'the wait entry', 'on the wait entry'],
       ['use the lower bound', 'clamped to the lower bound', 'clamps to the lower bound'],
       ['the wait ends', 'this wait ends', 'ends the wait'],
       ['keeps running', 'the background task keeps running']
     ],
     maxWaitMs: [
-      ['both wait tools', 'the two wait tools', 'on both wait tools'],
+      ['wait entry', 'the wait entry', 'on the wait entry'],
       ['use the upper bound', 'uses the upper bound', 'clamped to the upper bound'],
       ['the wait ends', 'this wait ends', 'ends the wait'],
       ['keeps running', 'the background task keeps running']
     ],
     pollIntervalMs: [
-      ['async_wait_agent'],
-      ['periodic checks', 'how often', 'at this cadence'],
+      ['async_wait'],
+      ['periodically check', 'periodic checks', 'how often'],
       ['backup judgment', 'backup check', 'the backup']
     ],
     maxResultChars: [
@@ -1816,6 +1837,18 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
       ['diagnostic reminder', 'diagnostic reminders'],
       ["only to this package's two presets", "applies only to this package's two presets", "covers only this package's two presets"],
       ['off by default', 'disabled by default']
+    ],
+    workflowProgressLog: [
+      ['orchestration results', 'orchestration job'],
+      ['progress lines', 'progress logs'],
+      ['off by default', 'Off by default', 'disabled by default'],
+      ['longer results', 'results longer', 'result bodies longer']
+    ],
+    fullCommandEcho: [
+      ['job lists', 'job list'],
+      ['progress description'],
+      ['full command text', 'full command'],
+      ['off by default', 'Off by default', 'disabled by default']
     ],
     askTakeover: [
       ['plain questions', 'ordinary questions'],
@@ -1851,16 +1884,18 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     defaultYieldMs: 'async_run、async_workflow 收到省略 yield_ms 的调用时，首次等待取这个默认时长；调用带值时由请求值与上下限共同决定。等待结束时若工作还没完，就交回 job id，任务在后台继续。',
     minYieldMs: '本次 yield_ms 低于下限会被钳到下限。等待到时结束，后台继续运行。',
     maxYieldMs: '本次 yield_ms 高于上限时按上限取值。等待到时结束，后台继续运行。',
-    defaultWaitMs: '返回提示中的示例时长仅为演示，与真实调用的生效等待不同。两个等待工具要 wait_ms 必填，缺省报错。',
-    minWaitMs: '作用于两个等待工具的 wait_ms；请求低于下限时按下限取值。等待到时结束，后台继续运行。',
-    maxWaitMs: '作用于两个等待工具的 wait_ms；高于上限时按上限取值。等待到时结束，后台继续运行。',
-    pollIntervalMs: 'async_wait_agent 按这个间隔周期性检查子代理是否还在跑，作为结束事件没到时的备用检查手段。',
+    defaultWaitMs: '返回提示中的示例时长仅为演示，与真实调用的生效等待不同。等待入口要 wait_ms 必填，缺省报错。',
+    minWaitMs: '作用于等待入口的 wait_ms；请求低于下限时按下限取值。等待到时结束，后台继续运行。',
+    maxWaitMs: '作用于等待入口的 wait_ms；高于上限时按上限取值。等待到时结束，后台继续运行。',
+    pollIntervalMs: 'async_wait 的子代理目标按这个间隔周期性检查目标是否还在跑，作为变化事件没到时的备用检查手段。',
     maxResultChars: '结果内容单次保留的字符数上限，必须是正整数；超限时保留开头与结尾并注明截断，状态与提示单独计量。',
     jobKind: '命令作业注册时用的类型名，出现在作业列表和日志里方便辨认。',
     subagentProvider: 'async_agent 创建子代理的后端。',
     uiLang: '决定界面文案（设置表单、字段帮助、待答界面）显示中文还是英文；自动档跟随宿主语言。',
     agentLang: '决定模型侧文案（含工具描述与执行纪律、错误与提示）的语言。',
     silentFailureGuard: '所谓静默失败，就是命令可能没有执行却看不到报错。开启后这类情况会给出诊断提示和检查建议；只对两预设生效，默认关闭。',
+    workflowProgressLog: '编排作业默认关——各阶段进度行滤除、只留结论；打开后保留进度行，结果正文随之变长。',
+    fullCommandEcho: '命令作业在作业列表里默认关——显示进度说明；打开后回显完整命令原文。',
     askTakeover: '开启后，两预设根代理的一般性提问在待答面板作答；关掉则走宿主默认流程。到期后 Agent 继续工作，用户仍可之后再回答。',
     askTimeoutMs: '自收到一批提问时开始计时，同批多题共用一个期限。到期时已作的回答保留，Agent 继续工作，用户仍可之后再回答；改值只影响之后的批次。',
     askExtendMs: '待答面板的「增加等待时间」按钮每按一下，就给该会话此刻等待中的批次各加这段时间。',
@@ -1870,16 +1905,18 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     defaultYieldMs: 'The default first-wait span async_run and async_workflow use for calls that omit yield_ms; a call with a value gets it from the request value and the bounds. When the wait ends with work unfinished, you get a job id back and the task keeps running in the background.',
     minYieldMs: 'A yield_ms below the lower bound is clamped to the lower bound; the wait ends on schedule and the background task keeps running.',
     maxYieldMs: 'A yield_ms above this ceiling uses the upper bound; the wait ends on schedule and the background task keeps running.',
-    defaultWaitMs: 'The span shown for the wait-call example in return notes is for illustration only, not the effective wait of a real call. Real calls of the two wait tools must explicitly state wait_ms; leaving it out errors.',
-    minWaitMs: 'Governs wait_ms on the two wait tools; a request below the floor is clamped to the lower bound; the wait ends on schedule and the background task keeps running.',
-    maxWaitMs: 'Governs wait_ms on the two wait tools; a request above this ceiling uses the upper bound; the wait ends on schedule and the background task keeps running.',
-    pollIntervalMs: 'async_wait_agent decides how often to run a backup check of the subagent running state when the completion event has not arrived.',
+    defaultWaitMs: 'The span shown for the wait-call example in return notes is for illustration only, not the effective wait of a real call. Real calls of the wait entry must explicitly state wait_ms; leaving it out errors.',
+    minWaitMs: 'Governs wait_ms on the wait entry; a request below the floor is clamped to the lower bound; the wait ends on schedule and the background task keeps running.',
+    maxWaitMs: 'Governs wait_ms on the wait entry; a request above this ceiling uses the upper bound; the wait ends on schedule and the background task keeps running.',
+    pollIntervalMs: 'async_wait\'s subagent targets decide how often to run a backup check of the target\'s running state when the change event has not arrived.',
     maxResultChars: 'Cap on characters kept per result (must be a positive integer); past it the head and tail are kept with a note about the truncation; status and notices are counted separately.',
     jobKind: 'The type name used when registering command jobs so they can be told apart in job lists and logs.',
     subagentProvider: 'The backend async_agent spawns subagents with.',
     uiLang: 'Sets the language (Chinese or English) of the settings form, field help, and pending panel; the auto choice follows the host language.',
     agentLang: 'Sets the language of model-visible copy: tool descriptions, parameter notes, notices, execution discipline, and errors.',
     silentFailureGuard: '"Silent failure" is when a command may not have executed with no visible error. When on, such cases get a diagnostic reminder and checking advice; it covers only this package\'s two presets and is disabled by default.',
+    workflowProgressLog: 'When this is off by default, orchestration results keep conclusions only; turning it on keeps the progress lines, producing longer results.',
+    fullCommandEcho: 'Command jobs show the progress description in job lists while this is off by default; turning it on echoes the full command text.',
     askTakeover: 'When on, the pending panel answers plain questions from the root agents of this package\'s two presets; when off, the host\'s native flow handles them. After expiry the Agent continues working and the user can still answer later.',
     askTimeoutMs: 'Timed from receiving a batch of questions; the batch\'s questions share one deadline. On expiry the answers given so far are kept, the Agent continues working, the user can still answer later; a new setting applies to subsequent batches.',
     askExtendMs: 'Each "Extend wait" click in the pending panel adds this much time to every batch of that session not yet expired at that moment.',
@@ -1920,7 +1957,9 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     pollIntervalMs: ['轮询', '配对'], maxResultChars: ['正整数', '截断', '另计'],
     jobKind: ['空串'], subagentProvider: ['provider 与 model', '可读拒绝'],
     uiLang: ['跟随宿主语言', '独立'], agentLang: ['工具描述', '互不影响'],
-    silentFailureGuard: ['诊断提醒', '返回提示'], askTakeover: ['迟到', '不会送达'],
+    silentFailureGuard: ['诊断提醒', '返回提示'],
+    workflowProgressLog: ['滤除', '内容预算'], fullCommandEcho: ['作业列表', '标签'],
+    askTakeover: ['迟到', '不会送达'],
     askTimeoutMs: ['共享', '仍接受作答'], askExtendMs: ['原截止点', '初始期限'], askUiSeat: ['消隐', '不改提问']
   };
   const HELP_ANCHORS_EN = {
@@ -1931,7 +1970,9 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     pollIntervalMs: ['polling', 'pairing'], maxResultChars: ['positive integer', 'truncation', 'counted separately'],
     jobKind: ['empty value is invalid'], subagentProvider: ['provider and model', 'rejected readably'],
     uiLang: ['follows the host language', 'independent'], agentLang: ['tool descriptions', 'do not affect each other'],
-    silentFailureGuard: ['diagnostic reminders', 'return notes'], askTakeover: ['Late answers', 'will not arrive'],
+    silentFailureGuard: ['diagnostic reminders', 'return notes'],
+    workflowProgressLog: ['filter out', 'content budget'], fullCommandEcho: ['job-list label', 'full command text'],
+    askTakeover: ['Late answers', 'will not arrive'],
     askTimeoutMs: ['share the deadline', 'keeps accepting answers'], askExtendMs: ['stacked on the original deadline', 'own initial deadlines'],
     askUiSeat: ['hides once everything is handled', 'does not change questioning']
   };
@@ -1968,7 +2009,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     }
   }
 
-  // ⑦ T21 在场断言扩展：17 字段的字段名键、hint.<键>、help.<键> 两档全必须在场
+  // ⑦ T21 在场断言扩展：19 字段的字段名键、hint.<键>、help.<键> 两档全必须在场
   //    （删任一键即红——本循环逐键断言）。
   for (const key of Object.keys(NAMES_ZH)) {
     for (const lang of ['zh', 'en']) {
@@ -2052,14 +2093,14 @@ test('T19（R21/R24/R25）：字段表单一来源——client.js 的 FIELDS 与
   // 两条钉的是"字段集合"的**单一来源**：界面判据拿 `BUDGET_FIELD_KEYS` + `LANG_FIELD_KEYS` 去核对页面
   // （`judgeConfigForm` 的字段身份那一条），而页面渲染哪些字段、哪几个带读数由 `client.js` 的
   // `FIELDS` 决定。两侧漂移时，"字段缺项 / 读数挂错字段"永远抓不到——判据会与被测实现一起错。
-  const { MS_FIELD_KEYS, BUDGET_FIELD_KEYS, LANG_FIELD_KEYS, FLAG_FIELD_KEYS, ASK_FIELD_KEYS } = await import('../lib/config.js');
+  const { MS_FIELD_KEYS, BUDGET_FIELD_KEYS, LANG_FIELD_KEYS, FLAG_FIELD_KEYS, DISPLAY_FIELD_KEYS, ASK_FIELD_KEYS } = await import('../lib/config.js');
   let loaded;
   new Function('window', clientCode())({ __ModuleLoader__: { load: (spec) => { loaded = spec; } } });
   const product = loaded.factory(() => ({ createElement: () => undefined, useState: () => [undefined, () => {}], useEffect: () => {} }));
 
   assert.deepEqual(product.FIELDS.map((field) => field.key),
-    [...BUDGET_FIELD_KEYS, ...LANG_FIELD_KEYS, ...FLAG_FIELD_KEYS, ...ASK_FIELD_KEYS],
-    'client.js 的字段顺序必须是 预算字段 + 语言字段 + 开关字段 + 提问字段（ask 组四个字段全部可编辑）');
+    [...BUDGET_FIELD_KEYS, ...LANG_FIELD_KEYS, ...FLAG_FIELD_KEYS, ...DISPLAY_FIELD_KEYS, ...ASK_FIELD_KEYS],
+    'client.js 的字段顺序必须是 预算字段 + 语言字段 + 开关字段 + 展示开关字段 + 提问字段（ask 组四个字段全部可编辑）');
   assert.deepEqual(product.LANG_KEYS, [...LANG_FIELD_KEYS], 'client.js 的语言键表必须与 LANG_FIELD_KEYS 一致');
 
   const declared = [...clientCode().matchAll(/key: "([A-Za-z]+)", label: "[A-Za-z]+", ms: true/g)]
@@ -2135,6 +2176,10 @@ test('T17（R10·复审 Z4）：预算默认值本身也要钉住——改错一
     // 窗口 60000 ms；延长步长 60000 ms；座位 sidebar（需求 §5.2：默认标记位在
     // 「侧边栏底栏徽标」）。默认值翻成 true 等于未经用户同意就劫持提问通道。
     askTakeover: false,
+    // 两个展示开关出厂**默认关**（需求 9.3.4）：开启会改变模型上下文的展示面，
+    // 默认不注入进度行与命令原文。
+    workflowProgressLog: false,
+    fullCommandEcho: false,
     askTimeoutMs: 60000,
     askExtendMs: 60000,
     askUiSeat: 'sidebar'
@@ -2149,16 +2194,15 @@ test('T17（R10·复审 Z4）：预算默认值本身也要钉住——改错一
 });
 
 test('T20（R25）：agentLang 双档——en 零 CJK、zh 换语言、参数集合不变、缺译抛错', async (tc) => {
-  // 四个工具在两档下各构建一次；判据是**行为差异**（构建产物逐项对比），
-  // 不是"源码里出现了某个词"。四个工厂里 jobs、wait-job、wait-agent、agent
+  // 工具在两档下各构建一次；判据是**行为差异**（构建产物逐项对比），
+  // 不是"源码里出现了某个词"。工厂里 jobs、wait、agent
   // 与 descriptions 都是宿主链模块（→ dsh-tools），离线形态缺席即跳过（交给 test:inproc）。
   const jobsModule = await loadOfflineSafe('../lib/jobs.js');
-  const waitJobModule = await loadOfflineSafe('../lib/wait-job.js');
-  const waitAgentModule = await loadOfflineSafe('../lib/wait-agent.js');
+  const waitModule = await loadOfflineSafe('../lib/wait.js');
   const agentModule = await loadOfflineSafe('../lib/agent.js');
   const descriptionsModule = await loadOfflineSafe('../lib/descriptions.js');
   if (
-    jobsModule === undefined || waitJobModule === undefined || waitAgentModule === undefined
+    jobsModule === undefined || waitModule === undefined
     || agentModule === undefined || descriptionsModule === undefined
   ) {
     tc.skip(HOST_SKIP_REASON);
@@ -2166,8 +2210,7 @@ test('T20（R25）：agentLang 双档——en 零 CJK、zh 换语言、参数集
   }
   const { resolveConfig } = await import('../lib/config.js');
   const { createRunTool } = jobsModule;
-  const { createWaitJobTool } = waitJobModule;
-  const { createWaitAgentTool } = waitAgentModule;
+  const { createWaitTool } = waitModule;
   const { createAgentTool } = agentModule;
   const { t } = await import('../lib/text.js');
   const { buildToolText } = descriptionsModule;
@@ -2176,8 +2219,7 @@ test('T20（R25）：agentLang 双档——en 零 CJK、zh 换语言、参数集
   const ctx = { shell: { sandboxMode: 'workspace-write' } };
   const factories = {
     async_run: createRunTool,
-    async_wait_job: createWaitJobTool,
-    async_wait_agent: createWaitAgentTool,
+    async_wait: createWaitTool,
     async_agent: createAgentTool
   };
   const tools = {};

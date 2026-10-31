@@ -177,9 +177,9 @@ try {
     .map((t) => t?.name);
   // 根作用域可见的五个本包工具（async_workflow 在 delegation 组内、根不可见，
   // 由 d05 组合探针证明，此处不断言）。
-  const ours = ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent', 'async_list_subagent_models'];
+  const ours = ['async_run', 'async_wait', 'async_agent', 'async_list_subagent_models'];
   const present = ours.filter((n) => tools.includes(n));
-  record('五个根可见工具在**另一个预设**下也出现（"不限于本预设"）',
+  record('四个根可见工具在**另一个预设**下也出现（"不限于本预设"）',
     present.length === ours.length,
     `实得 ${JSON.stringify(present)}；该预设工具数 ${String(tools.length)}`);
   failed = checks.filter((c) => !c.ok).length;

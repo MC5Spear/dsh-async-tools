@@ -41,7 +41,7 @@ export function checkUserDocs(root = ROOT, { quiet = false, packageFiles } = {})
   const fail = message => problems.push(message);
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
   const { facts, tools, bounds } = settingFacts(root);
-  if (facts.size !== 17 || tools.length < 5) fail('源码设置或工具集合提取失败，须更新事实提取规则');
+  if (facts.size !== 19 || tools.length < 5) fail('源码设置或工具集合提取失败，须更新事实提取规则');
   const docs = new Map();
   for (const file of USER_DOCUMENTS) {
     try { docs.set(file, readFileSync(join(root, file), 'utf8')); }
@@ -123,14 +123,13 @@ export function checkUserDocs(root = ROOT, { quiet = false, packageFiles } = {})
       }
       const headings = [...text.matchAll(/^#{2,5}\s+(?:\d+(?:\.\d+)*[.)]?\s+)?`?(async_\w+)`?/gm)].map(m => m[1]);
       for (const tool of tools) if (!headings.includes(tool)) fail(`${file} 缺少 ${tool} 独立工具参考`);
-      const legacy = tools.length === 5;
-      const parameters = { async_run: ['command', 'description', 'yield_ms', 'workdir', 'sandbox_permissions', 'justification'], async_wait_job: ['job_id', 'wait_ms'], async_wait_agent: ['agent_id', 'wait_ms'], async_agent: legacy ? ['description', 'prompt', 'provider', 'model'] : ['description', 'prompt', 'cwd', 'provider', 'model', 'reasoning_effort', 'agent_preset'], async_workflow: ['script', 'meta', 'args', 'yield_ms'], async_list_subagent_models: ['provider', 'model', 'query', 'target_tool', 'version', 'page', 'page_size'] };
+      const parameters = { async_run: ['command', 'description', 'yield_ms', 'workdir', 'sandbox_permissions', 'justification'], async_wait: ['wait_ms', 'targets'], async_agent: ['description', 'prompt', 'cwd', 'provider', 'model', 'reasoning_effort', 'agent_preset'], async_workflow: ['script', 'meta', 'args', 'yield_ms'], async_list_subagent_models: ['provider', 'model', 'query', 'target_tool', 'version', 'page', 'page_size'] };
       for (const tool of tools) {
         const start = text.search(new RegExp(`^#{2,5}\\s+(?:\\d+(?:\\.\\d+)*[.)]?\\s+)?\u0060?${tool}\u0060?\\s*$`, 'm'));
         const tail = start < 0 ? '' : text.slice(start).split(/\n(?=#{2,5}\s)/)[0];
         const parameterRows = rows(tail);
         for (const parameter of parameters[tool] ?? []) if (!parameterRows.some(row => row[0] === parameter)) fail(`${file} ${tool} 缺少参数正文表行 ${parameter}`);
-        if (tool === 'async_wait_job' || tool === 'async_wait_agent') {
+        if (tool === 'async_wait') {
           const waits = parameterRows.filter(row => row[0] === 'wait_ms');
           if (waits.length !== 1) fail(`${file} ${tool} wait_ms 应有唯一参数行`);
           else {
@@ -144,10 +143,9 @@ export function checkUserDocs(root = ROOT, { quiet = false, packageFiles } = {})
             if (!/^(?:number|数字|数值)$/i.test(row[1] ?? '') || !required || !noDefault) fail(`${file} ${tool} wait_ms 必须为数字、必填且无默认值`);
           }
         }
-        if (legacy && tool === 'async_agent') for (const row of parameterRows) if (['cwd', 'reasoning_effort', 'agent_preset'].includes(row[0])) fail(`${file} 五工具线混入新创建参数 ${row[0]}`);
       }
       const policyText = text.split('\n').filter(line => /(?:策略|policy)/i.test(line) && /(?:会话|session|每次|each|live|实时)/i.test(line)).join('\n');
-      if (legacy ? !/(?:采样|samples?|session creation)/i.test(policyText) : !/(?:实时|每次|现读|live|each|current)/i.test(policyText)) fail(`${file} 缺少本线模型策略生效说明`);
+      if (!/(?:实时|每次|现读|live|each|current)/i.test(policyText)) fail(`${file} 缺少本线模型策略生效说明`);
       for (const tool of headings) if (!tools.includes(tool)) fail(`${file} 混入本线不存在工具 ${tool}`);
       if (!text.includes('2147483647') || !text.includes('1000000') || !text.includes('10000')) fail(`${file} 缺少设置合法边界`);
       for (const risk of ['settled', 'job_list', 'job_kill', 'selected=[]']) if (!text.includes(risk)) fail(`${file} 缺少状态或恢复要素 ${risk}`);

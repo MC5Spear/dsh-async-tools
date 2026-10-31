@@ -295,7 +295,7 @@ async function newSessionUnconfined(preset) {
 /** 模型可见文本里的 CJK 判据（`\u3000-\u303f`、CJK 汉字、全角标点）。 */
 const CJK = /[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]/;
 
-const FOUR = ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent'];
+const FOUR = ['async_run', 'async_wait', 'async_agent'];
 
 /** 生效设置的出厂默认（T17 对账的十项；漂移了读数就不可比）。 */
 const FACTORY = {
@@ -373,7 +373,7 @@ async function behaviorA() {
     'Follow these steps in order and do nothing else:',
     '1) async_run: `Write-Output SHORT_OK`',
     '2) async_run: `Start-Sleep -Seconds 6; Write-Output LONG_DONE` with yield_ms=1500',
-    '3) take the job_id from step 2 and call async_wait_job with wait_ms=30000',
+    '3) take the job_id from step 2 and call async_wait with targets=[{kind:"job", id:...}] and wait_ms=30000',
     '4) reply with exactly one line: ALL_DONE'
   ].join('\n'));
   const transcript = await page(sid);
@@ -382,15 +382,15 @@ async function behaviorA() {
     modes.includes('danger-full-access'), `sandbox/mode 事件序列=${modes.join(' → ') || '(无)'}`);
   const { calls, results } = parseEvents(transcript);
   const runCalls = calls.filter((c) => c.name === 'async_run').length;
-  const waitCalls = calls.filter((c) => c.name === 'async_wait_job').length;
+  const waitCalls = calls.filter((c) => c.name === 'async_wait').length;
   record('短命令直接返回（结果里有 SHORT_OK）',
     results.some((t) => t.includes('SHORT_OK')), `async_run 调用 ${String(runCalls)} 次`);
   record('长命令让出而非被杀（note 说明超出首次等待且未被终止）',
     results.some((t) => YIELD_RUNNING.test(t) && NOT_TERMINATED.test(t)),
     `命中首次等待文案=${String(results.filter((t) => YIELD_RUNNING.test(t)).length)} 条`);
-  record('让出返回给出可复制的 async_wait_job 调用（带作业编号）与生效数字',
-    results.some((t) => /async_wait_job\(job_id="[^"]+", wait_ms=\d+\)/.test(t)),
-    `async_wait_job 调用 ${String(waitCalls)} 次`);
+  record('让出返回给出可复制的 async_wait 调用（带作业编号）与生效数字',
+    results.some((t) => /async_wait\(targets=\[\{kind:"job", id:"[^"]+"\}\]/.test(t)),
+    `async_wait 调用 ${String(waitCalls)} 次`);
   record('等待把长命令的输出取回（结果里有 LONG_DONE）',
     results.some((t) => t.includes('LONG_DONE')));
   extra.behaviorA = {
@@ -411,23 +411,23 @@ async function behaviorB() {
       content: [{
         type: 'text',
         text: 'Use async_run to run `Start-Sleep -Seconds 60; Write-Output SURVIVED` with yield_ms=1500; '
-          + 'as soon as you get the job_id, call async_wait_job on it with wait_ms=120000 and do nothing else.'
+          + 'as soon as you get the job_id, call async_wait on it with targets=[{kind:"job", id:...}] and wait_ms=120000, and do nothing else.'
       }],
       clientTimeZone: 'Asia/Shanghai'
     }
   });
-  // 等到出现一次 async_wait_job 调用（说明它已经进入长等待），再发插话。
+  // 等到出现一次 async_wait 调用（说明它已经进入长等待），再发插话。
   let waiting = false;
   for (let i = 0; i < 90 && !waiting; i++) {
     await sleep(1000);
     const { calls } = parseEvents(await page(sid));
-    waiting = calls.some((c) => c.name === 'async_wait_job');
+    waiting = calls.some((c) => c.name === 'async_wait');
   }
-  record('情形搭建成功（模型已进入 async_wait_job 长等待）', waiting);
+  record('情形搭建成功（模型已进入 async_wait 长等待）', waiting);
   if (waiting) {
     await steer(sid, 'By the way: nice weather. Use job_list to check that job\'s current status and reply with its status only.');
   }
-  await ask(sid, 'Continue: fetch that job\'s output with async_wait_job (wait_ms=90000), then reply with the single line it printed.');
+  await ask(sid, 'Continue: fetch that job\'s output with async_wait (targets=[{kind:"job", id:...}], wait_ms=90000), then reply with the single line it printed.');
   const transcriptB = await page(sid);
   const modesB = sandboxModes(transcriptB);
   record('运行形态：B 段会话同样运行在 danger-full-access 下',
@@ -446,23 +446,23 @@ async function behaviorB() {
   };
 }
 
-/** C 段：async_agent 派生 + async_wait_agent 有界等待（需求 §2.3）。 */
+/** C 段：async_agent 派生 + async_wait（子代理目标）有界等待（需求 §2.3）。 */
 async function behaviorC() {
   const sid = await newSession('dsh-async');
   sessionIds.behaviorC = sid;
   await ask(sid, [
     'Follow these steps in order and do nothing else:',
     '1) async_agent with prompt: `Reply with exactly one line: PONG`',
-    '2) take the agent_id it returns and call async_wait_agent with wait_ms=60000',
+    '2) take the agent_id it returns and call async_wait with targets=[{kind:"agent", id:...}] and wait_ms=60000',
     '3) reply with exactly one line: AGENT_DONE'
   ].join('\n'), 300000);
   const { calls, results } = parseEvents(await page(sid));
   record('async_agent 立即返回 agent_id 与可复制的等待调用',
-    results.some((t) => /async_wait_agent\(agent_id="[^"]+", wait_ms=\d+\)/.test(t)),
+    results.some((t) => /async_wait\(targets=\[\{kind:"agent", id:"[^"]+"\}\]/.test(t)),
     `async_agent 调用 ${String(calls.filter((c) => c.name === 'async_agent').length)} 次`);
-  record('async_wait_agent 有界等待以合法出口返回（结算：最终回答另行到达；或消息唤醒：交还运行句柄）',
+  record('async_wait（子代理目标）有界等待以合法出口返回（结算：最终回答另行到达；或消息唤醒：交还运行句柄）',
     results.some((t) => CHILD_SETTLED.some((re) => re.test(t)) || WAIT_WOKE_BY_MESSAGE.test(t)),
-    `async_wait_agent 调用 ${String(calls.filter((c) => c.name === 'async_wait_agent').length)} 次`);
+    `async_wait 调用 ${String(calls.filter((c) => c.name === 'async_wait').length)} 次`);
   extra.behaviorC = { calls: calls.map((c) => c.name), results: results.map((t) => t.slice(0, 300)) };
 }
 
@@ -662,10 +662,10 @@ async function phaseSettings() {
     const face = faceOf(await page(sid));
     if (face === null) throw new Error('设置相位：会话里没有 request/header');
     const runDesc = String(face.tools.find((t) => t.name === 'async_run')?.description ?? '');
-    const waitDesc = String(face.tools.find((t) => t.name === 'async_wait_job')?.description ?? '');
+    const waitDesc = String(face.tools.find((t) => t.name === 'async_wait')?.description ?? '');
     record('async_run 描述里的首次等待数字跟着设置变（12000）',
       runDesc.includes('The first wait defaults to 12000 ms'), `片段=${runDesc.match(/The first wait defaults to \d+ ms[^;]*/)?.[0] ?? '(未命中)'}`);
-    record('async_wait_job 描述里的等待上限跟着设置变（480000）',
+    record('async_wait 描述里的等待上限跟着设置变（480000）',
       waitDesc.includes('250–480000 ms'), `片段=${waitDesc.match(/Per-call wait budgets must be passed explicitly[^;]*/)?.[0] ?? '(未命中)'}`);
 
     const delta = logSince(mark);

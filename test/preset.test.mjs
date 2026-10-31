@@ -136,7 +136,7 @@ hostTest('validate-preset：合法补丁必须通过（基线，防止断言恒�
 hostTest('validate-preset：dsh-async-create 基线必须通过（P1，R26）', async () => {
   const result = await validatePatch(PATCH_CREATE, { quiet: true });
   assert.equal(result.ok, true, `创造补丁基线应当通过，失败行：\n${result.lines.filter((l) => l.includes('FAIL')).join('\n')}`);
-  assert.ok(result.lines.some((l) => l.includes('顶层 27 行 + 嵌套 11 行')), '③ 的对账读数必须是 27+11（0.2.1 基线 + 五行顶层 async 工具行；delegation 组 6 行 + async-workflow）');
+  assert.ok(result.lines.some((l) => l.includes('顶层 26 行 + 嵌套 11 行')), '③ 的对账读数必须是 26+11（0.2.1 基线 + 四行顶层 async 工具行；delegation 组 6 行 + async-workflow）');
 });
 
 hostTest('validate-preset：tool-bash 被改成平台表达式必须拦住（需求 §3.3：Linux 也要无条件禁用）', async () => {
@@ -156,9 +156,9 @@ hostTest('validate-preset：tool-bash 行被整个删掉必须拦住', async () 
   assert.equal(result.ok, false, '没有 tool-bash 行（改动对象缺席）必须被拦');
 });
 
-hostTest('validate-preset：toolName 写错（async_wait_agent 写成 async_run）必须拦住', async () => {
+hostTest('validate-preset：toolName 写错（async_wait 写成 async_run）必须拦住', async () => {
   const result = await validateMutation((text) => text
-    .replace('toolName: async_wait_agent', 'toolName: async_run'));
+    .replace('toolName: async_wait\n', 'toolName: async_run\n'));
   assert.equal(result.ok, false);
   assert.ok(result.lines.some((l) => l.includes('重复') || l.includes('缺')),
     `报错必须指向判据④的缺值/重复，实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
@@ -168,7 +168,7 @@ hostTest('validate-preset：toolName 写成不存在的值必须拦住', async (
   const result = await validateMutation((text) => text
     .replace('toolName: async_agent', 'toolName: async_frobnicate'));
   assert.equal(result.ok, false);
-  assert.ok(result.lines.some((l) => l.includes('toolName 六值缺')));
+  assert.ok(result.lines.some((l) => l.includes('toolName 五值缺')));
 });
 
 hostTest('validate-preset：tool-pwsh 挂回来必须拦住（R6）', async () => {
@@ -393,7 +393,7 @@ hostTest('validate-preset：活 subagent × async_agent 且词典缺锚句必须
     assert.ok(entryRemoved.lines.some((l) => l.includes('唯一派生入口') && l.includes('需求 §3.1 可验证口径')),
       `⑦ 的入口专报必须在场，实得：${entryRemoved.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
     const retrievalKill = await validatorWithText((src) => src
-      .split('wait with async_wait_agent (bounded').join('get results via async_wait_agent (bounded'));
+      .split('wait with async_wait').join('retrieve via async_wait'));
     const retrievalRemoved = await retrievalKill.validate(mutatedPatchPath, { quiet: true });
     assert.equal(retrievalRemoved.ok, false);
     assert.ok(retrievalRemoved.lines.some((l) => l.includes('取回通道') && l.includes('需求 §3.1 可验证口径')),
@@ -421,7 +421,7 @@ hostTest('validate-preset：创造补丁 toolName 写错必须拦住（P13，④
     .replace('toolName: async_agent', 'toolName: async_frobnicate'),
     PATCH_CREATE, baselineCreate);
   assert.equal(result.ok, false);
-  assert.ok(result.lines.some((l) => l.includes('toolName 六值缺')));
+  assert.ok(result.lines.some((l) => l.includes('toolName 五值缺')));
 });
 
 hostTest('validate-preset：期望集必须与 shipped 基线的真实行集合逐条比对（P14，防快照漂移）', async () => {
@@ -701,14 +701,15 @@ hostTest('validate-preset：dsh-async 有界等待取回锚句被删必须拦住
   // 「需要结果时有界等待取回」是委托纪律五句之一：从 dsh-async 文案删掉
   // 该句（保留同条的「不要循环轮询」半句）而锚句表仍在，⑤b 必须按档点名。
   const killed = await validatorWithText((src) => src
-    .replace('wait with async_wait_agent (bounded wait_ms)',
-      'call async_wait_agent (bounded wait_ms)')
-    .replace('用 async_wait_agent 有界等待', '以 async_wait_agent 有界等待'));
+    .replace('wait with async_wait(targets=[{kind:"agent", id:"..."}], wait_ms=...) (bounded)',
+      'call async_wait(targets=[{kind:"agent", id:"..."}], wait_ms=...) (bounded)')
+    .replace('需要后台子代理的结果时用 async_wait（有界、用户插话会打断等待）',
+      '需要后台子代理的结果时以 async_wait（有界、用户插话会打断等待）'));
   const result = await killed.validate(PATCH, { quiet: true });
   assert.equal(result.ok, false, '删有界等待取回句必须被拦');
-  assert.ok(result.lines.some((l) => l.includes('wait with async_wait_agent') && l.includes('en 档')),
+  assert.ok(result.lines.some((l) => l.includes('wait with async_wait') && l.includes('en 档')),
     `报错必须点名 en 档缺失锚句，实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
-  assert.ok(result.lines.some((l) => l.includes('用 async_wait_agent 有界等待') && l.includes('zh 档')),
+  assert.ok(result.lines.some((l) => l.includes('需要后台子代理的结果时用 async_wait') && l.includes('zh 档')),
     '报错必须点名 zh 档缺失锚句');
 });
 
@@ -758,7 +759,7 @@ hostTest('validate-preset：锚句表快照锁——表删行、改锚或加锚�
       en: [
         'ALWAYS',
         'async_agent is the ONLY delegation entry',
-        'wait with async_wait_agent',
+        'wait with async_wait',
         'never pass run_in_background: false',
         'Do not poll in a loop',
         'no personal pronouns for the actor, authorizer, or owner',
@@ -769,7 +770,7 @@ hostTest('validate-preset：锚句表快照锁——表删行、改锚或加锚�
       zh: [
         '一律在后台',
         '唯一的委托入口',
-        '用 async_wait_agent 有界等待',
+        '需要后台子代理的结果时用 async_wait',
         '绝不要传 run_in_background: false',
         '不要循环轮询',
         '不使用指代执行者、授权者或归属对象的人称代词',
@@ -782,7 +783,7 @@ hostTest('validate-preset：锚句表快照锁——表删行、改锚或加锚�
       en: [
         'ALWAYS',
         'async_agent is the ONLY delegation entry',
-        'wait with async_wait_agent',
+        'wait with async_wait',
         'disabled here; do not call them',
         'Do not poll in a loop',
         'no personal pronouns for the actor, authorizer, or owner',
@@ -793,7 +794,7 @@ hostTest('validate-preset：锚句表快照锁——表删行、改锚或加锚�
       zh: [
         '一律在后台',
         '唯一的委托入口',
-        '用 async_wait_agent 有界等待',
+        '需要后台子代理的结果时用 async_wait',
         '已禁用，不要调用',
         '不要循环轮询',
         '不使用指代执行者、授权者或归属对象的人称代词',

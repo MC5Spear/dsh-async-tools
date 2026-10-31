@@ -8,7 +8,7 @@
  * 三件事，全部从**真实会话转录**读回，不碰验证实例以外的任何实例：
  *  1. 模型用 `async_agent` 派生子代理：调用参数只有 description+prompt（没有
  *     run_in_background——后台是结构保证，需求 §2.3.1 的机制半边），结果**立返** started+agent_id，
- *     note 里带可照抄的 async_wait_agent 调用；随后模型用 async_wait_agent 等到 settled，
+ *     note 里带可照抄的 async_wait 调用；随后模型用 async_wait（子代理目标）等到 settled，
  *     子代理的最终回答作为**独立消息**出现在会话里（不是塞在等待返回值里）。
  *  2. persona 强制规则（需求 §3.1）的**行为判据**：固定格式四问，值全部定向。
  *     口径（源已核证）：目标宿主 `0.2.1-rc.2` 的 `subagent`／`subagent_fork`
@@ -21,7 +21,7 @@
  *     `verify/mutate-agent.mjs` M2。该轮断言零 tool/call，防止模型现读仓库里
  *     的模板污染行为来源；转录的 `request/header` 不含 systemPrompt，系统
  *     提示原文真机不可直接取证。
- *  3. 隔离对照：standard 预设的会话里四个 async 工具**一个都没有**（需求 §1.2）。
+ *  3. 隔离对照：standard 预设的会话里 async 工具**一个都没有**（需求 §1.2）。
  *
  * 用法：node verify/probe-agent-e2e.mjs；全过退出码 0，证据落盘到本机证据目录的 logs/agent-e2e.json。
  */
@@ -42,7 +42,7 @@ function record(name, passed, detail) {
 }
 
 // ── 起跑基线：设置写回出厂默认并读回核对（每个真机脚本自己保证起跑状态） ──────────
-// 残留窄 `maxWaitMs` 会让 async_wait_agent 早返"仍在运行"，settled 判据假红。
+// 残留窄 `maxWaitMs` 会让 async_wait 早返"仍在运行"，settled 判据假红。
 const FACTORY_DEFAULTS = {
   defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
   defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000,
@@ -140,7 +140,7 @@ function parse(page, afterSeq = -1) {
 mkdirSync(LOG_DIR, { recursive: true });
 const evidence = { at: new Date().toISOString(), sections: {} };
 
-// ── 1) async_agent 立返 + async_wait_agent 等到 settled + 独立消息 ────────────────
+// ── 1) async_agent 立返 + async_wait（子代理目标）等到 settled + 独立消息 ────────
 console.log('=== 1) async_agent 派生 → 立返 → 等待 → 独立回答 ===');
 const sid = await newSession('dsh-async');
 evidence.asyncSessionId = sid;
@@ -152,8 +152,8 @@ await ask(sid,
   '请严格按以下步骤执行，不要多做别的：'
   + '1) 调用 async_agent，参数 description="算术验证"，prompt="回答一个问题：3 乘 7 等于多少？'
   + '只回答一行，格式为 ANSWER=<数字>。"；'
-  + '2) 拿到返回的 agent_id 后立即调用 async_wait_agent 等它（wait_ms=600000）；'
-  + '2b) 若该次等待返回"仍在运行"，就用同一个 agent_id 再调用一次 async_wait_agent（wait_ms=600000），最多等两次；'
+  + '2) 拿到返回的 agent_id 后立即调用 async_wait 等它（targets=[{kind:"agent", id:...}]，wait_ms=600000）；'
+  + '2b) 若该次等待返回"仍在运行"，就用同一个 agent_id 再调用一次 async_wait（同形态，wait_ms=600000），最多等两次；'
   + '3) 等待结束后，不要复述子代理内容，只输出一行 DONE。', 1_260_000);
 {
   const { calls, results, assistantTexts, childMessages } = parse(await transcriptOf(sid));
@@ -176,21 +176,21 @@ await ask(sid,
   const agentId = /agent_id[=: ]+"?([A-Za-z0-9-]+)"?/.exec(spawnResultText)?.[1];
   record('async_agent 立返 started + agent_id', /started/.test(spawnResultText) && agentId !== undefined,
     `片段=${spawnResultText.slice(0, 120).replace(/\n/g, ' ')}`);
-  record('立返结果带可照抄的 async_wait_agent 调用', /async_wait_agent\(agent_id="/.test(spawnResultText));
+  record('立返结果带可照抄的 async_wait 调用', /async_wait\(targets=\[\{kind:"agent", id:"/.test(spawnResultText));
 
-  // 取**最后一次** async_wait_agent 调用（允许二次等待后，settled 出现在末次返回）。
+  // 取**最后一次** async_wait 调用（允许二次等待后，settled 出现在末次返回）。
   let waitCallIndex = -1;
   for (let i = calls.length - 1; i >= 0; i -= 1) {
-    if (calls[i].name === 'async_wait_agent') { waitCallIndex = i; break; }
+    if (calls[i].name === 'async_wait') { waitCallIndex = i; break; }
   }
   const waitCall = waitCallIndex >= 0 ? calls[waitCallIndex] : undefined;
-  record('模型用 async_wait_agent 等待（bounded wait_ms）', waitCall !== undefined
+  record('模型用 async_wait 等待（bounded wait_ms）', waitCall !== undefined
     && /"wait_ms"\s*:\s*\d+/.test(waitCall?.args ?? ''), (waitCall?.args ?? '').slice(0, 80));
 
   // 结局判据（与现行需求 §2.2/§2.3 一致，两条合法收尾）：CHILD_SETTLED 三选一；或
   // 被可处理消息唤醒——子代理的最终回答（中继）本身在唤醒集里，先于结算事件到达时
   // 等待按 running 交还。唤醒路径要求：文案如实说"目标仍在运行"（不冒称已结束/
-  // 答案已到）并保留再等待出路。断言仍然**锚定到 async_wait_agent 那次调用**——
+  // 答案已到）并保留再等待出路。断言仍然**锚定到 async_wait 那次调用**——
   // 在全量 results 里找会"断言等待收尾、证据却来自别处"。等待
   // 文案是中文，盯 "settled" 字样抓不住。
   const waitResultText = waitCallIndex >= 0 ? (results[waitCallIndex] ?? '') : '';
@@ -198,7 +198,7 @@ await ask(sid,
   const settledHit = MESSAGE_MARKERS.CHILD_SETTLED.some((m) => m.test(waitResultText));
   record('等待收尾对齐该次调用：settled 三选一，或被消息唤醒且不冒称已结束',
     settledHit || (wokeByMessage && !settledHit && /still running|仍在运行/.test(waitResultText)
-      && /async_wait_agent/.test(waitResultText)),
+      && /async_wait/.test(waitResultText)),
     `片段=${waitResultText.slice(0, 100).replace(/\n/g, ' ')}`);
 
   // 子代理的最终回答以**独立消息**（user/message，source=agent-message/subagent-settled）
@@ -242,18 +242,18 @@ console.log('=== 2) persona 强制规则的行为判据 ===');
     `实答=${String(pick('FALSE_ALLOWED'))}`);
   record('AGENT_FOREGROUND=no（async_agent 无前台模式）', pick('AGENT_FOREGROUND') === 'no',
     `实答=${String(pick('AGENT_FOREGROUND'))}`);
-  record('WAIT_TOOL=async_wait_agent', pick('WAIT_TOOL') === 'async_wait_agent',
+  record('WAIT_TOOL=async_wait', pick('WAIT_TOOL') === 'async_wait',
     `实答=${String(pick('WAIT_TOOL'))}`);
   record('POLLING_ALLOWED=no（不许轮询循环）', pick('POLLING_ALLOWED') === 'no',
     `实答=${String(pick('POLLING_ALLOWED'))}`);
   record('模型按 persona 强制规则作答（四问定向全中）', answer.includes('FALSE_ALLOWED=no')
-    && answer.includes('AGENT_FOREGROUND=no') && answer.includes('WAIT_TOOL=async_wait_agent')
+    && answer.includes('AGENT_FOREGROUND=no') && answer.includes('WAIT_TOOL=async_wait')
     && answer.includes('POLLING_ALLOWED=no'), `回答=${answer.slice(0, 160)}`);
 }
 
-// ── 3) 隔离对照：standard 四个 async 工具都没有 ──────────────────────────
+// ── 3) 隔离对照：standard 无任何 async 工具 ──────────────────────────────
 console.log('');
-console.log('=== 3) 隔离：standard 预设不含四个 async 工具 ===');
+console.log('=== 3) 隔离：standard 预设不含任何 async 工具 ===');
 {
   const std = await newSession('standard');
   evidence.standardSessionId = std;
@@ -263,9 +263,9 @@ console.log('=== 3) 隔离：standard 预设不含四个 async 工具 ===');
   const line = (assistantTexts.at(-1) ?? '').match(/TOOLS=([^\n`]+)/)?.[1] ?? '';
   const names = line.split(',').map((s) => s.trim()).filter(Boolean);
   evidence.sections.s3 = { toolsLine: line, names };
-  const ASYNC_TOOLS = ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent'];
+  const ASYNC_TOOLS = ['async_run', 'async_wait', 'async_agent'];
   const leaked = ASYNC_TOOLS.filter((t) => names.includes(t));
-  record('standard 有 pwsh 且四个 async 工具一个都没有（未泄漏到全局工具层）',
+  record('standard 有 pwsh 且任何 async 工具都没有（未泄漏到全局工具层）',
     names.includes('pwsh') && leaked.length === 0,
     `工具数=${String(names.length)}；泄漏=${leaked.join(',') || '无'}`);
 }

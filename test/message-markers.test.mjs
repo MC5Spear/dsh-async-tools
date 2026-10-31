@@ -27,7 +27,7 @@ test('A 组·词典锚反漂移：锚命中 t() 两档渲染的出处键（任�
   const interruptedVars = {
     waitedMs: 1200,
     subject: 'job async-command-29bb2c6b2dff4ad9',
-    resume: 'async_wait_job(job_id="async-command-29bb2c6b2dff4ad9", wait_ms=30000)'
+    resume: 'async_wait(targets=[{kind:"job", id:"async-command-29bb2c6b2dff4ad9"}], wait_ms=30000)'
   };
   for (const lang of LANGS) {
     const text = t(lang, 'note.interrupted', interruptedVars);

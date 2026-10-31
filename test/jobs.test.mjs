@@ -78,7 +78,7 @@ hostTest('async_run：超出首次等待 → 返回作业编号，命令不被�
 
   assert.equal(result.status, 'running');
   assert.match(result.job_id, /^async-command-/);
-  assert.match(result.note, /async_wait_job\(job_id="/);
+  assert.match(result.note, /async_wait\(targets=\[\{kind:"job", id:"/);
   assert.match(result.note, /was NOT terminated/, '首次等待到期不杀命令（R22 英文口径）');
   assert.match(result.note, /is still running/, 'note 明说命令仍在运行（防误判终止后重跑）');
   assert.equal(isKilled(), false, '让出不得杀死命令 —— 这是与内置 pwsh 的根本区别');
@@ -111,8 +111,9 @@ hostTest('async_run（R32/R33）：注册字段——label=命令原文、progre
 
   const spec = f.jobsFake.registeredSpecs[0];
   assert.equal(spec.kind, config.jobKind);
-  // label 是命令原文（不截断、不换用 description； pwsh 先例）。
-  assert.equal(spec.label, 'build --flag with spaces');
+  // label（需求 9.3.4 fullCommandEcho 默认关）：默认以 description 作标签——
+  // 作业列表读的是人读描述，命令原文默认不进列表；开关打开才回显命令原文。
+  assert.equal(spec.label, 'long build', 'fullCommandEcho 默认关：label 取 description');
   // [0.2.1-rc.2]：owner 是 SessionId（agent.id）。
   assert.equal(spec.owner, exec.agent.id, '作业归属发起 agent 的 SessionId');
   // 通知截断口径：outputLimitBytes 必须还在（字节量纲）。
@@ -140,7 +141,7 @@ hostTest('async_run（R32/R33）：注册字段——label=命令原文、progre
     '正常退出的 detail 不得带退出码标记（前台同口径）');
   const chunks = f.jobsFake.chunksOf(result.job_id);
   assert.ok(chunks.some((chunk) => chunk.text === 'background output' && chunk.channel === 'stdout'),
-    'observed.stdout 的内容必须进环形缓冲（async_wait_job 从这里取输出）');
+    'observed.stdout 的内容必须进环形缓冲（async_wait 从这里取输出）');
 });
 
 hostTest('async_run（R32·prep 窗口）：拉式源在 proc 到位前被泵 → 空增量、游标不动、不误判丢失', async () => {
@@ -550,7 +551,7 @@ hostTest('async_run：lossy 且有落点 → note 与作业结局都给出 spill
   assert.match(result.note, /full output is on disk/);
   assert.match(result.note, /stdout: C:\\spill\\stdout\.txt/, 'spill 路径是找回完整输出的唯一线索');
 
-  // 让出分支：作业结局里同样要带路径（async_wait_job 的终态分支把 detail 原样交给模型）。
+  // 让出分支：作业结局里同样要带路径（async_wait 的终态分支把 detail 原样交给模型）。
   const g = fakeCtx();
   immediateTimers(g.ctx);
   const second = lossyProc({ spillPath: 'C:\\spill\\stdout.txt', autoResolve: false });
@@ -1072,7 +1073,8 @@ hostTest('R29-f（判据 11·注册失败单行化）：宿主原文多行超长
 });
 
 // ---------------------------------------------------------------------------
-// 首次等待的五信号竞速：结算/插话/abort/迟到作答/预算。
+// 首次等待的三信号竞速：结算/插话/abort/预算（9.3.1 收紧：非目标消息与迟到作答
+// 不再提前结束首次等待——唤醒集合＝作业终态、user 插话、调用取消、预算到期）。
 // 预算与结算路径已有上方用例；这里补插话、迟到、abort、prep 窗口 kill 与
 // 通知计数的判据。预算路径由 yield_ms=600000 的大预算排除（fake
 // jobs.wait 的超时走全局 setTimeout，freezeTimers 只冻结 ctx.timer——它冻结
@@ -1095,7 +1097,7 @@ hostTest('async_run（R32-b·插话）：让出窗口内用户消息到达 → �
   const result = await pending;
   assert.equal(result.status, 'running', '插话 → 转后台句柄（R32-c-b），不是 interrupted（那是 wait 工具的形状）');
   assert.match(result.note, /ended early: a user message arrived/, 'note 注明因用户到达提前让出');
-  assert.match(result.note, /async_wait_job\(job_id="/, '恢复示例照带');
+  assert.match(result.note, /async_wait\(targets=\[\{kind:"job", id:"/, '恢复示例照带');
   assert.equal(isKilled(), false, '插话只结束等待，绝不终止命令');
   assert.equal(f.jobsFake.views()[0].status, 'running', '作业必须存活');
   // 竞速定局即撤销 → waiter 已摘 → 结算时不计 awaited。
@@ -1106,10 +1108,10 @@ hostTest('async_run（R32-b·插话）：让出窗口内用户消息到达 → �
   exec.agent.inbox.nextStep.splice(0);
 });
 
-hostTest('async_run（R32-b·迟到作答）：让出窗口内迟到作答到达 → 句柄 + lateArrived（与 wait 工具同键）', async () => {
+hostTest('async_run（R32-b·迟到作答）：迟到作答不提前结束首次等待（9.3.1 收紧）——正文留收件箱，作业结算才交回', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
-  const { proc } = fakeProc({ text: 'partial', status: 'running', autoResolve: false });
+  const { proc, settle } = fakeProc({ text: 'partial', status: 'running', autoResolve: false });
   f.installShellExecute(() => Promise.resolve(proc));
   const agent = exec.agent;
   const tool = createRunTool(f.ctx, config);
@@ -1119,12 +1121,73 @@ hostTest('async_run（R32-b·迟到作答）：让出窗口内迟到作答到达
   f.emit(LATE_ANSWER_EVENT, {
     agentId: agent.id, questionId: 'color', kind: 'answer', summary: 'Late answer for color: red'
   });
+  // 迟到作答到达后一小段：等待**不得**收敛（非目标消息不提前结束——大预算下
+  // 只有终态/插话/abort 能交回）。
+  let concluded = false;
+  pending.then(() => { concluded = true; }, () => { concluded = true; });
+  await new Promise((r) => { setTimeout(r, 10); });
+  assert.equal(concluded, false, '迟到作答不提前结束首次等待（旧形态：秒回句柄+lateArrived——已按 9.3.1 移除）');
 
+  // 作业终态才是合法交回点：结算（作业终态视图 + 进程流关闭）→ wait 成员
+  // 胜出 → 直接交付（不是句柄）。
+  const views = f.jobsFake.views();
+  f.jobsFake.settleJob(views[0].id, { status: 'completed', detail: 'exit code: 0' });
+  settle({ status: 'completed', exitCode: 0 });
   const result = await pending;
-  assert.equal(result.status, 'running');
-  assert.match(result.note, /A late answer has arrived \(Late answer for color: red\)/, 'lateArrived 键 + summary（题号在册）');
-  assert.match(result.note, /async_wait_job\(job_id="/, '句柄示例照带');
-  assert.equal(f.jobsFake.waitersOf(result.job_id), 0, '同样撤销在先：不残留 waiter');
+  assert.equal(result.status, 'completed', '结算路径直接交付（等待没有被作答提前打断）');
+  assert.ok(!/lateArrived|Late answer/i.test(result.result ?? ''),
+    '作答摘要不进返回——它留在收件箱按宿主节奏领取（§2.1.2 排队消息口径）');
+  assert.equal(f.jobsFake.waitersOf(views[0].id), 0, '结算后不残留 waiter');
+});
+
+hostTest('async_run（R32-b·非目标通知）：等待中 notice 到达不提前结束首次等待（9.3.1 表 2 行——盲审 M-7③ 显式锚）', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  const { proc, settle } = fakeProc({ text: 'partial', status: 'running', autoResolve: false });
+  f.installShellExecute(() => Promise.resolve(proc));
+  const tool = createRunTool(f.ctx, config);
+
+  const pending = tool.execute({ command: 'build', description: 'long build', yield_ms: 600000 }, exec);
+  await new Promise((r) => { setTimeout(r, 5); });
+  // 等待中到达的非目标 notice（form notice、sender 非任何目标——首等无消息目标
+  // 可言，订阅层空目标过滤只放行 user 插话）：不产生唤醒。
+  f.emit('agent/inbox/inserted', inboxPayload({
+    agent: exec.agent,
+    sourceKind: 'tool-jobs',
+    form: 'notice',
+    summary: 'some other job finished',
+    senderSessionId: 'someone-else',
+    target: 'next-step'
+  }));
+  let concluded = false;
+  pending.then(() => { concluded = true; }, () => { concluded = true; });
+  await new Promise((r) => { setTimeout(r, 10); });
+  assert.equal(concluded, false, '非目标 notice 不提前结束首次等待（到期/终态/插话/abort 才交回）');
+
+  const views = f.jobsFake.views();
+  f.jobsFake.settleJob(views[0].id, { status: 'completed', detail: 'exit code: 0' });
+  settle({ status: 'completed', exitCode: 0 });
+  const result = await pending;
+  assert.equal(result.status, 'completed', '作业终态才是交回点');
+  assert.ok(!/some other job/i.test(result.result ?? ''), '通知摘要不进返回（正文留收件箱按宿主节奏领取）');
+});
+
+hostTest('async_run（R32/R33·开启向）：fullCommandEcho=true → label=命令原文（盲审 M-7②）', async () => {
+  const f = fakeCtx();
+  immediateTimers(f.ctx);
+  const { proc, settle } = fakeProc({ text: 'x', status: 'running', autoResolve: false });
+  f.installShellExecute(() => Promise.resolve(proc));
+  const echoConfig = resolveConfig({ toolName: 'async_run', fullCommandEcho: true });
+  const tool = createRunTool(f.ctx, echoConfig);
+
+  const pending = tool.execute({ command: 'deploy --env prod', description: 'deployment step', yield_ms: 5 }, exec);
+  await new Promise((r) => { setTimeout(r, 0); });
+  await pending;
+  const spec = f.jobsFake.registeredSpecs[0];
+  assert.equal(spec.label, 'deploy --env prod',
+    '开启向：注册名称取命令原文（需求 2.2.4/9.3.4——任务列表经注册名称回显命令）');
+  assert.equal(f.jobsFake.views()[0].progress, 'deployment step', 'progress 行仍取 description（活动期说明）');
+  settle({ exitCode: 0 });
 });
 
 hostTest('async_run（R32-c·abort）：GUI 停止 → 句柄形状返回（宿主改写、模型不可见）、作业存活、结算通知可恢复', async () => {

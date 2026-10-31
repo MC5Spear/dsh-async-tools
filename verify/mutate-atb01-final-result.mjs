@@ -10,7 +10,7 @@
  * - M3 **恒无分隔**：增量与 `result` 直接拼接 → 必须红在「非换行结尾的增量
  *   恰一个换行」的精确文本断言上。守分隔规则的边界二。
  *
- * **本脚本会原地改写真实的 `lib/wait-job.js`**，跑完在 `finally` 里写回并核对摘要。
+ * **本脚本会原地改写真实的 `lib/delivery.js`**，跑完在 `finally` 里写回并核对摘要。
  *
  * 用法：node verify/mutate-atb01-final-result.mjs
  * （会跑 `node --test` 测试文件：受限沙箱下按「没跑成不算 CAUGHT」fail-closed，
@@ -24,8 +24,8 @@ import { fileURLToPath } from 'node:url';
 
 // 从模块自身位置推仓根（verify/ 上一级）——变异脚本要在任意 cwd 下都能跑。
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const TARGET = join(ROOT, 'lib', 'wait-job.js');
-const TESTS = ['test/wait-job.test.mjs', 'test/wait-job-result.test.mjs'];
+const TARGET = join(ROOT, 'lib', 'delivery.js');
+const TESTS = ['test/wait-delivery.test.mjs'];
 
 const original = readFileSync(TARGET, 'utf8');
 const hashBefore = createHash('sha256').update(original, 'utf8').digest('hex');
@@ -84,18 +84,18 @@ function restore() {
   if (after !== hashBefore) throw new Error(`还原失败：${TARGET} 与变异前不一致，请 git checkout 恢复。`);
 }
 
-// 现行实现的合并段（outputOf 尾部三分支）。
-const MERGE_ANCHOR = "  const text = read?.result === undefined\n    ? delta\n    : `${delta}${delta.length > 0 && !delta.endsWith('\\n') ? '\\n' : ''}${read.result}`;";
-const M1_MUTATED = '  const text = delta; // mutated M1: 丢弃一次性 result（缺陷回潮）';
-const M2_MUTATED = "  const text = read?.result === undefined\n    ? delta\n    : `${delta}\\n${read.result}`; // mutated M2: 恒加分隔";
-const M3_MUTATED = "  const text = read?.result === undefined\n    ? delta\n    : `${delta}${read.result}`; // mutated M3: 恒无分隔";
+// 现行实现的合并段（lib/delivery.js 的 chunksTextOf 尾部三分支）。
+const MERGE_ANCHOR = "  if (read?.result === undefined) return delta;\n  return `${delta}${delta.length > 0 && !delta.endsWith('\\n') ? '\\n' : ''}${read.result}`;";
+const M1_MUTATED = "  if (read?.result === undefined) return delta;\n  return delta; // mutated M1: 丢弃一次性 result（缺陷回潮）";
+const M2_MUTATED = "  if (read?.result === undefined) return delta;\n  return `${delta}\\n${read.result}`; // mutated M2: 恒加分隔";
+const M3_MUTATED = "  if (read?.result === undefined) return delta;\n  return `${delta}${read.result}`; // mutated M3: 恒无分隔";
 
 const baseline = runTests(120000);
 if (baseline.state !== 'green') {
   console.log(`BASELINE-${baseline.state === 'red' ? 'RED' : 'DIDNT-RUN'}  未变异时不是绿的（${baseline.summary}）——先修基线/换环境。`);
   process.exit(2);
 }
-console.log('基线：未变异时两个测试文件全绿。');
+console.log('基线：未变异时目标测试文件全绿。');
 console.log('');
 
 let ok = true;

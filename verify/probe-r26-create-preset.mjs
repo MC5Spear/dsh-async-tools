@@ -6,8 +6,8 @@
  * 用法：node verify/probe-r26-create-preset.mjs <face|drill|both>
  *   face  —— 部署态全量判据（重启装载第三份 patch 后跑）：
  *            ① 新会话选 dsh-async-create 不回退；② 工具目录（启用行在场/禁用行缺席）；
- *            ③ async_agent→async_wait_agent 有界等待取回；④ 插话打断等待而子代理照跑；
- *            ⑤ 隔离对照（dsh-async 预设形态不变：async 五件在场、原生委托入口与同步 shell 同样禁用）。
+ *            ③ async_agent→async_wait 有界等待取回；④ 插话打断等待而子代理照跑；
+ *            ⑤ 隔离对照（dsh-async 预设形态不变：async 四件在场、原生委托入口与同步 shell 同样禁用）。
  *   drill —— 回滚态判据（package.json 摘掉第三项并重启后跑）：
  *            dsh-async-create 必须开不出来（报错或回退）；dsh-async 必须仍可用。
  *   both  —— 复原态快查（两项都在花名册上、都能开新会话）。
@@ -185,7 +185,7 @@ function record(name, ok, detail) {
 //    不从开发实例的会话推断——两实例组合不同，tool-cordis 在验证实例只注册
 //    cordis_inspect_list/cordis_inspect_query 两件）────────────────────────────
 const CREATE_MUST_HAVE = [
-  'async_run', 'async_wait_job', 'async_wait_agent', 'async_agent', 'async_workflow',
+  'async_run', 'async_wait', 'async_agent', 'async_workflow',
   'read', 'glob', 'grep', 'write', 'edit',                           // tool-fs（基线启用）
   'web_search', 'web_fetch',                                        // tool-web
   'ask_user_question', 'todo_write', 'skill',                       // 交互/规划行
@@ -206,8 +206,8 @@ const CREATE_MUST_NOT_HAVE = [
   'subagent_codex', 'subagent_claude_code', // 基线本就禁用
   'ralph'                                // 基线本就禁用
 ];
-// 隔离对照：dsh-async 的形态必须不变（async 五件在场；原生委托入口与同步 shell 同样禁用）。
-const ASYNC_MUST_HAVE = ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent', 'async_workflow'];
+// 隔离对照：dsh-async 的形态必须不变（async 四件在场；原生委托入口与同步 shell 同样禁用）。
+const ASYNC_MUST_HAVE = ['async_run', 'async_wait', 'async_agent', 'async_workflow'];
 // 差集口径：两预设相对各自基线做同款改动，工具集差集只剩基线差——create（cordis 基线）
 // 独有 = tool-cordis 的两件＋插件管理入口（cordis 基线两行是 profileContext 条件表达式，
 // 创造上下文中按基线启用——设计 §3.6「异步创造预设不丢失原生插件管理入口」；standard
@@ -245,10 +245,10 @@ async function phaseFace() {
   const TASK = [
     '请严格按步做，每步 finish 前不要做别的：',
     '第 1 步：用 async_agent 派生一个子代理，prompt 让它「计算 17×23 并只回答这个数字」，不要传 provider/model。',
-    '第 2 步：立刻用 async_wait_agent 等它，wait_ms=120000，把子代理的回答记下来。',
+    '第 2 步：立刻用 async_wait 等它（targets=[{kind:"agent", id:...}]），wait_ms=120000，把子代理的回答记下来。',
     '第 3 步：再用 async_agent 派生第二个子代理，prompt 让它「写一篇约 2000 字的中文短文，主题：异步，写完才算完成」。',
-    '第 4 步：拿到第二个 agent_id 后立刻用 async_wait_agent 等它，wait_ms=600000。',
-    '第 5 步（关键）：若第 4 步的等待因用户消息到达而提前返回（返回文本说有消息进入你的输入），就用**同一个 agent_id** 再次 async_wait_agent、wait_ms=600000，把短文取回。',
+    '第 4 步：拿到第二个 agent_id 后立刻用 async_wait 等它（同形态），wait_ms=600000。',
+    '第 5 步（关键）：若第 4 步的等待因用户消息到达而提前返回（返回文本说有消息进入你的输入），就用**同一个 agent_id** 再次 async_wait（同形态）、wait_ms=600000，把短文取回。',
     '全部做完后回答两行：第一行 Q1=<17×23 的答案>；第二行 DONE。'
   ].join('\n');
   await prompt(s1, TASK);
@@ -271,13 +271,13 @@ async function phaseFace() {
     // 任务轮已开始 = 转录里出现过 async_agent 调用（防 READY 轮结束瞬间的假收敛）。
     const taskStarted = (page.records ?? []).some((r) => r.event?.type === 'tool/call' && r.event.data?.name === 'async_agent');
 
-    // 插话窗口（定位的是状态不是时刻）：async_wait_agent 且 wait_ms
+    // 插话窗口（定位的是状态不是时刻）：async_wait（子代理目标）且 wait_ms
     // 很大 → 两拍后发 steer；若这轮等待已正常返回而打断证据未出现，则在**下一次**
     // 长等待里重试（有界 3 次）。
     const longWaitActive = (() => {
       for (const record of page.records) {
         const event = record.event;
-        if (event?.type !== 'tool/call' || event.data?.name !== 'async_wait_agent') continue;
+        if (event?.type !== 'tool/call' || event.data?.name !== 'async_wait') continue;
         const waitMs = Number(argsOf(event.data).wait_ms ?? 0);
         if (waitMs >= 300000) return true;
       }
@@ -306,7 +306,7 @@ async function phaseFace() {
   const { calls, resultsById } = callsOf(finalPage);
   const childMessages = childMessagesOf(finalPage);
   const agentCalls = calls.filter((c) => c.name === 'async_agent');
-  const waitCalls = calls.filter((c) => c.name === 'async_wait_agent');
+  const waitCalls = calls.filter((c) => c.name === 'async_wait');
   const waitTexts = waitCalls.map((c) => resultsById.get(c.callId)).filter((t) => typeof t === 'string');
   const firstAgentText = agentCalls.length > 0 ? resultsById.get(agentCalls[0].callId) : undefined;
   record('③a async_agent 被真的调用并立返（agent_id 在结果里）',
@@ -318,7 +318,7 @@ async function phaseFace() {
   // 子代理中继消息里。文案匹配按双语档（实例 agentLang 可为 en 或 zh）。
   const firstWaitReturned = waitTexts.length > 0;
   const answerMessage = childMessages.find((m) => /391/.test(m.text));
-  record('③b async_wait_agent 有界等待返回 + 子代理回答独立到达（agent-message 含 391）',
+  record('③b async_wait 有界等待返回 + 子代理回答独立到达（agent-message 含 391）',
     firstWaitReturned && answerMessage !== undefined,
     `等待返回=${String(firstWaitReturned)}；回答消息=${answerMessage === undefined ? '未见' : `${answerMessage.kind} len=${String(answerMessage.text.length)}`}`);
   const interrupted = waitTexts.filter((t) => WAIT_INTERRUPTED.test(t));
@@ -350,7 +350,7 @@ async function phaseFace() {
   }
   const face2 = faceOf(await transcriptOf(s2));
   const missing2 = ASYNC_MUST_HAVE.filter((n) => !face2?.names.includes(n));
-  record('⑤a 隔离对照：dsh-async 预设形态不变（async 五件在场；原生委托入口禁用缺席）',
+  record('⑤a 隔离对照：dsh-async 预设形态不变（async 四件在场；原生委托入口禁用缺席）',
     missing2.length === 0, missing2.length === 0 ? `${String(face2?.names.length ?? 0)} 个工具` : `缺：${missing2.join(', ')}`);
   const createOnly = face.names.filter((n) => !face2?.names.includes(n));
   const controlOnly = (face2?.names ?? []).filter((n) => !face.names.includes(n));

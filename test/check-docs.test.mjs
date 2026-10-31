@@ -45,7 +45,9 @@ const SCRIPT = 'tools/check-docs.mjs';
  * 静态导入有顺带执行整场检查的风险（函数形态只在调用时跑，但双份清单的漂移风险
  * 本来就是 C5 要盯的）。重复一份的代价是可能漂移，所以 C5 顺便断言这些文件都存在。
  */
-const CURRENT_DOCS = ['requirements.md', 'design.md', 'user-reference.md', 'user-reference.en.md', 'documentation-principles.md'];
+// 过程性文档（问题清单）同属公开范围 docs/ 的现行文件——收尾整份删除时同步撤
+// 本名单与 tools/check-docs.mjs 责任表里的登记行（C5 与未分类对账两侧都盯着）。
+const CURRENT_DOCS = ['requirements.md', 'design.md', 'user-reference.md', 'user-reference.en.md', 'documentation-principles.md', 'issue-list.md'];
 
 /**
  * `docs/` **之外**的登记文档，同样必须与脚本的责任表一致（脚本里 CHANGELOG 是
@@ -102,7 +104,7 @@ test('C1 check-docs：干净时退出 0（四态之③：正常文档全绿）',
   t.after(box.cleanup);
   const { code, out } = box.runChecker();
   assert.equal(code, 0, `干净的树必须退出 0，实际输出：${out.slice(-300)}`);
-  assert.match(out, /现行 9 份/);
+  assert.match(out, /现行 10 份/);
   assert.match(out, /档案 1 份/);
 });
 

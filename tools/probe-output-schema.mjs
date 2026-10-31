@@ -1,5 +1,5 @@
 /**
- * 缺陷定位探针：把四个工具的**实际返回值**喂给宿主自己的输出校验器。
+ * 缺陷定位探针：把各工具的**实际返回值**喂给宿主自己的输出校验器。
  *
  * 为什么需要它：单测断言返回值的**字段**，宿主校验器验的是 `output.schema`
  * 本体，而 schema 校验只在运行时发生（`@deepseek-ai/dsh-tools/lib/index.js:3543`）
@@ -19,8 +19,7 @@ import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools';
 import { fakeCtx, fakeProc } from '../test/_helpers.mjs';
 import { createAgentTool } from '../lib/agent.js';
 import { createRunTool } from '../lib/jobs.js';
-import { createWaitAgentTool } from '../lib/wait-agent.js';
-import { createWaitJobTool } from '../lib/wait-job.js';
+import { createWaitTool } from '../lib/wait.js';
 import { resolveConfig } from '../lib/config.js';
 
 const config = resolveConfig({});
@@ -28,7 +27,7 @@ const config = resolveConfig({});
 /** 失败计数（决定退出码）。 */
 let failures = 0;
 
-const exec = { agent: { id: 'session-probe', session: { header: { cwd: 'Q:\\nowhere' } } }, signal: undefined };
+const exec = { agent: { id: 'session-probe', session: { header: { cwd: 'Q:\\nowhere' }, requestHeader: () => ({}) }, requestHeader: () => ({}) }, signal: undefined };
 
 /**
  * 跑一个工具并把结果喂给校验器。
@@ -92,38 +91,51 @@ async function probe(label, tool, args) {
     { command: 'Start-Sleep 1', description: 'probe-yield', yield_ms: 20 });
 }
 
-// 5) `async_wait_job` 的两个分支：终态与未终态。
+// 5) `async_wait`（作业目标）的两个分支：终态与未终态。
 //    终态分支用假注册表造一个已结算作业（`settleJob` 是测试驱动结算的正式入口）。
 {
   const f = fakeCtx();
-  const waitJob = createWaitJobTool(f.ctx, config);
+  const wait = createWaitTool(f.ctx, config);
   {
     const id = f.jobsFake.service.start({
       kind: 'async-command', label: 'probe-wait', owner: exec.agent.id,
       run: () => ({ cancel: () => {}, done: Promise.resolve({ status: 'completed', result: 'job output' }) })
     });
     f.jobsFake.settleJob(id, { status: 'completed', result: 'job output' });
-    await probe(`async_wait_job(${id})`, waitJob, { job_id: id, wait_ms: 100 });
+    await probe(`async_wait(job ${id})`, wait, { targets: [{ kind: 'job', id }], wait_ms: 100 });
   }
   {
     const id = f.jobsFake.service.start({
       kind: 'async-command', label: 'probe-wait-running', owner: exec.agent.id,
       run: () => ({ cancel: () => {}, done: new Promise(() => {}) })
     });
-    await probe(`async_wait_job(${id}, running)`, waitJob, { job_id: id, wait_ms: 20 });
+    await probe(`async_wait(job ${id}, running)`, wait, { targets: [{ kind: 'job', id }], wait_ms: 20 });
   }
 }
 
-// 6) `async_wait_agent` 的两个分支：屏障即终态（settled）与查不到（not_found）。
+// 6) `async_wait`（子代理目标）的两个分支：屏障即终态（settled）与查不到。
+//    查无**抛可读错误**（error.unknownAgent 带纠错清单）——那是设计行为，不是
+//    schema 违规：这里断言抛错消息形态，而不是喂校验器。
 {
   const f = fakeCtx();
-  const waitAgent = createWaitAgentTool(f.ctx, config);
+  const wait = createWaitTool(f.ctx, config);
   f.ctx.subagents.listChildren = async () => [
     { kind: 'child', id: 'child-1', mode: 'continuable', label: 'x', activity: 'inactive', hasChildren: false }
   ];
-  await probe('async_wait_agent(settled)', waitAgent, { agent_id: 'child-1', wait_ms: 50 });
+  await probe('async_wait(agent settled)', wait, { targets: [{ kind: 'agent', id: 'child-1' }], wait_ms: 50 });
   f.ctx.subagents.listChildren = async () => [];
-  await probe('async_wait_agent(not_found)', waitAgent, { agent_id: 'child-1', wait_ms: 50 });
+  let notFoundError;
+  try {
+    await wait.execute({ targets: [{ kind: 'agent', id: 'child-1' }], wait_ms: 50 }, exec);
+  } catch (error) {
+    notFoundError = error;
+  }
+  if (notFoundError === undefined || !/unknown subagent/.test(String(notFoundError?.message ?? notFoundError))) {
+    failures += 1;
+    console.log('async_wait(agent not_found): 未按设计抛 unknown subagent 可读错误');
+  } else {
+    console.log('async_wait(agent not_found): OK（可读错误，含纠错清单）');
+  }
 }
 
 // 7) `async_agent` 的立返分支：替身 provider 走 startActivation（result 永不落定）。

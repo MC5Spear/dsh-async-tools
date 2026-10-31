@@ -7,7 +7,7 @@
 | 项目 | 当前适用版本 |
 | --- | --- |
 | 插件版本 | `0.2.8+dsh.0.2.1-rc` |
-| 支持的宿主版本 | `0.2.1-rc.2`、`0.2.1-rc.3`、`0.2.1-rc.4` |
+| 支持的宿主版本 | `0.2.1-rc.2`、`0.2.1-rc.3`、`0.2.1-rc.4`、`0.2.1-rc.5` |
 
 安装地址取不到源码时，先核对仓库地址与提交号，再检查网络或代理；仍无法获取时，联系提供安装来源的维护者，询问可用安装件。
 
@@ -15,7 +15,7 @@
 
 安装前先确认运行环境：建议 Node.js 24。插件清单的 `>=20` 只是插件声明；宿主依赖 commander 15 要求 `>=22.12.0`，也只是已知下界，不是整套宿主经验证的最低版本。确认目标宿主依赖能在所选运行时解析后，再安装。
 
-上表三个宿主版本共用同一条兼容线与同一份 peer 支持集合，集合外的正式 `0.2.1`、`0.2.0`、`0.2.2` 与未列入的新 rc 都不放行。本线面向 Windows，但三个宿主版本上的逐项重验尚未完成。Linux 命令与单次提权、macOS、远程执行均未验证。需要这些环境时，向维护者提供环境与使用需求，安排隔离验证后再决定部署。兼容线支持不等于所有行为已在每个宿主上通过验证。
+上表四个宿主版本共用同一条兼容线与同一份 peer 支持集合，集合外的正式 `0.2.1`、`0.2.0`、`0.2.2` 与未列入的新 rc 都不放行。本线面向 Windows；`0.2.1-rc.2` 与 `0.2.1-rc.5` 已完成隔离实例真机逐项验证（2026-10-31 独立验收判收），`0.2.1-rc.3`、`0.2.1-rc.4` 依靠同一实现的静态契约核对与 CI 矩阵覆盖，逐宿主真机重验尚未完成。Linux 命令与单次提权、macOS、远程执行均未验证。需要这些环境时，向维护者提供环境与使用需求，安排隔离验证后再决定部署。兼容线支持不等于所有行为已在每个宿主上通过验证。
 
 确认上述前提后，在终端安装：
 
@@ -46,16 +46,16 @@ dsh plugin --profile web add <克隆目录的绝对路径>
 
 ## 2. 首次使用与设置
 
-选择 `dsh-async` 进行通用编码，或选择保留插件和预设创作工具的 `dsh-async-create`。两个预设直接提供六个工具；检查、消息、显式停止继续使用宿主管理工具。它们不改写原有预设。
+选择 `dsh-async` 进行通用编码，或选择保留插件和预设创作工具的 `dsh-async-create`。两个预设直接提供五个工具；检查、消息、显式停止继续使用宿主管理工具。它们不改写原有预设。
 
 ```text
 async_run(command="Write-Output SHORT_OK", description="Print a harmless test marker")
 async_run(command="Start-Sleep -Seconds 30; Write-Output LONG_DONE",
           description="Wait then print completion marker", yield_ms=1000)
-async_wait_job(job_id="<返回的job_id>", wait_ms=30000)
+async_wait(targets=[{kind:"job", id:"<返回的job_id>"}], wait_ms=30000)
 ```
 
-上面是 Agent 工具调用示意，不是终端命令。短命令应直接显示 `SHORT_OK`；长命令在首次等待后通常返回作业编号 `job_id`。保留编号，继续独立工作；需要结果时调用 `async_wait_job`，每次显式填写 `wait_ms`。看到 `LONG_DONE` 后仍须核对退出信息，不重复执行原命令来查进度。
+上面是 Agent 工具调用示意，不是终端命令。短命令应直接显示 `SHORT_OK`；长命令在首次等待后通常返回作业编号 `job_id`。保留编号，继续独立工作；作业结算时结果正文直接附在等待返回或完成消息里，不要求专门调用取回；需要阻塞等待时用 `async_wait`，每次显式填写 `wait_ms`。看到 `LONG_DONE` 后仍须核对退出信息，不重复执行原命令来查进度。
 
 设置入口：插件列表 → 本包详情页 → 描述与组件行之间的表单。写入需宿主本机回环入口；非回环或只读时按页面提示切换到可写入口。编辑只产生草稿，保存才生效；恢复默认也须保存，离开丢弃未保存草稿。保存失败保留草稿。帮助按钮展开说明，不提交设置。
 
@@ -63,9 +63,9 @@ async_wait_job(job_id="<返回的job_id>", wait_ms=30000)
 
 高级配置写在宿主行的 `config.settings.<字段>`，不要把字段直接放在 `config` 根上。取值优先级从高到低为：用户覆盖、组合层配置、schema 默认值（配置定义中的默认值）。是否覆盖取决于用户层有没有该字段，而不是值是否等于默认值。
 
-工具优先读取宿主发布的当前配置快照。只有快照缺席时，才使用合法的工具行备用值，并提示设置未接入。`toolName`、`owningPreset` 和委托行配置是固定的行配置，不在下面的 17 项界面设置中。
+工具优先读取宿主发布的当前配置快照。只有快照缺席时，才使用合法的工具行备用值，并提示设置未接入。`toolName`、`owningPreset` 和委托行配置是固定的行配置，不在下面的 19 项界面设置中。
 
-### 2.1 全部17项设置
+### 2.1 全部19项设置
 
 表中“范围”表示允许保存的配置值。单次调用超出当前 min/max 时，工具把请求值调到对应边界，这叫“夹紧”。新的非法配置保存会被拒绝，不会自动改成边界值；已有损坏配置的原样重存例外见表后的恢复说明。毫秒（ms）是存储单位，1000 ms 等于 1 秒。
 
@@ -84,6 +84,8 @@ async_wait_job(job_id="<返回的job_id>", wait_ms=30000)
 | `uiLang` | enum | `auto` | auto / zh / en | — | 界面；auto跟随宿主 |
 | `agentLang` | enum | `en` | en / zh | — | 描述、结果和执行纪律的语言 |
 | `silentFailureGuard` | boolean | `false` | true / false | — | 两预设的命令诊断与提示 |
+| `workflowProgressLog` | boolean | `false` | true / false | — | 编排结果是否保留各阶段进度行 |
+| `fullCommandEcho` | boolean | `false` | true / false | — | 命令作业列表回显完整命令原文 |
 | `askTakeover` | boolean | `false` | true / false | — | 每次普通提问请求 |
 | `askTimeoutMs` | number | `60000` | 10000..600000，可小数 | ms | 新接管批次的初始期限 |
 | `askExtendMs` | number | `60000` | 1..2147483647，可小数 | ms | 每次延长动作，在原期限上追加 |
@@ -97,7 +99,7 @@ async_wait_job(job_id="<返回的job_id>", wait_ms=30000)
 
 要恢复正常，先修正全部非法字段和跨字段关系，使整份配置合法，再保存。保存后检查降级警示是否解除，并核对工具描述中的实际采用值是否符合预期；不要只看保存成功或表单中的“生效”读数。若警示仍在，按警示或装载日志继续修正。正常合法设置保存无需重启。
 
-## 3. 六工具参数与返回
+## 3. 五工具参数与返回
 
 参数表中的“必填”适用于每次调用。未知键不能当作任意宿主配置透传。预算取当前设置夹紧后的值。
 
@@ -116,14 +118,18 @@ async_wait_job(job_id="<返回的job_id>", wait_ms=30000)
 
 首次等待完成返回 `{status, output, truncated, exit_code?, signal?, note?}`；`completed` 不代表退出码为0，读取退出标记。`signal` 是进程终止信号。被终止可返回 `{status:'killed', detail?, output?, truncated?}`。后台返回 `{status:'running', job_id, elapsed_ms, note}`。作业从启动时注册，不等到首次等待到期才出现。
 
-### 3.2 async_wait_job
+### 3.2 async_wait
+
+统一等待入口：无目标等待消息与作业结果，或等待指定作业与子代理目标。
 
 | 参数 | 类型 | 必填/默认 | 规则 |
 | --- | --- | --- | --- |
-| `job_id` | string | 必填 | 原作业的不透明编号 |
-| `wait_ms` | number | 必填，无默认 | 夹紧至minWaitMs..maxWaitMs |
+| `wait_ms` | number | 必填，无默认 | 正值夹紧至minWaitMs..maxWaitMs；0合法＝零等待即时检查 |
+| `targets` | array | 可选，默认无目标 | 元素为 `{kind, id}`；kind枚举job/agent，id非空；重复项按同一目标去重 |
 
-终态返回 `{status, job_id, output, truncated, detail?}`，终态是 completed / killed / failed；stopping仍未结。等待类返回 `{status, job_id, waited_ms, note}`。查无或不可见按错误处理；查询失败按提示重试，不重启原命令。读取消费规则见第4节。
+无目标时等待可处理消息与本包作业结果；有目标时等待目标终态（作业）或变化（子代理），非目标消息不结束等待。`wait_ms=0` 立即返回当前状态与未交付内容，不进入等待段。
+
+作业终态返回 `{status:'completed'|'killed'|'failed', job_id, output, truncated, waited_ms}`；子代理变化返回 `{status:'changed'|'settled', agent_id, waited_ms, note}`；等待类返回 `{status:'running'|'budget'|'interrupted'|'message'|'cancelled', waited_ms, note}`。多目标出口附其余目标已证状态 `targets`。同拍就绪的其他作业正文以 `outputs` 分条携带，`delivered` 是批次元数据。查无或不可见的作业目标按 `not_found` 状态标注；查询失败按提示重试，不重启原任务。读取消费规则见第4节。
 
 ### 3.3 async_agent
 
@@ -139,22 +145,13 @@ async_wait_job(job_id="<返回的job_id>", wait_ms=30000)
 
 无 `run_in_background` 参数，也不等待最终答案。成功立即返回 `{status:'started', agent_id, note}`，说明实际路由来源及等待入口；拒绝不返回虚构编号。默认两预设未配置允许预设集合，因此不暴露agent_preset。继承上下文型后端的子代理可见父上下文；任务书按实际后端编写。
 
-通常只需填写任务书。需要指定模型时，先按第 5 节查询准确 ID，再提供成对的 `provider`／`model`。`reasoning_effort` 可单独提供，但仍按最终有效模型校验。`agentOptions`、`agentPreset`、`allowedAgentPresets` 是高级组合中的固定行配置，不能当作调用参数，也不属于 17 项界面设置。
+通常只需填写任务书。需要指定模型时，先按第 5 节查询准确 ID，再提供成对的 `provider`／`model`。`reasoning_effort` 可单独提供，但仍按最终有效模型校验。`agentOptions`、`agentPreset`、`allowedAgentPresets` 是高级组合中的固定行配置，不能当作调用参数，也不属于 19 项界面设置。
 
 **支持预检何时运行：** 显式提供路由或推理强度，或行 `agentOptions` 中配置了 `provider`、`model`、`reasoningEffort`，都会触发创建前的支持预检。仅配置 `maxTokens` 等非路由选项不会触发。后端 `agentRouteDefaults` 只在触发预检时参与合并；显式参数覆盖行选项，行选项覆盖后端默认，缺少的路由部分由父路由补齐。允许名单检查仍只针对显式选择请求，行默认触发预检不等于显式请求。
 
 **最终创建携带什么：** 任何一层贡献选项时，创建请求携带合并后的 `agentOptions`；没有贡献时省略它，由宿主继承父选项，不额外套用后端路由默认。支持预检临时采用的兼容父推理强度或模型默认，不会被预检结果回填到创建请求。最终子代理继承以实际请求和宿主合并为准，不能仅凭预检值推断。换路由而未指定强度时，预检不沿用旧路由不兼容的值。
 
-### 3.4 async_wait_agent
-
-| 参数 | 类型 | 必填/默认 | 规则 |
-| --- | --- | --- | --- |
-| `agent_id` | string | 必填 | 有权等待的子代理编号 |
-| `wait_ms` | number | 必填，无默认 | 夹紧至minWaitMs..maxWaitMs |
-
-返回 `{status, agent_id, waited_ms, note}`；查无返回 `{status:'not_found', agent_id, known_children}`。存在检查最多三拍pollIntervalMs重试，仍计入同一预算。settled只表示当次不再观察到运行，最终回答另以消息到达，无答案返回字段。not_found先核目录与编号；查询故障不等于查无，勿重新派发同任务。
-
-### 3.5 async_workflow
+### 3.4 async_workflow
 
 仅在用户明确要求workflow或大规模编排时使用；一两项委托用async_agent。
 
@@ -184,9 +181,9 @@ const results = await pipeline(args.items,
 return results.filter(value => value !== null);
 ```
 
-完成返回 `{status:'completed', result}`，result是渲染后的字符串，并非直接返回JSON对象；终止返回 `{status:'killed', detail?}`，后台返回 `{status:'running', job_id, elapsed_ms, note}`。用async_wait_job读整次运行，job_kill才请求取消。缺编排引擎时可读拒绝且零作业，正确组合见第7节。
+完成返回 `{status:'completed', result}`，result是渲染后的字符串，并非直接返回JSON对象；终止返回 `{status:'killed', detail?}`，后台返回 `{status:'running', job_id, elapsed_ms, note}`。后台运行的结果经async_wait或完成消息交付；job_kill才请求取消。缺编排引擎时可读拒绝且零作业，正确组合见第7节。
 
-### 3.6 async_list_subagent_models
+### 3.5 async_list_subagent_models
 
 | 参数 | 类型 | 必填/默认 | 规则 |
 | --- | --- | --- | --- |
@@ -210,21 +207,23 @@ async_list_subagent_models(provider="<准确ID>", model="<准确ID>", target_too
 
 搜索匹配 ID 与显示名，忽略大小写。部分供应商读取失败时，`complete=false`，`total` 只计算已取得的结果，不能理解成失败供应商没有模型。允许名单中的准确 ID 即使未列入目录，仍可查询和列入结果；目录缺席本身不证明模型不受支持。
 
-## 4. 等待状态与消费式输出
+## 4. 等待状态与直接交付
 
-先看返回状态，再决定下一步。预算到期通常返回 `running`，表示这次等待结束，后台工作没有因此停止。两个等待工具的入口查询、存在检查、重试和等待共用一份 `wait_ms`，不是每段各等一次。
+先看返回状态，再决定下一步。预算到期通常返回 `running`（有目标）或 `budget`（无目标），表示这次等待结束，后台工作没有因此停止。等待的入口查询、存在检查、重试和等待段共用一份 `wait_ms`，不是每段各等一次。
 
-等待也可能因消息提前结束。发给当前 Agent 的用户插话、可领取的通知（notice）、代理转达（relay）和本包迟到答案都会触发检查；开始前已经到达的消息同样有效。排队消息留到下一轮，不打断本次等待。收到消息只说明 Agent 有新内容可处理，不证明等待目标完成。
+作业结果直接交付：结算时结果正文附在进行中的等待返回（`output`／`outputs` 分条）或以完成消息到达，不要求专门调用取回；被延后的条目用 `async_wait(wait_ms=0)` 领取。
+
+等待也可能因消息提前结束。发给当前 Agent 的用户插话、可领取的通知（notice）、代理转达（relay）和本包迟到答案都会触发检查；开始前已经到达的消息同样有效。排队消息留到下一轮，不打断本次等待。有目标等待只被目标变化、目标消息或用户插话结束；收到消息只说明 Agent 有新内容可处理，不证明等待目标完成。
 
 | 看到什么 | 怎样处理 |
 | --- | --- |
-| `running` 或因消息交回 | 先处理消息或独立工作，需要结果时用原编号再等待 |
+| `running`／`budget` 或因消息交回 | 先处理消息或独立工作，需要阻塞时用原目标再等待 |
 | 作业 `completed` | 阅读结果并检查退出码；完成不等于退出 0 |
 | 作业 `failed`／`killed` | 保留错误、信号和已有输出，再决定修正或停止 |
-| 子代理 `settled` | 查看独立结算消息和最终回答，不当作成功证明 |
-| 查询或读取失败 | 按错误重试原编号，不重新启动原任务 |
+| 子代理 `changed`／`settled` | 查看独立结算消息和最终回答，不当作成功证明 |
+| 查询或读取失败 | 按错误重试原目标，不重新启动原任务 |
 
-取消等待或停止当前回合只结束等待，不杀后台命令或编排。宿主可能把取消出口改成取消错误，模型没收到job_id时，从job_list或完成通知找回；不要直接重跑可能有副作用的命令。真正停止用job_kill；子代理通过宿主interrupt_agent/管理入口停止，通过send_message续谈。
+取消等待或停止当前回合只结束等待，不杀后台命令或编排。宿主可能把取消出口改成取消错误，模型没收到job_id时，从job_list或完成消息找回；不要直接重跑可能有副作用的命令。真正停止用job_kill；子代理通过宿主interrupt_agent/管理入口停止，通过send_message续谈。
 
 子代理settled表示这次不再观察到运行，不代表任务成功、最终答案已到或永远不会再运行。读取独立结算消息；最终文本迟到时处理其他工作，再等待消息。目标关系与状态分别确认，查询失败不能当not_found或settled。
 
@@ -268,18 +267,15 @@ silentFailureGuard默认false，仅本包两预设。启用后按条件提供结
 
 ## 7. 高级组合
 
-工具可独立挂入自建预设，查询可与原生查询并存；自建组合不会自动禁掉原有同步工具。每行config.toolName选工具，无toolName为宿主配置角色。workflow必须在隔离delegation组取得引擎；下例包含全部六工具，不是完整预设的其他功能清单。
+工具可独立挂入自建预设，查询可与原生查询并存；自建组合不会自动禁掉原有同步工具。每行config.toolName选工具，无toolName为宿主配置角色。workflow必须在隔离delegation组取得引擎；下例包含全部五工具，不是完整预设的其他功能清单。
 
 ```yaml
 - id: async-run
   name: dsh-async-tools
   config: { toolName: async_run }
-- id: async-wait-job
+- id: async-wait
   name: dsh-async-tools
-  config: { toolName: async_wait_job }
-- id: async-wait-agent
-  name: dsh-async-tools
-  config: { toolName: async_wait_agent }
+  config: { toolName: async_wait }
 - id: async-agent
   name: dsh-async-tools
   config: { toolName: async_agent }

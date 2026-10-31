@@ -71,7 +71,7 @@ test('用户资料：等义措辞和正常附加说明不冻结散文', t => {
   const result = box.run();
   assert.equal(result.code, 0, result.out);
 });
-for (const tool of ['async_wait_job', 'async_wait_agent']) {
+for (const tool of ['async_wait']) {
   for (const [name, change] of [
     ['改为可选', row => { row[2] = 'Optional'; }],
     ['伪造默认值', row => { row[3] = '30000'; }],

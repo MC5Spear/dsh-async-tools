@@ -38,7 +38,7 @@ test('支持集合：九条 dsh peer 同串，集合外宿主不在集合内', (
   assert.equal(support.dshPeers.length, 9);
   assert.ok(support.members.length > 0);
   for (const member of support.members) assert.match(member, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
-  for (const outside of ['0.2.1', '0.2.0', '0.2.2', '0.2.1-rc.5']) assert.ok(!support.members.includes(outside));
+  for (const outside of ['0.2.1', '0.2.0', '0.2.2', '0.2.1-rc.6']) assert.ok(!support.members.includes(outside));
   assert.equal(manifest.engines?.dsh, undefined, '包清单不得声明 engines.dsh——它会顶替九条 peer 裁决');
 });
 

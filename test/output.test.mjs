@@ -49,7 +49,7 @@ test('truncate：按**字符**计数（maxResultChars 以模型可见的字符�
 test('yieldNote（R1 硬性需求）：必须带 job_id、可复制的调用示例和生效上限', () => {
   const note = yieldNote({ jobId: 'async-command-7', yieldMs: 20000, maxWaitMs: 600000, elapsedMs: 20012 });
   assert.match(note, /async-command-7/, '必须含 job_id');
-  assert.match(note, /async_wait_job\(job_id="async-command-7", wait_ms=30000\)/, '必须含可照抄的调用示例');
+  assert.match(note, /async_wait\(targets=\[\{kind:"job", id:"async-command-7"\}\], wait_ms=30000\)/, '必须含可照抄的调用示例');
   assert.match(note, /20000 ms/, '必须写出实际生效的首次等待');
   assert.match(note, /600000 ms/, '必须写出实际生效的等待上限');
   assert.match(note, /It was NOT terminated/, '必须说明命令没有被杀死');
@@ -71,7 +71,7 @@ test('yieldNote：示例里的 `wait_ms` 必须取**生效配置的默认值**�
   const note = yieldNote({
     jobId: 'async-command-9', yieldMs: 1500, maxWaitMs: 600000, defaultWaitMs: 7000, elapsedMs: 1600
   });
-  assert.match(note, /async_wait_job\(job_id="async-command-9", wait_ms=7000\)/,
+  assert.match(note, /async_wait\(targets=\[\{kind:"job", id:"async-command-9"\}\], wait_ms=7000\)/,
     '示例必须用生效的 defaultWaitMs（7000），不能写死成插件的默认 30000');
   assert.doesNotMatch(note, /wait_ms=30000/,
     '不得残留写死的 30000——示例与设置打架时，模型会照抄示例');
@@ -84,14 +84,17 @@ test('yieldNote（R32-c-b）：插话提前让出 → 注明用户到达且命�
   assert.match(note, /4321/, '带上已运行时长');
   assert.match(note, /itself is unaffected/, '必须说明命令本身不受影响');
   assert.doesNotMatch(note, /outlived the .* first wait/, '提前结束不是等待到期——开头不得再出现"超出首次等待"句');
-  assert.match(note, /async_wait_job\(job_id="async-command-7", wait_ms=7000\)/, '恢复示例照带（取生效默认值）');
+  assert.match(note, /async_wait\(targets=\[\{kind:"job", id:"async-command-7"\}\], wait_ms=7000\)/, '恢复示例照带（取生效默认值）');
 });
 
-test('yieldNote（R32-c-d）：迟到作答 → 与 wait 工具同键的 lateArrived 开头 + 句柄示例', () => {
+test('yieldNote（9.3.1 收紧）：迟到作答不再是让出原因——mode 只有 user/cancelled/budget 三档', () => {
   const base = { jobId: 'async-command-8', yieldMs: 20000, maxWaitMs: 600000, elapsedMs: 1000 };
-  const note = yieldNote({ ...base, mode: 'late', summary: 'Pick a fruit' });
-  assert.match(note, /A late answer has arrived \(Pick a fruit\)/, 'lateArrived 键与 wait 工具同口径');
-  assert.match(note, /async_wait_job\(job_id="async-command-8"/, '后台句柄示例照带');
+  // 收紧后的缺省档（budget）：作答不进 note（留在收件箱按宿主节奏领取——
+  // 首次等待只被作业终态/user 插话/取消/预算结束）。
+  const note = yieldNote({ ...base });
+  assert.match(note, /outlived the 20000 ms first wait/, '预算到期口径');
+  assert.doesNotMatch(note, /late answer|A late answer/i, '迟到作答不再有让出档（wait 工具的 lateArrived 键仍归 wait 使用）');
+  assert.match(note, /async_wait\(targets=\[\{kind:"job", id:"async-command-8"\}\]/, '后台句柄示例照带');
 });
 
 test('waitAgainNote：说明作业未受影响且可再次等待', () => {
@@ -102,24 +105,24 @@ test('waitAgainNote：说明作业未受影响且可再次等待', () => {
 });
 
 test('interruptedNote（R4 硬性需求）：必须说明结束等待没有终止后台工作（行为陈述，不作运行断言）', () => {
-  const note = interruptedNote({ subject: 'job j-1', waitedMs: 812, resume: 'async_wait_job(job_id="j-1", wait_ms=...)' });
+  const note = interruptedNote({ subject: 'job j-1', waitedMs: 812, resume: 'async_wait(targets=[{kind:"job", id:"j-1"}], wait_ms=...)' });
   assert.match(note, /Wait interrupted: a user message has arrived/);
   assert.match(note, /812 ms/);
   assert.match(note, /Ending the wait did not stop job j-1/);
-  assert.match(note, /async_wait_job/);
+  assert.match(note, /async_wait\(targets=/);
 });
 
 test('cancelledNote/cancelledPreexistingNote（设计 §2.5 取消口径）：取消与消息到达分开，行为陈述不作运行断言', () => {
-  const note = cancelledNote({ subject: 'job j-1', waitedMs: 300, resume: 'async_wait_job(job_id="j-1", wait_ms=...)' });
+  const note = cancelledNote({ subject: 'job j-1', waitedMs: 300, resume: 'async_wait(targets=[{kind:"job", id:"j-1"}], wait_ms=...)' });
   assert.match(note, /The wait was cancelled after 300 ms/);
   assert.match(note, /cancellation did not stop job j-1/, '取消≠停止工作（本次原因＋后台状态，一遍即可）');
   assert.doesNotMatch(note, /still running/, '取消出口不做状态复查，不得写运行断言');
   assert.doesNotMatch(note, /user message/, '取消不是消息到达，不用 interrupted 口径');
 
-  const pre = cancelledPreexistingNote({ subject: 'subagent child-9', resume: 'async_wait_agent(agent_id="child-9", wait_ms=...)' });
+  const pre = cancelledPreexistingNote({ subject: 'subagent child-9', resume: 'async_wait(targets=[{kind:"agent", id:"child-9"}], wait_ms=...)' });
   assert.match(pre, /cancelled before the wait began/);
   assert.match(pre, /did not stop subagent child-9/);
-  assert.match(pre, /async_wait_agent/);
+  assert.match(pre, /async_wait\(targets=/);
 });
 
 test('yieldNote（设计 §2.5 证据分级）：复查快照缺席 → 未证实档，不作"仍在运行"断言', () => {
@@ -130,7 +133,7 @@ test('yieldNote（设计 §2.5 证据分级）：复查快照缺席 → 未证�
   assert.match(budget, /outlived the 20000 ms first wait/);
   assert.match(budget, /could not confirm its current state/);
   assert.doesNotMatch(budget, /command is still running/, '无当次快照支撑不写运行断言（"instead of assuming it is still running" 的否定指引不算断言）');
-  assert.match(budget, /async_wait_job/, '句柄与复查出路保留');
+  assert.match(budget, /async_wait\(targets=/, '句柄与复查出路保留');
 
   const user = yieldNote({
     jobId: 'j-1', yieldMs: 20000, maxWaitMs: 600000, defaultWaitMs: 30000,
@@ -140,12 +143,12 @@ test('yieldNote（设计 §2.5 证据分级）：复查快照缺席 → 未证�
   assert.match(user, /ending the wait did not stop the command/, '行为陈述保留（句中小写形态）');
   assert.doesNotMatch(user, /background task keeps running/);
 
-  const late = yieldNote({
+  const cancelled = yieldNote({
     jobId: 'j-1', yieldMs: 20000, maxWaitMs: 600000, defaultWaitMs: 30000,
-    elapsedMs: 500, mode: 'late', summary: 'Late answer for color: red', unverified: true
+    elapsedMs: 500, mode: 'cancelled', unverified: true
   });
-  assert.match(late, /A late answer has arrived/);
-  assert.match(late, /could not confirm the command's current state/, '消息说明后补未证实行');
+  assert.match(cancelled, /was cancelled/);
+  assert.match(cancelled, /could not confirm the command's current state/, '取消说明后补未证实行');
 
   // 有快照（unverified 缺省）时保留现行句柄口径（运行断言有非终态快照支撑）。
   const verified = yieldNote({

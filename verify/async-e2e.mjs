@@ -1,6 +1,6 @@
 /**
  * 真机端到端（需求 §2.1.2 消息唤醒与取消、§2.2 命令执行与作业取回）：在**验证实例**上、
- * 在 `dsh-async` 预设下驱动一个真实会话，走完"让出 → async_wait_job 取回 → 插话打断等待但作业不受影响"。
+ * 在 `dsh-async` 预设下驱动一个真实会话，走完"让出 → async_wait 取回 → 插话打断等待但作业不受影响"。
  *
  * 为什么必须自己写脚本而不是在聊天里下指令：端到端证据必须来自验证实例，而
  * 本会话跑在开发实例上，两边不是同一个进程。这里用 dsh 自己的浏览器 RPC
@@ -80,9 +80,9 @@ const TASK = [
   '请严格按四步做，每步的 finish 之前不要做别的：',
   '第 1 步：用 async_run 执行 `Write-Output SHORT_OK`，不要传 yield_ms。',
   '第 2 步：用 async_run 执行 `Start-Sleep -Seconds 6; Write-Output LONG_DONE`，传 yield_ms=1500。它应当返回一个作业编号（job_id）。',
-  '第 3 步：用 async_wait_job 等第 2 步那个 job_id，wait_ms=20000。',
-  '第 4 步：用 async_run 执行 `Start-Sleep -Seconds 180; Write-Output PATIENCE`，传 yield_ms=1500，拿到 job_id 后立刻用 async_wait_job 等它，wait_ms=600000。',
-  '第 5 步（**关键**）：若第 4 步的等待返回"等待被打断"，就用同一个 job_id **再次**调用 async_wait_job、wait_ms=600000，把它的最终输出取回来。',
+  '第 3 步：用 async_wait 等第 2 步那个 job_id（targets=[{kind:"job", id:...}]），wait_ms=20000。',
+  '第 4 步：用 async_run 执行 `Start-Sleep -Seconds 180; Write-Output PATIENCE`，传 yield_ms=1500，拿到 job_id 后立刻用 async_wait 等它，wait_ms=600000。',
+  '第 5 步（**关键**）：若第 4 步的等待返回"等待被打断"，就用同一个 job_id **再次**调用 async_wait、wait_ms=600000，把它的最终输出取回来。',
   '四步都做完后，用一段话报告每一步的工具名与关键返回字段（status / job_id）。'
 ].join('\n');
 
@@ -130,7 +130,7 @@ for (;;) {
   // 按时刻猜窗口有三个失败形态（机制原因，不是运气）：
   //
   // - **按步数猜**（`steps >= 6`）：本质是抢墙壁时钟。插话发出时命令早结束了。
-  // - **出现 async_wait_job 就发**：太早。第 3 步（6 秒命令）那次等待就满足，
+  // - **出现 async_wait 就发**：太早。第 3 步（6 秒命令）那次等待就满足，
   //   插话在长命令还没开始时发出，整个会话当场结束。
   // - **让出 ≥ 2 次且有等待调用**：还是太早。长作业刚让出时，模型还没来得及
   //   发出它的等待；插话落在"模型正在想下一步"，于是那次等待要么没发生、
@@ -138,7 +138,7 @@ for (;;) {
   //   **轮询的 2 秒粒度根本够不着**。
   //
   // 现行做法：把窗口从"时刻"改成"**状态**"——
-  //   ① 读转录里那次 `async_wait_job` 的**参数**，确认它的 `wait_ms` 很大（长作业的等待）；
+  //   ① 读转录里那次 `async_wait` 的**参数**，确认它的 `wait_ms` 很大（长作业的等待）；
   //   ② 第一次看到它时记下时刻，**再等两拍**（轮询 2 秒一次，所以约 2–4 秒）才插话
   //      ——那时它必然还在等（`wait_ms` 是 600000，而整轮只有几十秒）；
   //   ③ 此刻发插话，必然落在等待活跃期内。
@@ -150,7 +150,7 @@ for (;;) {
   const longWaitArgs = (() => {
     for (const record of page.records) {
       const event = record.event;
-      if (event?.type !== 'tool/call' || event.data?.name !== 'async_wait_job') continue;
+      if (event?.type !== 'tool/call' || event.data?.name !== 'async_wait') continue;
       const args = String(event.data.arguments ?? '');
       // 判据要**精确到长作业那一次**：`wait_ms` 是 600000。正则不能放宽到
       // 任意 ≥5 位数字——会把第 3 步那个 20000 也匹配，"长作业的等待"在
@@ -195,7 +195,7 @@ for (;;) {
         // 模型还能继续把那个作业等回来"（第 5 步）。模型若照做"不调用工具"，
         // 会话当场结束，第 5 步永远跑不到——**判据没错，是提示词自己把路堵了**。
         content: [{ type: 'text', text: '插话测试：这是一条用户新消息。请先回复一行 INTERRUPT_RECEIVED，'
-          + '然后**继续执行第 5 步**（用同一个 job_id 再次调用 async_wait_job 把最终输出取回来），不要跳过。' }],
+          + '然后**继续执行第 5 步**（用同一个 job_id 再次调用 async_wait 把最终输出取回来），不要跳过。' }],
         clientTimeZone: 'Asia/Shanghai'
       }
     });
@@ -211,7 +211,7 @@ for (;;) {
   // `tool/result` 用 `toolCallId`。
   if (!interrupted && interjectionAt > 0) {
     const waitCallIds = new Set(page.records
-      .filter((r) => r.event?.type === 'tool/call' && r.event.data?.name === 'async_wait_job')
+      .filter((r) => r.event?.type === 'tool/call' && r.event.data?.name === 'async_wait')
       .map((r) => r.event.data.callId));
     // 转录形状：tool/result 的 content 是**渲染文本块**（type:'text'，句柄在
     // message.toolCallId）——没有 'tool-result' 块。断言锚取 message-markers（两语）。
@@ -292,10 +292,10 @@ function resultOf(callIndex) {
 }
 
 const runCalls = calls.filter((c) => c.name === 'async_run');
-const waitCalls = calls.filter((c) => c.name === 'async_wait_job');
-judge('会话里真的调用了 async_run 与 async_wait_job（否则后面的判定都是空的）',
+const waitCalls = calls.filter((c) => c.name === 'async_wait');
+judge('会话里真的调用了 async_run 与 async_wait（否则后面的判定都是空的）',
   runCalls.length >= 1 && waitCalls.length >= 1,
-  `async_run × ${String(runCalls.length)}、async_wait_job × ${String(waitCalls.length)}`);
+  `async_run × ${String(runCalls.length)}、async_wait × ${String(waitCalls.length)}`);
 
 // ① 短命令（ROUND 之前那条 SHORT_OK）：必须**直接返回输出**（预算内完成，不回
 //    句柄）。执行即注册——短命令同样注册了作业，只是完成先于首次等待到期，
@@ -313,21 +313,21 @@ judge('超出首次等待的那次返回了"仍在运行"的作业编号（不�
   yielded.length >= 1,
   yielded.length === 0 ? '没有任何一次首次等待返回' : `首次等待返回 ${String(yielded.length)} 次，首次文本=${JSON.stringify(yielded[0].text.slice(0, 80))}`);
 
-// ③ **核心**：让出去的作业必须能被 `async_wait_job` 取回**最终输出**。
+// ③ **核心**：让出去的作业必须能被 `async_wait` 取回**最终输出**。
 //    这是"不得杀死进程"的唯一实证——只断言返回里有 job_id 是不够的。
 //    关联按**调用参数**逐作业配对：每个让出的 job_id 找参数指向它的
-//    async_wait_job 调用，取其结果文本验证终态输出。判据要求**每一个**
-//    job_id 都有取回证据——多个作业缺任何一个都判失败（存在性 some 会放走
-//    丢失的那个）。
-const jobIds = [...new Set((yielded.map((x) => /async_wait_job\(job_id="([^"]+)"/.exec(x.text)?.[1])).filter(Boolean))];
+//    async_wait 调用（targets[0] 形态），取其结果文本验证终态输出。判据要求
+//    **每一个** job_id 都有取回证据——多个作业缺任何一个都判失败（存在性
+//    some 会放走丢失的那个）。
+const jobIds = [...new Set((yielded.map((x) => /async_wait\(targets=\[\{kind:"job", id:"([^"]+)"\}/.exec(x.text)?.[1])).filter(Boolean))];
 const finalTextOf = (id) => waitCalls
-  .filter((c) => c.args?.job_id === id)
+  .filter((c) => c.args?.targets?.[0]?.kind === 'job' && c.args?.targets?.[0]?.id === id)
   .map((c) => resultsById.get(c.callId))
   .filter((t) => typeof t === 'string')
   .find((t) => /LONG_DONE|PATIENCE/.test(t));
 const missing = jobIds.filter((id) => finalTextOf(id) === undefined);
 const waitTexts = waitCalls.map((c) => resultsById.get(c.callId)).filter((t) => typeof t === 'string');
-judge('每一次让出的作业都被 async_wait_job 按参数关联取回了最终输出（缺一即失败）',
+judge('每一次让出的作业都被 async_wait 按参数关联取回了最终输出（缺一即失败）',
   jobIds.length >= 1 && missing.length === 0,
   `job_id=[${jobIds.join(', ')}]；未取回=[${missing.join(', ')}]；`
   + `首份取回文本=${JSON.stringify((finalTextOf(jobIds[0]) ?? '').slice(0, 90))}`);
@@ -357,7 +357,7 @@ judge('取回的输出证明进程正常结束：末尾输出完整、无截断�
 //   (b) 打断的返回里明说**结束等待没有终止作业**（证明"打断等待 ≠ 打断工作"
 //       这句话被写在模型看得见的地方，而不是只在文档里）。
 const interruptNotes = waitTexts.filter((t) => MESSAGE_MARKERS.WAIT_INTERRUPTED.test(t));
-judge('用户插话让 async_wait_job 立即返回"等待被打断"（打断等待）',
+judge('用户插话让 async_wait 立即返回"等待被打断"（打断等待）',
   interruptNotes.length >= 1,
   interruptNotes.length === 0
     ? `没有一次等待被打断；取回文本=${waitTexts.map((t) => JSON.stringify(t.slice(0, 60))).join(' | ')}`
