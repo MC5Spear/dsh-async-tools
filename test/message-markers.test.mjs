@@ -22,11 +22,10 @@ const LANGS = ['en', 'zh'];
 // ── A 组：词典锚反漂移 ────────────────────────────────────────────────────────
 
 test('A 组·词典锚反漂移：锚命中 t() 两档渲染的出处键（任一侧漂移即红）', () => {
-  // note.interrupted：subject 用 34 字符真实形态，检验 SUBJECT_UNTOUCHED 的
-  // 60 字符窗口（窗口过窄即红，过宽被反例组钉在 B 组之外的探针现场）。
+  // note.interrupted：标识经 resume 里的 job id 进入文本，检验 SUBJECT_UNTOUCHED
+  // 的 60 字符窗口（窗口过窄即红，过宽被反例组钉在 B 组之外的探针现场）。
   const interruptedVars = {
     waitedMs: 1200,
-    subject: 'job async-command-29bb2c6b2dff4ad9',
     resume: 'async_wait(targets=[{kind:"job", id:"async-command-29bb2c6b2dff4ad9"}], wait_ms=30000)'
   };
   for (const lang of LANGS) {

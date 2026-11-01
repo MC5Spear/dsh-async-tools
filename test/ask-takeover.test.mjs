@@ -1669,14 +1669,15 @@ test('AskItem 作答选择与提交（需求 §4.2.1–§4.2.4）——单选互
   assert.deepEqual(optionStates(), [false, false], '不自动恢复预设选择');
   assert.equal(submitBtn().props.disabled, true, '选中的自定义空白：禁用提交');
   assert.equal(reason()?.children[0], 'ask.needCustom', '就近说明换档：自定义空白');
-  // Enter 快捷键与按钮同规则（§4.2.4）：无效状态下 Enter 不提交。
-  customInput().props.onKeyDown({ key: 'Enter', preventDefault() {} });
-  assert.equal(submitted.length, 0, '空白自定义：Enter 不提交');
+  // 多行输入（§4.2.2）：Enter 是换行、不是提交快捷键（提交走按钮）；输入法
+  // 组合期确认不误提交由 textarea/IME 默认行为承担。无效状态下提交仍被禁。
+  assert.equal(customInput().props.onKeyDown, undefined, 'Enter 不再绑定为提交快捷键（换行语义）');
+  assert.equal(submitted.length, 0, '空白自定义：不可提交');
   // 填回文本：载荷只含自定义原文（空白检查不改写用户文本）。
   customInput().props.onChange({ target: { value: ' 前后空白 ' } });
-  customInput().props.onKeyDown({ key: 'Enter', preventDefault() {} });
+  submitBtn().props.onClick();
   assert.deepEqual(submitted[submitted.length - 1], { selected: [], custom: ' 前后空白 ' },
-    'Enter 提交：自定义原文照发（未选中草稿不存在）');
+    '按钮提交：自定义原文照发（未选中草稿不存在）');
 
   // 草稿排除（§4.2.2）：取消自定义、改选预设 a → 未选中草稿不进载荷。
   customCtl().props.onClick();

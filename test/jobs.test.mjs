@@ -635,7 +635,7 @@ hostTest('async_run（R32-a/设计 §3.1）：无 agent 语境 → 拒绝且零�
 });
 
 hostTest('async_run：描述里写出生效的预算数字（锚②③④都接上了）', async () => {
-  const tool = createRunTool(fakeCtx().ctx, resolveConfig({ toolName: 'async_run', defaultYieldMs: 15000, maxWaitMs: 120000 }));
+  const tool = createRunTool(fakeCtx().ctx, resolveConfig({ toolName: 'async_run', defaultYieldMs: 15000, minYieldMs: 1000, maxWaitMs: 120000 }));
   assert.match(tool.description, /15000 ms/, '首次等待必须来自生效配置');
   assert.match(tool.description, /120000 ms/, '等待上限必须来自生效配置（补缺口）');
   // `async_run` 是**唯一**该看到 yield_ms 与"转后台"的工具。
@@ -1140,7 +1140,7 @@ hostTest('async_run（R32-b·迟到作答）：迟到作答不提前结束首次
   assert.equal(f.jobsFake.waitersOf(views[0].id), 0, '结算后不残留 waiter');
 });
 
-hostTest('async_run（R32-b·非目标通知）：等待中 notice 到达不提前结束首次等待（9.3.1 表 2 行——盲审 M-7③ 显式锚）', async () => {
+hostTest('async_run（R32-b·非目标通知）：等待中 notice 到达不提前结束首次等待（9.3.1 表 2 行）', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
   const { proc, settle } = fakeProc({ text: 'partial', status: 'running', autoResolve: false });
@@ -1172,7 +1172,7 @@ hostTest('async_run（R32-b·非目标通知）：等待中 notice 到达不提�
   assert.ok(!/some other job/i.test(result.result ?? ''), '通知摘要不进返回（正文留收件箱按宿主节奏领取）');
 });
 
-hostTest('async_run（R32/R33·开启向）：fullCommandEcho=true → label=命令原文（盲审 M-7②）', async () => {
+hostTest('async_run（R32/R33·开启向）：fullCommandEcho=true → label=命令原文', async () => {
   const f = fakeCtx();
   immediateTimers(f.ctx);
   const { proc, settle } = fakeProc({ text: 'x', status: 'running', autoResolve: false });

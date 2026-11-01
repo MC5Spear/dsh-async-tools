@@ -453,7 +453,7 @@ test('T19：job_output 隐藏——agent/created 挂 agent 作用域 restrict，
   }
   // 四个交付类工具行（async_run/async_wait/async_agent/async_workflow）装载后监听
   // `agent/created`，在 **Agent 作用域**上调 agent.ctx.tools.restrict({deny:['job_output']})
-  // ——真机首测暴露「行装载 ctx 上 restrict 必报 unknown global tool」（同层注册不进
+  // ——曾实证「行装载 ctx 上 restrict 必报 unknown global tool」（同层注册不进
   // 本层可限制名单，与行序无关），宿主语义要求挂在 Agent 继承面上（installJobOutputHide
   // 文档串）；查询行（async_list_subagent_models）不挂——9.3.5 末条「查询类工具不受影响」。
   const deliveryRows = ['async_run', 'async_wait', 'async_agent', 'async_workflow'];
@@ -465,8 +465,8 @@ test('T19：job_output 隐藏——agent/created 挂 agent 作用域 restrict，
     );
     await activate(fork);
     // 假 Agent：agent.ctx.tools.restrict 与 agent.ctx.effect 都是 per-agent 记录器
-    //（effect 记录器锚定句柄归属——挂行 ctx 则行卸载会连带摘在世 Agent 的隐藏，
-    // 复审 L-1/N-B 的缺陷形态）。
+    //（effect 记录器锚定句柄归属——挂行 ctx 则行卸载会连带摘在世 Agent 的
+    // 隐藏，曾实证的缺陷形态）。
     const agentRestrictCalls = [];
     const agentEffectDisposers = [];
     const fakeAgent = {
@@ -592,8 +592,8 @@ test('T12：设置快照链的三种故障姿态——首播降级、刷新保�
   assert.equal(degradedWiring.seeded, true);
   assert.equal(degradedWiring.degraded, true, '降级状态必须可观察');
   assert.ok(/minWaitMs(=\d+)? > maxWaitMs(=\d+)?/.test(String(readDegraded())), '首播降级同样登记（模型可见侧；detail 带日志前缀原文；两态错误文本——裸名或带值——都必须命中）');
-  assert.equal(readSnapshot().minWaitMs, 250, '降级快照 = 出厂默认（minWaitMs）');
-  assert.equal(readSnapshot().maxResultChars, 30000, '降级快照 = 出厂默认（maxResultChars）');
+  assert.equal(readSnapshot().minWaitMs, 20000, '降级快照 = 出厂默认（minWaitMs）');
+  assert.equal(readSnapshot().maxResultChars, 12000, '降级快照 = 出厂默认（maxResultChars）');
   assert.ok(degradeEvents.some((message) => /宿主行配置自检失败/.test(String(message)) && /按出厂默认运行/.test(String(message))),
     '必须 warn 说明"忽略了什么、正在按什么运行"');
   assert.ok(stderrChunks.some((line) => line.includes('宿主行忽略持久化的非法设置') && /minWaitMs(=\d+)? > maxWaitMs(=\d+)?/.test(line)),

@@ -294,7 +294,7 @@ const PROSE_ALLOWLIST = {
   ],
   'wait.js': [
     { needle: 'wait concluded', why: '内部中止原因（喂给 raceAbort 的 Error，只在进程内传播；原 wait-job 同款条目随文件并入）' },
-    { needle: 'returning as budget-exhausted', why: '操作者一侧诊断（ctx.logger.warn——自旋防线兜底触发的缺陷信号行的尾段字面量，不进模型上下文；needle 须与被抽取字面量同段）' }
+    { needle: 'returning as budget-exhausted', why: '操作者一侧诊断（ctx.logger.warn——自旋防线检出的缺陷信号行的尾段字面量，不进模型上下文；needle 须与被抽取字面量同段）' }
   ],
   'index.js': [
     { needle: 'the tool-jobs row must be part of', why: '操作者一侧诊断（ctx.logger.warn——job_output 隐藏登记降级行的尾段字面量，不进模型上下文；agent/created 挂点改版后的新措辞，needle 须与被抽取字面量同段）' },

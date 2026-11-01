@@ -49,13 +49,18 @@ async function buildRig(label, childRows = [], options = {}) {
     inject(message) { injections.push(message); }
   };
   base.provide('agents', {
-    // parent 是本主体；其余 id 一律给 running 形状（子代理目标用例的注册表观察
-    // 默认值——需要 absent/unknown 形态的用例自行绕过 provide 重新建 rig）。
-    get: (id) => (id === parent.id ? parent : { id, status: 'running' })
+    // parent 是本主体；其余 id 默认给 running 形状（子代理目标用例的注册表观察
+    // 默认值——需要 absent/idle/unknown 形态的用例经 options.agentsGet 覆盖）。
+    get: (id) => (id === parent.id
+      ? parent
+      : (options.agentsGet === undefined ? { id, status: 'running' } : options.agentsGet(id)))
   });
   // 子代理目录替身（形状行为用例）：childRows 由调用方给（catalog 行／判别联合行／
-  // 诊断行三种形态都从这里进）。
-  base.provide('subagents', { listChildren: async () => childRows, interrupt() {} });
+  // 诊断行三种形态都从这里进）；options.listChildren 可整替（挂起/抛错/竞速用例）。
+  base.provide('subagents', {
+    listChildren: options.listChildren === undefined ? async () => childRows : options.listChildren,
+    interrupt() {}
+  });
   await base.plugin(LocalJobRegistry, {
     maxConcurrentJobsPerOwner: 10, retainBytes: 1048576, settledRetainBytes: 1048576, pumpPollMs: 10
   });
@@ -101,8 +106,12 @@ async function buildRig(label, childRows = [], options = {}) {
   };
   const config = resolveConfig({
     toolName: 'async_workflow', minYieldMs: 1, defaultYieldMs: 20, maxYieldMs: 1000,
+    // 装置显式下限（合法显式设置原样保留）：用例用真定时器的小额 wait_ms
+    //（60–500 ms）测预算到期，不吃出厂下限 20000 的夹紧。
+    minWaitMs: 1,
     ...(options.maxResultChars === undefined ? {} : { maxResultChars: options.maxResultChars }),
-    ...(options.workflowProgressLog === undefined ? {} : { workflowProgressLog: options.workflowProgressLog })
+    ...(options.workflowProgressLog === undefined ? {} : { workflowProgressLog: options.workflowProgressLog }),
+    ...(options.pollIntervalMs === undefined ? {} : { pollIntervalMs: options.pollIntervalMs })
   });
   const workflow = checkedTool(createWorkflowTool(adapter, config));
   const waiter = checkedTool(createWaitTool(adapter, config));
@@ -298,6 +307,10 @@ hostTest('R55（判据 2·负面）：next-step 滞留的是转达消息 → mes
 hostTest('R55（判据 3·负面）：next-turn 的排队 user 消息不命中（排队不唤醒，R12 不回归）', async () => {
   const rig = await buildRig('pre3');
   try {
+    // 无目标挂起资格（9.3.1 工作前提）：放一个运行中后台作业——没有可等待
+    // 工作时入口按 no-work 立即交回，测不到「预算到期不被排队消息打断」。
+    const running = await rig.workflow.execute(WF_ARGS, rig.exec());
+    assert.equal(running.status, 'running', '前置：同主体运行中作业提供挂起资格');
     inboxPayload({ agent: rig.parent, sourceKind: 'user', text: '排队中的消息', target: 'next-turn' });
     const outcome = await rig.waiter.execute({ wait_ms: 60 }, rig.exec());
     assert.notEqual(outcome.status, 'interrupted', '排队消息不打断（只有插话落点 next-step 参与）');
@@ -307,7 +320,7 @@ hostTest('R55（判据 3·负面）：next-turn 的排队 user 消息不命中�
   }
 });
 
-// R58-j（盲审 M-2）：零等待与正等待同款入口判定——无目标时先到的 notice/relay
+// R58-j：零等待与正等待同款入口判定——无目标时先到的 notice/relay
 // 按 message 出口交回，不得把消息信息吞进 zeroWaitNoTargets。
 hostTest('R58-j：零等待交回已到达的可处理消息——message 出口（入口判定同一）', async () => {
   const rig = await buildRig('r58j');
@@ -324,7 +337,7 @@ hostTest('R58-j：零等待交回已到达的可处理消息——message 出口
   }
 });
 
-// R58-k（盲审 N-3）：零等待同样扫先到迟到作答（与正等待入口同一判定）——
+// R58-k：零等待同样扫先到迟到作答（与正等待入口同一判定）——
 // source.kind=async-tools-late-answer 且 form=notice 的滞留消息按 message
 // 出口交回，不得吞进 zeroWaitNoTargets。
 hostTest('R58-k：零等待交回先到的迟到作答——message 出口（迟到作答入口同一）', async () => {
@@ -368,7 +381,10 @@ hostTest('R58-o：混合多目标三形态——任一满足、无满足、agent
       );
       const trigger = result.outputs.find((item) => item.job_id === jobA.job_id);
       assert.ok(trigger !== undefined, '任一满足：触发目标作业以批次条目出现');
+      // 零等待主出口无单触发字段——各条目正文随批携带（excludeJobId 只在终态
+      // 出口使用，那里正文改由 output 字段携带、批次条目只留状态行）。
       assert.equal(trigger.text, 'MIX-A-FINAL', '触发目标正文随批交付');
+      assert.match(trigger.status_line, /completed/, '触发目标状态行随批可见');
       assert.equal(result.status, 'running', '零等待主出口：就绪即取（不空等）');
       const agentNote = (result.targets ?? []).find((t) => t.id === 'agent-r58o1');
       assert.ok(agentNote !== undefined, '混合数组中的 agent 目标出现在 targets 附注');
@@ -423,7 +439,7 @@ hostTest('R58-o：混合多目标三形态——任一满足、无满足、agent
   }
 });
 
-// R58-m（真机首测 P-2）：运行中作业零等待取增量——includeRunning 装配、只推进
+// R58-m：运行中作业零等待取增量——includeRunning 装配、只推进
 // 游标不终结生命周期；终态后最终结果照常投递。真机缺陷形态：零等待返回称增量
 // 已附、装配层把运行中条目整体滤除（collectBatch 候选只收终态）。
 hostTest('R58-m：零等待增量装配——运行中条目进批、不置已交付事实、终态后照常投', async () => {
@@ -464,7 +480,7 @@ hostTest('R58-m：零等待增量装配——运行中条目进批、不置已�
   }
 });
 
-// R58-n（复审 M-3/H-1/M-1 端到端）：零等待出口真跑 waiter.execute——运行中目标
+// R58-n：零等待出口真跑 waiter.execute——运行中目标
 // 的增量随返回携带（running 分键状态行），就绪的 lossy 作业随批带两态找回说明。
 // checkedTool 全程过 schema：lossy 条目的 note 键未进 outputs schema 即红（真机
 // 「宿主校验拒绝整个工具返回」的缺陷形态——离线装置此前缺席该形态）；render 文本
@@ -509,7 +525,7 @@ hostTest('R58-n：零等待端到端——运行中增量出口投影 + lossy �
   }
 });
 
-// R58-l（盲审 M-3 复审 FAIL 项）：预算外说明有界可测（需求 9.3.2「批次还须限制
+// R58-l：预算外说明有界可测（需求 9.3.2「批次还须限制
 // 条目数及预算外状态、标识和诊断说明的总量……有限且可测的规则」）——单条
 // 说明 ≤200（clampNote 入界，宿主留存路径等无界字符串在此截断）；完成消息内
 // 留存行合计 ≤2000（超限合并为一行计数汇总，正文不受限）。
@@ -768,7 +784,7 @@ hostTest('R58-d：首次等待直付后不再被动双投——armed 链按已�
     assert.equal(rig.followups.length, 0,
       '已直付的最终结果不得再以完成消息投递（同一直付路径的被动双投是缺陷形态）');
     assert.equal(rig.injections.length, 0, 'inject 通道同样不得收到重复结果');
-    // R58-i（盲审 M-5）：已交付作业再次作为目标等待——返回必须**说明**已交付
+    // R58-i：已交付作业再次作为目标等待——返回必须**说明**已交付
     //（note 键），不得让空 output 被误读成「完成且无输出」。
     const settledView = rig.ctx.jobs.list(rig.parent.id)
       .find((j) => j.status === 'completed' && j.kind === 'async-workflow');
@@ -781,7 +797,7 @@ hostTest('R58-d：首次等待直付后不再被动双投——armed 链按已�
     assert.ok(dbgEntry !== undefined, '前置：账本登记在册');
     assert.equal(again.status, 'completed', '再次等待按终态返回');
     assert.ok(typeof again.note === 'string' && again.note.length > 0,
-      '已交付事实以 note 说明（盲审 M-5）');
+      '已交付事实以 note 说明');
     assert.ok(/already finished|先前已交付|已交付/.test(again.note),
       `note 说明结果已在先前载体交付；实得 ${JSON.stringify(again.note)}`);
     assert.equal(again.output, '', '正文不重复出现（恰一次）');
@@ -808,7 +824,7 @@ hostTest('R58-e：交付批回滚按真实装配退回缓冲（undoClaim 非空�
     ledger.undoClaim(owner, delivered);
     assert.equal(entry.buffer, 'PAYLOAD-TO-ROLLBACK', '回滚退回正文');
     assert.equal(entry.claimedBy, null, '回滚撤销认领');
-    // 截断条目按**装配前原文**回滚（盲审 M-1）：预算 20 装配出首尾保留的裁剪
+    // 截断条目按**装配前原文**回滚：预算 20 装配出首尾保留的裁剪
     // 文本后，回滚必须退回整条原文——退回裁剪文本会让中段永久丢失（模型从未
     // 见过任何部分，读取游标又已推进）。独立 owner：共享批的剩余预算会让这
     // 条不截断，测不到目标形态。
@@ -821,7 +837,11 @@ hostTest('R58-e：交付批回滚按真实装配退回缓冲（undoClaim 非空�
     entry2.buffer = original2;
     const { delivered: delivered2 } = ledger.collectBatch(owner2, {});
     assert.equal(delivered2.length, 1, '前置：截断条目装配成功');
-    assert.equal(entry2.buffer, '', '装配即消费缓冲');
+    // WAIT-RECOVER-01（9.3.2 裁剪恢复）：截断装配不清空缓冲——省略中段按装配
+    // 前原文保留（partial 事实），续段可再进批；回滚仍退回完整原文。
+    assert.ok(entry2.buffer !== '' && entry2.buffer.length < original2.length,
+      '截断装配保留省略中段（缓冲非空、小于原文）');
+    assert.equal(entry2.deliveredFact?.partial, true, '截断装配置 partial 已交付事实');
     assert.ok(delivered2[0].text.length < original2.length, '前置：装配文本确实被裁剪（预算 20 < 原文 89）');
     assert.notEqual(delivered2[0].text, original2, '前置：装配文本不是原文（截断真实发生）');
     ledger.undoClaim(owner2, delivered2);
@@ -953,9 +973,8 @@ hostTest('R58-g：批预算耗尽——完成消息延后不丢正文，wait_ms=
   }
 });
 
-// R58-h（盲审 H-1/N-1）：让位终局复查投**全部**就绪条目。单元装置直测
-// releaseWait（复审 N-1：端到端形态里两等待在入口终态分支即返回、不经让位
-// 复查，装置恒绿）——两 entry terminal+buffer 就绪、两次 claimWait 后逐个
+// R58-h：让位终局复查投**全部**就绪条目。单元装置直测
+// releaseWait——两 entry terminal+buffer 就绪、两次 claimWait 后逐个
 // releaseWait：最后一次注销（activeWaits 归零）触发让位复查，**两条**就绪正文
 // 都必须经完成消息投出（旧形态只投 Map 迭代序第一个，第二条滞留缓冲且再无
 // 被动载体——违反 9.3.2「不要求专门再调用一次工具领取」）。空正文终态条目
@@ -994,6 +1013,305 @@ hostTest('R58-h：让位复查投全部就绪作业——两条正文+一条空�
       assert.equal(entry.claimedBy, 'message', `${id} 已认领`);
       ledger.detachJob(id);
     }
+  } finally {
+    await rig.dispose();
+  }
+});
+
+// ── WAIT-EMPTY/WAIT-TIME/WAIT-AGENT-02/WAIT-READ/READY/SHARE 补测（B3）────────────
+//
+// 独立盲审登记的受控缺口：no-work/unconfirmed 出口、资格与诊断清单的竞速
+//（挂起/取消切断）、已报告静止目标的资格与轮询拍、读取失败可重试、入口
+// 汇集、并行直付份额、有目标等待不以迟到作答结束、混合目标校验顺序。
+// 装置沿用真注册表；小额 wait_ms 走真定时器（装置显式 minWaitMs=1）。
+
+hostTest('W-EMPTY-A：无目标且无运行中工作 → no-work 立即返回，不挂起等未来消息', async () => {
+  const rig = await buildRig('no-work', []);
+  try {
+    const result = await rig.waiter.execute({ wait_ms: 250 }, rig.exec());
+    assert.equal(result.status, 'no-work', '无可等待工作：未挂起立即交回');
+    assert.ok(result.waited_ms < 250, '立即返回（不等满预算——挂起等未来消息是旧缺陷形态）');
+    assert.match(result.note, /未确认存在可等待工作|No wait-worthy work/, '出口说明与两语键一致');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-EMPTY-B：资格清单查询失败 → unconfirmed，不假装无工作', async () => {
+  const rig = await buildRig('unconfirmed', [], {
+    listChildren: async () => { throw new Error('catalog down'); }
+  });
+  try {
+    const result = await rig.waiter.execute({ wait_ms: 250 }, rig.exec());
+    assert.equal(result.status, 'unconfirmed', '无法证实＝未证实档，不是 no-work');
+    assert.match(result.note, /无法确认|could not be confirmed/, '未证实档给复查出路');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-EMPTY-C：有运行中子代理 → 无目标等待真实挂起至预算到期', async () => {
+  const rig = await buildRig('has-work', [{ id: 'at-child-live' }]);
+  try {
+    const result = await rig.waiter.execute({ wait_ms: 220 }, rig.exec());
+    assert.equal(result.status, 'budget', '有可等待工作：挂起到预算，不被资格门截断');
+    assert.ok(result.waited_ms >= 180, '真实等待（提前交回即资格门误伤）');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-TIME-A：资格清单悬置 → 与总截止竞速，拍内交回 unconfirmed（不无界阻塞）', async () => {
+  const rig = await buildRig('hang-list', [], {
+    listChildren: () => new Promise(() => {})
+  });
+  try {
+    const started = Date.now();
+    const result = await rig.waiter.execute({ wait_ms: 300 }, rig.exec());
+    const wall = Date.now() - started;
+    assert.equal(result.status, 'unconfirmed', '清单挂起：按未证实档交回，不是无界挂死');
+    assert.ok(wall < 1500, '受预算约束返回（WAIT-TIME-01 同缺陷类在新路径不复发）');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-TIME-B：资格清单悬置期间取消 → cancelled 出口及时切断', async () => {
+  const rig = await buildRig('hang-cancel', [], {
+    listChildren: () => new Promise(() => {})
+  });
+  try {
+    const controller = new AbortController();
+    const pending = rig.waiter.execute({ wait_ms: 5000 }, { agent: rig.parent, signal: controller.signal });
+    setTimeout(() => controller.abort(new Error('tool call aborted')), 150);
+    const result = await pending;
+    assert.equal(result.status, 'cancelled', '取消切断悬置清单（资格检查不吞取消）');
+    assert.ok(result.waited_ms < 2000, '及时交回');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-TIME-C：目标屏障悬置 → 拍内交回 unconfirmed，不无界阻塞入口校验', async () => {
+  const rig = await buildRig('hang-barrier', [], {
+    listChildren: () => new Promise(() => {})
+  });
+  try {
+    const started = Date.now();
+    const result = await rig.waiter.execute(
+      { wait_ms: 300, targets: [{ kind: 'agent', id: 'at-child-ghost-live' }] }, rig.exec()
+    );
+    const wall = Date.now() - started;
+    assert.equal(result.status, 'unconfirmed', '屏障挂起：未证实档交回');
+    assert.ok(wall < 1500, '受预算约束（入口校验不被悬置查询卡死）');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-SETTLED-A：已报告静止目标再次等待 → 立即返回「维持静止」，不挂起', async () => {
+  const rig = await buildRig('quiet', [{ id: 'at-child-quiet' }], {
+    agentsGet: (id) => ({ id, status: 'idle' })
+  });
+  try {
+    const target = { kind: 'agent', id: 'at-child-quiet' };
+    const first = await rig.waiter.execute({ wait_ms: 400, targets: [target] }, rig.exec());
+    assert.equal(first.status, 'settled', '首次观察静止：停止态返回一次（stop-once）');
+    const started = Date.now();
+    const again = await rig.waiter.execute({ wait_ms: 400, targets: [target] }, rig.exec());
+    const wall = Date.now() - started;
+    assert.equal(again.status, 'settled', '维持静止目标不取得挂起资格（WAIT-AGENT-02）');
+    assert.ok(wall < 300, '立即返回（挂起等翻转是缺陷形态）');
+    assert.match(again.note, /维持上次报告的停止态|remain settled as last reported/,
+      '说明目标维持已确认静止');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-SETTLED-B：静止子代理＋运行中作业的混合等待 → 轮询拍不截断，作业结算交回', async () => {
+  const rig = await buildRig('mix', [{ id: 'at-child-quiet2' }], {
+    agentsGet: (id) => ({ id, status: 'idle' }),
+    pollIntervalMs: 80
+  });
+  try {
+    // 建立静止基准（首次 stop-once），此后轮询拍看到的静止是「维持」。
+    const target = { kind: 'agent', id: 'at-child-quiet2' };
+    await rig.waiter.execute({ wait_ms: 100, targets: [target] }, rig.exec());
+    const wf = await rig.workflow.execute(WF_ARGS, rig.exec());
+    assert.equal(wf.status, 'running');
+    const pending = rig.waiter.execute(
+      { wait_ms: 4000, targets: [target, { kind: 'job', id: wf.job_id }] }, rig.exec()
+    );
+    // 静止拍（~80ms×多拍）之后作业才结算：旧缺陷会在首个静止拍交回 settled。
+    setTimeout(() => rig.finisher(), 500);
+    const result = await pending;
+    assert.equal(result.status, 'completed', '等待以作业终态交回，不被静止轮询拍截断');
+    assert.ok(result.output.includes('AT_FINAL_PAYLOAD'), '作业正文随终态交付');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-READ-A：宿主读取失败 → 失败态可见可重试，正文恰一次交付', async () => {
+  const rig = await buildRig('read-fail');
+  try {
+    const jobId = rig.ctx.jobs.start({
+      kind: 'at-r57-cmd', label: 'read fail probe', owner: rig.parent.id,
+      run(job) {
+        job.append('RECOVERABLE-PAYLOAD\n');
+        return { cancel() {}, done: Promise.resolve({ status: 'completed', detail: 'exit code: 0' }) };
+      }
+    });
+    await new Promise((resolve) => { setTimeout(resolve, 10); });
+    // 装置内点状故障：终态后的首次读取抛错（readFailed 置位、不置交付事实）。
+    const realRead = rig.ctx.jobs.read.bind(rig.ctx.jobs);
+    let failNext = true;
+    rig.ctx.jobs.read = (...args) => {
+      if (failNext) throw new Error('registry read exploded');
+      return realRead(...args);
+    };
+    const failed = await rig.waiter.execute(waitArgs(jobId), rig.exec());
+    assert.equal(failed.status, 'completed', '终态事实照常返回');
+    assert.match(failed.output, /读取失败|read failed/i, '读取失败≠空输出：失败标记与重试出路在场');
+    assert.ok(!failed.output.includes('RECOVERABLE-PAYLOAD'), '失败当次不交付正文');
+    // 故障排除后重试：正文恰好交付一次。
+    failNext = false;
+    const recovered = await rig.waiter.execute(waitArgs(jobId), rig.exec());
+    assert.ok(recovered.output.includes('RECOVERABLE-PAYLOAD'), '失败未置交付事实：正文可重试取得');
+    const third = await rig.waiter.execute(waitArgs(jobId), rig.exec());
+    assert.equal(third.output, '', '重试后不重复（恰一次）');
+    rig.ctx.jobs.read = realRead;
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-READY-A：入口已就绪的续段 → 无目标等待不挂起，直接汇集交付（readyCollect）', async () => {
+  const rig = await buildRig('ready', [], { maxResultChars: 40 });
+  try {
+    const jobId = rig.ctx.jobs.start({
+      kind: 'at-r57-cmd', label: 'long body', owner: rig.parent.id,
+      run(job) {
+        job.append(`HEAD-9-CHARS${'y'.repeat(160)}TAIL-10\n`);
+        return { cancel() {}, done: Promise.resolve({ status: 'completed', detail: 'exit code: 0' }) };
+      }
+    });
+    const first = await rig.waiter.execute(waitArgs(jobId), rig.exec());
+    assert.equal(first.status, 'completed');
+    assert.equal(first.truncated, true, '前置：首访按 40 份额截断（partial 事实，中段留缓冲）');
+    // 无目标正等待：入口汇集就绪续段，不进入资格门挂起。
+    const started = Date.now();
+    const again = await rig.waiter.execute({ wait_ms: 300 }, rig.exec());
+    const wall = Date.now() - started;
+    assert.equal(again.status, 'message', '就绪内容优先于挂起（WAIT-READY-01）');
+    assert.ok(again.outputs.some((item) => item.job_id === jobId && item.text.length > 0),
+      '续段条目随批交回');
+    assert.ok(again.output === '' || again.output === undefined, '无目标出口正文只在批次条目里');
+    assert.ok(wall < 250, '立即交付，不等满预算');
+    assert.match(again.note, /已汇集就绪|collected at the wait entry/, '汇集说明在场');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-SHARE-A：两个并行直付共享同一份批次预算——后到者只取剩余份额', async () => {
+  const rig = await buildRig('share', [], { maxResultChars: 400 });
+  try {
+    const args = (name) => ({
+      script: 'return {proof:"AT_FINAL_PAYLOAD"}',
+      meta: { name, description: 'parallel direct share' },
+      yield_ms: 200
+    });
+    const first = rig.workflow.execute(args('share-a'), rig.exec());
+    const second = rig.workflow.execute(args('share-b'), rig.exec());
+    // 结算落在让出窗口内：两次首次等待都走直接结算（先到先拿份额）。
+    rig.finisher(0, { blob: `A-${'a'.repeat(300)}` });
+    rig.finisher(1, { blob: `B-${'b'.repeat(300)}` });
+    const [r1, r2] = await Promise.all([first, second]);
+    assert.equal(r1.status, 'completed');
+    assert.equal(r2.status, 'completed');
+    const bodyOf = (result, marker) => {
+      const index = result.indexOf(marker);
+      return index === -1 ? 0 : result.length - index;
+    };
+    const b1 = bodyOf(r1.result, 'A-');
+    const b2 = bodyOf(r2.result, 'B-');
+    // 先到者预留整份份额拿满正文；后到者在预留窗口内份额为零——整条延后
+    //（正文进缓冲，续段可领取），同「剩余为零整条延后」同款语义。
+    const fullCount = [b1, b2].filter((b) => b >= 300).length;
+    assert.equal(fullCount, 1, '恰一个直付拿满正文（先分配再构造，共享同一份预算）');
+    assert.ok(b1 + b2 <= 460, '两次直付合计不超过一份生效预算（标注行容差内）');
+    const starved = b1 === 0 ? r1 : r2;
+    assert.equal(starved.truncated, true, '份额耗尽的后到直付如实标注截断（正文延后）');
+    // 被延后正文经 wait_ms=0 续段领取恢复（partial 事实，9.3.2 裁剪恢复）。
+    const ids = rig.ctx.jobs.list(rig.parent.id).map((row) => row.id);
+    const { ledger } = await import('../lib/delivery.js');
+    const resumes = [];
+    for (const id of ids) {
+      resumes.push(await rig.waiter.execute({ wait_ms: 0, targets: [{ kind: 'job', id }] }, rig.exec()));
+    }
+    // 后到者正文不因份额耗尽丢失：账本缓冲有续段，或已由另一载体（完成消息）
+    // 投出——两载体合计仍不超一份预算。
+    const messageBodies = [...rig.followups, ...rig.injections]
+      .map((m) => m.content.map((p) => p.text ?? '').join('')).join('\n');
+    const resumedBodies = resumes.map((r) => `${r.output ?? ''}${JSON.stringify(r.outputs ?? [])}`).join('\n');
+    const ledgerBodies = ids.map((id) => ledger.jobs.get(id)?.buffer ?? '').join('');
+    assert.ok(
+      messageBodies.includes('a'.repeat(5)) || messageBodies.includes('b'.repeat(5))
+      || resumedBodies.includes('a'.repeat(5)) || resumedBodies.includes('b'.repeat(5))
+      || ledgerBodies.includes('a'.repeat(5)) || ledgerBodies.includes('b'.repeat(5)),
+      '被延后的正文经完成消息载体、续段领取或账本缓冲之一可恢复（不永久丢失）'
+    );
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-WAKE-A：有目标等待不以迟到作答提前结束（作答留宿主收件箱）', async () => {
+  const rig = await buildRig('late-target', [{ id: 'at-child-live3' }]);
+  try {
+    const wf = await rig.workflow.execute(WF_ARGS, rig.exec());
+    assert.equal(wf.status, 'running');
+    const pending = rig.waiter.execute(
+      { wait_ms: 400, targets: [{ kind: 'job', id: wf.job_id }] }, rig.exec()
+    );
+    // 等待开始后再投递迟到作答（无目标才可被它唤醒——9.3.1）。
+    setTimeout(() => {
+      rig.parent.inbox.nextStep.push({
+        id: 'msg-late-a', role: 'user', content: [{ type: 'text', text: 'late' }],
+        source: { kind: 'ask-takeover-late', form: 'notice', summary: 'late answer arrived' }
+      });
+    }, 60);
+    const result = await pending;
+    assert.equal(result.status, 'running', '迟到作答不结束有目标等待：预算到期按目标仍在运行交回（被唤醒即失败）');
+    assert.ok(result.waited_ms >= 350, '真实等到预算（被迟到作答唤醒即失败）');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-MIX-A：终态作业＋查无子代理的混合目标 → 全部资格校验先于终态读取（拒绝）', async () => {
+  const rig = await buildRig('mix-order', []);
+  try {
+    const wf = await rig.workflow.execute(WF_ARGS, rig.exec());
+    rig.finisher();
+    const deadline = Date.now() + 2000;
+    let settledView;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => { setTimeout(resolve, 5); });
+      settledView = rig.ctx.jobs.list(rig.parent.id).find((j) => j.id === wf.job_id);
+      if (settledView?.status === 'completed') break;
+    }
+    assert.equal(settledView?.status, 'completed', '前置：作业已终态');
+    await assert.rejects(
+      rig.waiter.execute(
+        { wait_ms: 300, targets: [{ kind: 'job', id: wf.job_id }, { kind: 'agent', id: 'at-child-nope' }] },
+        rig.exec()
+      ),
+      (error) => /at-child-nope|not found|查无|unknown/i.test(String(error?.message ?? error)),
+      '混合目标：查无子代理在校验遍拒绝，终态作业不被先行读取交付（校验先于返回）'
+    );
   } finally {
     await rig.dispose();
   }

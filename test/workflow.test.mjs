@@ -530,25 +530,32 @@ hostTest('async_workflow（F8）：注册表收原始 JSON；已直付的最终�
     '直接结算的省略量按原始 JSON 计算（28−5=23）');
 
   // 注册表：outcome 存**原始序列化值**——一次性通道的消费事实由裸读反推
-  //（见用例末）。**已直付的最终结果不再进任何后续载体**（需求 9.3.2「同一
-  // 最终结果在正常交付中只出现一次」——原始 JSON 与渲染文本算同一最终结果的
-  // 两种形态）：再次等待同一作业只回终态事实，不重复展开正文。
+  //（见用例末）。**已直付的首尾不再进任何后续载体**（需求 9.3.2「同一最终
+  // 结果在正常交付中只出现一次」）：再次等待同一作业，终态正文（首尾）不重复
+  // 展开；直付时被份额裁剪省略的**中段**按 9.3.2 裁剪恢复续段交付——那是
+  // 模型从未见过的内容，不是重复。
   const views = f.jobsFake.views();
   const jobId = views[0].id;
   await new Promise((resolve) => { setTimeout(resolve, 5); });
-  const waiter = createWaitTool(f.ctx, resolveConfig({ toolName: 'async_wait', maxResultChars: 5 }));
+  // 装置显式 minWaitMs=1：本用例走入口终态分支立即返回，但装置不走夹紧歧义。
+  const waiter = createWaitTool(f.ctx, resolveConfig({ toolName: 'async_wait', maxResultChars: 5, minWaitMs: 1 }));
   const again = await waiter.execute({ wait_ms: 30000, targets: [{ kind: 'job', id: jobId }] }, exec);
   assert.equal(again.status, 'completed', '终态事实照常返回（入口快照终态分支）');
-  assert.equal(again.output, '',
-    '已直付的正文不再重复交付（deliveredFact 阻断批次装配；重复交付是旧缺陷形态）');
-  assert.ok(!JSON.stringify(again).includes('x'.repeat(5)),
-    '原始 JSON 的任何片段都不得再次出现');
+  // 已直付的首尾不再重复（readSettled 按已交付事实短路，不从宿主再消费一次性
+  // result），本次 output 只交**未领的中段续段**（模型从未见过的内容）。
+  assert.ok((again.output ?? '').length > 0, '省略中段以续段交回（裁剪恢复，9.3.2）');
+  assert.ok(!again.output.includes('"'),
+    '续段只含被省略的中段（JSON 引号在首尾，已交付过——不重复出现）');
+  const entryNote = (again.outputs ?? []).find((item) => item.job_id === jobId);
+  assert.ok(entryNote !== undefined && entryNote.text === '',
+    '触发目标批次条目只带状态行（正文由 output 携带，不双投）');
 
-  // 一次性通道被「再次等待」的入口终态读取消费（终态事实的读取管线照常运转，
-  // 只是装配被 deliveredFact 阻断——正文不重复展开，通道不再有 result）。
+  // 一次性通道在已交付事实短路下**不再被消费**：中段已由直付方经 pendingTail
+  // 进账本缓冲，本包不从宿主重复读取（读取会再把一次性 result 与已交付首尾
+  // 拼出重复正文）。宿主副本留待外部读取者，本包不再触碰。
   const rawNext = f.jobsFake.service.read(jobId, agent.id);
-  assert.equal(rawNext.result, undefined,
-    '再次等待消费一次性 result（读取照常、装配被阻断——这才是「只出现一次」的完整形态）');
+  assert.equal(rawNext.result, '"xxxxxxxxxxxxxxxxxxxxxxxxxx"',
+    '短路读取不消费一次性 result（「只出现一次」由交付事实与缓冲续段共同保证）');
 });
 
 hostTest('async_workflow（F9）：取消与预算到期分别说明——abort 的 note 不冒称超出预算', async () => {

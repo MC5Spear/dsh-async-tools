@@ -1,5 +1,5 @@
 /**
- * 子代理目标适配的观察基准直测（盲审 M-7①；需求 9.3.3、设计 §3.2.4）。
+ * 子代理目标适配的观察基准直测。
  *
  * `AgentTarget` 的入口检查（`entryCheck`）与跨调用登记（`noteReported`／
  * `clearBaseline`／`baseline`）此前只经 wait-delivery 的形状用例间接覆盖——

@@ -38,7 +38,7 @@ export const WAIT_INTERRUPTED = /等待被打断|Wait interrupted/;
  * 行为陈述口径：只断言"结束等待"这个动作没有终止工作对象——等待被打断这一
  * 事件本身证明不了运行状态，故不匹配"仍在后台运行"类措辞。
  */
-export const SUBJECT_UNTOUCHED = /结束等待没有终止[\s\S]{0,60}的工作|Ending the wait did not stop/;
+export const SUBJECT_UNTOUCHED = /结束等待没有终止[\s\S]{0,60}工作|Ending the wait did not stop/;
 
 /**
  * `async_wait`（子代理目标）的**结局**标记——三选一即可，两语都要认（agentLang 是设置项，

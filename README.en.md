@@ -59,7 +59,7 @@ Both presets directly provide these five tools. DSH management tools still handl
 | Tool | Purpose |
 | --- | --- |
 | `async_run` | Runs a command and returns its result or a background job identifier |
-| `async_wait` | Unified wait entry: waits for messages and job results, or on job and subagent targets |
+| `async_wait` | Unified wait entry: collects ready results first, then waits with a bounded budget for messages, job results, or explicit targets — returning at once when no wait-worthy work exists |
 | `async_agent` | Starts a resumable child in the background and immediately returns `agent_id` |
 | `async_workflow` | Coordinates large multi-agent tasks with a script managed as a background job |
 | `async_list_subagent_models` | Browses or searches model pages and checks applicability to a chosen creation tool |

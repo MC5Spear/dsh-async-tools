@@ -1,21 +1,21 @@
 # `dsh-async` 预设：改用异步 shell 的完整编码 Agent。
 #
-# 结构（设计 §3.6）：本文件是 `dsh.bundle.patch` 数组的一项——一条预设声明行
+# 结构（设计 §3.5）：本文件是 `dsh.bundle.patch` 数组的一项——一条预设声明行
 # （`@deepseek-ai/dsh-agent-preset`），config.plugins 是完整子清单。预设生命周期由
 # loader 拥有：本包从 bundles 移除即预设消失，无清理代码（设计 §7.1）。
 #
 # 基线 = 随支持集合内宿主发布的 shipped standard 预设补丁（需求 §7.3；基线位置由
-# tools/validate-preset.mjs 按需求读取，不硬编码本机路径）。当前三个受支持宿主的
-# 随包基线相同，按 0.2.1-rc.4 出处核读。相对基线的改动
-# （设计 §3.6"两者相对基线的共同差异"，逐条给依据）：
+# tools/validate-preset.mjs 按需求读取，不硬编码本机路径）。当前四个受支持宿主
+#（rc.2–rc.5）的随包基线相同，按 0.2.1-rc.4 出处核读并经 rc.2/rc.5 哈希核对。
+# 相对基线的改动（设计 §3.5"两者相对基线的共同差异"，逐条给依据）：
 #   1. tool-bash 无条件 disabled: true——禁同步 shell（需求 §3.1），两平台工具清单
 #      一致（需求 §3.3）；
 #   2. 不挂 tool-pwsh 行——前台同步 shell 到期杀进程树，与异步语义冲突（需求 §3.1）；
-#   3. tool-bash 之后连续成组新增五行 dsh-async-tools（toolName 分派；第五行
+#   3. tool-bash 之后连续成组新增四个 dsh-async-tools 顶层行（toolName 分派；其中
 #      async_list_subagent_models 是顶层只读行——查询工具不进 delegation 组，
-#      设计 §3.6）；第六行 async_workflow 在 delegation 组内 tool-workflow 行后——
-#      编排引擎是组内隔离服务，组外行取不到（需求 §3.2 末条、设计 §3.5）。
-#      六行 config 均携带 owningPreset 归属声明（设计 §6.2——描述警示按行归属
+#      设计 §3.5）；第五个工具 async_workflow 在 delegation 组内 tool-workflow 行后
+#      ——编排引擎是组内隔离服务，组外行取不到（需求 §3.2 末条、设计 §3.4）。
+#      五行 config 均携带 owningPreset 归属声明（设计 §6.2——描述警示按行归属
 #      判定，非 volatile）；
 #   4. tool-workflow 与 tool-subagent 系委托入口（单发 / fork）置 disabled: true
 #      （需求 §3.1：委托／编排入口收归本包——派生入口唯一化为 async_agent、
@@ -188,9 +188,9 @@
               - id: tool-workflow
                 name: '@deepseek-ai/dsh-tool-workflow'
                 disabled: true
-              # 第六行 async_workflow 插在 delegation 组内（tool-workflow 行后）——
+              # async_workflow 插在 delegation 组内（tool-workflow 行后）——
               # 编排引擎是组内隔离服务，组外行 ctx.get 恒取不到（需求 §3.2 末条、
-              # 设计 §3.5/§3.6）；组内注册工具的成例即上面的 tool-workflow 行。
+              # 设计 §3.4/§3.5）；组内注册工具的成例即上面的 tool-workflow 行。
               - id: async-workflow
                 name: dsh-async-tools
                 config:

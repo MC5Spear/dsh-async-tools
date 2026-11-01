@@ -72,13 +72,13 @@ The Range column describes values that can be saved. If a call's budget falls ou
 | Field | Type | Default | Range | Unit | Takes effect |
 | --- | --- | --- | --- | --- | --- |
 | `defaultYieldMs` | number | `20000` | 1..2147483647; fractions allowed | ms | Next run/workflow call omitting yield_ms |
-| `minYieldMs` | number | `1000` | 1..2147483647; fractions allowed | ms | Lower bound for the next initial wait |
+| `minYieldMs` | number | `20000` | 1..2147483647; fractions allowed | ms | Lower bound for the next initial wait |
 | `maxYieldMs` | number | `600000` | 1..2147483647; fractions allowed | ms | Upper bound for the next initial wait |
 | `defaultWaitMs` | number | `30000` | 1..2147483647; fractions allowed | ms | Example budget only; wait_ms remains required |
-| `minWaitMs` | number | `250` | 1..2147483647; fractions allowed | ms | Lower bound for the next wait request |
+| `minWaitMs` | number | `20000` | 1..2147483647; fractions allowed | ms | Lower bound for the next wait request |
 | `maxWaitMs` | number | `600000` | 1..2147483647; fractions allowed | ms | Upper bound for the next wait request |
 | `pollIntervalMs` | number | `500` | 1..2147483647; fractions allowed | ms | New wait's fallback state polling and existence retries |
-| `maxResultChars` | integer | `30000` | 1..1000000 | JS String.length | Result rendering |
+| `maxResultChars` | integer | `12000` | 1..1000000 | JS String.length | Result rendering |
 | `jobKind` | string | `async-command` | Nonempty | — | Kind identifier for new command jobs |
 | `subagentProvider` | string | `spawn` | Backend name; trimmed empty value uses spawn | — | Next child creation; not an LLM provider |
 | `uiLang` | enum | `auto` | auto / zh / en | — | UI; auto follows the host |
@@ -129,7 +129,7 @@ The unified wait entry: wait for messages and job results without targets, or wa
 
 Without targets, the wait may return on processable messages and this package's job results. With targets, it waits for target terminal states (jobs) or changes (subagents); non-target messages do not end the wait. `wait_ms=0` returns current states and any undelivered content immediately, without a wait segment.
 
-A job terminal result is `{status:'completed'|'killed'|'failed', job_id, output, truncated, waited_ms}`. A subagent change is `{status:'changed'|'settled', agent_id, waited_ms, note}`. Wait-shaped results are `{status:'running'|'budget'|'interrupted'|'message'|'cancelled', waited_ms, note}`. Multi-target results carry the other targets' proven states in `targets`. Other jobs settling in the same batch are carried in `outputs` entries; `delivered` is batch metadata. A missing or inaccessible job target is reported with a `not_found` status. A query failure calls for a retry, not a new execution. See section 4 for consuming reads and delivery.
+A job terminal result is `{status:'completed'|'killed'|'failed', job_id, output, truncated, waited_ms}`. A subagent change is `{status:'changed'|'settled', agent_id, waited_ms, note}`. Wait-shaped results are `{status:'running'|'budget'|'interrupted'|'message'|'cancelled'|'no-work'|'unconfirmed', waited_ms, note}` — `no-work` means no wait-worthy work was confirmed and the call did not suspend; `unconfirmed` means work or target eligibility could not be proven (a listing failed or timed out). Without targets, the entry first collects ready job results into the return and suspends only when wait-worthy work is confirmed (a running background job or a running subagent of yours). Multi-target results carry the other targets' proven states in `targets`. Other jobs settling in the same batch are carried in `outputs` entries; `delivered` is batch metadata. A missing or inaccessible job target is reported with a `not_found` status. A query failure calls for a retry, not a new execution. See section 4 for consuming reads and delivery.
 
 ### 3.3 async_agent
 
@@ -229,7 +229,7 @@ settled means the child is not currently observed running. It does not mean succ
 
 Reads advance the incremental output cursor. The first successful terminal read delivers the final result once, merged into the same response. Later reads do not replay consumed text. A read error requires retrying, not interpreting the result as empty. Inspect exit codes, signals, and failed/killed notices even when execution completed.
 
-Long results can lose content in two different ways. `maxResultChars` truncates only the body shown to the model, counting JavaScript `String.length`, preserving its head and tail, and marking the omitted amount. A host `lossy` marker instead means buffered content has already been lost. Status, loss explanations, and temporary-file clues are outside the body budget.
+Long results can lose content in two different ways. `maxResultChars` is a quota **shared by all result content in one delivery batch**: the multiple results reaching the model input in one batch — first-wait direct returns, wait-return batch entries, and completion messages — draw on this single cap, first come first served; a single oversized entry keeps its head and tail with the omitted amount marked, and the omitted middle stays in the ledger buffer, recoverable via later batches or `async_wait(wait_ms=0)` — never lost to truncation. Counting is JavaScript `String.length`. A host `lossy` marker instead means buffered content has already been lost. Status, loss explanations, and temporary-file clues are outside the body budget.
 
 The host may write output to temporary files (spill) and return their absolute system-temporary paths in `spillPaths`. Open them only where authorized and promptly save necessary contents to an appropriate location. Output and files can contain secrets; review and redact before sharing. Temporary files can disappear. Without a returned path, do not assume a complete disk copy exists.
 
@@ -248,6 +248,8 @@ To answer in the pending-question panel, enable `askTakeover` in settings and sa
 With `sidebar`, an unanswered count appears at the sidebar bottom; click to expand. With `overlay`, questions appear at the lower right. The panel lets you open the original session, answer, ignore, or extend the wait.
 
 Check the question type before answering. Single-choice questions accept one preset option or the custom answer. Multiple-choice questions can combine them, with custom text submitted as an independent answer rather than a suffix. Nothing starts selected, and a recommendation is not a selection. Clicking the custom input or entering non-whitespace text selects it; moving keyboard focus alone does not.
+
+The custom answer uses a multi-line input: the first row holds the choice control and its title, and the input below spans the available width at about three lines tall, resizable vertically. Enter inserts a line break instead of submitting, and confirming an IME composition never submits by accident; submission uses the button. Line breaks and text are delivered verbatim, and whitespace validation and preset-selection relationships are unchanged from the single-line era.
 
 Deselecting the custom answer may retain its draft, but the draft is not submitted. Clicking its input or entering valid text selects it again. Clearing selected custom text does not restore an earlier selection. No selection, or a selected whitespace-only custom answer, prevents submission—even if a multiple-choice question has other selected options. Use the separate Ignore action to leave a question unanswered. The server also validates options and selection relationships.
 

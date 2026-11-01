@@ -555,7 +555,7 @@ test('T10：宿主侧的 volatile 提交必须真的到达预设工具的描述'
   const tool = registeredTools.get('async_run');
   assert.ok(tool !== undefined, '工具必须注册');
   assert.ok(bus.listenerCount() >= 1, '预设层装载后登记表里必须有刷新回调');
-  assert.match(tool.description, /pass yield_ms, range 1000–600000 ms/, '快照缺席时描述用本行默认值');
+  assert.match(tool.description, /pass yield_ms, range 20000–600000 ms/, '快照缺席时描述用本行默认值');
 
   // ② 宿主侧（同一插件、行配置没有 toolName）：首播快照。settings 子树形态：
   //    19 个可编辑字段住在 `settings` 键下（设计 §5.1——新根形态）。
@@ -581,7 +581,10 @@ test('T10：宿主侧的 volatile 提交必须真的到达预设工具的描述'
   updateVolatile(hostFork.config.settings, createVolatile({
     ...hostFork.config.settings.get(),
     maxWaitMs: 130000,
-    defaultYieldMs: 5000
+    defaultYieldMs: 5000,
+    // 出厂 minYieldMs=20000 会把 defaultYieldMs=5000 顶爆组合校验（快照重播
+    // 拒绝、保旧值）——显式给出合法下限，测的仍是「提交→重播→描述刷新」链。
+    minYieldMs: 1000
   }));
   hostFork.ctx.emit('loader/volatile-update');
   // 快照重播是同步的（先于 refresh-bus 的动态 import）；描述刷新要等微任务+宏任务。
@@ -592,7 +595,7 @@ test('T10：宿主侧的 volatile 提交必须真的到达预设工具的描述'
   assert.notEqual(tool.description, before,
     'volatile 提交后描述必须变化——否则通道是断的（行为活、描述死）');
   const range = /Per-call wait budgets must be passed explicitly, range (\d+)–(\d+) ms;/.exec(tool.description);
-  assert.deepEqual([range?.[1], range?.[2]], ['250', '130000'], '描述里的等待区间必须更新');
+  assert.deepEqual([range?.[1], range?.[2]], ['20000', '130000'], '描述里的等待区间必须更新');
   assert.match(String(tool.parameters.properties.yield_ms.description), /Defaults to 5000/,
     '参数说明也必须更新');
 
@@ -1017,9 +1020,9 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   // 嵌套形状（真机 describe 把 19 字段展平在 `settings` 键下——毫秒说明行的读数
   // 才有东西可换算；client.js 经 makeSettingsScopeView 适配官方模型的平铺寻址）。
   const DEFAULTS = {
-    defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
-    defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000,
-    pollIntervalMs: 500, maxResultChars: 30000,
+    defaultYieldMs: 20000, minYieldMs: 20000, maxYieldMs: 600000,
+    defaultWaitMs: 30000, minWaitMs: 20000, maxWaitMs: 600000,
+    pollIntervalMs: 500, maxResultChars: 12000,
     jobKind: 'async-command', subagentProvider: '', uiLang: 'auto', agentLang: 'en',
     silentFailureGuard: false,
     askTakeover: false, askTimeoutMs: 60000, askExtendMs: 60000, askUiSeat: 'sidebar'
@@ -1398,9 +1401,9 @@ test('T18h（R24/R27·设计 §5.5）：字段帮助——问号按钮、开合�
   const product = loaded.factory((name) => (name === 'react' ? react : double));
 
   const DEFAULTS = {
-    defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
-    defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000,
-    pollIntervalMs: 500, maxResultChars: 30000,
+    defaultYieldMs: 20000, minYieldMs: 20000, maxYieldMs: 600000,
+    defaultWaitMs: 30000, minWaitMs: 20000, maxWaitMs: 600000,
+    pollIntervalMs: 500, maxResultChars: 12000,
     jobKind: 'async-command', subagentProvider: '', uiLang: 'zh', agentLang: 'en',
     silentFailureGuard: false,
     askTakeover: false, askTimeoutMs: 60000, askExtendMs: 60000, askUiSeat: 'sidebar'
@@ -1639,8 +1642,8 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     jobKind: '命令作业类型标识', subagentProvider: '子代理创建后端',
     uiLang: '插件界面语言', agentLang: 'Agent 文案语言',
     silentFailureGuard: '命令静默失败提示',
-    workflowProgressLog: '编排进度行保留',
-    fullCommandEcho: '作业列表回显完整命令',
+    workflowProgressLog: '向 Agent 提供工作流进度日志',
+    fullCommandEcho: '向 Agent 回显完整命令',
     askTakeover: '在待答面板处理提问',
     askTimeoutMs: '首次提问等待时长', askExtendMs: '每次增加的等待时长',
     askUiSeat: '待答问题显示方式'
@@ -1683,7 +1686,11 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
       ['省略时报错', '缺省报错', '省略会报错']
     ],
     minWaitMs: [
+      // DOC-04：正等待限定 + 零等待例外（wait_ms=0 只做即时检查）。
       ['适用于等待入口', '作用于等待入口', '等待入口的 wait_ms'],
+      ['正等待', 'wait_ms > 0'],
+      ['只做即时检查', '即时检查', 'wait_ms=0'],
+      ['不抬高到下限', '不抬到下限', '不会被抬高'],
       ['低于此值时按下限取值', '低于下限时按下限取值', '低于下限会被钳到下限'],
       ['结束本次等待', '等待到时结束', '提前交回控制权'],
       ['后台任务继续运行', '后台继续运行']
@@ -1701,6 +1708,9 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     ],
     maxResultChars: [
       ['正整数', '必须是正整数'],
+      // DOC-04 批次共享口径：多条结果共享一份上限（不是「每次返回各自一份」）。
+      ['共享', '共用', '共同占用'],
+      ['交付批次', '同一交付批次', '一个交付批次'],
       ['保留首尾', '保留开头与结尾', '首尾都保留'],
       ['说明截断', '注明截断', '截断说明'],
       ['另计', '不计入', '单独计量']
@@ -1732,13 +1742,19 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
       ['编排结果', '编排作业', '编排'],
       ['进度行', '进度日志'],
       ['默认关', '默认关闭', '默认不开启'],
-      ['结果正文', '结果更长', '结果相应变长']
+      ['结果正文', '结果更长', '结果相应变长'],
+      // DOC-05 受众锚：开关作用面是 Agent 收到的内容（不是界面），且界面与
+      // 日志的原始记录不受影响（不能写成「关闭显示」——界面原始记录常驻）。
+      ['Agent 看到', 'Agent 看到的', '向 Agent', '给 Agent'],
+      ['原始记录不受影响', '原始记录不受本开关影响']
     ],
     fullCommandEcho: [
       ['作业列表'],
       ['进度说明'],
       ['完整命令原文', '命令原文'],
-      ['默认关', '默认关闭', '默认不开启']
+      ['默认关', '默认关闭', '默认不开启'],
+      ['Agent 看到', 'Agent 看到的', '向 Agent', '给 Agent'],
+      ['原始记录不受影响', '原始记录不受本开关影响']
     ],
     askTakeover: [
       ['普通提问', '一般性提问'],
@@ -1792,6 +1808,10 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     ],
     minWaitMs: [
       ['wait entry', 'the wait entry', 'on the wait entry'],
+      // DOC-04：positive-wait scope + zero-wait exception.
+      ['positive waits', 'wait_ms > 0'],
+      ['an immediate check', 'immediate check only', 'immediate check'],
+      ['is not raised', 'not raised to the bound'],
       ['use the lower bound', 'clamped to the lower bound', 'clamps to the lower bound'],
       ['the wait ends', 'this wait ends', 'ends the wait'],
       ['keeps running', 'the background task keeps running']
@@ -1809,7 +1829,10 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     ],
     maxResultChars: [
       ['a positive integer', 'positive integer'],
-      ['the head and tail are kept', 'head and tail kept', 'keeps the head and tail'],
+      // DOC-04 batch-shared quota.
+      ['shared', 'draw on the same quota', 'one shared quota'],
+      ['delivery batch', 'one delivery batch', 'per delivery batch'],
+      ['the head and tail are kept', 'head and tail kept', 'keeps its head and tail', 'keeps the head and tail'],
       ['truncation note', 'a note about the truncation', 'states the truncation'],
       ['counted separately', 'not counted toward the cap', 'separate from the cap']
     ],
@@ -1842,13 +1865,18 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
       ['orchestration results', 'orchestration job'],
       ['progress lines', 'progress logs'],
       ['off by default', 'Off by default', 'disabled by default'],
-      ['longer results', 'results longer', 'result bodies longer']
+      ['are shorter', 'longer results', 'result bodies'],
+      // DOC-05 audience anchors.
+      ['the Agent sees', 'the Agent receives', 'the agent receives'],
+      ['unaffected', 'are unaffected']
     ],
     fullCommandEcho: [
       ['job lists', 'job list'],
       ['progress description'],
       ['full command text', 'full command'],
-      ['off by default', 'Off by default', 'disabled by default']
+      ['off by default', 'Off by default', 'disabled by default'],
+      ['the Agent sees', 'the Agent receives', 'the agent receives'],
+      ['unaffected', 'are unaffected']
     ],
     askTakeover: [
       ['plain questions', 'ordinary questions'],
@@ -1885,17 +1913,17 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minYieldMs: '本次 yield_ms 低于下限会被钳到下限。等待到时结束，后台继续运行。',
     maxYieldMs: '本次 yield_ms 高于上限时按上限取值。等待到时结束，后台继续运行。',
     defaultWaitMs: '返回提示中的示例时长仅为演示，与真实调用的生效等待不同。等待入口要 wait_ms 必填，缺省报错。',
-    minWaitMs: '作用于等待入口的 wait_ms；请求低于下限时按下限取值。等待到时结束，后台继续运行。',
+    minWaitMs: '作用于等待入口正等待（wait_ms > 0）的 wait_ms；请求低于下限时按下限取值。wait_ms=0 只做即时检查、不会被抬高到下限。等待到时结束，后台继续运行。',
     maxWaitMs: '作用于等待入口的 wait_ms；高于上限时按上限取值。等待到时结束，后台继续运行。',
     pollIntervalMs: 'async_wait 的子代理目标按这个间隔周期性检查目标是否还在跑，作为变化事件没到时的备用检查手段。',
-    maxResultChars: '结果内容单次保留的字符数上限，必须是正整数；超限时保留开头与结尾并注明截断，状态与提示单独计量。',
+    maxResultChars: '同一交付批次内多条结果共享的字符数上限，必须是正整数；超限时保留开头与结尾并注明截断，状态与提示单独计量。',
     jobKind: '命令作业注册时用的类型名，出现在作业列表和日志里方便辨认。',
     subagentProvider: 'async_agent 创建子代理的后端。',
     uiLang: '决定界面文案（设置表单、字段帮助、待答界面）显示中文还是英文；自动档跟随宿主语言。',
     agentLang: '决定模型侧文案（含工具描述与执行纪律、错误与提示）的语言。',
     silentFailureGuard: '所谓静默失败，就是命令可能没有执行却看不到报错。开启后这类情况会给出诊断提示和检查建议；只对两预设生效，默认关闭。',
-    workflowProgressLog: '编排作业默认关——各阶段进度行滤除、只留结论；打开后保留进度行，结果正文随之变长。',
-    fullCommandEcho: '命令作业在作业列表里默认关——显示进度说明；打开后回显完整命令原文。',
+    workflowProgressLog: '编排作业默认关——各阶段进度行滤除、只留结论，Agent 看到的结果更短；打开后保留进度行，结果正文随之变长，界面与日志的原始记录不受影响。',
+    fullCommandEcho: '命令作业在作业列表里默认关——Agent 看到进度说明；打开后回显完整命令原文，界面与日志的原始记录不受影响。',
     askTakeover: '开启后，两预设根代理的一般性提问在待答面板作答；关掉则走宿主默认流程。到期后 Agent 继续工作，用户仍可之后再回答。',
     askTimeoutMs: '自收到一批提问时开始计时，同批多题共用一个期限。到期时已作的回答保留，Agent 继续工作，用户仍可之后再回答；改值只影响之后的批次。',
     askExtendMs: '待答面板的「增加等待时间」按钮每按一下，就给该会话此刻等待中的批次各加这段时间。',
@@ -1906,17 +1934,17 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minYieldMs: 'A yield_ms below the lower bound is clamped to the lower bound; the wait ends on schedule and the background task keeps running.',
     maxYieldMs: 'A yield_ms above this ceiling uses the upper bound; the wait ends on schedule and the background task keeps running.',
     defaultWaitMs: 'The span shown for the wait-call example in return notes is for illustration only, not the effective wait of a real call. Real calls of the wait entry must explicitly state wait_ms; leaving it out errors.',
-    minWaitMs: 'Governs wait_ms on the wait entry; a request below the floor is clamped to the lower bound; the wait ends on schedule and the background task keeps running.',
+    minWaitMs: 'Governs wait_ms of positive waits (wait_ms > 0) on the wait entry; a request below the floor is clamped to the lower bound; wait_ms=0 is an immediate check only and is not raised to the bound; the wait ends on schedule and the background task keeps running.',
     maxWaitMs: 'Governs wait_ms on the wait entry; a request above this ceiling uses the upper bound; the wait ends on schedule and the background task keeps running.',
     pollIntervalMs: 'async_wait\'s subagent targets decide how often to run a backup check of the target\'s running state when the change event has not arrived.',
-    maxResultChars: 'Cap on characters kept per result (must be a positive integer); past it the head and tail are kept with a note about the truncation; status and notices are counted separately.',
+    maxResultChars: 'Cap on characters shared by the multiple results of one delivery batch (must be a positive integer); past it the head and tail are kept with a note about the truncation; status and notices are counted separately.',
     jobKind: 'The type name used when registering command jobs so they can be told apart in job lists and logs.',
     subagentProvider: 'The backend async_agent spawns subagents with.',
     uiLang: 'Sets the language (Chinese or English) of the settings form, field help, and pending panel; the auto choice follows the host language.',
     agentLang: 'Sets the language of model-visible copy: tool descriptions, parameter notes, notices, execution discipline, and errors.',
     silentFailureGuard: '"Silent failure" is when a command may not have executed with no visible error. When on, such cases get a diagnostic reminder and checking advice; it covers only this package\'s two presets and is disabled by default.',
-    workflowProgressLog: 'When this is off by default, orchestration results keep conclusions only; turning it on keeps the progress lines, producing longer results.',
-    fullCommandEcho: 'Command jobs show the progress description in job lists while this is off by default; turning it on echoes the full command text.',
+    workflowProgressLog: 'When this is off by default, orchestration results keep conclusions only and the result bodies the Agent receives are shorter; turning it on keeps the progress lines, producing longer results; raw records in the interface and logs are unaffected.',
+    fullCommandEcho: 'Command jobs show the progress description in job lists while this is off by default, and the Agent sees it; turning it on echoes the full command text; raw records in the interface and logs are unaffected.',
     askTakeover: 'When on, the pending panel answers plain questions from the root agents of this package\'s two presets; when off, the host\'s native flow handles them. After expiry the Agent continues working and the user can still answer later.',
     askTimeoutMs: 'Timed from receiving a batch of questions; the batch\'s questions share one deadline. On expiry the answers given so far are kept, the Agent continues working, the user can still answer later; a new setting applies to subsequent batches.',
     askExtendMs: 'Each "Extend wait" click in the pending panel adds this much time to every batch of that session not yet expired at that moment.',
@@ -1953,7 +1981,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     defaultYieldMs: ['先取得作业编号', 'minYieldMs ≤ defaultYieldMs ≤ maxYieldMs'],
     minYieldMs: ['提前结束', '上下限'], maxYieldMs: ['提前结束', '上下限'],
     defaultWaitMs: ['仅为示例', '必填'],
-    minWaitMs: ['一份预算'], maxWaitMs: ['一份预算'],
+    minWaitMs: ['正等待', '零等待例外'], maxWaitMs: ['正等待', '零等待不受区间抬高'],
     pollIntervalMs: ['轮询', '配对'], maxResultChars: ['正整数', '截断', '另计'],
     jobKind: ['空串'], subagentProvider: ['provider 与 model', '可读拒绝'],
     uiLang: ['跟随宿主语言', '独立'], agentLang: ['工具描述', '互不影响'],
@@ -1966,7 +1994,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     defaultYieldMs: ['returns the job id first', 'minYieldMs ≤ defaultYieldMs ≤ maxYieldMs'],
     minYieldMs: ['end the first wait early', 'bounds'], maxYieldMs: ['end the first wait early', 'bounds'],
     defaultWaitMs: ['only an example', 'required'],
-    minWaitMs: ['One budget covers'], maxWaitMs: ['One budget covers'],
+    minWaitMs: ['positive waits', 'zero-wait exception'], maxWaitMs: ['positive waits', 'not raised by the range'],
     pollIntervalMs: ['polling', 'pairing'], maxResultChars: ['positive integer', 'truncation', 'counted separately'],
     jobKind: ['empty value is invalid'], subagentProvider: ['provider and model', 'rejected readably'],
     uiLang: ['follows the host language', 'independent'], agentLang: ['tool descriptions', 'do not affect each other'],
@@ -2051,12 +2079,12 @@ test('T22（R25）：改语言后刷新必须整段换文案——正文、尾�
     uiLang: 'auto',
     agentLang: 'en',
     defaultYieldMs: 20000,
-    minYieldMs: 1000,
+    minYieldMs: 20000,
     maxYieldMs: 600000,
     defaultWaitMs: 30000,
-    minWaitMs: 250,
+    minWaitMs: 20000,
     maxWaitMs: 600000,
-    maxResultChars: 30000,
+    maxResultChars: 12000,
     jobKind: 'async-command',
     pollIntervalMs: 500
   };
@@ -2079,8 +2107,8 @@ test('T22（R25）：改语言后刷新必须整段换文案——正文、尾�
   // 数字链不能因为换语言断掉：zh 档下正文与参数说明的区间都要跟着快照更新。
   current = { ...current, maxYieldMs: 120000 };
   refreshToolDescriptions(tool, view);
-  assert.match(tool.description, /1000–120000 ms/, 'zh 档正文里的让出区间仍要跟着设置更新');
-  assert.match(paramText(), /1000-120000/, 'zh 档参数说明里的区间仍要跟着设置更新');
+  assert.match(tool.description, /20000–120000 ms/, 'zh 档正文里的让出区间仍要跟着设置更新');
+  assert.match(paramText(), /20000-120000/, 'zh 档参数说明里的区间仍要跟着设置更新');
 
   // 展示侧开关与模型侧无关：改 `uiLang` 不得动描述（互不牵连的单元侧最小证据）。
   const zhDescription = tool.description;
@@ -2154,12 +2182,12 @@ test('T17（R10·复审 Z4）：预算默认值本身也要钉住——改错一
   const { resolveConfig } = await import('../lib/config.js');
   const resolved = resolveConfig({ toolName: 'async_run' });
   const EXPECTED_DEFAULTS = {
-    maxResultChars: 30000,
+    maxResultChars: 12000,
     defaultYieldMs: 20000,
-    minYieldMs: 1000,
+    minYieldMs: 20000,
     maxYieldMs: 600000,
     defaultWaitMs: 30000,
-    minWaitMs: 250,
+    minWaitMs: 20000,
     maxWaitMs: 600000,
     pollIntervalMs: 500,
     jobKind: 'async-command',

@@ -23,7 +23,7 @@
 dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
 ```
 
-也可以在 DSH 插件管理页打开安装对话框，将上面的 GitHub spec 填入安装地址。安装结束后，在本包详情页确认设置表单可见；再新建会话，确认可选择 `dsh-async` 和 `dsh-async-create`。选择其中一个后，Agent 应能使用本参考列出的六个工具。
+也可以在 DSH 插件管理页打开安装对话框，将上面的 GitHub spec 填入安装地址。安装结束后，在本包详情页确认设置表单可见；再新建会话，确认可选择 `dsh-async` 和 `dsh-async-create`。选择其中一个后，Agent 应能使用本参考列出的五个工具。
 
 若设置与工具都缺席，按以下顺序排查：
 
@@ -72,13 +72,13 @@ async_wait(targets=[{kind:"job", id:"<返回的job_id>"}], wait_ms=30000)
 | 字段 | 类型 | 默认 | 范围 | 单位 | 生效 |
 | --- | --- | --- | --- | --- | --- |
 | `defaultYieldMs` | number | `20000` | 1..2147483647，可小数 | ms | 下次run/workflow省略yield_ms时 |
-| `minYieldMs` | number | `1000` | 1..2147483647，可小数 | ms | 下次首次等待请求下限 |
+| `minYieldMs` | number | `20000` | 1..2147483647，可小数 | ms | 下次首次等待请求下限 |
 | `maxYieldMs` | number | `600000` | 1..2147483647，可小数 | ms | 下次首次等待请求上限 |
 | `defaultWaitMs` | number | `30000` | 1..2147483647，可小数 | ms | 等待示例基准；wait_ms仍必填 |
-| `minWaitMs` | number | `250` | 1..2147483647，可小数 | ms | 下次wait请求下限 |
+| `minWaitMs` | number | `20000` | 1..2147483647，可小数 | ms | 下次wait请求下限 |
 | `maxWaitMs` | number | `600000` | 1..2147483647，可小数 | ms | 下次wait请求上限 |
 | `pollIntervalMs` | number | `500` | 1..2147483647，可小数 | ms | 新等待的状态轮询及存在检查间隔 |
-| `maxResultChars` | integer | `30000` | 1..1000000 | JS String.length | 结果渲染 |
+| `maxResultChars` | integer | `12000` | 1..1000000 | JS String.length | 结果渲染 |
 | `jobKind` | string | `async-command` | 非空 | — | 新命令作业的类型标识 |
 | `subagentProvider` | string | `spawn` | 后端名；trim后空值回spawn | — | 下次子代理创建；不是LLM provider |
 | `uiLang` | enum | `auto` | auto / zh / en | — | 界面；auto跟随宿主 |
@@ -129,7 +129,7 @@ async_wait(targets=[{kind:"job", id:"<返回的job_id>"}], wait_ms=30000)
 
 无目标时等待可处理消息与本包作业结果；有目标时等待目标终态（作业）或变化（子代理），非目标消息不结束等待。`wait_ms=0` 立即返回当前状态与未交付内容，不进入等待段。
 
-作业终态返回 `{status:'completed'|'killed'|'failed', job_id, output, truncated, waited_ms}`；子代理变化返回 `{status:'changed'|'settled', agent_id, waited_ms, note}`；等待类返回 `{status:'running'|'budget'|'interrupted'|'message'|'cancelled', waited_ms, note}`。多目标出口附其余目标已证状态 `targets`。同拍就绪的其他作业正文以 `outputs` 分条携带，`delivered` 是批次元数据。查无或不可见的作业目标按 `not_found` 状态标注；查询失败按提示重试，不重启原任务。读取消费规则见第4节。
+作业终态返回 `{status:'completed'|'killed'|'failed', job_id, output, truncated, waited_ms}`；子代理变化返回 `{status:'changed'|'settled', agent_id, waited_ms, note}`；等待类返回 `{status:'running'|'budget'|'interrupted'|'message'|'cancelled'|'no-work'|'unconfirmed', waited_ms, note}`——`no-work` 表示未确认到可等待工作、本次没有挂起，`unconfirmed` 表示工作或目标资格未能证实（清单查询失败或超时）。不指定目标时，入口先汇集已就绪的作业结果并直接随返回携带，仅在确认存在可等待工作（自己的运行中后台作业或运行中的子代理）时才挂起等待。多目标出口附其余目标已证状态 `targets`。同拍就绪的其他作业正文以 `outputs` 分条携带，`delivered` 是批次元数据。查无或不可见的作业目标按 `not_found` 状态标注；查询失败按提示重试，不重启原任务。读取消费规则见第4节。
 
 ### 3.3 async_agent
 
@@ -229,7 +229,7 @@ async_list_subagent_models(provider="<准确ID>", model="<准确ID>", target_too
 
 输出读取会推进增量游标。首次成功终态read的最终result只交付一次，并入同次文本；再次读取不重复已消费内容。读取失败按错误重试，不能当空输出。完成也需检查退出码、信号、failed/killed提示。
 
-结果过长有两种情况。`maxResultChars` 只裁剪交给模型的正文，按 JavaScript `String.length` 计数，保留首尾并标出省略量。宿主的 `lossy` 标记则表示缓冲内容已经丢失，两者不能混为一谈。状态、丢失说明和临时文件线索不占正文预算。
+结果过长有两种情况。`maxResultChars` 是**同一交付批次**中全部结果内容共享的额度：同批到达模型输入的多条结果——首次等待直接返回、等待返回的批次条目、完成消息——共同占用这一份上限，先到先分配；单条超出时保留首尾并标出省略量，被省略的中段保留在账本缓冲里，可随后续批次或 `async_wait(wait_ms=0)` 续段领取，不因裁剪永久丢失。按 JavaScript `String.length` 计数。宿主的 `lossy` 标记则表示缓冲内容已经丢失，两者不能混为一谈。状态、丢失说明和临时文件线索不占正文预算。
 
 宿主可能将输出写入临时文件（spill），并通过 `spillPaths` 返回系统临时目录中的绝对路径。只在有权限的环境打开这些路径，及时把必要内容保存到合适位置。输出和文件可能含敏感信息，分享前检查并脱敏。临时文件可能被清理；没有返回路径时，不要假定磁盘上有完整副本。
 
@@ -248,6 +248,8 @@ async_list_subagent_models(provider="<准确ID>", model="<准确ID>", target_too
 选择 `sidebar` 时，侧边栏底栏显示未处理问题数，点击可展开；选择 `overlay` 时，问题显示在右下角。面板可以跳转原会话、作答、忽略或增加等待时间。
 
 回答时先确认题型。单选只能选预设选项或自定义回答中的一项；多选可以组合，自定义文本也作为独立答案提交，不是附注。初始没有任何选择，“推荐”不是已选中。点击自定义输入框或输入非空白文本，会选中自定义项；仅移动键盘焦点不会选中。
+
+自定义回答用多行输入框：第一行是选择控件和标题，下方输入框独占可用宽度，初始约三行高，可纵向调整。Enter 键换行、不提交，中文输入法组字确认不会误提交；提交走按钮。答案中的换行与文本原样交付，空白校验与预设选择关系和单行时代一致。
 
 取消自定义选择后，草稿可以保留，但不会提交。再次点击输入框或输入有效文本会重新选中；清空已选自定义文本不会恢复旧选择。没有选择或选中了空白自定义项时，不能提交，即使多选题还有其他已选项也一样。确实不答时使用独立的“忽略”。服务端同样校验选项和选择关系。
 

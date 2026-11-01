@@ -202,7 +202,9 @@ hostTest('async_agent：note 示例数字随 defaultWaitMs 设置变化（现读
   const env = agentEnv();
   const tool = checkedTool(createAgentTool(env.ctx, env.view));
 
-  env.setConfig({ defaultWaitMs: 1234 });
+  // 显式 minWaitMs：保留合法显式下限的同时给出合法组合（出厂 20000 会把
+  // 1234 顶爆配对校验——本用例测的是示例数字现读现取，不是下限行为）。
+  env.setConfig({ defaultWaitMs: 1234, minWaitMs: 250 });
   const result = await tool.execute({ description: '调研乙', prompt: '报告。' }, EXEC);
   assert.match(result.note, /wait_ms=1234/);
 });

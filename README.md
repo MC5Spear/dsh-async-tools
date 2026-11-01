@@ -59,7 +59,7 @@ async_wait(targets=[{kind:"job", id:"<返回的job_id>"}], wait_ms=30000)
 | 工具 | 用途 |
 | --- | --- |
 | `async_run` | 执行命令；直接返回结果或后台作业编号 |
-| `async_wait` | 统一等待入口：等待消息与作业结果，或等待作业与子代理目标 |
+| `async_wait` | 统一等待入口：先汇集就绪结果，确认存在可等待工作时才有界等待消息、作业结果或指定目标 |
 | `async_agent` | 后台创建可续谈的子代理，立即返回 `agent_id` |
 | `async_workflow` | 用脚本协调大规模多代理任务，并作为后台作业管理 |
 | `async_list_subagent_models` | 分页浏览或搜索模型，查询对指定创建工具是否适用 |

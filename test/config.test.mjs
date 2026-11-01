@@ -68,7 +68,7 @@ test('resolveConfig：默认值符合需求 §5 的约定', () => {
   const c = resolveConfig({ toolName: 'async_run' });
   assert.equal(c.defaultYieldMs, 20000);
   assert.equal(c.defaultWaitMs, 30000);
-  assert.equal(c.minWaitMs, 250);
+  assert.equal(c.minWaitMs, 20000);
   assert.equal(c.maxWaitMs, 600000);
   assert.equal(c.jobKind, 'async-command');
   assert.ok(Object.isFrozen(c), '生效配置应被冻结');
@@ -81,9 +81,9 @@ test('根形态：settings 子树是唯一的 volatile 节点，19 字段默认�
     'settings 固定路径产生一个 Ref（快照解包取该 Ref 再逐字段）');
   const settings = empty.settings.get();
   const expected = {
-    defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
-    defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000, pollIntervalMs: 500,
-    maxResultChars: 30000, jobKind: 'async-command', subagentProvider: 'spawn',
+    defaultYieldMs: 20000, minYieldMs: 20000, maxYieldMs: 600000,
+    defaultWaitMs: 30000, minWaitMs: 20000, maxWaitMs: 600000, pollIntervalMs: 500,
+    maxResultChars: 12000, jobKind: 'async-command', subagentProvider: 'spawn',
     uiLang: 'auto', agentLang: 'en', silentFailureGuard: false,
     workflowProgressLog: false, fullCommandEcho: false,
     askTakeover: false, askTimeoutMs: 60000, askExtendMs: 60000, askUiSeat: 'sidebar'
@@ -228,7 +228,7 @@ test('武装态：五条链式不等式在 schema 层拒绝，消息双侧字段
       [{ minYieldMs: 5000, maxYieldMs: 1000 }, /minYieldMs=5000 > maxYieldMs=1000/],
       [{ defaultYieldMs: 1, minYieldMs: 1000 }, /defaultYieldMs=1 outside \[minYieldMs=1000, maxYieldMs=600000\]/],
       [{ minWaitMs: 500, maxWaitMs: 100 }, /minWaitMs=500 > maxWaitMs=100/],
-      [{ defaultWaitMs: 1 }, /defaultWaitMs=1 outside \[minWaitMs=250, maxWaitMs=600000\]/],
+      [{ defaultWaitMs: 1 }, /defaultWaitMs=1 outside \[minWaitMs=20000, maxWaitMs=600000\]/],
       [{ pollIntervalMs: 900, maxWaitMs: 100 }, /pollIntervalMs=900 > maxWaitMs=100/]
     ];
     for (const [value, pattern] of cases) {
@@ -568,7 +568,7 @@ test('resolveWait：wait_ms 必填，缺失必须报错而不是静默取默认�
   const c = resolveConfig({ toolName: 'async_run' });
   assert.throws(() => resolveWait(undefined, c), /required and bounded/);
   assert.throws(() => resolveWait(null, c), /required and bounded/);
-  assert.equal(resolveWait(1000, c), 1000);
+  assert.equal(resolveWait(1000, c), c.minWaitMs, '低于下界抬起（出厂下限 20000，WAIT-DEFAULT-01）');
   assert.equal(resolveWait(1, c), c.minWaitMs, '低于下界抬起');
   assert.equal(resolveWait(9e9, c), c.maxWaitMs, '高于上界压下 —— 调用者不能超过我们的上限');
 });
@@ -759,9 +759,9 @@ after(() => {
 });
 
 const BASE_SETTINGS = {
-  defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
-  defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000, pollIntervalMs: 500,
-  maxResultChars: 30000, jobKind: 'async-command', subagentProvider: 'spawn',
+  defaultYieldMs: 20000, minYieldMs: 20000, maxYieldMs: 600000,
+  defaultWaitMs: 30000, minWaitMs: 20000, maxWaitMs: 600000, pollIntervalMs: 500,
+  maxResultChars: 12000, jobKind: 'async-command', subagentProvider: 'spawn',
   uiLang: 'auto', agentLang: 'en', silentFailureGuard: false, askTakeover: false,
   askTimeoutMs: 60000, askExtendMs: 60000, askUiSeat: 'sidebar'
 };
@@ -906,7 +906,7 @@ test('进程内（真实链）：投影形态、写入拒绝与行身份字段�
     const before = existsSync(settings.documentPath) ? readFileSync(settings.documentPath, 'utf8') : null;
     await assert.rejects(
       () => settings.update(ns, { settings: { defaultWaitMs: 1 } }),
-      (error) => /cross-field violation/.test(error.message) && /defaultWaitMs=1/.test(error.message) && /minWaitMs=250/.test(error.message),
+      (error) => /cross-field violation/.test(error.message) && /defaultWaitMs=1/.test(error.message) && /minWaitMs=20000/.test(error.message),
       '武装态非法保存必须被拒且原因双侧字段名齐备'
     );
     const after = existsSync(settings.documentPath) ? readFileSync(settings.documentPath, 'utf8') : null;

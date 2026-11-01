@@ -105,23 +105,23 @@ test('waitAgainNote：说明作业未受影响且可再次等待', () => {
 });
 
 test('interruptedNote（R4 硬性需求）：必须说明结束等待没有终止后台工作（行为陈述，不作运行断言）', () => {
-  const note = interruptedNote({ subject: 'job j-1', waitedMs: 812, resume: 'async_wait(targets=[{kind:"job", id:"j-1"}], wait_ms=...)' });
+  const note = interruptedNote({ waitedMs: 812, resume: 'async_wait(targets=[{kind:"job", id:"j-1"}], wait_ms=...)' });
   assert.match(note, /Wait interrupted: a user message has arrived/);
   assert.match(note, /812 ms/);
-  assert.match(note, /Ending the wait did not stop job j-1/);
+  assert.match(note, /Ending the wait did not stop the background work you were waiting on/);
   assert.match(note, /async_wait\(targets=/);
 });
 
 test('cancelledNote/cancelledPreexistingNote（设计 §2.5 取消口径）：取消与消息到达分开，行为陈述不作运行断言', () => {
-  const note = cancelledNote({ subject: 'job j-1', waitedMs: 300, resume: 'async_wait(targets=[{kind:"job", id:"j-1"}], wait_ms=...)' });
+  const note = cancelledNote({ waitedMs: 300, resume: 'async_wait(targets=[{kind:"job", id:"j-1"}], wait_ms=...)' });
   assert.match(note, /The wait was cancelled after 300 ms/);
-  assert.match(note, /cancellation did not stop job j-1/, '取消≠停止工作（本次原因＋后台状态，一遍即可）');
+  assert.match(note, /cancellation did not stop the background work you were waiting on/, '取消≠停止工作（本次原因＋后台状态，一遍即可）');
   assert.doesNotMatch(note, /still running/, '取消出口不做状态复查，不得写运行断言');
   assert.doesNotMatch(note, /user message/, '取消不是消息到达，不用 interrupted 口径');
 
-  const pre = cancelledPreexistingNote({ subject: 'subagent child-9', resume: 'async_wait(targets=[{kind:"agent", id:"child-9"}], wait_ms=...)' });
+  const pre = cancelledPreexistingNote({ resume: 'async_wait(targets=[{kind:"agent", id:"child-9"}], wait_ms=...)' });
   assert.match(pre, /cancelled before the wait began/);
-  assert.match(pre, /did not stop subagent child-9/);
+  assert.match(pre, /did not stop the background work you were waiting on/);
   assert.match(pre, /async_wait\(targets=/);
 });
 

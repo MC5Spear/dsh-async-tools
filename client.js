@@ -12,7 +12,7 @@ var module = { exports: {} }; var exports = module.exports;
 //   页脚唯一的保存按钮及其启用条件、卸载丢弃草稿），暂存/差集/保存全部由
 //   `SettingsFormModel` 承担——本包不自绘草稿、差集与写后回读。primitives 在
 //   冻结平台模块表里，直接 `require` 即可，`dsh.client.external` 一条都不用加。
-// - 字段壳统一自绘（设计 §5.5）：17 个字段共用 `FieldShell`——官方
+// - 字段壳统一自绘（设计 §5.5）：19 个字段共用 `FieldShell`——官方
 //   `SettingsValueField` 的帮助图标固定带圈 i、标签行没有注入开口（需求 5.6 要
 //   带圈问号），所以值字段也转入统一壳；官方件继续在场：`SettingsForm`／
 //   `SettingsFormModel`／`settingsNumberField`／`settingsTextField`（模型 spec）、
@@ -302,7 +302,7 @@ function flagFieldSpec(key) {
  * 模型装配：10 个数字字段（官方 `settingsNumberField`——七个毫秒预算 +
  * `maxResultChars` + 提问接管两字段）+ 2 个文本字段（官方 `settingsTextField`）+
  * 3 个枚举字段（本包 `enumFieldSpec`——两个语言开关 + 座位）+ 2 个布尔字段
- * （本包 `flagFieldSpec`——静默失败防线总开关 + 提问接管总开关），合计 17 个
+ * （本包 `flagFieldSpec`——静默失败防线总开关 + 提问接管总开关），合计 19 个
  * 字段。字段键集合必须与 `FIELDS` 逐项相等（卡片装配断言钉住）。
  *
  * @returns {object[]} spec 列表（顺序 = FIELDS 顺序）。
@@ -474,7 +474,7 @@ if (typeof document !== "undefined" && document.getElementById("dsh-async-tools-
 }
 
 /**
- * 统一字段壳（设计 §5.5）：17 个字段共用——label 行（标签 + 带圈问号帮助按钮 +
+ * 统一字段壳（设计 §5.5）：19 个字段共用——label 行（标签 + 带圈问号帮助按钮 +
  * 覆盖徽标）、控件本体、说明/错误行、展开区（仅展开时渲染）。控件本体四形态：
  * 布尔 = 官方 `P.Switch`；枚举 = 原生 select；数值 = input（`inputMode="numeric"`）；
  * 文本 = input。度量逐项照官方 `fields.module.css`（见 ENUM_CSS 头注）。
@@ -548,7 +548,7 @@ function FieldShell(props) {
     });
   }
   // 元素 key 在父级 createElement 上（makeFieldNodes 传 `key: field.key`）——
-  // 真实 React 靠它对 17 个同函数实例做「相同组件类型 + 相同 key → 复用局部 state」，
+  // 真实 React 靠它对 19 个同函数实例做「相同组件类型 + 相同 key → 复用局部 state」，
   // 草稿键入/保存/语言切换的重渲不丢帮助开合状态（设计 §5.5）。
   return React.createElement("div", { className: "ats-enum-field" },
     React.createElement("div", { className: "ats-enum-head" },
@@ -585,7 +585,7 @@ function FieldShell(props) {
 
 /**
  * 从 describe 快照的值层（value/user/base）里取 settings 子树的内容
- * （设计 §5.1：17 字段全部展平在 `settings` 键下）。
+ * （设计 §5.1：19 字段全部展平在 `settings` 键下）。
  *
  * 防御回退：`settings` 键缺席时把该层本身当字段层用（快照值层整体缺席的
  * 部署形态不因此抛错，座位/语言回退默认值——同 `readConfig` 的口径）。
@@ -710,7 +710,7 @@ function createCardModel(ctx) {
 }
 
 /**
- * 渲染 `FIELDS` 里的全部字段（设计 §5.5：17 个字段统一走 `FieldShell`——
+ * 渲染 `FIELDS` 里的全部字段（设计 §5.5：19 个字段统一走 `FieldShell`——
  * 布尔/枚举/数值/文本四形态由壳分流）；`id = "plugin-config-" + key`；毫秒字段的
  * 说明行带秒数读数。帮助与说明走缺键回退（`resolveCopy`）：缺席/裸键名时
  * 按钮/说明行退场。
@@ -892,8 +892,8 @@ var DICTIONARIES = {
     uiLang: "插件界面语言",
     agentLang: "Agent 文案语言",
     silentFailureGuard: "命令静默失败提示",
-    workflowProgressLog: "编排进度行保留",
-    fullCommandEcho: "作业列表回显完整命令",
+    workflowProgressLog: "向 Agent 提供工作流进度日志",
+    fullCommandEcho: "向 Agent 回显完整命令",
     askTakeover: "在待答面板处理提问",
     askTimeoutMs: "首次提问等待时长（毫秒）",
     askExtendMs: "每次增加的等待时长（毫秒）",
@@ -902,17 +902,17 @@ var DICTIONARIES = {
     "hint.minYieldMs": "限制本次 yield_ms 的有效值；请求低于此值时按下限取值。到时结束本次等待，后台任务继续运行。",
     "hint.maxYieldMs": "限制本次 yield_ms 的有效值；请求高于此值时按上限取值。到时结束本次等待，后台任务继续运行。",
     "hint.defaultWaitMs": "返回提示里等待调用示例使用的时长；示例只作演示，不等于实际调用的生效等待。实际调用等待入口时须显式填写 wait_ms，省略时报错。",
-    "hint.minWaitMs": "适用于等待入口的 wait_ms；请求低于此值时按下限取值。到时结束本次等待，后台任务继续运行。",
-    "hint.maxWaitMs": "适用于等待入口的 wait_ms；请求高于此值时按上限取值。到时结束本次等待，后台任务继续运行。",
+    "hint.minWaitMs": "适用于等待入口正等待（wait_ms > 0）的下限；请求低于此值时按下限取值。wait_ms=0 只做即时检查，不抬高到下限。到时结束本次等待，后台任务继续运行。",
+    "hint.maxWaitMs": "适用于等待入口 wait_ms 的上限；请求高于此值时按上限取值。到时结束本次等待，后台任务继续运行。",
     "hint.pollIntervalMs": "async_wait 的子代理目标定期检查运行状态的间隔，用作变化事件未到达时的备用判断。",
-    "hint.maxResultChars": "单次返回保留的结果内容字符上限（正整数），超出时保留首尾并说明截断；状态与提示另计。",
+    "hint.maxResultChars": "同一交付批次中全部结果内容共享的字符上限（正整数）——首次返回、等待返回与完成消息里的多条结果共同占用；单条超出时保留首尾并说明截断，状态与提示另计。",
     "hint.jobKind": "注册命令作业用的类型名称，便于在作业列表与日志中识别。",
     "hint.subagentProvider": "async_agent 创建子代理使用的后端服务。",
     "hint.uiLang": "控制本包设置表单、字段帮助与待答界面的语言；跟随宿主语言或显式选择中文／英文。",
     "hint.agentLang": "控制本包工具描述、参数说明、提示、错误与执行纪律文案的语言。",
     "hint.silentFailureGuard": "“静默失败”指命令可能未执行、却没有明显报错。开启后，出现这种情况时给出诊断提醒和检查建议；仅本包两预设生效，默认关。",
-    "hint.workflowProgressLog": "默认关：编排结果滤除各阶段进度行，只保留结论。开启后保留进度行，结果正文相应变长。",
-    "hint.fullCommandEcho": "默认关：命令作业在作业列表里显示进度说明。开启后回显完整命令原文。",
+    "hint.workflowProgressLog": "默认关：编排结果滤除各阶段进度行，只保留结论，Agent 看到的结果更短。开启后进度行进入 Agent 收到的结果正文；界面与日志中的原始记录不受影响。",
+    "hint.fullCommandEcho": "默认关：Agent 在作业列表里看到进度说明。开启后向 Agent 回显完整命令原文；界面与日志中的原始记录不受影响。",
     "hint.askTakeover": "开启后由待答面板处理本包两预设根 Agent 的普通提问，关闭时使用宿主原生流程；到期后 Agent 继续处理任务，用户仍可稍后作答。",
     "hint.askTimeoutMs": "从接收一批提问起计时的初始窗口，同批多题共享期限。到期保留已答内容，Agent 继续处理任务，用户仍可稍后作答；新值用于后续批次。",
     "hint.askExtendMs": "待答面板“增加等待时间”每点击一次，给该会话当时仍在等待的批次各追加的时长。",
@@ -922,17 +922,17 @@ var DICTIONARIES = {
     "help.minYieldMs": "配置键：minYieldMs（数值，毫秒）。\n\n本次 yield_ms 低于此下限时按下限取值；消息和取消仍可提前结束首次等待。与 defaultYieldMs、maxYieldMs 共同构成首次等待时长的上下限；本次取值越界时按对应边界取值。",
     "help.maxYieldMs": "配置键：maxYieldMs（数值，毫秒）。\n\n本次 yield_ms 高于此上限时按上限取值；消息和取消仍可提前结束首次等待。与 minYieldMs、defaultYieldMs 共同构成首次等待时长的上下限；本次取值越界时按对应边界取值。",
     "help.defaultWaitMs": "配置键：defaultWaitMs（数值，毫秒）。\n\nwait_ms 是必填参数：等待入口的每次调用都要显式给出，缺省报错。返回提示里给出的 wait_ms 取值随本设置显示，仅为示例。示例与 minWaitMs、maxWaitMs 的区间配对。",
-    "help.minWaitMs": "配置键：minWaitMs（数值，毫秒）。\n\n一份预算覆盖本次调用的入口检查、查询、重试与等待；到时交回控制权、作业句柄仍有效，再次调用即可继续读。消息到达可提前结束本次等待。",
-    "help.maxWaitMs": "配置键：maxWaitMs（数值，毫秒）。\n\n一份预算覆盖本次调用的入口检查、查询、重试与等待；到时交回控制权、作业句柄仍有效，再次调用即可继续读。消息到达可提前结束本次等待。",
+    "help.minWaitMs": "配置键：minWaitMs（数值，毫秒）。\n\n正等待（wait_ms > 0）的下限：请求低于此值时按下限取值；wait_ms=0 是零等待例外——只做即时检查，不抬高到下限。到时交回控制权、作业句柄仍有效；消息到达可提前结束本次等待。",
+    "help.maxWaitMs": "配置键：maxWaitMs（数值，毫秒）。\n\nwait_ms 的上限：请求高于此值时按上限取值。与 minWaitMs 共同构成正等待的取值区间（minWaitMs ≤ 生效值 ≤ maxWaitMs）；零等待不受区间抬高。到时交回控制权、作业句柄仍有效；消息到达可提前结束本次等待。",
     "help.pollIntervalMs": "配置键：pollIntervalMs（数值，毫秒）。\n\nasync_wait 的子代理目标以变化事件为主、轮询为备用的双通道检查是否仍在运行；本间隔是备用轮询的节奏，受 pollIntervalMs ≤ maxWaitMs 配对约束。",
-    "help.maxResultChars": "配置键：maxResultChars（数值，字符）。\n\n按 String.length 计量，必须是正整数，小数草稿在保存时被拒；超出时保留首尾并说明省略量与截断；状态与提示另计。",
+    "help.maxResultChars": "配置键：maxResultChars（数值，字符）。\n\n按 String.length 计量，必须是正整数，小数草稿在保存时被拒。额度按交付批次共享：同批到达模型输入的多条结果——首次等待直接返回、等待返回的批次条目、完成消息——共用这一份上限，先到先分配，后到且预算耗尽的内容延后或裁剪（保首尾并说明省略量与截断）；状态行与提示另计。例如两个并行命令都在首次等待内完成时，两条直接返回合计不超过一份上限。",
     "help.jobKind": "配置键：jobKind（文本）。\n\n注册命令作业时使用的类型名称，用于作业列表与日志的辨识；输入空串会被拒绝。",
     "help.subagentProvider": "配置键：subagentProvider（文本）。\n\nasync_agent 创建子代理使用的后端服务，默认 spawn；输入去掉首尾空白后为空时按默认值保存，填了不存在的后端时在调用时可读拒绝。需要指定模型时，在 async_agent 调用参数中用 provider 与 model 指定。",
     "help.uiLang": "配置键：uiLang（枚举：auto / zh / en）。\n\n界面文案与 Agent 文案是两个独立开关：本开关只影响界面文案，Agent 文案语言由 agentLang 设置；auto 档跟随宿主语言。",
     "help.agentLang": "配置键：agentLang（枚举：en / zh）。\n\n控制模型可见文案（工具描述、参数说明、提示、错误与执行纪律）；界面文案语言由 uiLang 单独设置，两者互不影响。",
     "help.silentFailureGuard": "配置键：silentFailureGuard（布尔）。\n\n开启后，命令可能未执行且缺少明显报错的特定条件下，诊断提醒和检查建议出现在返回提示、命令描述与执行纪律三处。",
-    "help.workflowProgressLog": "配置键：workflowProgressLog（布尔）。\n\n默认关：编排作业的结果正文先滤除各阶段进度行，再进入内容预算。开启后保留进度行——长编排的结果更长，可能更早触发截断。",
-    "help.fullCommandEcho": "配置键：fullCommandEcho（布尔）。\n\n默认关：命令作业在作业列表里以进度说明作为标签。开启后以完整命令原文作为标签，便于核对哪条命令对应哪个作业。",
+    "help.workflowProgressLog": "配置键：workflowProgressLog（布尔）。\n\n默认关：编排作业的结果正文先滤除各阶段进度行，再进入内容预算，Agent 看到的结果更短。开启后进度行保留在 Agent 收到的结果正文里——长编排的结果更长，可能更早触发截断；界面与日志中的原始记录不受本开关影响。",
+    "help.fullCommandEcho": "配置键：fullCommandEcho（布尔）。\n\n默认关：命令作业在作业列表里以进度说明作为标签呈现给 Agent。开启后向 Agent 回显完整命令原文，便于核对哪条命令对应哪个作业；界面与日志中的原始记录不受本开关影响。",
     "help.askTakeover": "配置键：askTakeover（布尔）。\n\n迟到作答经通知送达；24 小时只是惰性清扫阈值——仅当下一个提问批次被接管时队列才做一次清扫，没有新批时记录可保留更久、仍可补答；被清扫、所属 Agent 无法接收或投递失败的记录不会送达。未送达时，直接出路是到题目所属会话直接回复。",
     "help.askTimeoutMs": "配置键：askTimeoutMs（数值，毫秒）。\n\n从接收一批提问起计时，同批多题共享期限；到期时未答的题按超时处理，Agent 继续处理任务。面板在到期后仍接受作答；迟到作答若所属会话本轮已结束，会直接回复到该会话，不进队列。",
     "help.askExtendMs": "配置键：askExtendMs（数值，毫秒）。\n\n待答面板“增加等待时间”每点击一次，给该会话当时未到期的批次各增加此时长，在原截止点上叠加；新批次按自己的初始期限计时。",
@@ -1005,8 +1005,8 @@ var DICTIONARIES = {
     uiLang: "Plugin interface language",
     agentLang: "Agent-facing text language",
     silentFailureGuard: "Command silent-failure hint",
-    workflowProgressLog: "Keep orchestration progress lines",
-    fullCommandEcho: "Echo full command in job lists",
+    workflowProgressLog: "Provide workflow progress logs to the Agent",
+    fullCommandEcho: "Echo the full command to the Agent",
     askTakeover: "Answer questions in the pending panel",
     askTimeoutMs: "Initial question wait duration (ms)",
     askExtendMs: "Wait time added per click (ms)",
@@ -1015,17 +1015,17 @@ var DICTIONARIES = {
     "hint.minYieldMs": "Clamps the effective value of this yield_ms; requests below it use the lower bound. When the wait ends, the background task keeps running.",
     "hint.maxYieldMs": "Clamps the effective value of this yield_ms; requests above it use the upper bound. When the wait ends, the background task keeps running.",
     "hint.defaultWaitMs": "Duration used by the wait-call example in return notes; the example is a demo and does not equal the effective wait of an actual call. Actual calls of the wait entry must give wait_ms explicitly, and omitting it errors.",
-    "hint.minWaitMs": "Applies to wait_ms on the wait entry; requests below it use the lower bound. When the wait ends, the background task keeps running.",
-    "hint.maxWaitMs": "Applies to wait_ms on the wait entry; requests above it use the upper bound. When the wait ends, the background task keeps running.",
+    "hint.minWaitMs": "Lower bound for positive waits (wait_ms > 0) on the wait entry; requests below it use the lower bound. wait_ms=0 is an immediate check only and is not raised to the bound. When the wait ends, the background task keeps running.",
+    "hint.maxWaitMs": "Upper bound for wait_ms on the wait entry; requests above it use the upper bound. When the wait ends, the background task keeps running.",
     "hint.pollIntervalMs": "Interval for async_wait's subagent targets to periodically check the running state — the backup judgment when the change event has not arrived.",
-    "hint.maxResultChars": "Character cap (a positive integer) for the result content kept per return; beyond it the head and tail are kept with a truncation note; status and notices are counted separately.",
+    "hint.maxResultChars": "Character cap (a positive integer) shared by all result content in one delivery batch — first returns, wait returns, and completion messages draw on the same quota together; a single oversized entry keeps its head and tail with a truncation note, and status and notices are counted separately.",
     "hint.jobKind": "Type name used to register command jobs, for identification in job lists and logs.",
     "hint.subagentProvider": "Backend service async_agent uses to create subagents.",
     "hint.uiLang": "Controls the language of this package's settings form, field help, and pending panel; follows the host language or an explicit Chinese/English choice.",
     "hint.agentLang": "Controls the language of this package's tool descriptions, parameter notes, notices, errors, and execution discipline.",
     "hint.silentFailureGuard": "\"Silent failure\" means a command may not have run, yet no error is visible. When on, such cases get a diagnostic reminder and checking advice; it applies only to this package's two presets and is off by default.",
-    "hint.workflowProgressLog": "Off by default: orchestration results filter out per-phase progress lines and keep conclusions only. When on, progress lines are kept, making result bodies longer.",
-    "hint.fullCommandEcho": "Off by default: command jobs show the progress description in job lists. When on, the full command text is echoed.",
+    "hint.workflowProgressLog": "Off by default: orchestration results filter out per-phase progress lines and keep conclusions only, so results the Agent sees are shorter. When on, progress lines enter the result bodies the Agent receives; raw records in the interface and logs are unaffected.",
+    "hint.fullCommandEcho": "Off by default: the Agent sees the progress description in job lists. When on, the full command text is echoed to the Agent; raw records in the interface and logs are unaffected.",
     "hint.askTakeover": "When on, the pending panel handles plain questions from this package's two presets' root agents; when off, the host's native flow is used. After expiry the Agent continues the task, and the user can still answer later.",
     "hint.askTimeoutMs": "Initial window counted from receiving a batch of questions; all questions in a batch share the deadline. On expiry, answered content is kept, the Agent continues the task, and the user can still answer later; a new value applies to later batches.",
     "hint.askExtendMs": "Wait time each \"Extend wait\" click in the pending panel adds to each batch of that session still waiting at that moment.",
@@ -1035,17 +1035,17 @@ var DICTIONARIES = {
     "help.minYieldMs": "Config key: minYieldMs (number, ms).\n\nA yield_ms below this lower bound is clamped to it; messages and cancellation can still end the first wait early. Forms the first-wait bounds together with defaultYieldMs and maxYieldMs; an out-of-range request uses the corresponding bound.",
     "help.maxYieldMs": "Config key: maxYieldMs (number, ms).\n\nA yield_ms above this upper bound is clamped to it; messages and cancellation can still end the first wait early. Forms the first-wait bounds together with minYieldMs and defaultYieldMs; an out-of-range request uses the corresponding bound.",
     "help.defaultWaitMs": "Config key: defaultWaitMs (number, ms).\n\nwait_ms is required: every call of the wait entry must give it explicitly, and omitting it errors. The wait_ms value shown in return notes follows this setting and is only an example. The example pairs with the minWaitMs/maxWaitMs range.",
-    "help.minWaitMs": "Config key: minWaitMs (number, ms).\n\nOne budget covers this call's entry checks, lookups, retries, and the wait; when it ends, control returns with the job handle still valid, and calling again continues reading. An arriving message can end the wait early.",
-    "help.maxWaitMs": "Config key: maxWaitMs (number, ms).\n\nOne budget covers this call's entry checks, lookups, retries, and the wait; when it ends, control returns with the job handle still valid, and calling again continues reading. An arriving message can end the wait early.",
+    "help.minWaitMs": "Config key: minWaitMs (number, ms).\n\nLower bound for positive waits (wait_ms > 0): a request below it is clamped to it; wait_ms=0 is the zero-wait exception — an immediate check only, not raised to the bound. When the budget ends, control returns with the job handle still valid; an arriving message can end the wait early.",
+    "help.maxWaitMs": "Config key: maxWaitMs (number, ms).\n\nUpper bound for wait_ms: a request above it is clamped to it. Forms the effective range for positive waits together with minWaitMs (minWaitMs ≤ effective value ≤ maxWaitMs); the zero wait is not raised by the range. When the budget ends, control returns with the job handle still valid; an arriving message can end the wait early.",
     "help.pollIntervalMs": "Config key: pollIntervalMs (number, ms).\n\nasync_wait's subagent targets check whether the target is still running on two channels — change events first, polling as the backup; this interval sets the backup polling cadence and is bound by the pollIntervalMs ≤ maxWaitMs pairing.",
-    "help.maxResultChars": "Config key: maxResultChars (number, characters).\n\nMeasured by String.length; it must be a positive integer, and non-integer drafts are rejected at save. Beyond the cap the head and tail are kept and the omission and truncation are stated; status and notices are counted separately.",
+    "help.maxResultChars": "Config key: maxResultChars (number, characters).\n\nMeasured by String.length; it must be a positive integer, and non-integer drafts are rejected at save. The quota is shared per delivery batch: the multiple results reaching the model input in one batch — first-wait direct returns, wait-return batch entries, and completion messages — draw on this single cap, first come first served; content arriving after the quota is exhausted is deferred or truncated (head and tail kept, omission and truncation stated), and status lines and notices are counted separately. For example, when two parallel commands both finish inside their first waits, the two direct returns together stay within one cap.",
     "help.jobKind": "Config key: jobKind (text).\n\nType name used when registering command jobs, for identification in job lists and logs; an empty value is invalid.",
     "help.subagentProvider": "Config key: subagentProvider (text).\n\nBackend service async_agent uses to create subagents, spawn by default; an empty value after trimming falls back to the default, and an unknown backend is rejected readably at call time. To specify a model, use the provider and model parameters of the async_agent call.",
     "help.uiLang": "Config key: uiLang (enum: auto / zh / en).\n\nInterface copy and Agent-facing copy are two independent switches: this one only affects interface copy, and agentLang sets the Agent-facing language; the auto mode follows the host language.",
     "help.agentLang": "Config key: agentLang (enum: en / zh).\n\nControls model-visible copy (tool descriptions, parameter notes, notices, errors, and execution discipline); interface copy is set by uiLang separately, and the two do not affect each other.",
     "help.silentFailureGuard": "Config key: silentFailureGuard (boolean).\n\nWhen on, in the specific cases where a command may not have run with no visible error, the diagnostic reminders and checking advice appear in three places: return notes, command descriptions, and execution discipline.",
-    "help.workflowProgressLog": "Config key: workflowProgressLog (boolean).\n\nOff by default: orchestration job result bodies filter out per-phase progress lines before entering the content budget. When on, progress lines are kept — long orchestrations produce longer results and may hit truncation earlier.",
-    "help.fullCommandEcho": "Config key: fullCommandEcho (boolean).\n\nOff by default: command jobs use the progress description as their job-list label. When on, the full command text is used as the label, making it easier to match jobs to commands.",
+    "help.workflowProgressLog": "Config key: workflowProgressLog (boolean).\n\nOff by default: orchestration job result bodies filter out per-phase progress lines before entering the content budget, so results the Agent sees are shorter. When on, progress lines stay in the result bodies the Agent receives — long orchestrations produce longer results and may hit truncation earlier; raw records in the interface and logs are unaffected by this switch.",
+    "help.fullCommandEcho": "Config key: fullCommandEcho (boolean).\n\nOff by default: command jobs use the progress description as their job-list label shown to the Agent. When on, the full command text is echoed to the Agent, making it easier to match jobs to commands; raw records in the interface and logs are unaffected by this switch.",
     "help.askTakeover": "Config key: askTakeover (boolean).\n\nLate answers are delivered as notices; 24 hours is only a lazy sweep threshold — the queue is swept just once when the next question batch is taken over, and with no new batch the records can live longer and can still be answered; a swept record, an agent that can no longer receive it, or a failed delivery will not arrive. When a record will not arrive, the direct fallback is to reply directly in the session that question belongs to.",
     "help.askTimeoutMs": "Config key: askTimeoutMs (number, ms).\n\nCounted from receiving a batch of questions; all questions in a batch share the deadline; unanswered questions are treated as timed out and the Agent continues the task. The panel keeps accepting answers after expiry; when the owning session's turn has already ended, a late answer is replied directly into that session instead of entering the queue.",
     "help.askExtendMs": "Config key: askExtendMs (number, ms).\n\nEach \"Extend wait\" click in the pending panel adds this duration to each batch of that session not yet expired at that moment, stacked on the original deadline; new batches run on their own initial deadlines.",
@@ -1562,7 +1562,7 @@ var ASK_CSS = ""
   + ".ats-ask-optbody{display:flex;flex-direction:column;gap:2px;min-width:0}"
   + ".ats-ask-optlabel{color:var(--dsw-alias-label-primary)}"
   + ".ats-ask-optdesc{color:var(--dsw-alias-label-tertiary);font-size:12px}"
-  + ".ats-ask-custom{display:flex;align-items:flex-start;gap:8px;"
+  + ".ats-ask-custom{display:flex;flex-direction:column;align-items:stretch;gap:6px;"
   + "border:.5px solid var(--dsw-alias-border-l4);border-radius:8px;background:none;"
   + "padding:6px 8px}"
   + ".ats-ask-custom[data-selected='true']{background:var(--dsw-alias-interactive-bg-hover);"
@@ -1570,7 +1570,12 @@ var ASK_CSS = ""
   + ".ats-ask-optctl{display:flex;align-items:flex-start;gap:8px;background:none;"
   + "border:none;cursor:pointer;font:inherit;font-size:12px;padding:0;"
   + "color:var(--dsw-alias-label-primary)}"
-  + ".ats-ask-custom .ats-ask-input{flex:1;min-width:0;margin-bottom:0}"
+  // 上下布局（需求 §4.2.2）：第一行选择控件与标题，输入框独占该项可用内容
+  // 宽度；多行编辑——初始可见至少三行（12px 字号 × 1.5 行距 × 3 行 + 内边距），
+  // 长文本自动换行（pre-wrap），超出可见高度纵向滚动，可拖拽扩高。
+  + ".ats-ask-custom .ats-ask-input{flex:none;width:100%;min-height:5.5em;"
+  + "resize:vertical;overflow-y:auto;white-space:pre-wrap;word-break:break-word;"
+  + "line-height:1.5;margin-bottom:0}"
   + ".ats-ask-reason{color:var(--dsw-alias-state-error-primary);font-size:12px;margin:4px 0 0}"
   + ".ats-ask-submit:disabled{opacity:.5;cursor:not-allowed}"
   + ".ats-ask-input{width:100%;box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l4);"
@@ -1725,19 +1730,19 @@ function AskItem(props) {
         },
           React.createElement("span", { className: "ats-ask-mark", "aria-hidden": "true" }),
           React.createElement("span", { className: "ats-ask-optlabel" }, t("ask.customAnswer"))),
-        React.createElement("input", {
-          className: "ats-ask-input", type: "text", value: draft,
+        // 多行编辑（需求 §4.2.2）：textarea 而非单行 input——Enter 插入换行、
+        // 不触发提交（提交走下方按钮），输入法组合期的确认键由 textarea/IME
+        // 默认行为消费、同样不提交；换行与正文原样交付（4.2.4）。点击输入框
+        // 选中自定义项；键盘 Tab 聚焦不选中（只认点击与主动输入）。输入非空白
+        // 文本同样选中（取消后的重新选中路径）。
+        React.createElement("textarea", {
+          className: "ats-ask-input", rows: 3, value: draft,
           placeholder: t("ask.customPlaceholder"), "aria-label": t("ask.customAnswer"),
-          // 点击输入框选中自定义项；键盘 Tab 聚焦不选中（需求 §4.2.2 只认点击
-          // 与主动输入）。输入非空白文本同样选中（取消后的重新选中路径）。
           onClick: customOn,
           onChange: function (event) {
             var value = event.target.value;
             setDraft(value);
             if (value.trim() !== "") customOn();
-          },
-          onKeyDown: function (event) {
-            if (event.key === "Enter") { event.preventDefault(); submit(); }
           }
         }))),
     React.createElement("div", { className: "ats-ask-row" },

@@ -170,7 +170,7 @@ function makeJobs() {
     },
     list(caller) { return [...entries.values()].map(viewOf); },
     read(id, caller) {
-      // chunks 与 result 两通道都在场：wait_job 的合并次序断言同时核两条通道；
+      // chunks 与 result 两通道都在场：async_wait 的合并次序断言同时核两条通道；
       // result 字面与终态用例的断言子串逐字一致，不隔其他词。
       return { chunks: [{ text: 'stub job output' }], lossy: false,
         result: 'stub job result', job: { id, status: 'completed', output: { spillPaths: [] } } };
@@ -195,7 +195,7 @@ function makeJobs() {
     },
     get(id, caller) { const e = entries.get(id); if (e === undefined) throw new Error(`unknown job ${id}`); return viewOf(e); },
     kill(id, caller) { const e = entries.get(id); if (e !== undefined && e.hooks) e.hooks.cancel('probe'); return 'requested'; },
-    // 预置终态条目：wait_job 用例不创建作业，不经 start，直接以已完成条目应答。
+    // 预置终态条目：async_wait 用例不创建作业，不经 start，直接以已完成条目应答。
     seedCompleted(id, label = 'probe job') {
       entries.set(id, { id, status: 'completed', label, detail: undefined, hooks: undefined, resolvers: [] });
     }
@@ -255,7 +255,7 @@ function makeContext() {
     get: (id) => (id === 'child-probe' ? { status: 'idle' } : undefined)
   });
   ctx.provide('timer', {
-    // wait_job / wait_agent 在入口武装 deadline 时调用 timeout（探针用例不等
+    // async_wait / wait_agent 在入口武装 deadline 时调用 timeout（探针用例不等
     // 真实到期，回调不触发）；interval 无消费点，提供它保接口完整。
     timeout: (callback, delay) => {
       const handle = setTimeout(callback, delay ?? 5);
