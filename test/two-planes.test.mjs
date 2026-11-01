@@ -2466,3 +2466,142 @@ test('T8b（R29-a·判据 15 附）：settings 的悬空动态 import 必须 .ca
   assert.match(code, /import\('\.\/refresh-bus\.js'\)[\s\S]{0,160}\.catch\(/,
     'refresh-bus 动态 import 链上必须有 .catch（这条 promise 只可能 reject，无人接住 = 整实例退出）');
 });
+
+// ═════════════════════════════════════════════════════════════════════
+// W-MIGRATE（MIGRATE-01）：0.2.5 平铺行 config 的迁移警告。
+//
+// 机制事实（丢失点归因，见 docs/issue-list.md MIGRATE-01）：平铺键经
+// schemastery object resolve 的 merge 透传与 cordis internal/config waterfall
+// 原样到达 apply；本包 normalizeConfigInput 的 `settings` 缺省 `{}` 短路使
+// 预置值回落默认——静默。装载警告（lib/index.js applyWith，一行英文 stderr）
+// 是**尽力提示非保证**（宿主改 strict 丢弃时入口 config 通道消失，警告缺席
+// 不证明正形）。
+//
+// 装置：真 cordis Context + 假九服务（index.test.mjs 的 makeContext 形态），
+// 经真 `apply` 通道装载工具行；console.warn 收集警告（警告恰一行、键名在场）。
+// 三个用例的平铺形态互不重叠（模块级去重 Set 是进程级单例，形态撞车会互相
+// 吞警告）。
+// ═════════════════════════════════════════════════════════════════════
+
+/** cordis 的 `FiberState.ACTIVE`（`@deepseek-ai/cordis` 4.0.4，const enum，ACTIVE = 2）。 */
+const ACTIVE = 2;
+
+/**
+ * 最小装载装置：真 Context、假九服务、真 `apply`（ctx.plugin → fiber 激活）。
+ * 返回注册表探针与警告收集器（用完调 `restore()` 复原 console.warn）。
+ */
+async function makeApplyRig(t, rawConfig) {
+  const hostIndex = await loadOfflineSafe('../lib/index.js');
+  const cordis = await loadOfflineSafe('@deepseek-ai/cordis');
+  if (hostIndex === undefined || cordis === undefined) {
+    t.skip(HOST_SKIP_REASON);
+    return undefined;
+  }
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args.join(' ')); };
+  const registered = [];
+  const ctx = new cordis.Context();
+  ctx.provide('tools', {
+    register(definition) {
+      registered.push(definition);
+      return () => {
+        const index = registered.indexOf(definition);
+        if (index >= 0) registered.splice(index, 1);
+      };
+    }
+  });
+  ctx.provide('jobs', { start: () => 'async-command-1', get: () => ({ status: 'running' }), read: () => ({ text: '' }), wait: async () => ({ status: 'running' }), kill: () => 'requested' });
+  ctx.provide('shell', { resolve: (request) => request, start: () => { throw new Error('迁移测试不该启动进程'); } });
+  ctx.provide('shellEnv', { collect: () => Object.freeze({ DSH_HOME: 'x' }) });
+  ctx.provide('subagents', { listChildren: async () => [], interrupt: () => {}, getProvider: () => undefined });
+  ctx.provide('timer', { timeout: () => () => {}, interval: () => () => {} });
+  ctx.provide('sessionProjections', { stateOf: () => null });
+  ctx.provide('agents', { get: () => undefined });
+  ctx.provide('workingDirectory', { ensure: async () => 'D:\\work' });
+  const fork = ctx.plugin(
+    { name: hostIndex.name, inject: hostIndex.inject, Config: hostIndex.Config, apply: hostIndex.apply },
+    rawConfig
+  );
+  for (let turn = 0; turn < 64 && fork.state !== ACTIVE; turn += 1) await Promise.resolve();
+  assert.equal(fork.state, ACTIVE, '插件 fiber 未在有限个微任务内激活（apply 没跑？）');
+  return {
+    registered,
+    warnings,
+    restore: async () => { console.warn = originalWarn; await fork.dispose(); }
+  };
+}
+
+test('W-MIGRATE-A：0.2.5 平铺（toolName 行）→apply 触发一行 stderr 警告（键名在场）、行为不变', async (t) => {
+  const rig = await makeApplyRig(t, { toolName: 'async_wait', agentLang: 'zh', defaultYieldMs: 30000 });
+  if (rig === undefined) return;
+  try {
+    assert.deepEqual(rig.registered.map((definition) => definition.name), ['async_wait'],
+      '行为不变：平铺行照常注册该工具（警告不抛错、不阻断装载）');
+    const flat = rig.warnings.filter((line) => line.includes('flat settings keys'));
+    assert.equal(flat.length, 1, '恰一行平铺迁移警告');
+    assert.match(flat[0], /agentLang/, '警告列出误平铺键名（agentLang）');
+    assert.match(flat[0], /defaultYieldMs/, '警告列出误平铺键名（defaultYieldMs）');
+    assert.match(flat[0], /settings/, '警告指出正形（包进 settings 子树）');
+  } finally {
+    await rig.restore();
+  }
+});
+
+test('W-MIGRATE-B：正形静默；嵌套＋根层混合→警告；未知根层键不误报', async (t) => {
+  {
+    const rig = await makeApplyRig(t, { toolName: 'async_wait', settings: { agentLang: 'zh' } });
+    if (rig === undefined) return;
+    try {
+      assert.equal(rig.registered.length, 1, '正形照常注册');
+      assert.equal(rig.warnings.filter((line) => line.includes('flat settings keys')).length, 0,
+        '正形（设置在 settings 子树）零警告——误报会把所有正形用户推进迁移文档');
+    } finally {
+      await rig.restore();
+    }
+  }
+  {
+    // 嵌套＋根层混合：settings 在场不豁免根层平铺键（丢失点正是「settings 缺省
+    // 短路＋根层残留」的组合形态）。
+    const rig = await makeApplyRig(t, { toolName: 'async_wait', settings: { agentLang: 'zh' }, minWaitMs: 5000 });
+    if (rig === undefined) return;
+    try {
+      const flat = rig.warnings.filter((line) => line.includes('flat settings keys'));
+      assert.equal(flat.length, 1, '混合形态仍警告');
+      assert.match(flat[0], /minWaitMs/, '警告列出根层残留键名');
+    } finally {
+      await rig.restore();
+    }
+  }
+  {
+    const rig = await makeApplyRig(t, { toolName: 'async_wait', someUnknownKey: 1 });
+    if (rig === undefined) return;
+    try {
+      assert.equal(rig.warnings.filter((line) => line.includes('flat settings keys')).length, 0,
+        '未知根层键不是设置字段名——不误报（判定源是 SETTING_FIELD_KEYS 交集，不是「任何根层键」）');
+    } finally {
+      await rig.restore();
+    }
+  }
+});
+
+test('W-MIGRATE-C：同形态重复装载→每进程至多一行（键序去重不刷屏）', async (t) => {
+  const first = await makeApplyRig(t, { toolName: 'async_workflow', jobKind: 'x' });
+  if (first === undefined) return;
+  let totalFlat;
+  try {
+    assert.equal(first.warnings.filter((line) => line.includes('flat settings keys')).length, 1,
+      '首次装载警告一行');
+    totalFlat = first.warnings.filter((line) => line.includes('flat settings keys')).length;
+  } finally {
+    await first.restore();
+  }
+  const second = await makeApplyRig(t, { toolName: 'async_workflow', jobKind: 'x' });
+  try {
+    totalFlat += second.warnings.filter((line) => line.includes('flat settings keys')).length;
+    assert.equal(totalFlat, 1, '同形态重复装载不再刷屏（「行身份＋有序键集」每进程去重一次）');
+    assert.equal(second.registered.length, 1, '重复装载行为不变（注册照常）');
+  } finally {
+    await second.restore();
+  }
+});

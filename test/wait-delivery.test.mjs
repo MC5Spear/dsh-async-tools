@@ -11,6 +11,8 @@ import assert from 'node:assert/strict';
 import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
 import { resolveConfig } from '../lib/config.js';
 import { LATE_ANSWER_EVENT } from '../lib/interrupts.js';
+import { t } from '../lib/text.js';
+import { resetAgentBaselines } from '../lib/wait-agent-target.js';
 import { checkedTool, inboxPayload } from './_helpers.mjs';
 
 // 宿主链动态守卫：lib/workflow.js、lib/wait.js（→ dsh-tools）与真注册表依赖
@@ -21,7 +23,7 @@ import { checkedTool, inboxPayload } from './_helpers.mjs';
 const workflowModule = await loadOfflineSafe('../lib/workflow.js');
 const waitModule = await loadOfflineSafe('../lib/wait.js');
 const { createWorkflowTool } = workflowModule ?? {};
-const { createWaitTool } = waitModule ?? {};
+const { createWaitTool, WAIT_SPIN_LIMIT } = waitModule ?? {};
 const cordisModule = await loadOfflineSafe('@deepseek-ai/cordis');
 const jobsLocalModule = await loadOfflineSafe('@deepseek-ai/dsh-jobs-local');
 const { Context } = cordisModule ?? {};
@@ -91,7 +93,9 @@ async function buildRig(label, childRows = [], options = {}) {
     }
   };
   const adapter = {
-    jobs: ctx.jobs,
+    // options.jobsList＝受控外来行（账本不在册、jobs.list 可见的宿主注册表行
+    // ——W-OBSERVE-H 的「外来作业静默结算」形态）；其余服务与 dispose 仍走真注册表。
+    jobs: options.jobsList === undefined ? ctx.jobs : { ...ctx.jobs, list: options.jobsList },
     subagents: ctx.subagents,
     agents: ctx.agents,
     on: (...args) => ctx.on(...args),
@@ -566,11 +570,12 @@ hostTest('R58-l：说明两档上限——单条 200 截断、留存行合计 20
 });
 
 hostTest('R55（判据 2b·子代理侧）：next-step 滞留目标子代理的未领取结算通知 → settled（结束优先于插话）', async () => {
-  const rig = await buildRig('pre2b');
+  // r13 结算复查门后（W-GATE-E），入口通知的 settled 交付要求注册表现读非运行；
+  // 本判据测的是入口侧优先级（结束优先于插话），装置补静止读数、断言不变。
+  const rig = await buildRig('pre2b', [], { agentsGet: (id) => ({ id, status: 'idle' }) });
   try {
     const childId = `at-r57-child-${Math.random().toString(36).slice(2, 8)}`;
-    // 目标子代理经 rig 的注册表默认登记为 running（附注读取用）；结算通知在
-    // 等待开始前已滞留 next-step（source.senderSessionId 是权威关联证据）。
+    // 结算通知在等待开始前已滞留 next-step（source.senderSessionId 是权威关联证据）。
     inboxPayload({
       agent: rig.parent, sourceKind: 'subagent-settled', form: 'notice',
       summary: 'child finished', senderSessionId: childId, target: 'next-step'
@@ -1316,5 +1321,473 @@ hostTest('W-MIX-A：终态作业＋查无子代理的混合目标 → 全部资�
     );
   } finally {
     await rig.dispose();
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// WAIT-OBSERVE-01／WAIT-SETTLE-GATE-01／W-SPIN（r13 四项修正的受控装置）。
+//
+// 装置纪律：激励一律走真实通道——子代理状态经注册表替身的真实读取路径
+// （`agents.get`，`agentStatusOf` 现读），停止信号经真实 `agent/status` 事件与
+// 真实 inbox 投递（`ctx.emit`），作业结算经真 `LocalJobRegistry`；断言锚经
+// `t('en', key)` 取运行时文案（变体断言：只断 status 的恒真断言无效）。
+// ═════════════════════════════════════════════════════════════════════
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+hostTest('W-OBSERVE-A：无目标挂起中子代理静默转 idle（无消息无通知）→周期复查 ≤pollIntervalMs+容差内按 no-work 交回、note=workConcluded、未耗尽预算', async () => {
+  resetAgentBaselines();
+  let childStatus = 'running';
+  const rig = await buildRig('obs-a', [{ id: 'at-obs-child' }], {
+    agentsGet: (id) => ({ id, status: childStatus })
+  });
+  try {
+    const started = Date.now();
+    const pending = rig.waiter.execute({ wait_ms: 2000 }, rig.exec());
+    await sleep(150);              // 入口资格检查完成、挂起开始（首拍 500 ms 未到）
+    childStatus = 'idle';          // 子代理静默转 idle：无消息、无通知
+    const outcome = await pending;
+    const wall = Date.now() - started;
+    assert.equal(outcome.status, 'no-work', '复查确认无工作：及时交回（耗尽预算是旧缺陷形态）');
+    assert.ok(wall < 1600, `复查在拍内交回（pollIntervalMs=500＋容差；实耗 ${String(wall)} ms）`);
+    assert.ok(outcome.waited_ms < 2000, 'waited_ms 为全程实际时长且未耗尽预算');
+    assert.ok(outcome.note.includes(t('en', 'wait.workConcluded')), 'note 用 workConcluded 新键');
+    assert.ok(!outcome.note.includes(t('en', 'wait.noWork')), '不是入口 no-work 键（两键不得混用）');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-OBSERVE-B：复查节奏对齐 pollIntervalMs（间隔调大后时延随之）；全程上界仍 有效wait_ms+300ms', async () => {
+  resetAgentBaselines();
+  const runOnce = async (label, pollIntervalMs) => {
+    let childStatus = 'running';
+    const rig = await buildRig(label, [{ id: `${label}-child` }], {
+      pollIntervalMs,
+      agentsGet: (id) => ({ id, status: childStatus })
+    });
+    try {
+      const started = Date.now();
+      const pending = rig.waiter.execute({ wait_ms: 3000 }, rig.exec());
+      await sleep(120);
+      childStatus = 'idle';
+      const outcome = await pending;
+      return { wall: Date.now() - started, outcome };
+    } finally {
+      await rig.dispose();
+    }
+  };
+  const fast = await runOnce('obs-b-fast', 100);
+  const slow = await runOnce('obs-b-slow', 700);
+  assert.equal(fast.outcome.status, 'no-work', '快拍：复查交回');
+  assert.equal(slow.outcome.status, 'no-work', '慢拍：复查交回');
+  assert.ok(fast.wall < 450, `快拍（100 ms）应近拍交回（实耗 ${String(fast.wall)} ms）`);
+  assert.ok(slow.wall >= 600, `慢拍（700 ms）交回不早于首拍（实耗 ${String(slow.wall)} ms）——节奏对齐 pollIntervalMs`);
+  assert.ok(slow.wall <= 3300, '全程上界仍为有效 wait_ms＋300 ms');
+});
+
+hostTest('W-OBSERVE-C：复查拍在途时插话/取消先到→各自既有出口及时交回（竞速切断，不拖到拍结束）', async () => {
+  resetAgentBaselines();
+  const makeGateRig = async (label) => {
+    let calls = 0;
+    const gates = [];
+    const rig = await buildRig(label, [{ id: `${label}-child` }], {
+      pollIntervalMs: 300,
+      // 首次调用＝入口资格检查（返回在册）；后续＝复查拍（挂起不答：宿主慢目录形态）。
+      listChildren: () => new Promise((resolve) => {
+        calls += 1;
+        if (calls === 1) return resolve([{ id: `${label}-child` }]);
+        gates.push(resolve);
+      })
+    });
+    return { rig, gates };
+  };
+  {
+    const { rig, gates } = await makeGateRig('obs-c-wake');
+    try {
+      const started = Date.now();
+      const pending = rig.waiter.execute({ wait_ms: 5000 }, rig.exec());
+      await sleep(450);            // 首拍 300 ms 已发起、复查查询在途
+      rig.ctx.emit('agent/inbox/inserted', inboxPayload({
+        agent: rig.parent, sourceKind: 'user', text: 'steer during recheck', target: 'next-step'
+      }));
+      const outcome = await pending;
+      assert.equal(outcome.status, 'interrupted', '复查在途的插话按 interrupted 及时交回');
+      assert.ok(Date.now() - started < 2000, '及时（不被在途查询拖住）');
+    } finally {
+      for (const release of gates) release([]);
+      await rig.dispose();
+    }
+  }
+  {
+    const { rig, gates } = await makeGateRig('obs-c-cancel');
+    try {
+      const controller = new AbortController();
+      const started = Date.now();
+      const pending = rig.waiter.execute(
+        { wait_ms: 5000 },
+        { agent: rig.parent, signal: controller.signal }
+      );
+      await sleep(450);
+      controller.abort(new Error('tool call aborted'));
+      const outcome = await pending;
+      assert.equal(outcome.status, 'cancelled', '复查在途的取消按 cancelled 及时交回');
+      assert.ok(Date.now() - started < 2000, '及时');
+    } finally {
+      for (const release of gates) release([]);
+      await rig.dispose();
+    }
+  }
+});
+
+hostTest('W-OBSERVE-D：复查拍内 listChildren 挂起→不判无工作、续等不交回；恢复应答后照常按 no-work 交回', async () => {
+  resetAgentBaselines();
+  let calls = 0;
+  const gates = [];
+  const rig = await buildRig('obs-d', [{ id: 'at-obs-d-child' }], {
+    pollIntervalMs: 250,
+    listChildren: () => new Promise((resolve) => {
+      calls += 1;
+      if (calls === 1) return resolve([{ id: 'at-obs-d-child' }]);
+      gates.push(resolve);
+    })
+  });
+  try {
+    const started = Date.now();
+    let concluded = false;
+    const pending = rig.waiter.execute({ wait_ms: 5000 }, rig.exec());
+    pending.then(() => { concluded = true; }, () => { concluded = true; });
+    await sleep(1200);             // 首拍 250 ms 发起、查询挂起至今
+    assert.equal(concluded, false, '查询挂起＝未证实：续等不交回（把挂起当无工作是缺陷形态）');
+    assert.ok(gates.length >= 1, '复查拍确实发起过查询');
+    for (const release of gates) release([]);   // 宿主目录恢复应答：清单空＝无运行中子代理
+    const outcome = await pending;
+    const wall = Date.now() - started;
+    assert.equal(outcome.status, 'no-work', '恢复应答后照常交回（在途跳拍防线不永久卡死）');
+    assert.ok(wall < 1200 + 2500, `恢复后在拍内交回（实耗 ${String(wall)} ms）`);
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-OBSERVE-E：账本在册作业运行期间——挂起窗口 listChildren 调用数=0（复查拍账本短路，零目录查询）', async () => {
+  resetAgentBaselines();
+  let listCalls = 0;
+  const rig = await buildRig('obs-e', [{ id: 'at-obs-e-child' }], {
+    pollIntervalMs: 100,
+    listChildren: async () => { listCalls += 1; return [{ id: 'at-obs-e-child' }]; }
+  });
+  try {
+    const wf = await rig.workflow.execute(WF_ARGS, rig.exec());
+    assert.equal(wf.status, 'running', '前置：账本在册的运行中作业提供挂起资格');
+    const outcome = await rig.waiter.execute({ wait_ms: 1200 }, rig.exec());
+    assert.equal(outcome.status, 'budget', '作业仍在跑：挂起到预算（复查拍全部短路续等）');
+    assert.equal(listCalls, 0, '账本在册非终态作业使入口检查与每拍复查都同步短路——零目录查询');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-OBSERVE-F：复查确认资格消失时账本就绪内容随 no-work 出口顺带交付（delivered 在场）', async () => {
+  resetAgentBaselines();
+  let calls = 0;
+  const gates = [];
+  const rig = await buildRig('obs-f', [{ id: 'at-obs-f-child' }], {
+    pollIntervalMs: 300,
+    listChildren: () => new Promise((resolve) => {
+      calls += 1;
+      if (calls === 1) return resolve([{ id: 'at-obs-f-child' }]);
+      gates.push(resolve);
+    })
+  });
+  try {
+    // 子代理清单提供挂起资格；首拍（300 ms）复查查询挂起（gate 在途——主循环
+    // 此刻不在竞速里，就绪事件不抢先出口）；在途窗口内经真 workflow 起作业并
+    // 结算，账本缓冲就绪后再放行 gate：复查确认无工作 → no-work 出口的批次
+    // 顺带携带就绪内容（§2.6 随批顺带交付）。
+    const pending = rig.waiter.execute({ wait_ms: 4000 }, rig.exec());
+    await sleep(450);
+    assert.ok(gates.length >= 1, '前置：复查拍查询已发起且在途');
+    const wf = await rig.workflow.execute(WF_ARGS, rig.exec());
+    assert.equal(wf.status, 'running', '前置：作业让出为 running');
+    rig.finisher();                // 结算 → 保活链读取 → 账本缓冲就绪
+    const { ledger } = await import('../lib/delivery.js');
+    const readyDeadline = Date.now() + 2000;
+    while (Date.now() < readyDeadline) {
+      const entry = ledger.jobs.get(wf.job_id);
+      if (entry?.terminal !== null && entry?.terminal !== undefined) break;
+      await sleep(10);
+    }
+    assert.notEqual(ledger.jobs.get(wf.job_id)?.terminal ?? null, null, '前置：账本条目已终态（就绪内容在册）');
+    for (const release of gates) release([]);   // 复查查询应答：无运行中子代理
+    const outcome = await pending;
+    assert.equal(outcome.status, 'no-work', '复查确认无工作交回');
+    assert.ok((outcome.delivered ?? []).some((row) => row.job_id === wf.job_id),
+      '账本就绪内容随 no-work 出口顺带交付（delivered 在场）');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-OBSERVE-G：复查交回不写跨调用基准——再指定该子代理等待得 via.idle 首次确认（非 targetsSettled 维持静止）', async () => {
+  resetAgentBaselines();
+  let childStatus = 'running';
+  const rig = await buildRig('obs-g', [{ id: 'at-obs-g-child' }], {
+    pollIntervalMs: 250,
+    agentsGet: (id) => ({ id, status: childStatus })
+  });
+  try {
+    const pending = rig.waiter.execute({ wait_ms: 2000 }, rig.exec());
+    await sleep(120);
+    childStatus = 'idle';          // 静默转 idle：复查经注册表现读观察到静止
+    const first = await pending;
+    assert.equal(first.status, 'no-work', '前置：无目标复查按 no-work 交回');
+    // 周期复查是只读观察、不写 3.2.4 的跨调用登记：随后指定该子代理的等待仍按
+    // 「首次确认」交回停止态一次（via.idle 文案）——若复查写了基准，这里会变成
+    // 维持静止文案（本断言必红）。
+    const second = await rig.waiter.execute(
+      { wait_ms: 500, targets: [{ kind: 'agent', id: 'at-obs-g-child' }] },
+      rig.exec()
+    );
+    assert.equal(second.status, 'settled');
+    assert.ok(second.note.includes(t('en', 'via.idle')), 'via.idle 首次确认文案在场');
+    assert.ok(!second.note.includes(t('en', 'wait.targetsSettled', { ids: 'at-obs-g-child' })), '不得是 targetsSettled 维持静止文案（写基准的形态必红）');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-OBSERVE-H：jobs.list 短路路径后复查不卡死——外来行静默转终态→下一拍 no-work 交回（不耗尽预算）', async () => {
+  resetAgentBaselines();
+  // 外来（账本不在册）作业在 jobs.list 有 running 行：首拍复查走第二级同步短路
+  //（listChildren 从未发起）。行随后静默转终态＋子代理静默转 idle——复查应在
+  // 下一拍确认无工作按 no-work 交回。修复前形态：短路路径不清跳拍标志，
+  // recheckQueryInFlight 永久卡 true，后续复查全部跳过、等待退化到预算到期
+  //（盲审实跑复现在案——本断言对旧代码必红）。
+  let externalRows = [{ id: 'ext-job-h', status: 'running' }];
+  let childStatus = 'running';
+  const rig = await buildRig('obs-h', [], {
+    pollIntervalMs: 100,
+    jobsList: () => externalRows,
+    agentsGet: (id) => ({ id, status: childStatus })
+  });
+  try {
+    const started = Date.now();
+    const pending = rig.waiter.execute({ wait_ms: 1500 }, rig.exec());
+    await sleep(250);               // 首拍（100 ms 节拍）已走 jobs.list 短路
+    externalRows = [];              // 外来行静默转终态（不经账本、无就绪事件）
+    childStatus = 'idle';           // 子代理同步静默转 idle（无消息无通知）
+    const outcome = await pending;
+    const wall = Date.now() - started;
+    assert.equal(outcome.status, 'no-work', '短路后复查继续工作：确认无工作及时交回（卡死形态＝budget，必红）');
+    assert.ok(wall < 900, `下一拍即交回、未耗尽预算（pollIntervalMs=100；实耗 ${String(wall)} ms；卡死形态 ≈1500 ms 必红）`);
+    assert.ok(outcome.note.includes(t('en', 'wait.workConcluded')), 'note 用 workConcluded 键');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-GATE-A：停止胜出（agent/status 转 idle）＋注册表现读 idle→按现行交付 settled＋跨调用基准写 idle', async () => {
+  resetAgentBaselines();
+  let childStatus = 'running';
+  const rig = await buildRig('gate-a', [{ id: 'at-gate-a-child' }], {
+    pollIntervalMs: 200,
+    agentsGet: (id) => ({ id, status: childStatus })
+  });
+  try {
+    const pending = rig.waiter.execute(
+      { wait_ms: 3000, targets: [{ kind: 'agent', id: 'at-gate-a-child' }] },
+      rig.exec()
+    );
+    await sleep(120);              // 入口屏障与挂起完成
+    childStatus = 'idle';          // 注册表静止与 idle 事件同拍（门现读即非运行）
+    rig.ctx.emit('agent/status', { agent: { id: 'at-gate-a-child' }, status: 'idle' });
+    const outcome = await pending;
+    assert.equal(outcome.status, 'settled', '非运行读数：停止胜出按现行交付 settled（门放行）');
+    assert.ok(outcome.note.includes(t('en', 'note.settled', { agentId: 'at-gate-a-child' })), '现行 settledNote 文案（W-GATE-A 钉现行保持）');
+    // 基准写 idle：同目标再次等待 → 全部维持已确认静止 → 立即 targetsSettled 返回。
+    const again = await rig.waiter.execute(
+      { wait_ms: 3000, targets: [{ kind: 'agent', id: 'at-gate-a-child' }] },
+      rig.exec()
+    );
+    assert.equal(again.status, 'settled');
+    assert.ok(again.note.includes(t('en', 'wait.targetsSettled', { ids: 'at-gate-a-child' })), '跨调用基准已写 idle（再等待按维持静止交回）');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-GATE-B：停止胜出＋现读 running→不报 settled、不写登记；一拍内转 idle→翻转出口 settled、note 注明结算通知已见；等待不因通知提前结束', async () => {
+  resetAgentBaselines();
+  let childStatus = 'running';
+  const rig = await buildRig('gate-b', [{ id: 'at-gate-b-child' }], {
+    pollIntervalMs: 200,
+    agentsGet: (id) => ({ id, status: childStatus })
+  });
+  try {
+    let concluded = false;
+    const pending = rig.waiter.execute(
+      { wait_ms: 4000, targets: [{ kind: 'agent', id: 'at-gate-b-child' }] },
+      rig.exec()
+    );
+    pending.then(() => { concluded = true; }, () => { concluded = true; });
+    await sleep(120);
+    // 停止信号到达但注册表现读仍 running（投影滞后形态）：门拦下——不交付、
+    // 不写登记、标记续等。
+    rig.ctx.emit('agent/status', { agent: { id: 'at-gate-b-child' }, status: 'idle' });
+    await sleep(150);
+    assert.equal(concluded, false, '注册表仍观察到运行：不报 settled（通知本身不结束等待）');
+    childStatus = 'idle';          // ≤一拍内注册表翻转
+    const outcome = await pending;
+    assert.equal(outcome.status, 'settled', '翻转出口交付 settled（via.idle 首次确认）');
+    assert.ok(outcome.note.includes(t('en', 'via.idle')), '翻转出口的 via.idle 文案');
+    assert.ok(outcome.note.includes(t('en', 'via.settleNoticeSeen')), 'note 前缀注明结算通知已见（标记兑现）');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-GATE-C：门后目标维持运行→到期按 running 交回＋目标已证状态＋settleNoticePending 说明（不误报静止）', async () => {
+  resetAgentBaselines();
+  const rig = await buildRig('gate-c', [{ id: 'at-gate-c-child' }], {
+    pollIntervalMs: 200,
+    agentsGet: (id) => ({ id, status: 'running' })
+  });
+  try {
+    const pending = rig.waiter.execute(
+      { wait_ms: 700, targets: [{ kind: 'agent', id: 'at-gate-c-child' }] },
+      rig.exec()
+    );
+    await sleep(120);
+    rig.ctx.emit('agent/status', { agent: { id: 'at-gate-c-child' }, status: 'idle' });
+    const outcome = await pending;
+    assert.equal(outcome.status, 'running', '静止未证实：到期按运行口径交回（不交 settled）');
+    assert.ok((outcome.targets ?? []).some((row) => row.id === 'at-gate-c-child' && row.status === 'running'),
+      '目标已证状态附 running');
+    assert.ok(outcome.note.includes(t('en', 'wait.settleNoticePending', { ids: 'at-gate-c-child' })), '到期附 settleNoticePending 说明（通知已见、静止未证实）');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-GATE-D：注册表读取抛错（unknown）→不制造 settled；到期未证实档＋标记说明', async () => {
+  resetAgentBaselines();
+  const rig = await buildRig('gate-d', [{ id: 'at-gate-d-child' }], {
+    pollIntervalMs: 200,
+    agentsGet: () => { throw new Error('registry down'); }
+  });
+  try {
+    const pending = rig.waiter.execute(
+      { wait_ms: 700, targets: [{ kind: 'agent', id: 'at-gate-d-child' }] },
+      rig.exec()
+    );
+    await sleep(120);
+    rig.ctx.emit('agent/status', { agent: { id: 'at-gate-d-child' }, status: 'idle' });
+    const outcome = await pending;
+    assert.equal(outcome.status, 'running', '读取失败不制造停止：到期按有目标口径交回');
+    assert.ok((outcome.targets ?? []).some((row) => row.id === 'at-gate-d-child' && row.status === 'unknown'),
+      '目标已证状态为 unknown（未证实档）');
+    assert.ok(outcome.note.includes(t('en', 'wait.settleNoticePending', { ids: 'at-gate-d-child' })), '标记说明在场');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-GATE-E：入口未领取结算通知同门现读——running→changed＋settleNoticeArrived；idle→现行 settled', async () => {
+  resetAgentBaselines();
+  const seedNotice = (rig) => rig.parent.inbox.nextStep.push(
+    inboxPayload({
+      agent: rig.parent, sourceKind: 'subagent-settled', form: 'notice',
+      summary: 'child settled', senderSessionId: 'at-gate-e-child', target: 'next-step'
+    })
+  );
+  {
+    const rig = await buildRig('gate-e-run', [{ id: 'at-gate-e-child' }], {
+      agentsGet: (id) => ({ id, status: 'running' })
+    });
+    try {
+      seedNotice(rig);
+      const outcome = await rig.waiter.execute(
+        { wait_ms: 600, targets: [{ kind: 'agent', id: 'at-gate-e-child' }] },
+        rig.exec()
+      );
+      assert.equal(outcome.status, 'changed', '通知已到、静止未证实：按变化交回（不作停止断言）');
+      assert.ok(outcome.note.includes(t('en', 'wait.settleNoticeArrived')), 'settleNoticeArrived 文案在场');
+    } finally {
+      await rig.dispose();
+    }
+  }
+  {
+    const rig = await buildRig('gate-e-idle', [{ id: 'at-gate-e-child' }], {
+      agentsGet: (id) => ({ id, status: 'idle' })
+    });
+    try {
+      seedNotice(rig);
+      const outcome = await rig.waiter.execute(
+        { wait_ms: 600, targets: [{ kind: 'agent', id: 'at-gate-e-child' }] },
+        rig.exec()
+      );
+      assert.equal(outcome.status, 'settled', '非运行读数：入口通知按现行 settled 交付');
+      assert.ok(outcome.note.includes(t('en', 'via.noticePreexisting')), '现行 via.noticePreexisting 文案');
+    } finally {
+      await rig.dispose();
+    }
+  }
+});
+
+hostTest('W-GATE-F：同目标重复门化事件不提前按到期交回（wall≈预算，自旋防线不触发）', async () => {
+  resetAgentBaselines();
+  const rig = await buildRig('gate-f', [{ id: 'at-gate-f-child' }], {
+    pollIntervalMs: 250,
+    agentsGet: (id) => ({ id, status: 'running' })
+  });
+  try {
+    const started = Date.now();
+    const pending = rig.waiter.execute(
+      { wait_ms: 1500, targets: [{ kind: 'agent', id: 'at-gate-f-child' }] },
+      rig.exec()
+    );
+    await sleep(120);
+    // 变异注释（W-GATE-F）：门化分支若不重建观察器（直接 continue），已 resolve
+    // 的一次性 settled promise 会被下一轮竞速再次胜出——每轮微任务复用、自旋
+    // 计数暴涨，在本预算内提前按到期口径交回（wall 断言必红）。
+    for (let i = 0; i < 25; i += 1) {
+      rig.ctx.emit('agent/status', { agent: { id: 'at-gate-f-child' }, status: 'idle' });
+      await sleep(20);
+    }
+    const outcome = await pending;
+    const wall = Date.now() - started;
+    assert.equal(outcome.status, 'running', '重复门化事件不误报停止：到期口径交回');
+    assert.ok(wall >= 1350, `不提前交回（wall≈预算 1500；实耗 ${String(wall)} ms）——重建观察器防自旋`);
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-SPIN-A：MAX_SPINS 可测锚——注入小上限后超过上限次数的定时拍续排不提前交回（定时拍胜者不计入计数）', async () => {
+  resetAgentBaselines();
+  const original = WAIT_SPIN_LIMIT.value;
+  WAIT_SPIN_LIMIT.value = 3;
+  try {
+    const rig = await buildRig('spin-a', [{ id: 'at-spin-a-child' }], {
+      pollIntervalMs: 50,
+      agentsGet: (id) => ({ id, status: 'running' })
+    });
+    try {
+      const started = Date.now();
+      // 变异注释（W-SPIN-A）：若定时拍胜者仍计入 spins（旧计数形态——备用轮询拍
+      // 曾无条件计入），第 4 拍（约 200 ms）即触发防线、提前按到期口径交回，
+      // wall 断言（≥570 ms）必红。
+      const outcome = await rig.waiter.execute(
+        { wait_ms: 600, targets: [{ kind: 'agent', id: 'at-spin-a-child' }] },
+        rig.exec()
+      );
+      const wall = Date.now() - started;
+      assert.equal(outcome.status, 'running', '到期口径交回（防线未触发）');
+      assert.ok(wall >= 570, `12 拍（600/50）远超注入上限 3 仍不提前交回（实耗 ${String(wall)} ms）`);
+    } finally {
+      await rig.dispose();
+    }
+  } finally {
+    WAIT_SPIN_LIMIT.value = original;
   }
 });

@@ -466,6 +466,14 @@ async function collectSamples(agentLang) {
   let waitError = '';
   try { resolveWait(undefined, resolveConfig({ agentLang })); } catch (error) { waitError = String(error?.message ?? error); }
   samples.push(['error.waitRequired', waitError]);
+  // WAIT-OBSERVE-01／WAIT-SETTLE-GATE-01 的四个新键（周期复查交回与结算复查门）：
+  // 经 t() 直接取样——运行时层判据（en 零 CJK、zh 换语言）对新键同样成立。
+  samples.push(
+    ['t(wait.workConcluded)', t(agentLang, 'wait.workConcluded')],
+    ['t(wait.settleNoticeArrived)', t(agentLang, 'wait.settleNoticeArrived')],
+    ['t(wait.settleNoticePending)', t(agentLang, 'wait.settleNoticePending', { ids: 'sa-1' })],
+    ['t(via.settleNoticeSeen)', t(agentLang, 'via.settleNoticeSeen')]
+  );
   // 编排完成渲染（端到端；render.workflowCompleted + detail.workflowAgents）。
   samples.push(['render(workflow completed)', await collectWorkflowCompletedRender(agentLang)]);
   return samples;
