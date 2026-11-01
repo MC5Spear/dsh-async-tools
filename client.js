@@ -966,7 +966,7 @@ function PresetBindingBlock(props) {
     // 生效值行（value 层的事实，与草稿分离——未保存的勾选不冒充生效）。
     React.createElement("p", { id: messageId, className: "ats-enum-message" },
       (hint !== undefined ? hint + "\n" : "")
-      + (effective.length > 0 ? effective.join(", ") : t("preset.noneBound"))),
+      + (effective.length > 0 ? t("preset.effectiveList").replace("{list}", effective.join(", ")) : t("preset.noneBound"))),
     catalogState.status === "loading"
       ? React.createElement("p", { className: "ats-enum-message" }, t("preset.loading"))
       : catalogState.status === "ready" && rows.length === 0
@@ -1295,6 +1295,7 @@ var DICTIONARIES = {
     "preset.failed": "预设列表读取失败：{reason}",
     "preset.unavailable": "预设服务不可用；显示已保存的绑定，可取消",
     "preset.noneBound": "当前未绑定任何预设",
+    "preset.effectiveList": "生效名单：{list}",
     "preset.broken": "该预设装载失败",
     "preset.absent": "未在当前预设列表中发现",
     "preset.a11yList": "适用预设列表"
@@ -1424,6 +1425,7 @@ var DICTIONARIES = {
     "preset.failed": "Preset list read failed: {reason}",
     "preset.unavailable": "The preset service is unavailable; saved bindings are shown and can be unchecked",
     "preset.noneBound": "No presets are currently bound",
+    "preset.effectiveList": "Effective presets: {list}",
     "preset.broken": "This preset failed to load",
     "preset.absent": "Not found in the current preset list",
     "preset.a11yList": "Applicable preset list"
