@@ -548,7 +548,7 @@ hostTest('async_run：lossy 且有落点 → note 与作业结局都给出 spill
   const result = await createRunTool(f.ctx, config).execute({ command: 'x', description: 'x' }, exec);
 
   assert.equal(result.status, 'completed');
-  assert.match(result.note, /full output is on disk/);
+  assert.match(result.note, /retained at the host-reported path/);
   assert.match(result.note, /stdout: C:\\spill\\stdout\.txt/, 'spill 路径是找回完整输出的唯一线索');
 
   // 让出分支：作业结局里同样要带路径（async_wait 的终态分支把 detail 原样交给模型）。
@@ -563,7 +563,7 @@ hostTest('async_run：lossy 且有落点 → note 与作业结局都给出 spill
   await new Promise((r) => { setTimeout(r, 0); });
   const view = g.jobsFake.views()[0];
   assert.match(view.detail, /output partially dropped from memory/);
-  assert.match(view.detail, /full output at stdout: C:\\spill\\stdout\.txt/);
+  assert.match(view.detail, /retained at the host-reported path\(s\): stdout: C:\\spill\\stdout\.txt/);
 });
 
 hostTest('async_run：lossy 但没有落点 → 必须明说没有落点，不得让模型以为磁盘上还有一份', async () => {
@@ -575,12 +575,12 @@ hostTest('async_run：lossy 但没有落点 → 必须明说没有落点，不�
   const completed = await tool.execute({ command: 'x', description: 'x' }, exec);
   assert.equal(completed.status, 'completed');
   assert.match(completed.note, /no spill file was reported/, '没有落点必须说清楚');
-  assert.doesNotMatch(completed.note, /full output is on disk/);
+  assert.doesNotMatch(completed.note, /host-reported path/);
 
   // 而且**必须到达模型可见文本**——`value.note` 里有不等于模型看得见。
   const completedText = tool.output.render({ command: 'x' }, completed).map((part) => part.text).join('\n');
   assert.match(completedText, /no spill file was reported/, '没有落点必须出现在**模型可见文本**里');
-  assert.doesNotMatch(completedText, /full output is on disk/, '模型可见文本里也不许声称磁盘上有');
+  assert.doesNotMatch(completedText, /host-reported path/, '模型可见文本里也不许声称宿主报告过留存位置');
 
   // 让出分支（作业结局）
   const g = fakeCtx();
@@ -592,7 +592,7 @@ hostTest('async_run：lossy 但没有落点 → 必须明说没有落点，不�
   await new Promise((r) => { setTimeout(r, 0); });
   const view = g.jobsFake.views()[0];
   assert.match(view.detail, /no spill file reported/);
-  assert.doesNotMatch(view.detail, /full output at/);
+  assert.doesNotMatch(view.detail, /host-reported path/);
 });
 
 hostTest('async_run：相对 workdir 按会话工作目录解析；无 cwd 时原样透传', async () => {
@@ -843,7 +843,7 @@ hostTest('async_run（T7）：lossy + 无退出码同时出现时，完成分支
 
   assert.equal(completed.status, 'completed');
   assert.equal('exit_code' in completed, false);
-  assert.match(completed.note, /full output is on disk/, 'note 必须与"没有退出码"共存于同一个分支');
+  assert.match(completed.note, /retained at the host-reported path/, 'note 必须与"没有退出码"共存于同一个分支');
 });
 
 hostTest('async_run（T7）：校验器活性证明——`exit_code: null` 确实会被判违规', () => {

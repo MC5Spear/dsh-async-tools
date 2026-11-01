@@ -15,7 +15,7 @@
 
 安装前先确认运行环境：建议 Node.js 24。插件清单的 `>=20` 只是插件声明；宿主依赖 commander 15 要求 `>=22.12.0`，也只是已知下界，不是整套宿主经验证的最低版本。确认目标宿主依赖能在所选运行时解析后，再安装。
 
-上表四个宿主版本共用同一条兼容线与同一份 peer 支持集合，集合外的正式 `0.2.1`、`0.2.0`、`0.2.2` 与未列入的新 rc 都不放行。本线面向 Windows；`0.2.1-rc.2` 与 `0.2.1-rc.5` 已完成隔离实例真机逐项验证（2026-10-31 独立验收判收），`0.2.1-rc.3`、`0.2.1-rc.4` 依靠同一实现的静态契约核对与 CI 矩阵覆盖，逐宿主真机重验尚未完成。Linux 命令与单次提权、macOS、远程执行均未验证。需要这些环境时，向维护者提供环境与使用需求，安排隔离验证后再决定部署。兼容线支持不等于所有行为已在每个宿主上通过验证。
+上表四个宿主版本共用同一条兼容线与同一份 peer 支持集合，集合外的正式 `0.2.1`、`0.2.0`、`0.2.2` 与未列入的新 rc 都不放行。本线面向 Windows；`0.2.1-rc.2` 与 `0.2.1-rc.5` 已完成隔离实例真机逐项验证（2026-10-31 独立验收判收），`0.2.1-rc.3`、`0.2.1-rc.4` 依靠同一实现的静态契约核对与 CI 矩阵覆盖，逐宿主真机重验尚未完成。隔离安装形态下运行时依赖是否与宿主完全同源尚未证明——局部安装与接口通过不推导运行时同源。Linux 命令与单次提权、macOS、远程执行均未验证。需要这些环境时，向维护者提供环境与使用需求，安排隔离验证后再决定部署。兼容线支持不等于所有行为已在每个宿主上通过验证。
 
 确认上述前提后，在终端安装：
 
@@ -83,13 +83,16 @@ async_wait(targets=[{kind:"job", id:"<返回的job_id>"}], wait_ms=30000)
 | `subagentProvider` | string | `spawn` | 后端名；trim后空值回spawn | — | 下次子代理创建；不是LLM provider |
 | `uiLang` | enum | `auto` | auto / zh / en | — | 界面；auto跟随宿主 |
 | `agentLang` | enum | `en` | en / zh | — | 描述、结果和执行纪律的语言 |
-| `silentFailureGuard` | boolean | `false` | true / false | — | 两预设的命令诊断与提示 |
+| `silentFailureGuard` | boolean | `false` | true / false | — | 名单内会话的命令诊断与提示 |
 | `workflowProgressLog` | boolean | `false` | true / false | — | 编排结果是否保留各阶段进度行 |
 | `fullCommandEcho` | boolean | `false` | true / false | — | 命令作业列表回显完整命令原文 |
 | `askTakeover` | boolean | `false` | true / false | — | 每次普通提问请求 |
 | `askTimeoutMs` | number | `60000` | 10000..600000，可小数 | ms | 新接管批次的初始期限 |
 | `askExtendMs` | number | `60000` | 1..2147483647，可小数 | ms | 每次延长动作，在原期限上追加 |
 | `askUiSeat` | enum | `sidebar` | sidebar / overlay | — | 待答面板位置，不重置期限 |
+| `boundPresets` | string[] | `dsh-async, dsh-async-create` | 预设ID数组，元素非空且不重复；空数组合法 | — | 按会话当前实际预设匹配 |
+
+`boundPresets` 是功能绑定名单（0.2.8+dsh.0.2.1-rc 新增）：勾选的预设下，该预设会话的组稿注入本包执行纪律段，静默失败提示与待答面板提问处理对名单内会话生效——三者都仍受各自开关控制，名单只决定作用范围，不代替开关。判定按会话当前实际预设匹配：同一工具实现被多个预设复用时，未勾选预设的会话不受影响。默认绑定本包两份预设（升级不改行为）；保存空数组等于解除全部绑定；已绑定但不在当前预设列表中的条目保留显示、可取消。设置页的名单来自宿主预设注册表，经「刷新」重读；读取失败时显示已保存绑定，仍可取消。
 
 跨字段须满足 `minYieldMs <= defaultYieldMs <= maxYieldMs`、`minWaitMs <= defaultWaitMs <= maxWaitMs`、`pollIntervalMs <= maxWaitMs`。预算数字须有限。出厂上限是600000。`defaultWaitMs` 不补全缺失的 `wait_ms`。
 
@@ -129,7 +132,7 @@ async_wait(targets=[{kind:"job", id:"<返回的job_id>"}], wait_ms=30000)
 
 无目标时等待可处理消息与本包作业结果；有目标时等待目标终态（作业）或变化（子代理），非目标消息不结束等待。`wait_ms=0` 立即返回当前状态与未交付内容，不进入等待段。
 
-作业终态返回 `{status:'completed'|'killed'|'failed', job_id, output, truncated, waited_ms}`；子代理变化返回 `{status:'changed'|'settled', agent_id, waited_ms, note}`；等待类返回 `{status:'running'|'budget'|'interrupted'|'message'|'cancelled'|'no-work'|'unconfirmed', waited_ms, note}`——`no-work` 表示未确认到可等待工作、本次没有挂起，`unconfirmed` 表示工作或目标资格未能证实（清单查询失败或超时）。不指定目标时，入口先汇集已就绪的作业结果并直接随返回携带，仅在确认存在可等待工作（自己的运行中后台作业或运行中的子代理）时才挂起等待。多目标出口附其余目标已证状态 `targets`。同拍就绪的其他作业正文以 `outputs` 分条携带，`delivered` 是批次元数据。查无或不可见的作业目标按 `not_found` 状态标注；查询失败按提示重试，不重启原任务。读取消费规则见第4节。
+作业终态返回 `{status:'completed'|'killed'|'failed', job_id, output, truncated, waited_ms}`；子代理变化返回 `{status:'changed'|'settled', agent_id, waited_ms, note}`；等待类返回 `{status:'running'|'budget'|'interrupted'|'message'|'cancelled'|'no-work'|'unconfirmed', waited_ms, note}`——`no-work` 有两种来源：入口即确认没有可等待工作、本次未挂起（`waited_ms` 接近 0），或挂起期间周期复查确认全部可等待工作已结束、提前交回（`waited_ms` 为本次等待的实际时长）；`note` 文案本身区分这两种过程，结合 `waited_ms` 可判断实际经过。`unconfirmed` 表示等待条件无法确认（清单查询失败或超时）——它与 `no-work` 的差别是**确认与否**，不是有无工作。不指定目标时，入口先汇集已就绪的作业结果并直接随返回携带，仅在确认存在可等待工作（自己的运行中后台作业或运行中的子代理）时才挂起等待。多目标出口附其余目标已证状态 `targets`。同拍就绪的其他作业正文以 `outputs` 分条携带，`delivered` 是批次元数据。查无或不可见的作业目标按 `not_found` 状态标注；查询失败按提示重试，不重启原任务。读取消费规则见第4节。
 
 ### 3.3 async_agent
 

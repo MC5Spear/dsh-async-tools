@@ -11,9 +11,13 @@ function rows(text) {
 function settingFacts(root) {
   const source = readFileSync(join(root, 'lib/config.js'), 'utf8');
   const constants = new Map([...source.matchAll(/export const (DEFAULT_\w+) = ['"]([^'"]+)['"]/g)].map(m => [m[1], m[2]]));
+  // 数组常量（PRESET-BIND-01 的 boundPresets 默认名单）：拆项去引号、逗号+空格
+  // 连接——文档默认单元格与事实提取共用同一形态。
+  const arrayConstants = new Map([...source.matchAll(/export const (\w+) = Object\.freeze\(\[([^\]]*)\]\)/g)]
+    .map(m => [m[1], m[2].split(',').map(item => item.trim().replace(/^['"]|['"]$/g, '')).join(', ')]));
   const facts = new Map();
   for (const match of source.matchAll(/^\s{2}(\w+): z\.[^\n]*?\.default\(([^)]+)\)/gm)) {
-    const value = constants.get(match[2]) ?? match[2].replace(/^['"]|['"]$/g, '');
+    const value = constants.get(match[2]) ?? arrayConstants.get(match[2]) ?? match[2].replace(/^['"]|['"]$/g, '');
     if (!['toolName', 'owningPreset', 'settings', 'allowedAgentPresets', 'agentOptions', 'agentPreset'].includes(match[1])) facts.set(match[1], value);
   }
   const toolMatch = /export const TOOL_NAMES = Object\.freeze\(\[([\s\S]*?)\]\)/.exec(source);
@@ -41,7 +45,7 @@ export function checkUserDocs(root = ROOT, { quiet = false, packageFiles } = {})
   const fail = message => problems.push(message);
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
   const { facts, tools, bounds } = settingFacts(root);
-  if (facts.size !== 19 || tools.length < 5) fail('源码设置或工具集合提取失败，须更新事实提取规则');
+  if (facts.size !== 20 || tools.length < 5) fail('源码设置或工具集合提取失败，须更新事实提取规则');
   const docs = new Map();
   for (const file of USER_DOCUMENTS) {
     try { docs.set(file, readFileSync(join(root, file), 'utf8')); }

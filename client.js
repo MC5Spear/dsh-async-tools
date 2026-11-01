@@ -12,10 +12,12 @@ var module = { exports: {} }; var exports = module.exports;
 //   页脚唯一的保存按钮及其启用条件、卸载丢弃草稿），暂存/差集/保存全部由
 //   `SettingsFormModel` 承担——本包不自绘草稿、差集与写后回读。primitives 在
 //   冻结平台模块表里，直接 `require` 即可，`dsh.client.external` 一条都不用加。
-// - 字段壳统一自绘（设计 §5.5）：19 个字段共用 `FieldShell`——官方
+// - 字段壳统一自绘（设计 §5.5）：19 个普通字段共用 `FieldShell`——官方
 //   `SettingsValueField` 的帮助图标固定带圈 i、标签行没有注入开口（需求 5.6 要
-//   带圈问号），所以值字段也转入统一壳；官方件继续在场：`SettingsForm`／
-//   `SettingsFormModel`／`settingsNumberField`／`settingsTextField`（模型 spec）、
+//   带圈问号），所以值字段也转入统一壳；第 20 个字段 `boundPresets`（预设功能
+//   绑定，需求 9.4）不用壳——它是复选框块 `PresetBindingBlock`，渲染在表单末尾、
+//   走同一模型与保存链。官方件继续在场：`SettingsForm`／`SettingsFormModel`／
+//   `settingsNumberField`／`settingsTextField`（模型 spec）、
 //   `P.Switch`／`P.Tag`／`P.IconQuestionOutlineRegular`（控件本体与图标）。
 // - 模型的 scope = `ctx.configForms.get(ENTRY)` 的控制器（控制器就是官方
 //   `SettingsFormScope`——`getSnapshot`/`subscribe`/`mutate`）。bundle 槽的 owner props
@@ -30,7 +32,8 @@ var module = { exports: {} }; var exports = module.exports;
 // - 帮助（需求 5.5/5.6）：每个字段标签旁带圈问号按钮（官方
 //   `IconQuestionOutlineRegular`），点击在字段下方展开 `help.<键>` 正文、再点收起；
 //   开合只存 `FieldShell` 局部 state，不碰草稿/保存/mutate；缺键回退＝按钮/说明行
-//   退场（`resolveCopy`），T21 在场断言守 17×3 键组两档齐全。
+//   退场（`resolveCopy`），T21 在场断言守键组（标签/hint/help 三前缀）两档齐全
+//  （`boundPresets` 的三个同前缀键随新字段入表同受守护）。
 // - 毫秒字段的秒数读数（需求 §5.4）长在说明行里，
 //   **与字段说明换行**（行首不带点，样式照同机参考插件的读数行）：说明行 =
 //   字段说明 + 换行 + 「生效：S s」+「 · 」+「输入：T s」。值**只写秒文本**
@@ -63,12 +66,13 @@ var PACKAGE_NAME = "dsh-async-tools";
 /** 词典命名空间（本插件自有）。 */
 var NS = "settings.async-tools";
 
-// 字段表：key 与宿主 Config 的 settings 子树字段一一对应（设计 §5.1：19 个
+// 字段表：key 与宿主 Config 的 settings 子树字段一一对应（设计 §5.1：20 个
 // 可编辑字段全在子树里，值投影展平在 `settings` 键下，经 makeSettingsScopeView
 // 适配成官方模型的平铺寻址）；ms 字段的说明行带秒数读数。
-// 顺序 = `lib/config.js` 五组键的拼接：BUDGET_FIELD_KEYS → LANG_FIELD_KEYS →
-// FLAG_FIELD_KEYS → DISPLAY_FIELD_KEYS → ASK_FIELD_KEYS（提问接管组殿后；与
-// test/two-planes.test.mjs T19 的键集对账，静默失败与两个展示开关字段在列）。
+// 顺序 = `lib/config.js` 六组键的拼接：BUDGET_FIELD_KEYS → LANG_FIELD_KEYS →
+// FLAG_FIELD_KEYS → DISPLAY_FIELD_KEYS → ASK_FIELD_KEYS → PRESET_FIELD_KEYS
+//（预设功能绑定组殿后；与 test/two-planes.test.mjs T19 的键集对账，静默失败与
+// 两个展示开关字段在列）。
 // `toolName` 不在表里（它在根的非 volatile 固定路径，不可用户写——写会被宿主拒绝
 // `Config field "toolName" is not volatile`，`dsh-settings/lib/index.js:507`），
 // 这正是「volatile 子树才可编辑」语义的正确表达。
@@ -100,7 +104,11 @@ var FIELDS = [
   { key: "fullCommandEcho", label: "fullCommandEcho", ms: false, flag: true },
   { key: "askTimeoutMs", label: "askTimeoutMs", ms: true },
   { key: "askExtendMs", label: "askExtendMs", ms: true },
-  { key: "askUiSeat", label: "askUiSeat", ms: false, options: ["sidebar", "overlay"] }
+  { key: "askUiSeat", label: "askUiSeat", ms: false, options: ["sidebar", "overlay"] },
+  // 预设功能绑定（需求 9.4）：值 = 宿主预设 ID 数组，控件是复选框块
+  //（PresetBindingBlock，表单末尾独立块），不经 FieldShell——但 spec 注册进
+  // 同一模型，暂存/差集/保存与其他字段同机制。
+  { key: "boundPresets", label: "boundPresets", ms: false, binding: true }
 ];
 var FIELD_KEYS = FIELDS.map(function (field) { return field.key; });
 /** 语言开关的键：`uiLang` 管本卡片文案，`agentLang` 管面向模型的文案（需求 §5.3）。 */
@@ -299,11 +307,64 @@ function flagFieldSpec(key) {
 }
 
 /**
+ * 预设绑定字段的转换 spec（需求 9.4，照 enum/flag 的 spec 契约形状）：值＝
+ * 预设 ID 数组，草稿文本＝数组的 JSON 串（`format` 物化、`parse` 校验回收）。
+ *
+ * - `format`：数组原样 JSON 串；非数组（含降级态 describe 出来的损坏原值）
+ *   折回 `'[]'`——复选框块按空草稿渲染，损坏值不在草稿层爆开；
+ * - `parse`：空文本判清除（恢复默认＝unset 路径→schema 默认两预设）；JSON
+ *   解析后必须是**无重复的非空字符串数组**（与服务端 `resolveConfig` 同判据，
+ *   需求 9.4.3 空数组合法＝解除全部绑定）；其余判非法（undefined → 官方非法
+ *   通道 → 保存禁用）。复选框 UI 结构上不产生重复，这层校验防程序化写入口；
+ * - 勾选操作走模型的 `edit(key, 新JSON串)`：块内解码当前草稿、切换成员、
+ *   重新编码回写——暂存/差集/保存与其他字段同机制。
+ *
+ * @param {string} key - 字段键（boundPresets）。
+ * @returns {object} `SettingsFieldSpec` 形状的 spec。
+ */
+function presetBindingFieldSpec(key) {
+  return {
+    field: key,
+    format: function (value) {
+      return JSON.stringify(Array.isArray(value) ? value : []);
+    },
+    parse: function (text) {
+      var trimmed = text.trim();
+      if (trimmed === "") return { kind: "clear" };
+      var parsed;
+      try { parsed = JSON.parse(trimmed); } catch (error) { return undefined; }
+      if (!Array.isArray(parsed)) return undefined;
+      var seen = {};
+      for (var i = 0; i < parsed.length; i += 1) {
+        var id = parsed[i];
+        if (typeof id !== "string" || id.length === 0) return undefined;
+        if (Object.prototype.hasOwnProperty.call(seen, id)) return undefined;
+        seen[id] = true;
+      }
+      return { kind: "set", value: parsed };
+    }
+  };
+}
+
+/** 解码绑定字段的草稿文本为 ID 数组（非法/非数组 JSON 折回空数组——块内渲染
+ * 用的宽容版；保存合法性由 spec.parse 的严格版把守）。
+ * @param {string|undefined} text - 模型暂存文本。
+ * @returns {string[]} 草稿名单。 */
+function decodeBoundDraft(text) {
+  if (typeof text !== "string" || text.trim() === "") return [];
+  var parsed;
+  try { parsed = JSON.parse(text); } catch (error) { return []; }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter(function (id) { return typeof id === "string" && id.length > 0; });
+}
+
+/**
  * 模型装配：10 个数字字段（官方 `settingsNumberField`——七个毫秒预算 +
  * `maxResultChars` + 提问接管两字段）+ 2 个文本字段（官方 `settingsTextField`）+
  * 3 个枚举字段（本包 `enumFieldSpec`——两个语言开关 + 座位）+ 2 个布尔字段
- * （本包 `flagFieldSpec`——静默失败防线总开关 + 提问接管总开关），合计 19 个
- * 字段。字段键集合必须与 `FIELDS` 逐项相等（卡片装配断言钉住）。
+ * （本包 `flagFieldSpec`——静默失败防线总开关 + 提问接管总开关）+ 1 个绑定字段
+ * （本包 `presetBindingFieldSpec`——预设功能绑定），合计 20 个字段。字段键集合
+ * 必须与 `FIELDS` 逐项相等（卡片装配断言钉住）。
  *
  * @returns {object[]} spec 列表（顺序 = FIELDS 顺序）。
  */
@@ -311,7 +372,8 @@ function makeSpecs() {
   var specs = [];
   for (var i = 0; i < FIELDS.length; i += 1) {
     var field = FIELDS[i];
-    if (field.flag === true) specs.push(flagFieldSpec(field.key));
+    if (field.binding === true) specs.push(presetBindingFieldSpec(field.key));
+    else if (field.flag === true) specs.push(flagFieldSpec(field.key));
     else if (field.options !== undefined) specs.push(enumFieldSpec(field.key, field.options));
     else if (isNumericField(field)) specs.push(boundedNumberSpec(field.key));
     else specs.push(P.settingsTextField(field.key));
@@ -465,6 +527,22 @@ var ENUM_CSS = ""
   + "border-radius:8px;background:var(--dsw-alias-state-warn-tertiary);"
   + "font-size:12px;line-height:1.5;color:var(--dsw-alias-state-warn-label)}"
   + ".ats-uninstall-risk svg{flex:none;margin-top:1px}"
+  // 预设绑定块（需求 9.4）：条目行 = 原生 checkbox + 宿主显示名称 + ID 小字
+  //（等宽、辅助辨识同名项）＋状态注记；样式只引用已定义别名
+  //（tools/check-alias-tokens.mjs 守护）。
+  + ".ats-preset-list{display:flex;flex-direction:column;gap:4px;margin:0;padding:0;"
+  + "list-style:none}"
+  + ".ats-preset-item{display:flex;align-items:center;gap:8px;min-width:0;"
+  + "font-size:13px;line-height:1.5;color:var(--dsw-alias-label-primary)}"
+  + ".ats-preset-item input[type='checkbox']{flex:none;margin:0}"
+  + ".ats-preset-item label{display:inline-flex;align-items:center;gap:8px;"
+  + "min-width:0;cursor:pointer}"
+  + ".ats-preset-item label:has(input:disabled){cursor:default}"
+  + ".ats-preset-id{font-family:ui-monospace,Consolas,monospace;font-size:11px;"
+  + "line-height:1.5;color:var(--dsw-alias-label-tertiary);"
+  + "overflow:hidden;text-overflow:ellipsis;white-space:nowrap}"
+  + ".ats-preset-note{flex:none;font-size:12px;line-height:1.5;"
+  + "color:var(--dsw-alias-label-tertiary)}"
 
 if (typeof document !== "undefined" && document.getElementById("dsh-async-tools-enum-style") === null) {
   var styleEl = document.createElement("style");
@@ -643,7 +721,8 @@ function projectCardState(model, scope) {
   for (var i = 0; i < FIELDS.length; i += 1) {
     var field = FIELDS[i];
     state.fields[field.key] = model.field(field.key);
-    if (field.ms === true) {
+    // 毫秒字段的生效值（说明行读数）＋绑定字段的生效名单（绑定块的生效值行）。
+    if (field.ms === true || field.binding === true) {
       state.effective[field.key] = valueLayer[field.key];
     }
   }
@@ -710,19 +789,247 @@ function createCardModel(ctx) {
 }
 
 /**
- * 渲染 `FIELDS` 里的全部字段（设计 §5.5：19 个字段统一走 `FieldShell`——
- * 布尔/枚举/数值/文本四形态由壳分流）；`id = "plugin-config-" + key`；毫秒字段的
- * 说明行带秒数读数。帮助与说明走缺键回退（`resolveCopy`）：缺席/裸键名时
+ * 预设目录模型（需求 9.4.2，独立于设置表单模型）：宿主预设列表的发现、状态与
+ * 快照存储。`load()` 走宿主 `agentPresets.list` 远程调用（`{ok:true,
+ * value:{presets:[…]}}`｜`{ok:false, error:{code, message}}`——宿主成例
+ * `dsh-client-ui-agent-preset` 的 `readRoster` 同一契约）：
+ * - `ok===true` → ready 态、items=`value.presets`（每项含 `{id,name?,
+ *   description?,order?,broken?,isDefault}`，按宿主序）；
+ * - `error.code==='gateway/invocation-unavailable'` → error 态·服务缺席文案；
+ * - 其余 error → error 态·失败原因文案。**任何失败都不是空目录**（需求 9.4.2
+ *   「读取失败不得显示为空列表」）——失败态下列表区退回已保存绑定（value 层）。
+ * - 防重入：loading 中忽略并发 load（照宿主成例 `beginRosterRead`）。
+ *
+ * 服务代理经 `attach(service)` 注入（apply 的动态 inject 接线，见
+ * `createPresetCatalog` 用法处注释）；服务永不到场时，任何一次读取尝试（手动
+ * 刷新或通知触发的 load）都进入可重试的 error 态（服务缺席文案），无人尝试
+ * 则停在 idle 回退渲染——设置卡与其余字段不受影响，已存绑定仍可查看与取消。
+ *
+ * @returns {object} `{store, load, attach}`——store 是快照存储
+ *   （`{status:'idle'|'loading'|'ready'|'error', items:[], error:undefined}`）。
+ */
+function createPresetCatalog() {
+  var listeners = [];
+  // 初始态是 `idle`（尚未发起任何读取）——不是 `loading`：防重入守卫按
+  // `loading` 判在途，初始若也记 `loading`，attach 触发的首读会被守卫吞掉，
+  // 目录永远卡在装载中（T23 诊断钉住的反例）。idle 期间条目区按生效名单回退
+  // 渲染、无状态行；首读发起后才进入真正的 loading。
+  var snapshot = { status: "idle", items: [], error: undefined };
+  var service = null;
+  function publish() {
+    for (var i = 0; i < listeners.length; i += 1) listeners[i]();
+  }
+  function load() {
+    if (snapshot.status === "loading") return;
+    if (service === null || typeof service.list !== "function") {
+      // 服务未注入（inject 回调未运行）＝按服务缺席处理：保持可重试的 error 态，
+      // 不是空目录。
+      snapshot = { status: "error", items: [], error: undefined, unavailable: true };
+      publish();
+      return;
+    }
+    snapshot = { status: "loading", items: [], error: undefined };
+    publish();
+    Promise.resolve().then(function () { return service.list(); }).then(function (result) {
+      if (result !== null && typeof result === "object" && result.ok === true
+        && result.value !== null && typeof result.value === "object"
+        && Array.isArray(result.value.presets)) {
+        snapshot = { status: "ready", items: result.value.presets, error: undefined };
+      } else if (result !== null && typeof result === "object" && result.ok !== true
+        && result.error !== null && typeof result.error === "object") {
+        var unavailable = result.error.code === "gateway/invocation-unavailable";
+        snapshot = {
+          status: "error", items: [],
+          error: unavailable ? undefined : String(result.error.message ?? result.error.code),
+          unavailable: unavailable
+        };
+      } else {
+        snapshot = { status: "error", items: [], error: undefined, malformed: true };
+      }
+      publish();
+    }, function (error) {
+      snapshot = {
+        status: "error", items: [],
+        error: String((error && error.message) || error)
+      };
+      publish();
+    });
+  }
+  return {
+    store: {
+      getSnapshot: function () { return snapshot; },
+      subscribe: function (listener) {
+        listeners.push(listener);
+        return function () {
+          var index = listeners.indexOf(listener);
+          if (index !== -1) listeners.splice(index, 1);
+        };
+      }
+    },
+    load: load,
+    attach: function (remoteService) {
+      service = remoteService;
+      load();
+    }
+  };
+}
+
+/**
+ * 渲染预设功能绑定块（需求 9.4.2，表单末尾的独立块；不经 FieldShell——
+ * 复选框组不是单值控件）。结构：
+ * - 块头：标签（词典键 `boundPresets`）＋带圈问号帮助（`help.boundPresets`，
+ *   开合模式照 `FieldShell`）＋「刷新」按钮（只重读目录，不碰草稿/保存/mutate）；
+ * - 生效值行：当前生效名单（value 层）＋覆盖徽标＋恢复默认按钮（走通用字段
+ *   重置 → unset → schema 默认两预设）；
+ * - 状态行：loading／目录空（与失败区分）／失败（带原因＋重试）；
+ * - 条目行：目录项 = 原生 checkbox（键盘与辅助技术天然可操作）＋宿主显示名称
+ *   （不由本包翻译）＋ID 小字；`broken` 项已绑定可取消、未绑定禁选；已绑定但
+ *   不在目录的 ID 保留条目（注记「未在当前预设列表中发现」）、可取消——目录只
+ *   用于发现与展示，不改变既有绑定；失败态下列表区退回已保存绑定（value 层）。
+ * 草稿存于设置表单模型（JSON 串经 spec 往返），刷新期间未保存勾选原样。
+ *
+ * @param {object} props - `{state, model, t, catalog}`。
+ * @returns {object} React 元素。
+ */
+function PresetBindingBlock(props) {
+  var state = props.state;
+  var model = props.model;
+  var t = props.t;
+  var catalogState = React.useSyncExternalStore(
+    props.catalog.store.subscribe, props.catalog.store.getSnapshot);
+  var fieldState = state.fields.boundPresets;
+  var draft = decodeBoundDraft(fieldState.text);
+  var effective = Array.isArray(state.effective.boundPresets)
+    ? state.effective.boundPresets : [];
+  var helpOpenState = React.useState(false);
+  var helpOpen = helpOpenState[0];
+  var setHelpOpen = helpOpenState[1];
+  var id = "plugin-config-boundPresets";
+  var messageId = id + "-message";
+  var helpId = id + "-help";
+  var label = t("boundPresets");
+  var help = resolveCopy(t, "help.boundPresets");
+  var helpA11y = help === undefined ? undefined
+    : t("help.a11yName").replace("{field}", label);
+  var hint = resolveCopy(t, "hint.boundPresets");
+  var disabled = !state.shell.writable;
+  var actions = model.actions();
+  function toggle(idToToggle, checked) {
+    var next = draft.filter(function (candidate) { return candidate !== idToToggle; });
+    if (checked) next = next.concat([idToToggle]);
+    actions.edit("boundPresets", JSON.stringify(next));
+  }
+  // 展示行集合：ready 态 = 目录项＋草稿里不在目录的已勾选 ID（保留条目）；
+  // error/空目录态 = 生效名单（value 层）里的 ID（失败不显示为空列表）。
+  var rows = [];
+  var listed = {};
+  var i;
+  if (catalogState.status === "ready") {
+    for (i = 0; i < catalogState.items.length; i += 1) {
+      var item = catalogState.items[i];
+      listed[item.id] = true;
+      rows.push({ id: item.id, name: item.name, broken: item.broken === true ? item.broken : undefined, absent: false });
+    }
+    for (i = 0; i < draft.length; i += 1) {
+      if (!listed[draft[i]]) rows.push({ id: draft[i], name: undefined, broken: undefined, absent: true });
+    }
+  } else {
+    for (i = 0; i < effective.length; i += 1) {
+      rows.push({ id: effective[i], name: undefined, broken: undefined, absent: true });
+    }
+  }
+  var draftIndex = {};
+  for (i = 0; i < draft.length; i += 1) draftIndex[draft[i]] = true;
+  return React.createElement("div", { className: "ats-enum-field", key: "boundPresets" },
+    React.createElement("div", { className: "ats-enum-head" },
+      React.createElement("span", { className: "ats-enum-labelGroup" },
+        React.createElement("label", { className: "ats-enum-label", htmlFor: id }, label),
+        help === undefined ? null : React.createElement("button", {
+          type: "button",
+          className: "ats-help-button",
+          "aria-label": helpA11y,
+          "aria-expanded": helpOpen,
+          "aria-controls": helpId,
+          onClick: function () { setHelpOpen(!helpOpen); }
+        }, React.createElement(P.IconQuestionOutlineRegular, { size: 14 }))),
+      React.createElement("span", { className: "ats-enum-badges" },
+        fieldState.overridden === true ? React.createElement(P.Tag, { tone: "neutral" }, t("overridden")) : null,
+        fieldState.overridden === true ? React.createElement("button", {
+          type: "button", className: "ats-enum-reset", disabled: disabled,
+          onClick: function () { actions.resetField("boundPresets"); }
+        }, t("reset")) : null),
+      React.createElement("button", {
+        type: "button", className: "ats-enum-reset",
+        disabled: catalogState.status === "loading",
+        onClick: function () { props.catalog.load(); }
+      }, t("preset.refresh"))),
+    // 生效值行（value 层的事实，与草稿分离——未保存的勾选不冒充生效）。
+    React.createElement("p", { id: messageId, className: "ats-enum-message" },
+      (hint !== undefined ? hint + "\n" : "")
+      + (effective.length > 0 ? effective.join(", ") : t("preset.noneBound"))),
+    catalogState.status === "loading"
+      ? React.createElement("p", { className: "ats-enum-message" }, t("preset.loading"))
+      : catalogState.status === "ready" && rows.length === 0
+      ? React.createElement("p", { className: "ats-enum-message" }, t("preset.empty"))
+      : catalogState.status === "error"
+      ? React.createElement("p", { className: "ats-enum-message", "aria-invalid": true },
+        catalogState.unavailable === true || catalogState.malformed === true
+          ? t("preset.unavailable")
+          : t("preset.failed").replace("{reason}", catalogState.error === undefined ? "" : catalogState.error),
+        " ",
+        React.createElement("button", {
+          type: "button", className: "ats-enum-reset",
+          onClick: function () { props.catalog.load(); }
+        }, t("preset.retry")))
+      : null,
+    rows.length > 0 ? React.createElement("ul", {
+      className: "ats-preset-list", role: "group", "aria-label": t("preset.a11yList")
+    }, rows.map(function (row) {
+      var checked = draftIndex[row.id] === true;
+      var rowDisabled = disabled || (row.broken === true && !checked);
+      return React.createElement("li", { key: row.id, className: "ats-preset-item" },
+        React.createElement("input", {
+          type: "checkbox",
+          id: id + "-" + row.id,
+          checked: checked,
+          disabled: rowDisabled,
+          onChange: function (event) { toggle(row.id, event.target.checked); }
+        }),
+        React.createElement("label", { htmlFor: id + "-" + row.id },
+          row.name !== undefined ? row.name : row.id,
+          row.name !== undefined && row.name !== row.id
+            ? React.createElement("span", { className: "ats-preset-id" }, row.id) : null),
+        row.absent === true
+          ? React.createElement("span", { className: "ats-preset-note" }, t("preset.absent"))
+          : row.broken === true
+          ? React.createElement("span", { className: "ats-preset-note" }, t("preset.broken"))
+          : null);
+    })) : null,
+    helpOpen && help !== undefined ? React.createElement("div", {
+      id: helpId,
+      role: "region",
+      "aria-label": helpA11y,
+      className: "ats-help-region"
+    }, String(help).split("\n\n").map(function (paragraph, index) {
+      return React.createElement("p", { key: index }, paragraph);
+    })) : null);
+}
+
+/**
+ * 渲染 `FIELDS` 里的全部**单值字段**（设计 §5.5：19 个字段统一走 `FieldShell`
+ * ——布尔/枚举/数值/文本四形态由壳分流）；绑定字段（`binding: true`）不走壳，
+ * 由 `PresetBindingBlock` 在表单末尾渲染。`id = "plugin-config-" + key`；毫秒
+ * 字段的说明行带秒数读数。帮助与说明走缺键回退（`resolveCopy`）：缺席/裸键名时
  * 按钮/说明行退场。
  *
  * @param {object} state - `projectCardState` 的投影。
  * @param {object} model - 模型实例（动作从这里取）。
  * @param {Function} t - 文案函数。
- * @returns {object[]} 字段元素数组（顺序 = FIELDS）。
+ * @returns {object[]} 字段元素数组（顺序 = FIELDS，绑定字段除外）。
  */
 function makeFieldNodes(state, model, t) {
   var actions = model.actions();
-  return FIELDS.map(function (field) {
+  return FIELDS.filter(function (field) { return field.binding !== true; }).map(function (field) {
     var fieldState = state.fields[field.key];
     var id = "plugin-config-" + field.key;
     var hint = composeHint(t, field, state.effective[field.key], fieldState.text);
@@ -821,9 +1128,10 @@ function makeUninstallRiskNode(t) {
  * `useSyncExternalStore(card.store.subscribe, card.store.getSnapshot)`。
  * `SettingsForm` 的 `onDiscard` 接模型的 `discard`——卸载丢弃草稿由它承担。
  * @param {object} ctx - 客户端上下文（`configForms` 由 inject 声明）。
+ * @param {object} catalog - 预设目录模型（`createPresetCatalog` 产物）。
  * @returns {Function} 槽位组件。
  */
-function makeBundleCard(ctx) {
+function makeBundleCard(ctx, catalog) {
   return function AsyncToolsBundleCard(props) {
     var modelRef = React.useRef(null);
     if (modelRef.current === null) modelRef.current = createCardModel(ctx);
@@ -852,7 +1160,11 @@ function makeBundleCard(ctx) {
       state: { ...state.shell, invalid: state.shell.invalid === true || pairViolated(state) },
       onSave: actions.save,
       onDiscard: actions.discard
-    }, [makeUninstallRiskNode(t)].concat(makeFieldNodes(state, card.model, t)));
+    }, [makeUninstallRiskNode(t)].concat(makeFieldNodes(state, card.model, t), [
+      React.createElement(PresetBindingBlock, {
+        key: "boundPresets", state: state, model: card.model, t: t, catalog: catalog
+      })
+    ]));
   };
 }
 
@@ -910,10 +1222,10 @@ var DICTIONARIES = {
     "hint.subagentProvider": "async_agent 创建子代理使用的后端服务。",
     "hint.uiLang": "控制本包设置表单、字段帮助与待答界面的语言；跟随宿主语言或显式选择中文／英文。",
     "hint.agentLang": "控制本包工具描述、参数说明、提示、错误与执行纪律文案的语言。",
-    "hint.silentFailureGuard": "“静默失败”指命令可能未执行、却没有明显报错。开启后，出现这种情况时给出诊断提醒和检查建议；仅本包两预设生效，默认关。",
+    "hint.silentFailureGuard": "“静默失败”指命令可能未执行、却没有明显报错。开启后，出现这种情况时给出诊断提醒和检查建议；作用范围由「适用预设」名单决定，默认关。",
     "hint.workflowProgressLog": "默认关：编排结果滤除各阶段进度行，只保留结论，Agent 看到的结果更短。开启后进度行进入 Agent 收到的结果正文；界面与日志中的原始记录不受影响。",
     "hint.fullCommandEcho": "默认关：Agent 在作业列表里看到进度说明。开启后向 Agent 回显完整命令原文；界面与日志中的原始记录不受影响。",
-    "hint.askTakeover": "开启后由待答面板处理本包两预设根 Agent 的普通提问，关闭时使用宿主原生流程；到期后 Agent 继续处理任务，用户仍可稍后作答。",
+    "hint.askTakeover": "开启后由待答面板处理「适用预设」名单内根 Agent 的普通提问，关闭时使用宿主原生流程；到期后 Agent 继续处理任务，用户仍可稍后作答。",
     "hint.askTimeoutMs": "从接收一批提问起计时的初始窗口，同批多题共享期限。到期保留已答内容，Agent 继续处理任务，用户仍可稍后作答；新值用于后续批次。",
     "hint.askExtendMs": "待答面板“增加等待时间”每点击一次，给该会话当时仍在等待的批次各追加的时长。",
     "hint.askUiSeat": "侧边栏底栏徽标显示未处理数，点击展开；右下角浮窗直接显示问题。",
@@ -934,7 +1246,7 @@ var DICTIONARIES = {
     "help.workflowProgressLog": "配置键：workflowProgressLog（布尔）。\n\n默认关：编排作业的结果正文先滤除各阶段进度行，再进入内容预算，Agent 看到的结果更短。开启后进度行保留在 Agent 收到的结果正文里——长编排的结果更长，可能更早触发截断；界面与日志中的原始记录不受本开关影响。",
     "help.fullCommandEcho": "配置键：fullCommandEcho（布尔）。\n\n默认关：命令作业在作业列表里以进度说明作为标签呈现给 Agent。开启后向 Agent 回显完整命令原文，便于核对哪条命令对应哪个作业；界面与日志中的原始记录不受本开关影响。",
     "help.askTakeover": "配置键：askTakeover（布尔）。\n\n迟到作答经通知送达；24 小时只是惰性清扫阈值——仅当下一个提问批次被接管时队列才做一次清扫，没有新批时记录可保留更久、仍可补答；被清扫、所属 Agent 无法接收或投递失败的记录不会送达。未送达时，直接出路是到题目所属会话直接回复。",
-    "help.askTimeoutMs": "配置键：askTimeoutMs（数值，毫秒）。\n\n从接收一批提问起计时，同批多题共享期限；到期时未答的题按超时处理，Agent 继续处理任务。面板在到期后仍接受作答；迟到作答若所属会话本轮已结束，会直接回复到该会话，不进队列。",
+    "help.askTimeoutMs": "配置键：askTimeoutMs（数值，毫秒）。\n\n从接收一批提问起计时，同批多题共享期限；到期时未答的题按超时处理，Agent 继续处理任务。面板在到期后仍接受作答；迟到作答会送达所属会话：会话空闲且没有未领取的本插件通知时直接开启新回合送达；会话正在处理或已有未领取通知时并入下一次消息领取，不立即开启回合。",
     "help.askExtendMs": "配置键：askExtendMs（数值，毫秒）。\n\n待答面板“增加等待时间”每点击一次，给该会话当时未到期的批次各增加此时长，在原截止点上叠加；新批次按自己的初始期限计时。",
     "help.askUiSeat": "配置键：askUiSeat（枚举：sidebar / overlay）。\n\n两种显示方式复用同一套题目交互，切换显示方式不改提问、计时或答案交付；徽标计数在全部处理后消隐。",
     "opt.askUiSeat.sidebar": "侧边栏底栏徽标（默认）",
@@ -945,7 +1257,7 @@ var DICTIONARIES = {
     "ask.ignore": "不答",
     "ask.customAnswer": "自定义回答",
     "ask.customPlaceholder": "输入自定义回答",
-    "ask.needAnswer": "请选择一项答案或填写自定义回答",
+    "ask.needAnswer": "请选择答案（可多选时选多项）或填写自定义回答",
     "ask.needCustom": "自定义回答为空：填写内容或改选其他答案",
     "ask.jump": "打开会话",
     "ask.expired": "已超时，仍可作答",
@@ -956,7 +1268,7 @@ var DICTIONARIES = {
     // 重试通道，允许手动消除。
     "ask.callFailed": "提交后没有收到宿主确认——可能已送达，也可能没有；稍候面板自动刷新，若仍显示未作答可再提交一次。",
     "ask.answerRejected": "宿主明确拒绝：本次提交没有生效",
-    "ask.undelivered": "未送达：题目记录已不在（超过保留期或批次已结束），本次提交未被接受；如仍需作答，请在所属会话中直接回复。",
+    "ask.undelivered": "未送达：题目记录已不在，本次提交未被接受（具体原因无法从回执确认）；如仍需作答，请在所属会话中直接回复。",
     "ask.stateFailed": "待答状态读取失败；面板会自动重试。",
     "ask.extendFailed": "延长请求没有收到宿主确认——可能已生效，也可能没有；按面板刷新后的剩余时间决定是否再点（每次点击都会累加）。",
     "ask.extendRejected": "宿主已收到延长请求但明确拒绝——本次加时没有生效；稍候面板自动刷新。",
@@ -970,7 +1282,22 @@ var DICTIONARIES = {
     "opt.uiLang.zh": "中文",
     "opt.uiLang.en": "English",
     "opt.agentLang.en": "English（默认）",
-    "opt.agentLang.zh": "中文"
+    "opt.agentLang.zh": "中文",
+    // 预设功能绑定（需求 9.4）：标签/hint/help 三前缀随 FIELDS 入表受 T21
+    // 在场断言守护；preset.* 系列两语成对由词典键集相等断言守护。
+    "boundPresets": "适用预设",
+    "hint.boundPresets": "选中后向该预设的会话注入异步执行纪律；静默失败提示与待答面板提问处理仍分别受各自开关控制。按会话当前实际预设匹配。",
+    "help.boundPresets": "配置键：boundPresets（预设 ID 数组）。\n\n选中预设后：该预设下的会话组稿注入本包执行纪律段；静默失败提示（silentFailureGuard）与提问接管（askTakeover）仍分别受各自开关控制——名单只决定作用范围，不代替开关。判定按会话当前实际预设匹配，同一工具被多个预设复用时未选中预设的会话不受影响。\n\n默认绑定本包两份预设（dsh-async / dsh-async-create）；保存空数组＝解除全部绑定；已绑定但不在当前预设列表中的条目保留显示，可取消。列表来自宿主预设注册表，「刷新」重读；读取失败时显示已保存绑定，可取消。",
+    "preset.refresh": "刷新",
+    "preset.retry": "重试",
+    "preset.loading": "正在读取预设列表…",
+    "preset.empty": "宿主没有已定义的预设可供绑定",
+    "preset.failed": "预设列表读取失败：{reason}",
+    "preset.unavailable": "预设服务不可用；显示已保存的绑定，可取消",
+    "preset.noneBound": "当前未绑定任何预设",
+    "preset.broken": "该预设装载失败",
+    "preset.absent": "未在当前预设列表中发现",
+    "preset.a11yList": "适用预设列表"
   },
   en: {
     title: "Async tools",
@@ -1023,10 +1350,10 @@ var DICTIONARIES = {
     "hint.subagentProvider": "Backend service async_agent uses to create subagents.",
     "hint.uiLang": "Controls the language of this package's settings form, field help, and pending panel; follows the host language or an explicit Chinese/English choice.",
     "hint.agentLang": "Controls the language of this package's tool descriptions, parameter notes, notices, errors, and execution discipline.",
-    "hint.silentFailureGuard": "\"Silent failure\" means a command may not have run, yet no error is visible. When on, such cases get a diagnostic reminder and checking advice; it applies only to this package's two presets and is off by default.",
+    "hint.silentFailureGuard": "\"Silent failure\" means a command may not have run, yet no error is visible. When on, such cases get a diagnostic reminder and checking advice; its scope follows the applicable-presets list, and it is off by default.",
     "hint.workflowProgressLog": "Off by default: orchestration results filter out per-phase progress lines and keep conclusions only, so results the Agent sees are shorter. When on, progress lines enter the result bodies the Agent receives; raw records in the interface and logs are unaffected.",
     "hint.fullCommandEcho": "Off by default: the Agent sees the progress description in job lists. When on, the full command text is echoed to the Agent; raw records in the interface and logs are unaffected.",
-    "hint.askTakeover": "When on, the pending panel handles plain questions from this package's two presets' root agents; when off, the host's native flow is used. After expiry the Agent continues the task, and the user can still answer later.",
+    "hint.askTakeover": "When on, the pending panel handles plain questions from root agents under the applicable-presets list; when off, the host's native flow is used. After expiry the Agent continues the task, and the user can still answer later.",
     "hint.askTimeoutMs": "Initial window counted from receiving a batch of questions; all questions in a batch share the deadline. On expiry, answered content is kept, the Agent continues the task, and the user can still answer later; a new value applies to later batches.",
     "hint.askExtendMs": "Wait time each \"Extend wait\" click in the pending panel adds to each batch of that session still waiting at that moment.",
     "hint.askUiSeat": "The sidebar footer badge shows the open count and expands on click; the bottom-right overlay shows the questions directly.",
@@ -1047,7 +1374,7 @@ var DICTIONARIES = {
     "help.workflowProgressLog": "Config key: workflowProgressLog (boolean).\n\nOff by default: orchestration job result bodies filter out per-phase progress lines before entering the content budget, so results the Agent sees are shorter. When on, progress lines stay in the result bodies the Agent receives — long orchestrations produce longer results and may hit truncation earlier; raw records in the interface and logs are unaffected by this switch.",
     "help.fullCommandEcho": "Config key: fullCommandEcho (boolean).\n\nOff by default: command jobs use the progress description as their job-list label shown to the Agent. When on, the full command text is echoed to the Agent, making it easier to match jobs to commands; raw records in the interface and logs are unaffected by this switch.",
     "help.askTakeover": "Config key: askTakeover (boolean).\n\nLate answers are delivered as notices; 24 hours is only a lazy sweep threshold — the queue is swept just once when the next question batch is taken over, and with no new batch the records can live longer and can still be answered; a swept record, an agent that can no longer receive it, or a failed delivery will not arrive. When a record will not arrive, the direct fallback is to reply directly in the session that question belongs to.",
-    "help.askTimeoutMs": "Config key: askTimeoutMs (number, ms).\n\nCounted from receiving a batch of questions; all questions in a batch share the deadline; unanswered questions are treated as timed out and the Agent continues the task. The panel keeps accepting answers after expiry; when the owning session's turn has already ended, a late answer is replied directly into that session instead of entering the queue.",
+    "help.askTimeoutMs": "Config key: askTimeoutMs (number, ms).\n\nCounted from receiving a batch of questions; all questions in a batch share the deadline; unanswered questions are treated as timed out and the Agent continues the task. The panel keeps accepting answers after expiry; a late answer reaches the owning session: when the session is idle with no unclaimed notices from this plugin, it opens a new turn and is delivered directly; while the session is processing or already has unclaimed notices, it joins the next message claim instead of opening a turn immediately.",
     "help.askExtendMs": "Config key: askExtendMs (number, ms).\n\nEach \"Extend wait\" click in the pending panel adds this duration to each batch of that session not yet expired at that moment, stacked on the original deadline; new batches run on their own initial deadlines.",
     "help.askUiSeat": "Config key: askUiSeat (enum: sidebar / overlay).\n\nBoth seats share the same question interaction — switching the display does not change questioning, timing, or answer delivery; the badge hides once everything is handled.",
     "opt.askUiSeat.sidebar": "Sidebar footer badge (default)",
@@ -1058,7 +1385,7 @@ var DICTIONARIES = {
     "ask.ignore": "Skip",
     "ask.customAnswer": "Custom answer",
     "ask.customPlaceholder": "Type a custom answer",
-    "ask.needAnswer": "Choose an option or type a custom answer to submit",
+    "ask.needAnswer": "Choose answer(s) — several when the question allows — or type a custom answer",
     "ask.needCustom": "The custom answer is empty: fill it in or choose another answer",
     "ask.jump": "Open session",
     "ask.expired": "Timed out; still answerable",
@@ -1069,7 +1396,7 @@ var DICTIONARIES = {
     // 重试通道。（与 zh 词典区同款说明：文案本身是英文界面文本，注释是中文。）
     "ask.callFailed": "No confirmation was received from the host after submitting — it may or may not have arrived; the panel refreshes automatically, and if it still shows unanswered, you can submit again.",
     "ask.answerRejected": "The host explicitly refused this submission — it did not take effect",
-    "ask.undelivered": "Not delivered: the question record is gone (past its retention or the batch has ended), so this submission was not accepted; if you still want to answer, reply directly in the session.",
+    "ask.undelivered": "Not delivered: the question record is gone, so this submission was not accepted (the receipt cannot confirm why); if you still want to answer, reply directly in the session.",
     "ask.stateFailed": "Failed to fetch the pending-questions state; the panel retries automatically.",
     "ask.extendFailed": "No confirmation was received for the extend request — it may or may not have taken effect; decide whether to click again based on the remaining time shown after the panel refreshes (each click adds up).",
     "ask.extendRejected": "The host received the extend request but explicitly refused it — this extension did not take effect; the panel refreshes automatically shortly.",
@@ -1083,7 +1410,23 @@ var DICTIONARIES = {
     "opt.uiLang.zh": "中文",
     "opt.uiLang.en": "English",
     "opt.agentLang.en": "English (default)",
-    "opt.agentLang.zh": "中文"
+    "opt.agentLang.zh": "中文",
+    // Preset binding (req. 9.4): label/hint/help prefixes guarded by the T21
+    // presence assertion via FIELDS; the preset.* series is guarded by the
+    // dictionary key-set equality assertion (zh/en must stay paired).
+    "boundPresets": "Applicable presets",
+    "hint.boundPresets": "When checked, sessions under that preset get the async execution discipline injected; the silent-failure hint and pending-panel question handling still answer to their own switches. Matching follows each session's current effective preset.",
+    "help.boundPresets": "Config key: boundPresets (an array of preset ids).\n\nWhen a preset is checked: sessions under it get this package's execution-discipline section in their composed prompts; the silent-failure hint (silentFailureGuard) and question takeover (askTakeover) still answer to their own switches — the list decides the scope only, it does not replace the switches. Matching follows the session's current effective preset; when the same tool is reused by several presets, sessions on unchecked presets are unaffected.\n\nThe default binds this package's two presets (dsh-async / dsh-async-create); saving an empty array unbinds everything; ids bound but absent from the current preset list stay listed and can be unchecked. The list comes from the host preset registry and reloads via \"Refresh\"; on a read failure the saved bindings are shown and can be unchecked.",
+    "preset.refresh": "Refresh",
+    "preset.retry": "Retry",
+    "preset.loading": "Reading the preset list…",
+    "preset.empty": "The host has no defined presets to bind",
+    "preset.failed": "Preset list read failed: {reason}",
+    "preset.unavailable": "The preset service is unavailable; saved bindings are shown and can be unchecked",
+    "preset.noneBound": "No presets are currently bound",
+    "preset.broken": "This preset failed to load",
+    "preset.absent": "Not found in the current preset list",
+    "preset.a11yList": "Applicable preset list"
   }
 };
 
@@ -1918,6 +2261,49 @@ function apply(ctx) {
   ctx.effect(function () {
     return ctx.locale.register(NS, DICTIONARIES);
   }, "async-tools: dictionaries");
+  // ── 预设功能绑定（需求 9.4.2）：目录模型 + 动态注入 + 变更通知 ────────────
+  // inject 清单**不加** `remote.agentPresets`——硬依赖会让服务缺席的部署整卡
+  // 不装。改为设置卡 whileServed 条件内**动态注入**（与 ask 座位同一成例）：
+  // 服务在场 → catalog.attach 触发首读；永不到场 → 停在 error 态（服务缺席
+  // 文案＋重试），设置卡与其余字段不受影响，已存绑定仍可查看与取消。
+  var presetCatalog = createPresetCatalog();
+  ctx.effect(function () {
+    return ctx.configForms.whileServed([ENTRY], function () {
+      var inner = null;
+      var pending = ctx.inject(["remote.agentPresets"], function (scope) {
+        presetCatalog.attach(scope.remote.agentPresets);
+      });
+      if (pending && typeof pending.then === "function") {
+        pending.then(function (dispose) {
+          inner = typeof dispose === "function" ? dispose : null;
+        }, function () {});
+      } else if (typeof pending === "function") {
+        inner = pending;
+      }
+      return function () {
+        if (inner !== null) inner();
+        inner = null;
+      };
+    });
+  }, "async-tools: preset catalog service");
+  // 变更通知（设计 §5.5，宿主成例 dsh-client-ui-agent-preset 的 settings
+  // refresh）：宿主无专门的预设增删事件，可用通知 = `settings/document-updated`
+  //（命名空间 `agent-preset-registry`——预设声明的增删改走设置文档）＋
+  // `connection/reset`；纯内存态变化不被通知覆盖的缺口由绑定块的手动刷新按钮
+  // 承接（需求 9.4.2「通过宿主可用的变更通知更新列表」按此口径满足）。
+  ctx.effect(function () {
+    var disposers = [
+      ctx.remote.$on("settings/document-updated", function (ns) {
+        if (ns !== "agent-preset-registry") return;
+        presetCatalog.load();
+      }),
+      ctx.on("connection/reset", function () { presetCatalog.load(); })
+    ];
+    return function () {
+      for (var i = 0; i < disposers.length; i += 1) disposers[i]();
+    };
+  }, "async-tools: preset catalog notices");
+
   // 宿主行在服务这个命名空间之前不注册卡片（部署无痕语义）。
   // keyed 槽：register options 必须带 `key`（缺 key 抛错）；bundle 槽的键 = **包名**。
   ctx.effect(function () {
@@ -1927,7 +2313,7 @@ function apply(ctx) {
           name: "plugins.bundle.config",
           key: PACKAGE_NAME,
           locale: NS
-        }, makeBundleCard(ctx));
+        }, makeBundleCard(ctx, presetCatalog));
       });
     });
   }, "async-tools: plugins.bundle.config section");
@@ -2034,12 +2420,16 @@ module.exports = {
   uiLangOf: uiLangOf,
   enumFieldSpec: enumFieldSpec,
   flagFieldSpec: flagFieldSpec,
+  presetBindingFieldSpec: presetBindingFieldSpec,
+  decodeBoundDraft: decodeBoundDraft,
   makeSpecs: makeSpecs,
   FieldShell: FieldShell,
   resolveCopy: resolveCopy,
   createCardModel: createCardModel,
   makeSettingsScopeView: makeSettingsScopeView,
   settingsLayerOf: settingsLayerOf,
+  createPresetCatalog: createPresetCatalog,
+  PresetBindingBlock: PresetBindingBlock,
   createAskModel: createAskModel,
   AskList: AskList,
   AskItem: AskItem,

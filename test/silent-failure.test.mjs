@@ -32,7 +32,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
-import { BUDGET_FIELD_KEYS, LANG_FIELD_KEYS, FLAG_FIELD_KEYS, DISPLAY_FIELD_KEYS, ASK_FIELD_KEYS, resolveConfig } from '../lib/config.js';
+import { BUDGET_FIELD_KEYS, LANG_FIELD_KEYS, FLAG_FIELD_KEYS, DISPLAY_FIELD_KEYS, ASK_FIELD_KEYS, PRESET_FIELD_KEYS, resolveConfig } from '../lib/config.js';
 import { DENIAL_ANCHOR_PAIRS, hasCaptureForm, hasDenialAnchors, silentFailureNotes } from '../lib/silent-failure.js';
 import { resetGuardOwnershipEvidence } from '../lib/descriptions.js';
 import { t } from '../lib/text.js';
@@ -66,9 +66,10 @@ function confinedCtx(presetOf = 'dsh-async') {
   f.ctx.shell.sandboxMode = 'workspace-write';
   // lib/jobs.js 的 execute 走 ctx.get('sandboxPolicy') 取放行策略（escalation.test.mjs:52
   // 同款桩）：缺了会得到 `TypeError: ctx.get is not a function`，断言本体根本执行不到。
-  // F3 范围判定（设计 §6.2（机制）／需求 §6.3（范围））：结果诊断只对归属本包预设的调用主体生效——
-  // 桩按 inOwnPreset 的读取路径（sessions.get → sessionProjections.stateOf('agentPreset')）
-  // 把调用主体映射到指定预设（默认 dsh-async；范围负面对照传别的）。
+  // F3 范围判定（需求 §6.3（范围）＋9.4（名单））：结果诊断只对「会话实际预设
+  // ∈ 绑定名单」的调用主体生效——桩按 guardPresetFor 的读取路径（sessions.get →
+  // sessionProjections.stateOf('agentPreset')）把调用主体映射到指定预设
+  //（默认 dsh-async，在默认名单内；范围负面对照传别的预设＋收窄名单）。
   f.ctx.get = (key) => {
     if (key === 'sandboxPolicy') {
       return { resolve: () => ({ mode: 'workspace-write' }) };
@@ -396,21 +397,23 @@ hostTest('F3（范围判定·后台）：结算时刻主体不在本包预设 �
   assert.equal(bareView.detail.includes('Silent-failure guard:'), false, '服务缺席 ⇒ 范围不可判定 ⇒ 不产生诊断（失效安全＝关）');
 });
 
-hostTest('R28 判据11：b 段五门组合矩阵 + 描述就地增删（不复制 c 的纪律文本）', async () => {
+hostTest('R28 判据11：b 段四门组合矩阵 + 描述就地增删（不复制 c 的纪律文本；PRESET-BIND-01 后按名单）', async () => {
   const warnAnchor = /can die silently at process creation/;
-  // 归属前提（设计 §6.2）：警示段是**四门**——执行器在场 × 开关开 × 行归属声明
-  // 属本包两预设 × 已核得「会话实际预设与声明值一致」的运行时证据。证据是
-  // 模块级单例，先清空隔离（本用例自带执行入口核得证据的正反路径）。
+  // 归属前提（需求 §6.3＋9.4）：警示段是**三门**——执行器在场 × 开关开 ×
+  // 已核得「会话实际预设 ∈ 当场绑定名单」的运行时证据（不再读 owningPreset：
+  // 自建预设无须补改行声明）。证据是模块级单例，先清空隔离（本用例自带
+  // 执行入口核得证据的正反路径）。
   resetGuardOwnershipEvidence();
-  const owned = { toolName: 'async_run', silentFailureGuard: true, owningPreset: 'dsh-async' };
+  const owned = { toolName: 'async_run', silentFailureGuard: true };
   const on = confinedCtx();
   assert.doesNotMatch(
     createRunTool(on.ctx, resolveConfig({ ...owned })).description,
-    warnAnchor, '有执行器 + 开 + 归属声明，但证据尚未核得（装载后未执行）⇒ 不拼');
+    warnAnchor, '有执行器 + 开 + 会话预设（dsh-async）在默认名单，但证据尚未核得（装载后未执行）⇒ 不拼');
 
-  // 执行入口核得一致（confinedCtx 会话预设 dsh-async = 声明值）→ 证据按**本行
+  // 执行入口核得（confinedCtx 会话预设 dsh-async ∈ 默认名单）→ 证据按**本行
   // 令牌**登记，就地重建描述 → 警示在场。注意用原始工具对象断言：就地重建写的
   // 是 createRunTool 闭包内的那个对象，checkedTool 的浅拷贝看不到后续改写。
+  //（P8：无 owningPreset 声明的自建行同样核得——名单匹配取代声明比对。）
   const quiet = fakeProc({ text: 'ok', exitCode: 0, status: 'running', autoResolve: false });
   on.installShellExecute(() => Promise.resolve(quiet.proc));
   const live = { ...resolveConfig({ ...owned }) };
@@ -420,15 +423,14 @@ hostTest('R28 判据11：b 段五门组合矩阵 + 描述就地增删（不复�
   quiet.settle();
   const settled = await pending;
   assert.equal(settled.status, 'completed');
-  assert.match(tool.description, warnAnchor, '执行核得一致 ⇒ 证据登记 + 描述就地重建（警示在场）');
-  // 证据按行隔离：同声明值的**新行**是新的行令牌，未执行核得 ⇒ 不拼——
-  // 他行（含复制同一声明值的自建行）核得的证据对本行不可见（A-F13 反例的
-  // 机制方面：按声明值全局共享会让全行刷新把警示泄漏到未核得的行）。
+  assert.match(tool.description, warnAnchor, '执行核得 ⇒ 证据登记 + 描述就地重建（警示在场；无须行声明）');
+  // 证据按行隔离：**新行**是新的行令牌，未执行核得 ⇒ 不拼——他行核得的证据对
+  // 本行不可见（按预设全局共享会让全行刷新把警示泄漏到未核得的行）。
   assert.doesNotMatch(
     createRunTool(on.ctx, resolveConfig({ ...owned })).description,
-    warnAnchor, '证据按行隔离 ⇒ 同声明值的新行（未执行核得）不拼');
+    warnAnchor, '证据按行隔离 ⇒ 新行（未执行核得）不拼');
 
-  // 开关关 / 无执行器 / 无归属声明 ⇒ 不拼（本行证据缺席或开关关都拦；
+  // 开关关 / 无执行器 ⇒ 不拼（本行证据缺席或开关关都拦；
   // 「已核得的行翻关 ⇒ 消失」由下文 flip 小节锁）。
   const off = confinedCtx();
   assert.doesNotMatch(
@@ -438,11 +440,7 @@ hostTest('R28 判据11：b 段五门组合矩阵 + 描述就地增删（不复�
   plainOn.installShellExecute(() => Promise.resolve(fakeProc({ text: 'ok' }).proc));
   assert.doesNotMatch(
     createRunTool(plainOn.ctx, resolveConfig({ ...owned })).description,
-    warnAnchor, '无执行器 + 开 + 归属 ⇒ 不拼（不给走不通的指引）');
-  const custom = confinedCtx();
-  assert.doesNotMatch(
-    createRunTool(custom.ctx, resolveConfig({ toolName: 'async_run', silentFailureGuard: true })).description,
-    warnAnchor, '无归属声明（自定义行）⇒ 不拼（设计 §6.2）');
+    warnAnchor, '无执行器 + 开 ⇒ 不拼（不给走不通的指引）');
   // b 段不得复制 c 的纪律文本（需求"不复制 c"条款）。
   assert.doesNotMatch(
     tool.description,
@@ -466,24 +464,28 @@ hostTest('R28 判据11：b 段五门组合矩阵 + 描述就地增删（不复�
   current.silentFailureGuard = true;
   refreshToolDescriptions(flipTool, flipView);
   assert.match(flipTool.description, warnAnchor, '翻转开 + refresh ⇒ 警示段出现（不重启）');
-  // 归属翻转：owningPreset 非本包预设时同样消失（行身份是装载期常量，这里只
-  // 锁视图传播——视图层现读，不缓存归属判定）。
-  current.owningPreset = undefined;
+  // 名单翻转（P11 取消绑定）：证据 dsh-async 已核得，但名单收窄到不含它 ⇒
+  // 撤段（名单活读——owningPreset 不再参与判定）。
+  current.boundPresets = ['dsh-async-create'];
   refreshToolDescriptions(flipTool, flipView);
-  assert.doesNotMatch(flipTool.description, warnAnchor, '归属不在本包两预设 ⇒ 警示段消失');
+  assert.doesNotMatch(flipTool.description, warnAnchor, '名单移除已核得预设 ⇒ 警示段消失');
+  // 名单补回 ⇒ 再现（同一行证据仍在，名单决定在场）。
+  current.boundPresets = ['dsh-async'];
+  refreshToolDescriptions(flipTool, flipView);
+  assert.match(flipTool.description, warnAnchor, '名单补回 ⇒ 警示段再现（证据未丢，名单活读）');
   // 复位证据：不得泄漏到其它用例（test:inproc 下共享单例）。
   resetGuardOwnershipEvidence();
 });
 
-hostTest('F3b（§6.2 归属比对）：会话预设≠行声明值 ⇒ 警示与诊断都不产生；全等 ⇒ 产生；读取失败 ⇒ 不产生', async () => {
+hostTest('F3b（§6.2 归属比对→PRESET-BIND-01 名单匹配）：会话预设∉名单 ⇒ 警示与诊断都不产生；∈名单 ⇒ 产生；读取失败 ⇒ 不产生', async () => {
   const warnAnchor = /can die silently at process creation/;
   const quiet = fakeProc({ text: '', exitCode: 1, status: 'running', autoResolve: false });
   quiet.proc.sandbox = { mode: 'workspace-write' };
-  const owned = { toolName: 'async_run', silentFailureGuard: true, owningPreset: 'dsh-async' };
+  const owned = { toolName: 'async_run', silentFailureGuard: true, boundPresets: ['dsh-async'] };
   resetGuardOwnershipEvidence();
 
-  // ① 自建行复制归属声明（dsh-async）+ 开关开，但会话实际预设是
-  //    dsh-async-create（≠声明值）——描述警示与结果诊断都不出现。
+  // ① 会话实际预设 dsh-async-create ∉ 名单（名单只收 dsh-async）——描述警示
+  //    与结果诊断都不出现（P9 隔离：未选预设的会话不产生绑定内容）。
   //    断言用**执行行自身**的描述对象（就地重建写的是闭包内对象）。
   const mismatch = confinedCtx('dsh-async-create');
   mismatch.installShellExecute(() => Promise.resolve(quiet.proc));
@@ -492,11 +494,12 @@ hostTest('F3b（§6.2 归属比对）：会话预设≠行声明值 ⇒ 警示�
     .execute({ command: 'node x.mjs 2>&1', description: 'run node' }, exec);
   quiet.settle();
   const r1 = await pending1;
-  assert.equal('note' in r1, false, '会话预设≠声明值 ⇒ 前台诊断不拼（键都不出现）');
+  assert.equal('note' in r1, false, '会话预设∉名单 ⇒ 前台诊断不拼（键都不出现）');
   assert.doesNotMatch(mismatchTool.description,
-    warnAnchor, '会话预设≠声明值 ⇒ 无运行时证据 ⇒ 描述警示不拼');
+    warnAnchor, '会话预设∉名单 ⇒ 无运行时证据 ⇒ 描述警示不拼');
 
-  // ② 会话实际预设 = 行声明值（dsh-async）⇒ 诊断产生、执行核得证据后警示在场。
+  // ② 会话实际预设 dsh-async ∈ 名单 ⇒ 诊断产生、执行核得证据后警示在场
+  //    （P8：无 owningPreset 声明同样生效）。
   const match = confinedCtx('dsh-async');
   const quiet2 = fakeProc({ text: '', exitCode: 1, status: 'running', autoResolve: false });
   quiet2.proc.sandbox = { mode: 'workspace-write' };
@@ -506,8 +509,8 @@ hostTest('F3b（§6.2 归属比对）：会话预设≠行声明值 ⇒ 警示�
     .execute({ command: 'node x.mjs 2>&1', description: 'run node' }, exec);
   quiet2.settle();
   const r2 = await pending2;
-  assert.match(r2.note, /Silent-failure guard:/, '会话预设=声明值 ⇒ 前台诊断在场');
-  assert.match(matchTool.description, warnAnchor, '本行核得证据 ⇒ 本行描述警示在场');
+  assert.match(r2.note, /Silent-failure guard:/, '会话预设∈名单 ⇒ 前台诊断在场');
+  assert.match(matchTool.description, warnAnchor, '本行核得证据 ⇒ 本行描述警示在场（无须行声明）');
 
   // ③ 读取失败（stateOf 抛错）⇒ 失效安全＝关：诊断不产生、该次执行不登记
   //    新证据（先清空 ② 留下的证据，验证读取失败不产生新登记）。
@@ -650,9 +653,9 @@ hostTest('执行纪律 section：语言档现读 agentLang、变体按目标预�
   assert.equal(zh, t('zh', 'discipline.preset.dsh-async-create'), 'zh 档文本 = 词典键逐字');
   assert.match(zh, /唯一的委托入口/);
   assert.match(zh, /不要调用/);
-  // 非目标预设 / 无 agent / 两服务缺席 ⇒ 空串。
+  // 非名单预设 / 无 agent / 两服务缺席 ⇒ 空串。
   projectionService = { stateOf: () => 'standard' };
-  assert.equal(entry.text(assembly), '', '其他预设会话 ⇒ 空串（段只对本包两预设生效）');
+  assert.equal(entry.text(assembly), '', '名单外预设会话 ⇒ 空串（段只对名单内预设生效）');
   projectionService = { stateOf: () => 'dsh-async' };
   assert.equal(entry.text({}), '', '无 agent 的组稿 ⇒ 空串');
   sessionsService = undefined;
@@ -664,10 +667,67 @@ hostTest('执行纪律 section：语言档现读 agentLang、变体按目标预�
   clearSnapshot();
 });
 
-hostTest('A-F13 回归：证据按行隔离——P 行执行核得后全行刷新，Q 行（复制同一声明值）警示缺席', async () => {
+hostTest('P14（PRESET-BIND-01）：纪律变体按名单选择——两内置→专用变体；其余→通用变体；通用变体两语无禁句', () => {
+  const f = fakeCtx();
+  const injectFns = new Map();
+  f.ctx.inject = (list, fn) => { injectFns.set(list.join(','), fn); };
+  f.ctx.effect = () => {};
+  let projectionService = { stateOf: () => 'rwkv' };
+  f.ctx.get = (key) => {
+    if (key === 'sessions') return { get: () => ({ id: 'session-1' }) };
+    if (key === 'sessionProjections') return projectionService;
+    return undefined;
+  };
+  applyHostHalf(f.ctx, resolveConfig({ agentLang: 'en' }));
+  const entry = {};
+  injectFns.get('systemPrompt')({
+    systemPrompt: { context: () => {}, section: (e) => { Object.assign(entry, e); } }
+  });
+  const assembly = { agent: { id: 'session-1' } };
+  try {
+    // 名单含自建预设（rwkv）→ 通用变体（P8：组稿纪律对名单内自建预设生效）。
+    seedSnapshot(resolveConfig({ agentLang: 'en', boundPresets: ['rwkv'] }));
+    const genericEn = entry.text(assembly);
+    assert.equal(genericEn, t('en', 'discipline.preset.generic'), '名单内自建预设 → 通用变体（词典键逐字）');
+    assert.match(genericEn, /Commands started with async_run run asynchronously/, '首句是条件形（经 async_run 启动）');
+    // 名单含两内置 → 专用变体（变体可用集合 DISCIPLINE_PRESET_VARIANTS 决定，
+    // t() 缺键即抛——不能靠缺键回退）。
+    seedSnapshot(resolveConfig({ agentLang: 'en', boundPresets: ['dsh-async', 'rwkv'] }));
+    projectionService = { stateOf: () => 'dsh-async' };
+    assert.equal(entry.text(assembly), t('en', 'discipline.preset.dsh-async'), '内置预设（名单内）→ 专用变体');
+    projectionService = { stateOf: () => 'rwkv' };
+    assert.equal(entry.text(assembly), t('en', 'discipline.preset.generic'), '同一名单内的自建预设 → 仍通用变体');
+    // 名单不含会话预设 → 空串（P9 隔离）。
+    seedSnapshot(resolveConfig({ agentLang: 'en', boundPresets: ['dsh-async'] }));
+    assert.equal(entry.text(assembly), '', '名单不含 rwkv → 该会话无纪律段');
+    // 禁句扫描（需求 9.4.1「不真实声明」）：通用变体不得含「已禁用」类组合事实
+    // 断言与「本部署异步执行」类部署级总起断言——自建预设可保留同步 shell 或
+    // 不挂本包工具，那两类断言在其中不真实（表驱动，两语同扫）。
+    const forbidden = [
+      /This deployment runs commands/i, /本部署异步执行/,
+      /subagent[a-z_/ ]* (tools )?(are|is) disabled/i, /已禁用/,
+      /disabled here/i, /do not call them/i, /不要调用/
+    ];
+    seedSnapshot(resolveConfig({ agentLang: 'en', boundPresets: ['rwkv'] }));
+    for (const pattern of forbidden) {
+      assert.doesNotMatch(entry.text(assembly), pattern, `通用变体（en）不含禁句 ${pattern}`);
+    }
+    seedSnapshot(resolveConfig({ agentLang: 'zh', boundPresets: ['rwkv'] }));
+    for (const pattern of forbidden) {
+      assert.doesNotMatch(entry.text(assembly), pattern, `通用变体（zh）不含禁句 ${pattern}`);
+    }
+    const genericZh = entry.text(assembly);
+    assert.match(genericZh, /经 async_run 启动的命令按异步方式执行/, 'zh 首句同为条件形');
+    assert.match(genericZh, /不以前台方式阻塞等待委托结果/, '委托规则是指令式（非事实式声明）');
+  } finally {
+    clearSnapshot();
+  }
+});
+
+hostTest('A-F13 回归：证据按行隔离——P 行执行核得后全行刷新，Q 行（未核得）警示缺席', async () => {
   const warnAnchor = /can die silently at process creation/;
   resetGuardOwnershipEvidence();
-  // 组合 P（真 dsh-async 行）：声明 = 会话预设，执行入口核得一致 ⇒ 本行证据登记。
+  // 组合 P（会话预设 dsh-async ∈ 默认名单）：执行入口核得 ⇒ 本行证据登记。
   const p = confinedCtx('dsh-async');
   const quietP = fakeProc({ text: 'ok', exitCode: 0, status: 'running', autoResolve: false });
   p.installShellExecute(() => Promise.resolve(quietP.proc));
@@ -678,25 +738,25 @@ hostTest('A-F13 回归：证据按行隔离——P 行执行核得后全行刷�
   quietP.settle();
   await pRun;
   assert.match(pTool.description, warnAnchor, 'P 行执行核得 ⇒ 本行警示在场');
-  // 组合 Q（自建行复制 owningPreset:'dsh-async'）：会话预设 av0408-custom ≠ 声明值。
+  // 组合 Q（会话预设 av0408-custom ∉ 名单）：同一工具实现的未选预设会话。
   const q = confinedCtx('av0408-custom');
   const qLive = { ...resolveConfig({ toolName: 'async_run', silentFailureGuard: true, owningPreset: 'dsh-async' }) };
   const qView = new Proxy({}, { get: (_t, k) => qLive[k] });
   const qTool = buildRunTool(q.ctx, qView);
   // volatile 提交触发 refresh-bus 全行刷新：两行各自就地重建（同一模块实例的证据表）。
-  // 按声明值全局共享证据时，Q 行在这里吃到 P 行核得的 'dsh-async' ⇒ 警示泄漏（原反例）。
+  // 按预设全局共享证据时，Q 行在这里吃到 P 行核得的 'dsh-async' ⇒ 警示泄漏（原反例）。
   refreshToolDescriptions(pTool, pView);
   refreshToolDescriptions(qTool, qView);
   assert.doesNotMatch(qTool.description, warnAnchor, '全行刷新后 Q 行警示仍缺席（证据按行令牌隔离）');
   assert.match(pTool.description, warnAnchor, 'P 行不受影响');
-  // Q 自身执行（归属不一致）⇒ 不登记 ⇒ 再刷新仍缺席。
+  // Q 自身执行（会话预设∉名单）⇒ 不登记 ⇒ 再刷新仍缺席。
   const quietQ = fakeProc({ text: 'ok', exitCode: 0, status: 'running', autoResolve: false });
   q.installShellExecute(() => Promise.resolve(quietQ.proc));
   const qRun = qTool.execute({ command: 'echo q', description: 'q' }, exec);
   quietQ.settle();
   await qRun;
   refreshToolDescriptions(qTool, qView);
-  assert.doesNotMatch(qTool.description, warnAnchor, 'Q 自身执行（归属不一致）不登记 ⇒ 仍缺席');
+  assert.doesNotMatch(qTool.description, warnAnchor, 'Q 自身执行（会话预设∉名单）不登记 ⇒ 仍缺席');
   resetGuardOwnershipEvidence();
 });
 
@@ -819,16 +879,17 @@ realLayerTest('执行纪律 section：注册落在宿主组稿会收集的 globa
   for (const fiber of [...fibers].reverse()) await fiber.dispose();
 });
 
-test('R28 判据13：设置界面 19 字段逐项在场 + flag spec 矩阵 + resolveConfig 归一', async () => {
-  // —— 键集身份核对：FIELDS = 预算 + 语言 + 开关 + 展示 + 提问五组之和（顺序也一致；
-  // 开关组 2 枚、展示组 2 枚、ASK 组 3 枚，合计 19）。
-  const expectedKeys = [...BUDGET_FIELD_KEYS, ...LANG_FIELD_KEYS, ...FLAG_FIELD_KEYS, ...DISPLAY_FIELD_KEYS, ...ASK_FIELD_KEYS];
-  assert.equal(expectedKeys.length, 19, '19 = 10 预算 + 2 语言 + 2 开关 + 2 展示 + 3 提问');
+test('R28 判据13：设置界面 20 字段逐项在场 + flag spec 矩阵 + resolveConfig 归一', async () => {
+  // —— 键集身份核对：FIELDS = 预算 + 语言 + 开关 + 展示 + 提问 + 预设绑定六组之和
+  //（顺序也一致；开关组 2 枚、展示组 2 枚、ASK 组 3 枚、预设组 1 枚，合计 20）。
+  const expectedKeys = [...BUDGET_FIELD_KEYS, ...LANG_FIELD_KEYS, ...FLAG_FIELD_KEYS, ...DISPLAY_FIELD_KEYS, ...ASK_FIELD_KEYS, ...PRESET_FIELD_KEYS];
+  assert.equal(expectedKeys.length, 20, '20 = 10 预算 + 2 语言 + 2 开关 + 2 展示 + 3 提问 + 1 绑定');
   assert.equal(FLAG_FIELD_KEYS.length, 2);
   assert.equal(FLAG_FIELD_KEYS[0], 'silentFailureGuard');
   assert.equal(FLAG_FIELD_KEYS[1], 'askTakeover');
   assert.deepEqual(DISPLAY_FIELD_KEYS, ['workflowProgressLog', 'fullCommandEcho']);
   assert.deepEqual(ASK_FIELD_KEYS, ['askTimeoutMs', 'askExtendMs', 'askUiSeat']);
+  assert.deepEqual(PRESET_FIELD_KEYS, ['boundPresets']);
 
   // —— 加载 client.js（CJS 包裹，浏览器侧无转译器——two-planes 的装载成例）。
   const ROOT = resolve(import.meta.dirname, '..');
@@ -844,9 +905,23 @@ test('R28 判据13：设置界面 19 字段逐项在场 + flag spec 矩阵 + res
   const double = makePrimitivesDouble(reactStub);
   const product = loaded.factory((name) => (name === 'react' ? reactStub : double));
   assert.deepEqual(product.FIELDS.map((field) => field.key), expectedKeys,
-    '设置卡 19 项逐项在场（缺一项即红，不只数个数）');
+    '设置卡 20 项逐项在场（缺一项即红，不只数个数）');
   assert.deepEqual(product.makeSpecs().map((spec) => spec.field), expectedKeys,
     'spec 列表与 FIELDS 逐项相等（顺序 = FIELDS 顺序）');
+
+  // —— presetBindingFieldSpec 矩阵（PRESET-BIND-01）：值＝数组、草稿＝JSON 串。
+  const bindSpec = product.presetBindingFieldSpec('boundPresets');
+  assert.equal(bindSpec.field, 'boundPresets');
+  assert.equal(bindSpec.format(['a', 'b']), '["a","b"]');
+  assert.equal(bindSpec.format('oops'), '[]', '非数组生效值折回空草稿（损坏值不在草稿层爆开）');
+  assert.deepEqual(bindSpec.parse('["a","b"]'), { kind: 'set', value: ['a', 'b'] });
+  assert.deepEqual(bindSpec.parse(''), { kind: 'clear' }, '空草稿 = 恢复默认（unset → schema 两默认）');
+  assert.deepEqual(bindSpec.parse('[]'), { kind: 'set', value: [] }, '显式空数组合法（解除全部绑定）');
+  assert.equal(bindSpec.parse('["a","a"]'), undefined, '重复 ID 阻止保存（UI 不产生，防程序化写入口）');
+  assert.equal(bindSpec.parse('[""]'), undefined, '空串元素阻止保存');
+  assert.equal(bindSpec.parse('oops'), undefined, '非 JSON 阻止保存');
+  assert.deepEqual(product.decodeBoundDraft('["a"]'), ['a'], '草稿解码');
+  assert.deepEqual(product.decodeBoundDraft('oops'), [], '损坏草稿解码折回空数组（渲染宽容版）');
 
   // —— flagFieldSpec 矩阵（偏离 ③：官方 SettingsFieldSpec 形状，两态文本制）。
   const spec = product.flagFieldSpec('silentFailureGuard');

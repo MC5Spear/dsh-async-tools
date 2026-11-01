@@ -558,7 +558,7 @@ test('T10：宿主侧的 volatile 提交必须真的到达预设工具的描述'
   assert.match(tool.description, /pass yield_ms, range 20000–600000 ms/, '快照缺席时描述用本行默认值');
 
   // ② 宿主侧（同一插件、行配置没有 toolName）：首播快照。settings 子树形态：
-  //    19 个可编辑字段住在 `settings` 键下（设计 §5.1——新根形态）。
+  //    20 个可编辑字段住在 `settings` 键下（设计 §5.1——新根形态；PRESET-BIND-01 后含 boundPresets）。
   const hostCtx = new Context();
   for (const [name, value] of Object.entries(services)) hostCtx.provide(name, value);
   const hostFork = await mount(
@@ -814,11 +814,16 @@ test('T16：plugins.bundle.config keyed 槽契约 + 毫秒换算秒读数', asyn
       }
     },
     // ask 接线的两个 effect 需要 remote（$mount 挂命名空间）与 uiWorkspace（跳转动作）。
-    remote: { $mount: function () { return Promise.resolve(function () {}); } },
+    remote: { $mount: function () { return Promise.resolve(function () {}); }, $on: function () { return function () {}; } },
+    // connection/reset 是预设目录刷新通知的宿主接口（PRESET-BIND-01）。
+    on: function () { return function () {}; },
     uiWorkspace: { openSession: function () {} },
     // ask 座位在 $mount 生效后经**动态** ctx.inject(['remote.async-tools-ask'])
     // 装配（自 mount 命名空间的取用口径——不能直接读 ctx.remote 下标）；注入即回调。
-    inject: function (list, fn) { fn({ remote: { 'async-tools-ask': {} } }); },
+    // 预设目录服务（remote.agentPresets）经同一动态 inject 形态注入。
+    inject: function (list, fn) {
+      fn({ remote: { 'async-tools-ask': {}, agentPresets: { list: function () { return Promise.resolve({ ok: true, value: { presets: [] } }); } } } });
+    },
     slots: {
       inject: function (slotName, load) { return load(); },
       register: function (options, Component) { registrations.push({ options: options, Component: Component }); }
@@ -858,7 +863,8 @@ test('T16：plugins.bundle.config keyed 槽契约 + 毫秒换算秒读数', asyn
  *
  * **hook 存储按组件函数＋元素 key 分槽**：卡片组件自己也有 hook（模型句柄、订阅、
  * 卸载清理），与表单组件共用一个游标会互相踩（两个组件的 `hooks[0]` 互相覆盖）；
- * 而 19 个字段壳是**同一个组件函数的 19 个实例**，只按函数分槽会让它们的
+ * 而 19 个字段壳是**同一个组件函数的 19 个实例**（PRESET-BIND-01 后另有 1 个
+ * 预设绑定块——独立组件，不与字段壳共用函数），只按函数分槽会让它们的
  * `helpOpen` 互踩（点一个字段的开全部字段的）——真实 React 按「组件类型＋元素
  * key」复用 fiber 局部状态，替身照抄这条语义（`begin(component, key)`；无 key
  * 的组件归入 `''` 槽）。
@@ -1017,7 +1023,7 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   // 控制器替身：真实形态是 `ctx.configForms.get(<entryId>)` 返回的 `ConfigFormController`
   // （`getSnapshot` / `subscribe` / `mutate`）。假件必须给**完整** SettingsFormScope
   // ——模型构造时就 subscribe（T9 ② 验过缺成员会抛错）。value/user 层给**全字段**
-  // 嵌套形状（真机 describe 把 19 字段展平在 `settings` 键下——毫秒说明行的读数
+  // 嵌套形状（真机 describe 把 20 字段展平在 `settings` 键下——毫秒说明行的读数
   // 才有东西可换算；client.js 经 makeSettingsScopeView 适配官方模型的平铺寻址）。
   const DEFAULTS = {
     defaultYieldMs: 20000, minYieldMs: 20000, maxYieldMs: 600000,
@@ -1025,7 +1031,8 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
     pollIntervalMs: 500, maxResultChars: 12000,
     jobKind: 'async-command', subagentProvider: '', uiLang: 'auto', agentLang: 'en',
     silentFailureGuard: false,
-    askTakeover: false, askTimeoutMs: 60000, askExtendMs: 60000, askUiSeat: 'sidebar'
+    askTakeover: false, askTimeoutMs: 60000, askExtendMs: 60000, askUiSeat: 'sidebar',
+    boundPresets: ['dsh-async', 'dsh-async-create']
   };
   const snapshot = (revision, user, overrides) => ({
     status: 'ready',
@@ -1060,10 +1067,18 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
       get: (id) => { asked.push(id); return controller; }
     },
     // ask 接线需要 remote（$mount）与 uiWorkspace（跳转动作，惰性调用）。
-    remote: { $mount: () => Promise.resolve(() => {}) },
+    // $on/on 是预设目录刷新通知的宿主接口（PRESET-BIND-01）。
+    remote: { $mount: () => Promise.resolve(() => {}), $on: () => () => {} },
+    on: () => () => {},
     uiWorkspace: { openSession: () => {} },
-    // ask 座位经 $mount 后的动态 ctx.inject 装配（注入即回调）。
-    inject: (list, fn) => fn({ remote: { 'async-tools-ask': {} } }),
+    // ask 座位经 $mount 后的动态 ctx.inject 装配（注入即回调）；预设目录服务
+    //（remote.agentPresets）同形态注入——目录里放两个预设供绑定块渲染。
+    inject: (list, fn) => fn({ remote: {
+      'async-tools-ask': {},
+      agentPresets: { list: () => Promise.resolve({ ok: true, value: { presets: [
+        { id: 'dsh-async' }, { id: 'dsh-async-create' }
+      ] } }) }
+    } }),
     slots: {
       inject: (slotName, load) => load(),
       register: (options, Component) => { registrations.push(Component); }
@@ -1112,10 +1127,10 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   // 卡片模型在挂载期取一次——两次都必须按 entry id（不是按包名）。
   assert.deepEqual(asked, ['async-tools-host', 'async-tools-host'], 'ask 模型与卡片都必须按 entry id 向 configForms 取控制器（不是按包名）');
   assert.equal(listeners.length, 2, '卡片模型与 ask 模型各订阅控制器恰好一次（bind 一次 + 订阅一次）');
-  const inputs = collectByType(tree, 'input');
+  const inputs = collectByType(tree, 'input').filter((node) => node.props.type !== 'checkbox');
   const selects = collectByType(tree, 'select');
   // 12 个值字段（10 预算 + askTimeoutMs + askExtendMs）、3 个枚举下拉
-  // （两语言 + askUiSeat）。
+  // （两语言 + askUiSeat）。预设绑定块的复选框（type=checkbox）不算值字段输入框。
   assert.equal(inputs.length, 12, '十二个值字段必须以官方 input 在场（10 预算 + R30 askTimeoutMs + askExtendMs）');
   assert.equal(selects.length, 3, '三个枚举字段必须以 select 在场（两语言 + R30 askUiSeat；控件本体自绘，裁定 B）');
   // 四个布尔开关（静默失败防护 + 提问接管 + 两个展示开关）：控件本体是官方 Switch
@@ -1144,9 +1159,10 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
     '开关说明行必须带该字段的说明文案');
   const expectedKeys = product.FIELDS.map((field) => field.key);
   // askTimeoutMs（input）排在语言枚举（select）之后，DOM 收集是「全部 input
-  // 再全部 select」——分型别各自按 FIELDS 顺序核对，不拼交错序。
+  // 再全部 select」——分型别各自按 FIELDS 顺序核对，不拼交错序。绑定字段
+  //（binding: true）以独立的预设绑定块渲染（复选组），不进 input/select 清单。
   const expectedInputKeys = product.FIELDS
-    .filter((field) => field.options === undefined && field.flag !== true).map((field) => field.key);
+    .filter((field) => field.options === undefined && field.flag !== true && field.binding !== true).map((field) => field.key);
   const expectedSelectKeys = product.FIELDS
     .filter((field) => field.options !== undefined).map((field) => field.key);
   assert.deepEqual(inputs.map((node) => node.props.id),
@@ -1165,9 +1181,10 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   // ② label↔id 绑定 + 说明行（判据 2 的结构；0.5px 分隔线是计算样式，真机探针验）。
   // 布尔开关不进此循环：可见标签是壳上的 div + Switch 的 aria-label（偏离 ③；client.js
   // FlagField 头注——Switch 不收 id/aria-* 摆位，for 绑定与 aria-describedby 不适用），
-  // 其说明行由上面 ① 段的 flagMessage 断言单独钉住。
+  // 其说明行由上面 ① 段的 flagMessage 断言单独钉住。绑定字段同样不进：预设绑定块
+  // 有自己的头注/帮助/读数结构（P18/P19 单独钉），不复用字段壳的 for/id 契约。
   for (const key of expectedKeys.filter((k) => k !== 'silentFailureGuard' && k !== 'askTakeover'
-    && k !== 'workflowProgressLog' && k !== 'fullCommandEcho')) {
+    && k !== 'workflowProgressLog' && k !== 'fullCommandEcho' && k !== 'boundPresets')) {
     const control = inputById(tree, `plugin-config-${key}`);
     const label = findNode(tree, (node) =>
       node.type === 'label' && node.props.htmlFor === `plugin-config-${key}`);
@@ -1406,7 +1423,8 @@ test('T18h（R24/R27·设计 §5.5）：字段帮助——问号按钮、开合�
     pollIntervalMs: 500, maxResultChars: 12000,
     jobKind: 'async-command', subagentProvider: '', uiLang: 'zh', agentLang: 'en',
     silentFailureGuard: false,
-    askTakeover: false, askTimeoutMs: 60000, askExtendMs: 60000, askUiSeat: 'sidebar'
+    askTakeover: false, askTimeoutMs: 60000, askExtendMs: 60000, askUiSeat: 'sidebar',
+    boundPresets: ['dsh-async', 'dsh-async-create']
   };
   const snapshot = (revision, user, overrides) => ({
     status: 'ready', value: { settings: { ...DEFAULTS, ...overrides } }, base: {},
@@ -1427,9 +1445,15 @@ test('T18h（R24/R27·设计 §5.5）：字段帮助——问号按钮、开合�
   product.apply({
     locale: { register: () => () => {} },
     configForms: { whileServed: (ids, load) => load(), get: () => controller },
-    remote: { $mount: () => Promise.resolve(() => {}) },
+    remote: { $mount: () => Promise.resolve(() => {}), $on: () => () => {} },
+    on: () => () => {},
     uiWorkspace: { openSession: () => {} },
-    inject: (list, fn) => fn({ remote: { 'async-tools-ask': {} } }),
+    inject: (list, fn) => fn({ remote: {
+      'async-tools-ask': {},
+      agentPresets: { list: () => Promise.resolve({ ok: true, value: { presets: [
+        { id: 'dsh-async' }, { id: 'dsh-async-create' }
+      ] } }) }
+    } }),
     slots: { inject: (slotName, load) => load(), register: (options, Component) => { registrations.push(Component); } },
     effect: (fn) => fn()
   });
@@ -1467,11 +1491,12 @@ test('T18h（R24/R27·设计 §5.5）：字段帮助——问号按钮、开合�
     findNode(tree, (node) => node.type === 'button' && node.props.className === 'ats-help-button'
       && node.props['aria-controls'] === `plugin-config-${key}-help`);
 
-  // ① 19 个字段各有问号按钮（type=button、aria-controls 指向 <id>-help、
-  //    aria-label 含字段名称——help.a11yName 模板）。
+  // ① 19 个字段壳各有问号按钮（type=button、aria-controls 指向 <id>-help、
+  //    aria-label 含字段名称——help.a11yName 模板）。预设绑定块复用同一帮助
+  //    模式（help.boundPresets，设计 §5.7 块头）——合计 20 个。
   let tree = renderCard();
   const buttons = helpButtons(tree);
-  assert.equal(buttons.length, 19, '19 个字段必须各有一个帮助按钮（需求 §5.5）');
+  assert.equal(buttons.length, 20, '20 个可编辑项（19 字段壳 + 1 绑定块）必须各有帮助按钮（需求 §5.5）');
   for (const button of buttons) {
     assert.equal(button.props.type, 'button', '帮助按钮必须 type=button（不提交表单）');
     assert.ok(typeof button.props['aria-controls'] === 'string'
@@ -1624,6 +1649,276 @@ test('T18h（R24/R27·设计 §5.5）：字段帮助——问号按钮、开合�
   unmount();
 });
 
+test('T23（PRESET-BIND-01·需求 9.4.2）：预设绑定块——目录四态/broken/缺席/刷新零副作用/保存 ops/无障碍', async () => {
+  const { react, begin, flush, unmount } = makeReactShim();
+  const { makePrimitivesDouble } = await import('./_primitives-double.mjs');
+  const double = makePrimitivesDouble(react);
+  const source = readFileSync(resolve(ROOT, 'client.js'), 'utf8');
+  let loaded;
+  new Function('window', source)({ __ModuleLoader__: { load: (spec) => { loaded = spec; } } });
+  const product = loaded.factory((name) => (name === 'react' ? react : double));
+
+  const DEFAULTS = {
+    defaultYieldMs: 20000, minYieldMs: 20000, maxYieldMs: 600000,
+    defaultWaitMs: 30000, minWaitMs: 20000, maxWaitMs: 600000,
+    pollIntervalMs: 500, maxResultChars: 12000,
+    jobKind: 'async-command', subagentProvider: '', uiLang: 'auto', agentLang: 'en',
+    silentFailureGuard: false,
+    askTakeover: false, askTimeoutMs: 60000, askExtendMs: 60000, askUiSeat: 'sidebar',
+    // 生效名单含一个目录里没有的 ID（ghost-absent——P18 缺席保留的道具）。
+    boundPresets: ['dsh-async', 'dsh-async-create', 'ghost-absent']
+  };
+  const snapshot = (revision, user, overrides) => ({
+    status: 'ready',
+    value: { settings: { ...DEFAULTS, ...overrides } },
+    base: {},
+    user: { settings: user },
+    revision,
+    writable: true,
+    mode: 'host'
+  });
+  let current = snapshot(7, {});
+  const listeners = [];
+  const mutateCalls = [];
+  const controller = {
+    getSnapshot: () => current,
+    subscribe: (listener) => { listeners.push(listener); return () => {
+      const at = listeners.indexOf(listener); if (at >= 0) listeners.splice(at, 1);
+    }; },
+    mutate: async (ops, rev) => { mutateCalls.push({ ops, rev }); return true; }
+  };
+  // 可控目录服务：每次 list() 一枚手动解开的 promise（loading 态可驻留）。
+  const pendingLists = [];
+  let listCalls = 0;
+  const fakeAgentPresets = {
+    list: () => {
+      listCalls += 1;
+      return new Promise((resolveList) => { pendingLists.push(resolveList); });
+    }
+  };
+  const registrations = [];
+  const noticeSubs = [];
+  product.apply({
+    locale: { register: () => () => {} },
+    configForms: { whileServed: (ids, load) => load(), get: () => controller },
+    remote: { $mount: () => Promise.resolve(() => {}), $on: (event, listener) => { noticeSubs.push({ event, listener }); return () => {}; } },
+    on: (event, listener) => { noticeSubs.push({ event, listener }); return () => {}; },
+    uiWorkspace: { openSession: () => {} },
+    inject: (list, fn) => fn({ remote: { 'async-tools-ask': {}, agentPresets: fakeAgentPresets } }),
+    slots: { inject: (slotName, load) => load(), register: (options, Component) => { registrations.push(Component); } },
+    effect: (fn) => fn()
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  const Card = registrations[0];
+  // 桩词典约定同 T18；preset.failed 带 {reason} 占位（实现用 replace 填值）。
+  const t = (key) => (key === 'preset.failed' ? 'preset.failed|{reason}' : `${key}|`);
+
+  const expand = (node) => {
+    if (node === null || node === undefined || typeof node !== 'object') return node;
+    if (Array.isArray(node)) return node.map(expand);
+    if (typeof node.type === 'function') {
+      const component = node.type;
+      begin(component, node.props?.key);
+      const rendered = component(node.props ?? {});
+      flush();
+      return expand(rendered);
+    }
+    const children = node.props?.children;
+    if (children !== undefined) {
+      const expanded = expand(children);
+      if (expanded !== children) return { ...node, props: { ...node.props, children: expanded } };
+    }
+    return node;
+  };
+  const renderCard = () => expand({ type: Card, props: { view: 'page', t } });
+  // 宏任务一拍：排空全部在途微任务（then 链的跳数不固定，按拍数等不可靠）。
+  const settle = () => new Promise((resolveTick) => { setTimeout(resolveTick, 0); });
+  const replace = (next) => { current = next; for (const listener of listeners) listener(); };
+  const buttonByLabel = (aTree, label) =>
+    findNode(aTree, (node) => node.type === 'button' && textOf(node).join('') === label);
+  const checkboxOf = (aTree, presetId) =>
+    findNode(aTree, (node) => node.type === 'input' && node.props.type === 'checkbox'
+      && node.props.id === `plugin-config-boundPresets-${presetId}`);
+  const noteOf = (aTree, presetId) =>
+    findNode(aTree, (node) => node.type === 'li' && node.props.key === presetId
+      && findNode(node, (child) => child.type === 'input'
+        && child.props.id === `plugin-config-boundPresets-${presetId}`) !== undefined);
+
+  // ── P16·loading：apply 即装载，未解开的 promise ⇒ 装载中文案；刷新钮禁用。
+  let tree = renderCard();
+  assert.ok(textOf(tree).join('').includes('preset.loading|'), '目录装载中 ⇒ loading 文案在场');
+  assert.equal(buttonByLabel(tree, 'preset.refresh|').props.disabled, true, '装载中「刷新」禁用');
+
+  // ── ready：四目录项 + 一个生效名单里的缺席 ID（P18）。
+  await settle(); // attach→load 的 list() 在微任务里入队
+  pendingLists.shift()({ ok: true, value: { presets: [
+    { id: 'dsh-async', name: '异步增强（演示）' },
+    { id: 'dsh-async-create' },
+    { id: 'rwkv-selfbuilt', name: 'RWKV 自建', broken: true },
+    { id: 'third-ok' }
+  ] } });
+  await settle(); // then 链全部排空后目录状态落定
+  tree = renderCard();
+  const group = findNode(tree, (node) => node.type === 'ul' && node.props.role === 'group');
+  assert.ok(group !== undefined, '条目区必须以 role=group 的列表在场（P22）');
+  assert.equal(group.props['aria-label'], 'preset.a11yList|', 'group 的 aria-label = preset.a11yList（P22）');
+  const checkboxes = collectByType(tree, 'input').filter((node) => node.props.type === 'checkbox');
+  assert.equal(checkboxes.length, 5, '目录四项 + 缺席保留一项 ⇒ 5 个原生 checkbox');
+  // P22：原生 checkbox（键盘 Tab/空格天然可操作）+ label for 绑定。
+  for (const node of checkboxes) {
+    assert.equal(node.props.type, 'checkbox', '条目控件必须是原生 checkbox');
+    assert.ok(node.props.id.startsWith('plugin-config-boundPresets-'), 'checkbox id = 块 id + 预设 ID');
+    const bound = findNode(tree, (labelNode) => labelNode.type === 'label'
+      && labelNode.props.htmlFor === node.props.id);
+    assert.ok(bound !== undefined, `checkbox ${String(node.props.id)} 必须有 label for 绑定`);
+  }
+  // 初稿＝生效名单（官方模型 format 种子）：三个已绑定全勾上。
+  for (const id of ['dsh-async', 'dsh-async-create', 'ghost-absent']) {
+    assert.equal(checkboxOf(tree, id).props.checked, true, `生效名单内的 ${id} 初始勾选`);
+  }
+  assert.equal(checkboxOf(tree, 'third-ok').props.checked, false, '目录内未绑定项初始不勾');
+  // 宿主显示名称原样（不由本包翻译）；name≠id 时附 ID 小字。
+  const dshAsyncLabel = findNode(tree, (node) => node.type === 'label'
+    && node.props.htmlFor === 'plugin-config-boundPresets-dsh-async');
+  assert.ok(textOf(dshAsyncLabel).join('').includes('异步增强（演示）'), '宿主预设显示名称原样渲染');
+  assert.ok(findNode(dshAsyncLabel, (node) => node.type === 'span'
+    && node.props.className === 'ats-preset-id') !== undefined, 'name≠id ⇒ ID 小字在场');
+
+  // ── P17·broken：未绑定的 broken 项禁选；已绑定的 broken 项可取消。
+  const brokenBox = checkboxOf(tree, 'rwkv-selfbuilt');
+  assert.equal(brokenBox.props.disabled, true, 'broken 且未绑定 ⇒ 禁选（不给勾一个装不上的预设）');
+  assert.ok(textOf(noteOf(tree, 'rwkv-selfbuilt')).join('').includes('preset.broken|'),
+    'broken 条目带 preset.broken 注记');
+  // ── P18·缺席：生效名单里、目录外 ⇒ 保留条目 + 注记 + 可取消。
+  const ghostBox = checkboxOf(tree, 'ghost-absent');
+  assert.ok(ghostBox !== undefined && ghostBox.props.checked === true, '缺席 ID 保留条目且维持勾选');
+  assert.ok(textOf(noteOf(tree, 'ghost-absent')).join('').includes('preset.absent|'),
+    '缺席条目带 preset.absent 注记');
+  assert.notEqual(ghostBox.props.disabled, true, '缺席条目可取消（目录只发现，不锁死绑定）');
+
+  // ── P19·刷新零副作用：点击只重读目录——mutate 零调用、勾选集合不变。
+  const checkedBefore = checkboxes.filter((node) => node.props.checked).map((node) => node.props.id).sort();
+  const listCallsBefore = listCalls;
+  buttonByLabel(tree, 'preset.refresh|').props.onClick();
+  await settle(); // load 的 list() 在微任务里入队
+  assert.equal(listCalls, listCallsBefore + 1, '刷新只触发一次 list 重读');
+  tree = renderCard();
+  assert.ok(textOf(tree).join('').includes('preset.loading|'), '重读期间回到 loading 文案');
+  pendingLists.shift()({ ok: true, value: { presets: [
+    { id: 'dsh-async', name: '异步增强（演示）' },
+    { id: 'dsh-async-create' },
+    { id: 'rwkv-selfbuilt', name: 'RWKV 自建', broken: true },
+    { id: 'third-ok' }
+  ] } });
+  await settle(); // 状态落定
+  tree = renderCard();
+  const checkedAfter = collectByType(tree, 'input').filter((node) => node.props.type === 'checkbox'
+    && node.props.checked).map((node) => node.props.id).sort();
+  assert.deepEqual(checkedAfter, checkedBefore, '刷新前后草稿勾选集合不变（刷新不碰草稿）');
+  assert.equal(mutateCalls.length, 0, '刷新绝不能触发写（mutate 零调用）');
+
+  // ── P20·保存 ops：数组整组写入；空数组合法；恢复默认＝unset。
+  // ① 取消缺席项 + 勾选 third-ok ⇒ 保存发整组 set（草稿序：过滤＋追加）。
+  checkboxOf(tree, 'ghost-absent').props.onChange({ target: { checked: false } });
+  tree = renderCard();
+  checkboxOf(tree, 'third-ok').props.onChange({ target: { checked: true } });
+  tree = renderCard();
+  await buttonByLabel(tree, 'save|').props.onClick();
+  assert.equal(mutateCalls.length, 1, '保存恰一次 mutate');
+  assert.deepEqual(mutateCalls[0].ops,
+    [{ op: 'set', path: ['settings', 'boundPresets'], value: ['dsh-async', 'dsh-async-create', 'third-ok'] }],
+    '绑定名单整组写入 settings.boundPresets（JSON 草稿 → 数组 op；缺席项随取消移除）');
+  replace(snapshot(8, { boundPresets: ['dsh-async', 'dsh-async-create', 'third-ok'] },
+    { boundPresets: ['dsh-async', 'dsh-async-create', 'third-ok'] }));
+  tree = renderCard();
+  // ② 全部取消 ⇒ 显式空数组合法保存（解除全部绑定，9.4.3）。
+  for (const id of ['dsh-async', 'dsh-async-create', 'third-ok']) {
+    checkboxOf(tree, id).props.onChange({ target: { checked: false } });
+    tree = renderCard();
+  }
+  await buttonByLabel(tree, 'save|').props.onClick();
+  assert.deepEqual(mutateCalls[1].ops,
+    [{ op: 'set', path: ['settings', 'boundPresets'], value: [] }],
+    '显式空数组是合法保存（= 解除全部绑定，不是 unset）');
+  replace(snapshot(9, { boundPresets: ['rwkv-selfbuilt'] }, { boundPresets: ['rwkv-selfbuilt'] }));
+  tree = renderCard();
+  // ③ 覆盖徽标 + 恢复默认 ⇒ unset（回 schema 默认两预设）；broken 已绑定项可取消。
+  const bindBadges = collectByType(tree, 'span').filter((node) => node.props['data-tone'] === 'neutral');
+  assert.deepEqual(badges(bindBadges), ['overridden|'], 'user 层覆盖 ⇒ 绑定块显示官方 Tag 徽标');
+  const rwkvBound = checkboxOf(tree, 'rwkv-selfbuilt');
+  assert.equal(rwkvBound.props.checked, true, 'broken 已绑定 ⇒ 勾选显示');
+  assert.notEqual(rwkvBound.props.disabled, true, 'broken 已绑定 ⇒ 可取消（P17 正面）');
+  buttonByLabel(tree, 'reset|').props.onClick();
+  tree = renderCard();
+  await buttonByLabel(tree, 'save|').props.onClick();
+  assert.deepEqual(mutateCalls[2].ops,
+    [{ op: 'unset', path: ['settings', 'boundPresets'] }],
+    '恢复默认 ⇒ unset op（清除用户层覆盖，回 schema 默认两预设）');
+
+  // ── P16·empty：目录空（与失败区分）——有已存绑定 ⇒ 条目退回绑定（空≠失败、
+  //    不显示为空列表）；绑定也为空 ⇒ preset.empty 文案、零条目。
+  replace(snapshot(10, { boundPresets: ['dsh-async', 'dsh-async-create', 'rwkv-selfbuilt'] },
+    { boundPresets: ['dsh-async', 'dsh-async-create', 'rwkv-selfbuilt'] }));
+  tree = renderCard();
+  buttonByLabel(tree, 'preset.refresh|').props.onClick();
+  await settle();
+  pendingLists.shift()({ ok: true, value: { presets: [] } });
+  await settle();
+  tree = renderCard();
+  const fullTextEmpty = textOf(tree).join('');
+  assert.ok(!fullTextEmpty.includes('preset.failed|') && !fullTextEmpty.includes('preset.loading|'),
+    '目录空不是失败、也不是装载中（error≠empty 分形）');
+  const emptyBoxes = collectByType(tree, 'input').filter((node) => node.props.type === 'checkbox');
+  assert.deepEqual(emptyBoxes.map((node) => node.props.id).sort(),
+    ['plugin-config-boundPresets-dsh-async', 'plugin-config-boundPresets-dsh-async-create', 'plugin-config-boundPresets-rwkv-selfbuilt'].sort(),
+    '空目录态条目区 = 已存绑定（草稿种子；失败不显示为空列表）');
+  // 绑定也为空 ⇒ 真正的空态文案 + 零条目。
+  replace(snapshot(11, { boundPresets: [] }, { boundPresets: [] }));
+  tree = renderCard();
+  buttonByLabel(tree, 'preset.refresh|').props.onClick();
+  await settle();
+  pendingLists.shift()({ ok: true, value: { presets: [] } });
+  await settle();
+  tree = renderCard();
+  assert.ok(textOf(tree).join('').includes('preset.empty|'), '目录空 ⇒ preset.empty 文案（不是失败文案）');
+  assert.equal(collectByType(tree, 'input').filter((node) => node.props.type === 'checkbox').length, 0,
+    '空目录 + 空绑定 ⇒ 零条目');
+
+  // ── P16·error：list 拒绝 ⇒ 失败文案带原因 + 重试钮；条目区退回已存绑定。
+  replace(snapshot(12, { boundPresets: ['dsh-async', 'dsh-async-create', 'rwkv-selfbuilt'] },
+    { boundPresets: ['dsh-async', 'dsh-async-create', 'rwkv-selfbuilt'] }));
+  tree = renderCard();
+  buttonByLabel(tree, 'preset.refresh|').props.onClick();
+  await settle();
+  pendingLists.shift()({ ok: false, error: { code: 'registry/broken', message: 'boom' } });
+  await settle();
+  tree = renderCard();
+  assert.ok(textOf(tree).join('').includes('preset.failed|boom'), '失败文案带原因（{reason} 填值）');
+  assert.ok(buttonByLabel(tree, 'preset.retry|') !== undefined, '失败态提供重试按钮');
+  const errorBoxes = collectByType(tree, 'input').filter((node) => node.props.type === 'checkbox');
+  assert.equal(errorBoxes.length, 3, '失败态条目区退回已保存绑定（value 层），不是空列表');
+  assert.notEqual(errorBoxes[0].props.disabled, true, '失败态仍可取消已保存绑定');
+
+  // ── P16·unavailable：gateway/invocation-unavailable ⇒ 专属文案（与一般失败区分）。
+  buttonByLabel(tree, 'preset.refresh|').props.onClick();
+  await settle();
+  pendingLists.shift()({ ok: false, error: { code: 'gateway/invocation-unavailable', message: 'x' } });
+  await settle();
+  tree = renderCard();
+  assert.ok(textOf(tree).join('').includes('preset.unavailable|'),
+    '宿主网关不可用 ⇒ preset.unavailable 专属文案');
+  // 通知接线在场（宿主无专门预设事件——文档更新/连接重置两通知，设计 §5.5）。
+  const noticeEvents = noticeSubs.map((entry) => entry.event).sort();
+  assert.deepEqual(noticeEvents, ['connection/reset', 'settings/document-updated'],
+    '刷新通知 = settings/document-updated + connection/reset（两订阅在场）');
+  unmount();
+});
+
+function badges(nodes) {
+  return nodes.map((node) => textOf(node).join(''));
+}
+
 test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/help 三层夹具 + opt 组 + 负向锚 + 术语锚', async () => {
   const source = readFileSync(resolve(ROOT, 'client.js'), 'utf8');
   let loaded;
@@ -1646,7 +1941,9 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     fullCommandEcho: '向 Agent 回显完整命令',
     askTakeover: '在待答面板处理提问',
     askTimeoutMs: '首次提问等待时长', askExtendMs: '每次增加的等待时长',
-    askUiSeat: '待答问题显示方式'
+    askUiSeat: '待答问题显示方式',
+    // PRESET-BIND-01 第 20 字段：绑定名单（不是毫秒字段，无后缀）。
+    boundPresets: '适用预设'
   };
   const MS_KEYS = new Set(['defaultYieldMs', 'minYieldMs', 'maxYieldMs', 'defaultWaitMs',
     'minWaitMs', 'maxWaitMs', 'pollIntervalMs', 'askTimeoutMs', 'askExtendMs']);
@@ -1735,7 +2032,8 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     silentFailureGuard: [
       ['命令可能未执行', '可能没有执行', '命令没跑'],
       ['诊断提醒', '诊断提示', '诊断说明'],
-      ['仅本包两预设生效', '只对两预设生效', '仅两预设'],
+      // PRESET-BIND-01：作用范围由绑定名单决定（不再写死两预设）。
+      ['适用预设', '预设名单', '名单决定'],
       ['默认关', '默认关闭', '默认不开启']
     ],
     workflowProgressLog: [
@@ -1759,6 +2057,8 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     askTakeover: [
       ['普通提问', '一般性提问'],
       ['根 Agent', '根代理'],
+      // PRESET-BIND-01：范围锚 = 名单（不再写死两预设）。
+      ['适用预设', '预设名单', '名单内'],
       ['宿主原生流程', '原生流程', '宿主默认流程'],
       ['继续处理任务', 'Agent 继续工作', '继续执行任务'],
       ['稍后作答', '之后再回答', '仍可再回答']
@@ -1782,6 +2082,12 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
       ['未处理数', '待处理数量'],
       ['浮窗'],
       ['显示问题', '展示问题', '直接展示']
+    ],
+    // PRESET-BIND-01 新字段：范围锚 = 注入纪律 / 开关正交 / 按实际预设匹配。
+    boundPresets: [
+      ['异步执行纪律', '执行纪律'],
+      ['各自开关控制', '仍分别受各自开关控制', '分别受各自开关'],
+      ['当前实际预设', '按会话当前实际预设匹配']
     ]
   };
   const HINT_FACTS_EN = {
@@ -1858,7 +2164,8 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     silentFailureGuard: [
       ['may not have run', 'may not have executed', 'command did not run'],
       ['diagnostic reminder', 'diagnostic reminders'],
-      ["only to this package's two presets", "applies only to this package's two presets", "covers only this package's two presets"],
+      // PRESET-BIND-01：范围锚 = 名单。
+      ['applicable-presets list', 'applicable presets list'],
       ['off by default', 'disabled by default']
     ],
     workflowProgressLog: [
@@ -1881,6 +2188,8 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     askTakeover: [
       ['plain questions', 'ordinary questions'],
       ['root agents', 'root agent'],
+      // PRESET-BIND-01：范围锚 = 名单。
+      ['applicable-presets list', 'applicable presets list'],
       ['native flow', "host's native flow", 'native process'],
       ['continues the task', 'continues working', 'Agent continues'],
       ['answer later', 'still answer', 'answered later']
@@ -1904,6 +2213,12 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
       ['shows the open count', 'open count'],
       ['overlay'],
       ['shows the questions', 'displays the questions']
+    ],
+    // PRESET-BIND-01 新字段（与 zh 组同事实）。
+    boundPresets: [
+      ['execution discipline', 'async execution discipline'],
+      ['their own switches', 'answer to their own switches'],
+      ['current effective preset', "session's current effective preset"]
     ]
   };
   // 等义改写样本：与词典同事实、不同措辞（刻意使用组内非词典短语；稳定名称
@@ -1921,13 +2236,15 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     subagentProvider: 'async_agent 创建子代理的后端。',
     uiLang: '决定界面文案（设置表单、字段帮助、待答界面）显示中文还是英文；自动档跟随宿主语言。',
     agentLang: '决定模型侧文案（含工具描述与执行纪律、错误与提示）的语言。',
-    silentFailureGuard: '所谓静默失败，就是命令可能没有执行却看不到报错。开启后这类情况会给出诊断提示和检查建议；只对两预设生效，默认关闭。',
+    silentFailureGuard: '所谓静默失败，就是命令可能没有执行却看不到报错。开启后这类情况会给出诊断提示和检查建议；生效范围由「适用预设」名单决定，默认关闭。',
     workflowProgressLog: '编排作业默认关——各阶段进度行滤除、只留结论，Agent 看到的结果更短；打开后保留进度行，结果正文随之变长，界面与日志的原始记录不受影响。',
     fullCommandEcho: '命令作业在作业列表里默认关——Agent 看到进度说明；打开后回显完整命令原文，界面与日志的原始记录不受影响。',
-    askTakeover: '开启后，两预设根代理的一般性提问在待答面板作答；关掉则走宿主默认流程。到期后 Agent 继续工作，用户仍可之后再回答。',
+    askTakeover: '开启后，预设名单内根代理的一般性提问在待答面板作答；关掉则走宿主默认流程。到期后 Agent 继续工作，用户仍可之后再回答。',
     askTimeoutMs: '自收到一批提问时开始计时，同批多题共用一个期限。到期时已作的回答保留，Agent 继续工作，用户仍可之后再回答；改值只影响之后的批次。',
     askExtendMs: '待答面板的「增加等待时间」按钮每按一下，就给该会话此刻等待中的批次各加这段时间。',
-    askUiSeat: '侧边栏底栏的角标显示待处理数量、点开列表；右下角的浮窗把问题直接展示出来。'
+    askUiSeat: '侧边栏底栏的角标显示待处理数量、点开列表；右下角的浮窗把问题直接展示出来。',
+    // PRESET-BIND-01：等义改写样本（组内非词典措辞——「把关」非「控制」）。
+    boundPresets: '勾选的预设向其会话注入本包执行纪律；静默失败提示与提问接管仍分别受各自开关把关，名单不越权。匹配看会话当前实际预设。'
   };
   const REWRITE_EN = {
     defaultYieldMs: 'The default first-wait span async_run and async_workflow use for calls that omit yield_ms; a call with a value gets it from the request value and the bounds. When the wait ends with work unfinished, you get a job id back and the task keeps running in the background.',
@@ -1942,13 +2259,15 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     subagentProvider: 'The backend async_agent spawns subagents with.',
     uiLang: 'Sets the language (Chinese or English) of the settings form, field help, and pending panel; the auto choice follows the host language.',
     agentLang: 'Sets the language of model-visible copy: tool descriptions, parameter notes, notices, execution discipline, and errors.',
-    silentFailureGuard: '"Silent failure" is when a command may not have executed with no visible error. When on, such cases get a diagnostic reminder and checking advice; it covers only this package\'s two presets and is disabled by default.',
+    silentFailureGuard: '"Silent failure" is when a command may not have executed with no visible error. When on, such cases get a diagnostic reminder and checking advice; the applicable presets list decides where it applies, and it is disabled by default.',
     workflowProgressLog: 'When this is off by default, orchestration results keep conclusions only and the result bodies the Agent receives are shorter; turning it on keeps the progress lines, producing longer results; raw records in the interface and logs are unaffected.',
     fullCommandEcho: 'Command jobs show the progress description in job lists while this is off by default, and the Agent sees it; turning it on echoes the full command text; raw records in the interface and logs are unaffected.',
-    askTakeover: 'When on, the pending panel answers plain questions from the root agents of this package\'s two presets; when off, the host\'s native flow handles them. After expiry the Agent continues working and the user can still answer later.',
+    askTakeover: 'When on, the pending panel answers plain questions from the root agents under the applicable presets list; when off, the host\'s native flow handles them. After expiry the Agent continues working and the user can still answer later.',
     askTimeoutMs: 'Timed from receiving a batch of questions; the batch\'s questions share one deadline. On expiry the answers given so far are kept, the Agent continues working, the user can still answer later; a new setting applies to subsequent batches.',
     askExtendMs: 'Each "Extend wait" click in the pending panel adds this much time to every batch of that session not yet expired at that moment.',
-    askUiSeat: 'A sidebar footer badge shows the open count and opens the list on click; a bottom-right overlay displays the questions directly.'
+    askUiSeat: 'A sidebar footer badge shows the open count and opens the list on click; a bottom-right overlay displays the questions directly.',
+    // PRESET-BIND-01（与 zh 样本同事实）。
+    boundPresets: 'Checked presets get this package\'s execution discipline injected into their sessions; the silent-failure hint and question takeover still answer to their own switches — the list does not override them. Matching follows each session\'s current effective preset.'
   };
   const missingFactGroups = (text, groups) => groups.flatMap((group, index) => (group.some((phrase) => text.includes(phrase)) ? [] : [index]));
   for (const key of Object.keys(HINT_FACTS_ZH)) {
@@ -1988,7 +2307,9 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     silentFailureGuard: ['诊断提醒', '返回提示'],
     workflowProgressLog: ['滤除', '内容预算'], fullCommandEcho: ['作业列表', '标签'],
     askTakeover: ['迟到', '不会送达'],
-    askTimeoutMs: ['共享', '仍接受作答'], askExtendMs: ['原截止点', '初始期限'], askUiSeat: ['消隐', '不改提问']
+    askTimeoutMs: ['共享', '仍接受作答'], askExtendMs: ['原截止点', '初始期限'], askUiSeat: ['消隐', '不改提问'],
+    // PRESET-BIND-01：名单语义三锚（开关正交／空数组解除／刷新重读）。
+    boundPresets: ['不代替开关', '解除全部绑定', '「刷新」重读']
   };
   const HELP_ANCHORS_EN = {
     defaultYieldMs: ['returns the job id first', 'minYieldMs ≤ defaultYieldMs ≤ maxYieldMs'],
@@ -2002,7 +2323,9 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     workflowProgressLog: ['filter out', 'content budget'], fullCommandEcho: ['job-list label', 'full command text'],
     askTakeover: ['Late answers', 'will not arrive'],
     askTimeoutMs: ['share the deadline', 'keeps accepting answers'], askExtendMs: ['stacked on the original deadline', 'own initial deadlines'],
-    askUiSeat: ['hides once everything is handled', 'does not change questioning']
+    askUiSeat: ['hides once everything is handled', 'does not change questioning'],
+    // PRESET-BIND-01（与 zh 锚同事实）。
+    boundPresets: ['does not replace the switches', 'unbinds everything', 'reloads via "Refresh"']
   };
   for (const [key, anchors] of Object.entries(HELP_ANCHORS_ZH)) {
     for (const anchor of anchors) {
@@ -2037,8 +2360,8 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     }
   }
 
-  // ⑦ T21 在场断言扩展：19 字段的字段名键、hint.<键>、help.<键> 两档全必须在场
-  //    （删任一键即红——本循环逐键断言）。
+  // ⑦ T21 在场断言扩展：20 字段的字段名键、hint.<键>、help.<键> 两档全必须在场
+  //    （删任一键即红——本循环逐键断言；含 PRESET-BIND-01 的 boundPresets）。
   for (const key of Object.keys(NAMES_ZH)) {
     for (const lang of ['zh', 'en']) {
       for (const prefix of ['', 'hint.', 'help.']) {
@@ -2121,14 +2444,14 @@ test('T19（R21/R24/R25）：字段表单一来源——client.js 的 FIELDS 与
   // 两条钉的是"字段集合"的**单一来源**：界面判据拿 `BUDGET_FIELD_KEYS` + `LANG_FIELD_KEYS` 去核对页面
   // （`judgeConfigForm` 的字段身份那一条），而页面渲染哪些字段、哪几个带读数由 `client.js` 的
   // `FIELDS` 决定。两侧漂移时，"字段缺项 / 读数挂错字段"永远抓不到——判据会与被测实现一起错。
-  const { MS_FIELD_KEYS, BUDGET_FIELD_KEYS, LANG_FIELD_KEYS, FLAG_FIELD_KEYS, DISPLAY_FIELD_KEYS, ASK_FIELD_KEYS } = await import('../lib/config.js');
+  const { MS_FIELD_KEYS, BUDGET_FIELD_KEYS, LANG_FIELD_KEYS, FLAG_FIELD_KEYS, DISPLAY_FIELD_KEYS, ASK_FIELD_KEYS, PRESET_FIELD_KEYS } = await import('../lib/config.js');
   let loaded;
   new Function('window', clientCode())({ __ModuleLoader__: { load: (spec) => { loaded = spec; } } });
   const product = loaded.factory(() => ({ createElement: () => undefined, useState: () => [undefined, () => {}], useEffect: () => {} }));
 
   assert.deepEqual(product.FIELDS.map((field) => field.key),
-    [...BUDGET_FIELD_KEYS, ...LANG_FIELD_KEYS, ...FLAG_FIELD_KEYS, ...DISPLAY_FIELD_KEYS, ...ASK_FIELD_KEYS],
-    'client.js 的字段顺序必须是 预算字段 + 语言字段 + 开关字段 + 展示开关字段 + 提问字段（ask 组四个字段全部可编辑）');
+    [...BUDGET_FIELD_KEYS, ...LANG_FIELD_KEYS, ...FLAG_FIELD_KEYS, ...DISPLAY_FIELD_KEYS, ...ASK_FIELD_KEYS, ...PRESET_FIELD_KEYS],
+    'client.js 的字段顺序必须是 预算字段 + 语言字段 + 开关字段 + 展示开关字段 + 提问字段 + 预设绑定字段（PRESET-BIND-01 后共 20 项）');
   assert.deepEqual(product.LANG_KEYS, [...LANG_FIELD_KEYS], 'client.js 的语言键表必须与 LANG_FIELD_KEYS 一致');
 
   const declared = [...clientCode().matchAll(/key: "([A-Za-z]+)", label: "[A-Za-z]+", ms: true/g)]
@@ -2210,9 +2533,16 @@ test('T17（R10·复审 Z4）：预算默认值本身也要钉住——改错一
     fullCommandEcho: false,
     askTimeoutMs: 60000,
     askExtendMs: 60000,
-    askUiSeat: 'sidebar'
+    askUiSeat: 'sidebar',
+    // 预设绑定名单出厂默认 = 两内置预设（需求 9.4.3：默认即维持现行为——
+    // 两内置预设天然在名单内，升级不改行为）。名单是冻结数组，逐项对。
+    boundPresets: ['dsh-async', 'dsh-async-create']
   };
   for (const [key, want] of Object.entries(EXPECTED_DEFAULTS)) {
+    if (key === 'boundPresets') {
+      assert.deepEqual(resolved[key], want, '`boundPresets` 的默认值必须是两内置预设名单');
+      continue;
+    }
     assert.equal(resolved[key], want,
       `\`${key}\` 的默认值必须是 ${JSON.stringify(want)}——`
       + `改错它不会让任何行为报错，只会静默改变工具行为（复审 Z4：30000→99999 曾全绿逃逸）`);

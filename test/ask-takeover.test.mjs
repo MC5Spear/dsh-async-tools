@@ -55,7 +55,8 @@ import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
 // 其余用例（纯文本判据、客户端模型装载）离线照常跑。
 const askModule = await loadOfflineSafe('../lib/ask-takeover.js');
 const hostModule = await loadOfflineSafe('../lib/host.js');
-const { AskBatchRegistry, AskTakeoverService, shouldTakeover, inOwnPreset } = askModule ?? {};
+const { AskBatchRegistry, AskTakeoverService, shouldTakeover, readSessionPreset } = askModule ?? {};
+const { isPresetBound } = await loadOfflineSafe('../lib/descriptions.js');
 const { applyHostHalf } = hostModule ?? {};
 const hostTest = await hostTestFor('../lib/ask-takeover.js', '../lib/host.js');
 
@@ -235,22 +236,61 @@ function mountListener({ timer, clock, config, services }) {
 
 // ── 判定序（J1–J5，经真实接线观察 next() 语义）────────────────────────────
 
-hostTest('inOwnPreset（F3 范围判定基件）：三态读取路径 + 失效安全方向＝关', () => {
+hostTest('readSessionPreset＋isPresetBound（F3 范围判定基件，PRESET-BIND-01）：三态读取路径 + 名单匹配 + 失效安全方向＝关', () => {
   // 与 shouldTakeover 判定②同一条读取路径（sessions.get → stateOf('agentPreset')），
-  // 供 lib/jobs.js 的结果诊断范围判定复用——两处口径必须一致。
+  // 供 lib/jobs.js 的 guardPresetFor／组稿纪律复用——三处口径必须一致。
   const scope = (preset, session = { id: 's1' }) => ({
     sessions: { get: (id) => (id === 's1' ? session : undefined) },
     sessionProjections: { stateOf: () => preset }
   });
-  assert.equal(inOwnPreset(scope('dsh-async'), 's1'), true, '本包主预设 ⇒ 归属');
-  assert.equal(inOwnPreset(scope('dsh-async-create'), 's1'), true, 'create 预设同样归属');
-  assert.equal(inOwnPreset(scope('standard'), 's1'), false, '其他预设 ⇒ 不归属');
-  assert.equal(inOwnPreset(scope('dsh-async'), 's-other'), false, '会话查无 ⇒ 不归属');
-  assert.equal(inOwnPreset({}, 's1'), false, '服务缺席 ⇒ 不归属（失效安全＝关）');
+  assert.equal(readSessionPreset(scope('dsh-async'), 's1'), 'dsh-async', '读得会话实际预设 id');
+  assert.equal(readSessionPreset(scope('standard'), 's1'), 'standard', '非本包预设照常读得（匹配交名单）');
+  assert.equal(readSessionPreset(scope('dsh-async'), 's-other'), undefined, '会话查无 ⇒ undefined');
+  assert.equal(readSessionPreset({}, 's1'), undefined, '服务缺席 ⇒ undefined（失效安全＝关）');
   assert.equal(
-    inOwnPreset({ sessions: { get: () => { throw new Error('boom'); } }, sessionProjections: {} }, 's1'),
-    false, '读取抛错 ⇒ 不归属（不把异常泄给诊断路径）'
+    readSessionPreset({ sessions: { get: () => { throw new Error('boom'); } }, sessionProjections: {} }, 's1'),
+    undefined, '读取抛错 ⇒ undefined（不把异常泄给诊断路径）'
   );
+  // 名单匹配（需求 9.4.1：按会话当前实际预设 ID 匹配）：缺席配置 → 默认两名单；
+  // 显式名单决定归属；快照缺席回退默认（boundList 的缺席分支）。
+  assert.equal(isPresetBound(undefined, 'dsh-async'), true, '快照缺席 → 默认名单含主预设');
+  assert.equal(isPresetBound(undefined, 'rwkv'), false, '快照缺席 → 默认名单不含自建预设');
+  assert.equal(isPresetBound({ boundPresets: ['rwkv'] }, 'rwkv'), true, '显式名单匹配自建预设');
+  assert.equal(isPresetBound({ boundPresets: ['rwkv'] }, 'dsh-async'), false, '显式名单不再含内置主预设（未选预设天然隔离）');
+  assert.equal(isPresetBound({ boundPresets: [] }, 'dsh-async'), false, '空名单＝解除全部绑定');
+  assert.equal(isPresetBound({ boundPresets: [] }, 'rwkv'), false, '空名单对任何预设都不匹配');
+  assert.equal(isPresetBound({ boundPresets: 'oops' }, 'dsh-async'), true, '非数组名单折回默认（快照在场恒为数组的兜底形态）');
+});
+
+hostTest('P12（PRESET-BIND-01）：shouldTakeover 按名单匹配——无预设/读取失败不误匹配', () => {
+  const agent = fakeAgent();
+  // 名单内自建预设（rwkv）→ 接管；名单外预设 → 原生；null/抛错 → 原生（不误匹配）。
+  assert.equal(shouldTakeover(
+    makeRequest(agent, [Q('q1')]), fakeServices(agent, { preset: 'rwkv' }), { askTakeover: true, boundPresets: ['rwkv'] }
+  ).takeover, true, '名单内自建预设 → 接管（无须行声明）');
+  for (const preset of ['dsh-standard', 'code-review', null]) {
+    assert.equal(shouldTakeover(
+      makeRequest(agent, [Q('q1')]), fakeServices(agent, { preset }), { askTakeover: true, boundPresets: ['rwkv'] }
+    ).takeover, false, `名单外预设 ${String(preset)} → 原生`);
+  }
+  assert.equal(shouldTakeover(
+    makeRequest(agent, [Q('q1')]), fakeServices(agent, { presetThrows: true }), { askTakeover: true, boundPresets: ['rwkv'] }
+  ).takeover, false, '投影读取抛错 → 原生（不猜）');
+  // 名单移除内置预设后，内置预设会话交还原生（取消绑定的语义）。
+  assert.equal(shouldTakeover(
+    makeRequest(agent, [Q('q1')]), fakeServices(agent, { preset: 'dsh-async' }), { askTakeover: true, boundPresets: ['rwkv'] }
+  ).takeover, false, '名单不含 dsh-async → 该预设会话走原生');
+});
+
+hostTest('P10（PRESET-BIND-01）：绑定名单与 askTakeover 开关正交——名单在、开关关仍零接管', () => {
+  const agent = fakeAgent();
+  // 名单含会话预设，但总开关关（判定①先于预设判定）→ 原生：名单只定范围，不代替开关。
+  assert.equal(shouldTakeover(
+    makeRequest(agent, [Q('q1')]), fakeServices(agent, { preset: 'rwkv' }), { askTakeover: false, boundPresets: ['rwkv'] }
+  ).takeover, false, '开关关 → 原生（名单不越权开启）');
+  assert.equal(shouldTakeover(
+    makeRequest(agent, [Q('q1')]), fakeServices(agent, { preset: 'rwkv' }), { boundPresets: ['rwkv'] }
+  ).takeover, false, '开关缺席（非字面 true）→ 原生');
 });
 
 hostTest('J1：总开关关 → next() 被调、零接管（默认关 = 零行为的接线侧证据）', () => {
@@ -1816,6 +1856,9 @@ test('sidebar 注册 label 闭包——经 apply 产品路径，随快照语言�
   };
   const registrations = [];
   const askRemoteNs = { state: () => Promise.resolve({ ok: true, value: { serverNow: 0, items: [] } }) };
+  // 预设目录服务的替身（apply 的动态 inject 会取 remote.agentPresets）：
+  // 空目录即可——本用例只锚 seats 的 label 闭包。
+  const fakeAgentPresets = { list: () => Promise.resolve({ ok: true, value: { presets: [] } }) };
   const ctx = {
     configForms: {
       get: () => scope,
@@ -1826,10 +1869,13 @@ test('sidebar 注册 label 闭包——经 apply 产品路径，随快照语言�
       register: (meta, renderFn) => { registrations.push({ meta, renderFn }); return () => {}; }
     },
     // 真机同款路径：seats 经**动态** ctx.inject(['remote.async-tools-ask'])
-    // 拿命名空间代理（自 mount 的 ns 不能直接读 ctx.remote[ns]）。
-    inject: (list, fn) => fn({ remote: { 'async-tools-ask': askRemoteNs } }),
+    // 拿命名空间代理（自 mount 的 ns 不能直接读 ctx.remote[ns]）；预设目录
+    // 服务（remote.agentPresets）经同一动态 inject 形态注入。
+    inject: (list, fn) => fn({ remote: { 'async-tools-ask': askRemoteNs, agentPresets: fakeAgentPresets } }),
     locale: { register: () => () => {} },
-    remote: { $mount: () => Promise.resolve(() => {}) },
+    // $on/on 是目录变更通知的宿主接口（settings/document-updated、connection/reset）。
+    remote: { $mount: () => Promise.resolve(() => {}), $on: () => () => {} },
+    on: () => () => {},
     effect: (fn) => { const off = fn(); return () => off?.(); },
     uiWorkspace: { openSession() {} }
   };
