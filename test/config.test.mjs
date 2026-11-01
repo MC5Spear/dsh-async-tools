@@ -172,8 +172,8 @@ test('schemastery 嵌套禁令：volatile 子树内的字段再挂 volatile 在 
   const { default: z } = await import('@deepseek-ai/schemastery');
   // 反面形态：字段逐个 volatile 且整体包 volatile——schemastery 校验
   // "volatile 字段要求无包围 volatile 的固定对象路径"，resolve 整棵根时即抛
-  // （与输入数据无关）。这是 19 字段搬进 settings 子树、字段级摘掉 volatile
-  // 标记的直接原因。
+  // （与输入数据无关）。这是全部可编辑字段搬进 settings 子树、字段级摘掉
+  // volatile 标记的直接原因。
   const nested = z.object({
     settings: z.transform(
       z.object({ minWaitMs: z.number().default(250).volatile() }),

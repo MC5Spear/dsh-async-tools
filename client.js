@@ -663,7 +663,7 @@ function FieldShell(props) {
 
 /**
  * 从 describe 快照的值层（value/user/base）里取 settings 子树的内容
- * （设计 §5.1：19 字段全部展平在 `settings` 键下）。
+ * （设计 §5.1：20 字段全部展平在 `settings` 键下）。
  *
  * 防御回退：`settings` 键缺席时把该层本身当字段层用（快照值层整体缺席的
  * 部署形态不因此抛错，座位/语言回退默认值——同 `readConfig` 的口径）。

@@ -1410,7 +1410,7 @@ WAIT-01 的设计落点：2.1（单一总截止与挂起条件检查）、2.2（
 - 新增 bash-backend 模块（`lib/` 下）：后端解析纯函数；探测（优先级、MSYSTEM 判别、`spawnSync` 超时、结论缓存）；覆盖字段解析（两形态）；argv 组装与受限档可读错误。
 - `lib/jobs.js`：执行顺序链插入后端步骤；resolve 请求按后端附加 `env`（`TERM`／`LANG`）；starter 分支（bash 走 `executeArgv`）；`silentFailureNotes` 传 backend；bash 失败路径的错误文案接线。
 - `lib/config.js`：`FLAG_FIELDS` 增 `gitBashShell`（布尔开关，schema 形态同 `silentFailureGuard`）与 `gitBashPath`（字符串，默认空串，修剪后空合法＝自动探测）；字段组计数注释更新。
-- `lib/settings.js`、`client.js`：字段表（FLAG 组内新序）、表单控件、`hint`／`help` 与两语文案，`gitBashShell` 的 hint／help 如实标注非受限档限定（3.1.1 裁定）；字段数断言 19→21。
+- `lib/settings.js`、`client.js`：字段表（FLAG 组内新序）、表单控件、`hint`／`help` 与两语文案，`gitBashShell` 的 hint／help 如实标注非受限档限定（3.1.1 裁定）；字段数断言 20→22。
 - `lib/descriptions.js`、`lib/text.js`：`async_run` 描述含当前默认命令行与 `shell` 参数说明（两语，随设置刷新），如实标注 bash 仅在 danger-full-access 档执行、受限档给可读错误与提权指引（3.1.1 裁定）；bash 默认时的 POSIX 语法与路径形态指引；词典键与 `tools/check-model-text.mjs` 登记。
 - `lib/silent-failure.js`：判定输入增 backend，签名 1 限 pwsh 后端。
 - `package.json`：无新增依赖（`@deepseek-ai/dsh-sandbox` 已在九项 peer 内）。

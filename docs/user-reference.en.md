@@ -63,9 +63,9 @@ A field's Restore default action stages removal of only that field's user overri
 
 For advanced configuration, put fields under the host row's `config.settings.<field>`, not directly under `config`. The 0.2.5 flat style (`config: { agentLang: zh, … }`) does not take effect on 0.2.8: the row activates but the preset values silently fall back to defaults. The correct form is `config: { settings: { agentLang: zh, … } }` (see the migration section of the repository's `CHANGELOG.md` for a side-by-side example and the load-time warning; that file is not shipped inside the install package — read it from a pinned branch or tag of the source repository). Values are selected in this order: user override, composition configuration, then schema default (the default in the configuration definition). A user-layer field counts as an override even when its value equals the default.
 
-Tools first read the current configuration snapshot published by the host. Only if it is absent do they use valid tool-row fallback values and report that settings are not connected. `toolName`, `owningPreset`, and delegation-row options are fixed row configuration, not part of the 19 UI settings below.
+Tools first read the current configuration snapshot published by the host. Only if it is absent do they use valid tool-row fallback values and report that settings are not connected. `toolName`, `owningPreset`, and delegation-row options are fixed row configuration, not part of the 20 UI settings below.
 
-### 2.1 All 19 settings
+### 2.1 All 20 settings
 
 The Range column describes values that can be saved. If a call's budget falls outside the current min/max, the tool moves it to the nearest boundary; this is clamping. A new invalid configuration is rejected, not clamped. Resaving an existing damaged configuration unchanged is an exception explained after the table. Values are stored in milliseconds (ms): 1000 ms is one second.
 
@@ -148,7 +148,7 @@ A job terminal result is `{status:'completed'|'killed'|'failed', job_id, output,
 
 There is no `run_in_background` argument and no wait for the final answer. Success immediately returns `{status:'started', agent_id, note}`, with the effective route source and wait guidance. Rejection does not invent an ID. The shipped presets do not configure an allowed preset set, so agent_preset is not exposed. A context-inheriting backend can expose the parent conversation to its child; write tasks according to the actual backend.
 
-Usually, a task prompt is sufficient. To choose a model, query exact IDs as described in section 5, then supply `provider` and `model` together. `reasoning_effort` may be supplied alone but is checked against the effective model. `agentOptions`, `agentPreset`, and `allowedAgentPresets` are fixed row configuration for advanced composition, not call arguments or part of the 19 UI settings.
+Usually, a task prompt is sufficient. To choose a model, query exact IDs as described in section 5, then supply `provider` and `model` together. `reasoning_effort` may be supplied alone but is checked against the effective model. `agentOptions`, `agentPreset`, and `allowedAgentPresets` are fixed row configuration for advanced composition, not call arguments or part of the 20 UI settings.
 
 **When support preflight runs:** an explicit route or effort choice, or row `agentOptions` containing `provider`, `model`, or `reasoningEffort`, triggers a support check before creation. Non-route options such as `maxTokens` alone do not. Backend `agentRouteDefaults` join the merge only when preflight is triggered. Explicit arguments override row options, row options override backend defaults, and missing route components come from the parent. Allowed-set checks still apply only to explicit choices; a row default triggering preflight does not make the request explicit.
 
