@@ -2066,3 +2066,213 @@ hostTest('L9 装载中途抛错：行注销恒执行、已就位处置器执行�
   runRowDisposers(rig3b.state);
   assert.equal(ledger.rowsCount(), 0, '收尾：替身行出册');
 });
+
+// ═══ REL-SEND-01：部分投递失败的精确回滚边界（设计 r14 §3）═══
+//
+// S1 是受控反例：修前 #flushPendingSends 的 catch 对整个 queue 回滚（含宿主
+// 已接受的条目）——第二次 inject 抛错后两项正文都重现。驱动走公开链路：
+// claimWait 压住活等待 → readSettled 逐项就绪（不投）→ releaseWait 让位复查
+// 逐条 deferFlush 装配后**单次冲刷**（多元素队列的成例路径，delivery.js 的
+// releaseWait）。替身只替换装载边界：agents 注册表（可抛错的 inject/followup）
+// 与 jobs 读取（list/read 形状与宿主契约一致）。
+
+/**
+ * S 系列装置：一个主体的假 Agent（busy→逐条 inject；idle→单条 followup）＋
+ * 受控 jobs 读取。`injectFailsAt`＝第 N 次 inject 抛错（0＝永不）；
+ * `followupThrows`＝followup 抛错；`agentsGet` 可整替（注册表缺失形）。
+ */
+function sRig({ injectFailsAt = 0, followupThrows = false, agentsGet, budget = 4000 } = {}) {
+  resetDeliveryLedger();
+  const calls = { inject: [], followup: [] };
+  const OWNER = 'at-s-owner';
+  const agent = {
+    id: OWNER,
+    status: 'running',
+    inject(message) {
+      calls.inject.push(message);
+      if (calls.inject.length === injectFailsAt) {
+        throw new Error(`inject #${String(calls.inject.length)} refused`);
+      }
+    },
+    followup(message) {
+      calls.followup.push(message);
+      if (followupThrows) throw new Error('followup refused');
+    }
+  };
+  const reads = new Map();
+  const config = Object.freeze({ maxResultChars: budget, agentLang: 'en' });
+  const ctx = {
+    emit() {},
+    get: (name) => (name === 'agents'
+      ? { get: (id) => (agentsGet !== undefined ? agentsGet(id) : (id === OWNER ? agent : undefined)) }
+      : undefined),
+    jobs: {
+      list: () => [...reads.keys()].map((id) => ({ id, status: 'completed', exitCode: 0 })),
+      read: async (jobId) => reads.get(jobId)
+    }
+  };
+  ledger.registerRow(ctx);
+  /** 登记一个已就绪（终态＋增量已读）的作业；返回 readSettled 的驱动 Promise。 */
+  const readyJob = async (jobId, text) => {
+    reads.set(jobId, { chunks: [{ channel: 'stdout', text }] });
+    ledger.noteJobStarted(ctx, config, jobId, OWNER);
+    await ledger.readSettled(jobId);
+  };
+  return { agent, calls, OWNER, config, ctx, reads, readyJob };
+}
+
+/** 装置产出的消息正文（inject/followup 的 content 拼接）。 */
+const textOf = (message) => message.content.map((part) => part.text).join('');
+
+hostTest('S1 部分失败只回滚失败项：已接受项不重现（REL-SEND-01 受控反例）', async () => {
+  const rig = sRig({ injectFailsAt: 2 });
+  const token = ledger.claimWait(rig.OWNER);
+  await rig.readyJob('job-s1a', 'BODY-S1-A');
+  await rig.readyJob('job-s1b', 'BODY-S1-B');
+  await ledger.releaseWait(token, rig.OWNER);
+  // 两次 inject 尝试：第一项被宿主接受，第二项抛错。
+  assert.equal(rig.calls.inject.length, 2, 'inject 恰尝试两次（第一项成功、第二项抛错）');
+  const firstTexts = rig.calls.inject.map(textOf);
+  assert.ok(firstTexts[0].includes('BODY-S1-A'), '第一项正文已投递');
+  assert.equal(firstTexts.filter((text) => text.includes('BODY-S1-A')).length, 1,
+    '第一项恰投递一次（重复交付计数 1）');
+  // 修前形态：catch 对整队回滚——两项都退回缓冲，随后重现（本例红）。
+  const a = ledger.jobs.get('job-s1a');
+  const b = ledger.jobs.get('job-s1b');
+  assert.ok(a.deliveredFact !== null, '已接受项保持交付事实（不回滚）');
+  assert.equal(a.buffer, '', '已接受项缓冲为空');
+  assert.ok(b.deliveredFact === null && b.claimedBy === null, '失败项认领撤销');
+  assert.ok(String(b.buffer).includes('BODY-S1-B'), '失败项正文退回缓冲');
+});
+
+hostTest('S2 失败项为截断条目：回滚按装配前原文退缓冲（中段不丢）', async () => {
+  // 批预算 25：第一项 9 字符整体装入（余 16），第二项 316 字符被裁剪为
+  // 首尾保留（truncated，original＝316 字符装配前原文）。第二项 inject 失败。
+  const long = `HEAD-${'m'.repeat(300)}-TAIL`;
+  const rig = sRig({ injectFailsAt: 2, budget: 25 });
+  const token = ledger.claimWait(rig.OWNER);
+  await rig.readyJob('job-s2a', 'BODY-S2-A');
+  await rig.readyJob('job-s2b', long);
+  await ledger.releaseWait(token, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 2, '前置：恰两次 inject 尝试');
+  const a = ledger.jobs.get('job-s2a');
+  const b = ledger.jobs.get('job-s2b');
+  assert.ok(a.deliveredFact !== null, '第一项（整体装入）保持交付');
+  assert.ok(b.deliveredFact === null && b.claimedBy === null, '截断的失败项认领撤销');
+  assert.equal(b.buffer, long, '失败项按装配前原文整体退回缓冲（省略中段不丢）');
+  // 投出的截断文本确属首尾形（而非误投原文或空投）。
+  const sentB = textOf(rig.calls.inject[1]);
+  assert.ok(sentB.includes('HEAD-') && sentB.includes('-TAIL'), '截断条目首尾都在');
+  assert.ok(!sentB.includes('m'.repeat(50)), '截断条目中段确实被省略');
+});
+
+hostTest('S3 失败项重试：换不抛错的通道后只补投失败项，已投项不再出现', async () => {
+  const rig = sRig({ injectFailsAt: 2 });
+  const token = ledger.claimWait(rig.OWNER);
+  await rig.readyJob('job-s3a', 'BODY-S3-A');
+  await rig.readyJob('job-s3b', 'BODY-S3-B');
+  await ledger.releaseWait(token, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 2, '前置：第二项失败');
+  // 换通道重试：不再抛错（injectFailsAt 已耗过）。
+  const token2 = ledger.claimWait(rig.OWNER);
+  await ledger.releaseWait(token2, rig.OWNER);
+  const all = rig.calls.inject.map(textOf);
+  assert.equal(all.filter((text) => text.includes('BODY-S3-A')).length, 1, '第一项不再出现（恰一次）');
+  // calls 记录的是「尝试」：BODY-S3-B 共两次＝一次失败尝试＋一次成功补投；
+  // 成功补投是最后一次调用（此前失败项已退缓冲、此处才置交付事实）。
+  assert.equal(all.filter((text) => text.includes('BODY-S3-B')).length, 2,
+    '第二项：一次失败尝试＋一次成功补投（不更多）');
+  assert.ok(all.at(-1).includes('BODY-S3-B'), '最后一次 inject 是失败项的成功补投');
+  const b = ledger.jobs.get('job-s3b');
+  assert.ok(b.deliveredFact !== null, '失败项重试后置交付事实');
+  assert.equal(b.buffer, '', '补投后缓冲清空');
+});
+
+hostTest('S4 失败位置扫描：首/中/末项失败三形只回滚失败项及其后', async () => {
+  for (const failsAt of [1, 2, 3]) {
+    const rig = sRig({ injectFailsAt: failsAt });
+    const token = ledger.claimWait(rig.OWNER);
+    await rig.readyJob('job-s4a', 'BODY-S4-A');
+    await rig.readyJob('job-s4b', 'BODY-S4-B');
+    await rig.readyJob('job-s4c', 'BODY-S4-C');
+    await ledger.releaseWait(token, rig.OWNER);
+    const delivered = ['job-s4a', 'job-s4b', 'job-s4c']
+      .filter((id) => ledger.jobs.get(id).deliveredFact !== null);
+    // 队列按 Map 迭代序＝a,b,c：第 k 项失败 ⇒ 前 k-1 项交付、其余回滚。
+    const expected = failsAt === 1 ? [] : failsAt === 2 ? ['job-s4a'] : ['job-s4a', 'job-s4b'];
+    assert.deepEqual(delivered.sort(), expected, `inject 第 ${String(failsAt)} 项失败：仅其前保持交付`);
+    assert.equal(rig.calls.inject.length, failsAt, `恰尝试到失败项（第 ${String(failsAt)} 次）`);
+  }
+});
+
+hostTest('S5 空闲路径原子不变：合并 followup 抛错整队回滚', async () => {
+  const rig = sRig({ followupThrows: true });
+  rig.agent.status = 'idle';
+  const token = ledger.claimWait(rig.OWNER);
+  await rig.readyJob('job-s5a', 'BODY-S5-A');
+  await rig.readyJob('job-s5b', 'BODY-S5-B');
+  await ledger.releaseWait(token, rig.OWNER);
+  assert.equal(rig.calls.followup.length, 1, '单条合并 followup（空闲路径）');
+  for (const id of ['job-s5a', 'job-s5b']) {
+    const entry = ledger.jobs.get(id);
+    assert.ok(entry.deliveredFact === null && entry.claimedBy === null, `${id} 认领撤销`);
+    assert.notEqual(entry.buffer, '', `${id} 正文退回缓冲（整队回滚语义不变）`);
+  }
+});
+
+hostTest('S6 并发冲刷互不波及：A 队失败回滚不碰 B 队已投项', async () => {
+  // 两个主体各自独立冲刷：A 的第二项 inject 抛错，B 全部成功。
+  const rigA = sRig({ injectFailsAt: 2 });
+  const tokenA = ledger.claimWait(rigA.OWNER);
+  await rigA.readyJob('job-s6a1', 'BODY-S6-A1');
+  await rigA.readyJob('job-s6a2', 'BODY-S6-A2');
+  const OWNER_B = 'at-s-owner-b';
+  const agentB = {
+    id: OWNER_B,
+    status: 'running',
+    inject(message) { this.calls.push(message); },
+    calls: []
+  };
+  // B 主体：独立 ctx（agents 只认 B 的注册表项）。
+  const readsB = new Map();
+  const ctxB = {
+    emit() {},
+    get: (name) => (name === 'agents' ? { get: (id) => (id === OWNER_B ? agentB : undefined) } : undefined),
+    jobs: {
+      list: () => [...readsB.keys()].map((id) => ({ id, status: 'completed', exitCode: 0 })),
+      read: async (jobId) => readsB.get(jobId)
+    }
+  };
+  ledger.registerRow(ctxB);
+  const tokenB = ledger.claimWait(OWNER_B);
+  const readyB = async (jobId, text) => {
+    readsB.set(jobId, { chunks: [{ channel: 'stdout', text }] });
+    ledger.noteJobStarted(ctxB, rigA.config, jobId, OWNER_B);
+    await ledger.readSettled(jobId);
+  };
+  await readyB('job-s6b1', 'BODY-S6-B1');
+  await readyB('job-s6b2', 'BODY-S6-B2');
+  // 「同拍」两冲刷：先后触发（取队列到投递间无 await 交错面，见设计 §3.4）。
+  await ledger.releaseWait(tokenA, rigA.OWNER);
+  await ledger.releaseWait(tokenB, OWNER_B);
+  assert.equal(agentB.calls.length, 2, 'B 队两项全部投递成功');
+  for (const id of ['job-s6b1', 'job-s6b2']) {
+    assert.ok(ledger.jobs.get(id).deliveredFact !== null, `${id}（B 队）交付事实保持`);
+  }
+  assert.ok(ledger.jobs.get('job-s6a1').deliveredFact !== null, 'A 队第一项保持交付');
+  assert.ok(ledger.jobs.get('job-s6a2').deliveredFact === null, 'A 队失败项按预期回滚');
+});
+
+hostTest('S7 注册表缺失分支回归：整队回滚行为不变', async () => {
+  const rig = sRig({ agentsGet: () => undefined });
+  const token = ledger.claimWait(rig.OWNER);
+  await rig.readyJob('job-s7a', 'BODY-S7-A');
+  await rig.readyJob('job-s7b', 'BODY-S7-B');
+  await ledger.releaseWait(token, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 0, '注册表缺失：零通道调用');
+  for (const id of ['job-s7a', 'job-s7b']) {
+    const entry = ledger.jobs.get(id);
+    assert.ok(entry.deliveredFact === null, `${id} 整队回滚（registry miss 语义不变）`);
+    assert.notEqual(entry.buffer, '', `${id} 正文退回缓冲`);
+  }
+});
