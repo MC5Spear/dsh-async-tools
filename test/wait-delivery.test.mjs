@@ -5,6 +5,10 @@
  * 消费式游标、settled 截流都不是替身模拟的。受控点只有一个：workflow 引擎何时
  * 结算。断言的是正向行为：最终 JSON 必须出现在模型可见输出里，恰一次。
  *
+ * L 系列（文件尾）是 REL-LIFECYCLE-01 的行级清扫回归：L1（查询行卸载不清他行
+ * 账目）与 L8（挂监听失败行不因他行卸载被整体释放）是受控反例——修前行卸载
+ * effect 调 `disposeAll`，两例必红；L9 在装载中途抛错的各时点断言行登记收支。
+ *
  * 宿主包不可解析（离线环境/CI）时整文件跳过——跳过不是通过。
  */
 import assert from 'node:assert/strict';
@@ -15,6 +19,11 @@ import { t } from '../lib/text.js';
 import { resetAgentBaselines } from '../lib/wait-agent-target.js';
 import { checkedTool, inboxPayload } from './_helpers.mjs';
 
+// delivery.js 静态依赖 @deepseek-ai/dsh-llm（宿主链）——离线守卫禁止测试文件
+// 静态闭包触达宿主链，与 workflow/wait 同走 loadOfflineSafe 动态装载。
+const deliveryModule = await loadOfflineSafe('../lib/delivery.js');
+const { ledger, resetDeliveryLedger } = deliveryModule ?? {};
+
 // 宿主链动态守卫：lib/workflow.js、lib/wait.js（→ dsh-tools）与真注册表依赖
 // （@deepseek-ai/cordis、@deepseek-ai/dsh-jobs-local——后者是宿主树内层包，不在本包
 // peer 声明里）在离线形态都缺席，全部用例自跳过并打印理由（ci.yml offline 作业的
@@ -22,14 +31,16 @@ import { checkedTool, inboxPayload } from './_helpers.mjs';
 // 事实，语法错或模块内部抛错原样红，不得被吞成跳过（防假跳过）。
 const workflowModule = await loadOfflineSafe('../lib/workflow.js');
 const waitModule = await loadOfflineSafe('../lib/wait.js');
+const indexModule = await loadOfflineSafe('../lib/index.js');
 const { createWorkflowTool } = workflowModule ?? {};
 const { createWaitTool, WAIT_SPIN_LIMIT } = waitModule ?? {};
+const { apply: applyRow } = indexModule ?? {};
 const cordisModule = await loadOfflineSafe('@deepseek-ai/cordis');
 const jobsLocalModule = await loadOfflineSafe('@deepseek-ai/dsh-jobs-local');
 const { Context } = cordisModule ?? {};
 const { LocalJobRegistry } = jobsLocalModule ?? {};
 const hostTest = await hostTestFor(
-  '../lib/workflow.js', '../lib/wait.js', '@deepseek-ai/cordis', '@deepseek-ai/dsh-jobs-local'
+  '../lib/workflow.js', '../lib/wait.js', '../lib/index.js', '@deepseek-ai/cordis', '@deepseek-ai/dsh-jobs-local'
 );
 
 /**
@@ -1790,4 +1801,268 @@ hostTest('W-SPIN-A：MAX_SPINS 可测锚——注入小上限后超过上限次�
   } finally {
     WAIT_SPIN_LIMIT.value = original;
   }
+});
+
+// ═══ REL-LIFECYCLE-01：行级归属的账本回收（设计 r14 §2）═══
+//
+// 测试纪律（本批头注）：L1/L8 是受控反例——先在未修代码上证明红（行卸载
+// effect 对每行调 disposeAll），修后绿；激励直接落在被测单元（账本 API 与
+// applyWith 装载链），替身只替换装载边界（ctx.on/ctx.tools.register/ctx.effect）。
+// 条目内字段（buffer/terminal/deliveredFact）经公开 API 无法到达的形态直接
+// 构造在条目上——被测的是 disposeRow 的账目归属，不是字段构造路径。
+
+hostTest('L1 查询行卸载不清其他行的交付账目（REL-LIFECYCLE-01 受控反例）', () => {
+  resetDeliveryLedger();
+  const queryCtx = { label: 'query-row' };
+  const runCtx = { label: 'run-row' };
+  ledger.registerRow(queryCtx);
+  ledger.registerRow(runCtx);
+  ledger.noteJobStarted(runCtx, {}, 'job-l1', 'owner-l1');
+  ledger.noteFirstWaitArmed('job-l1', 1000);
+  const chain = ledger.jobs.get('job-l1').chain;
+  // 修前形态：行卸载调 disposeAll——记录 1→0、链被撤（本例红）。
+  ledger.disposeRow(queryCtx);
+  assert.equal(ledger.jobs.size, 1, '查询行不创建条目，其卸载不得清他行作业');
+  assert.ok(ledger.jobs.has('job-l1'), '生产者行的作业记录仍在');
+  assert.ok(chain !== null && !chain.signal.signal.aborted, '他行作业的保活链在册未撤');
+  assert.equal(ledger.rowsCount(), 1, '生产者行仍在册（查询行已出册）');
+});
+
+hostTest('L2 生产者行卸载只清本行条目：他行三种形态逐字段原样', () => {
+  resetDeliveryLedger();
+  const ctxA = { label: 'row-a' };
+  const ctxB = { label: 'row-b' };
+  ledger.registerRow(ctxA);
+  ledger.registerRow(ctxB);
+  // B 形态一：活动作业＋已武装保活链。
+  ledger.noteJobStarted(ctxB, {}, 'job-b1', 'sub-b');
+  ledger.noteFirstWaitArmed('job-b1', 2000);
+  const b1 = ledger.jobs.get('job-b1');
+  // B 形态二：已结算未交付缓冲（截断＋留存路径）。
+  ledger.noteJobStarted(ctxB, {}, 'job-b2', 'sub-b');
+  const b2 = ledger.jobs.get('job-b2');
+  b2.buffer = '正文前段……后段';
+  b2.lossy = true;
+  b2.spillPaths = ['/tmp/at-spill.txt'];
+  b2.terminal = { status: 'completed', exitCode: 0, signal: null, detail: null };
+  b2.readyAt = 12345;
+  // B 形态三：partial 交付事实＋仍在缓冲的省略中段。
+  ledger.noteJobStarted(ctxB, {}, 'job-b3', 'sub-b');
+  const b3 = ledger.jobs.get('job-b3');
+  b3.buffer = '省略中段原文';
+  b3.deliveredFact = { via: 'message', partial: true };
+  // A 作业（活动＋武装链）——卸载 A 应撤它的链、删它的条目。
+  ledger.noteJobStarted(ctxA, {}, 'job-a1', 'sub-a');
+  ledger.noteFirstWaitArmed('job-a1', 2000);
+  const a1Chain = ledger.jobs.get('job-a1').chain;
+  ledger.disposeRow(ctxA);
+  assert.ok(!ledger.jobs.has('job-a1'), 'A 的条目消失');
+  assert.ok(a1Chain.signal.signal.aborted, 'A 的保活链撤销（abort 信号置位）');
+  assert.ok(ledger.jobs.has('job-b1') && ledger.jobs.get('job-b1') === b1, 'B1 条目原对象保留');
+  assert.ok(b1.chain !== null && !b1.chain.signal.signal.aborted, 'B1 保活链未被误撤');
+  assert.ok(ledger.jobs.has('job-b2') && ledger.jobs.get('job-b2') === b2, 'B2 条目原对象保留');
+  assert.equal(b2.buffer, '正文前段……后段', 'B2 未交付缓冲原样');
+  assert.equal(b2.lossy, true, 'B2 截断标记原样');
+  assert.deepEqual(b2.spillPaths, ['/tmp/at-spill.txt'], 'B2 留存路径原样');
+  assert.deepEqual(b2.terminal, { status: 'completed', exitCode: 0, signal: null, detail: null }, 'B2 终态事实原样');
+  assert.equal(b2.readyAt, 12345, 'B2 就绪时刻原样');
+  assert.ok(ledger.jobs.has('job-b3') && ledger.jobs.get('job-b3') === b3, 'B3 条目原对象保留');
+  assert.equal(b3.buffer, '省略中段原文', 'B3 省略中段仍在缓冲');
+  assert.deepEqual(b3.deliveredFact, { via: 'message', partial: true }, 'B3 partial 交付事实原样');
+  assert.equal(ledger.rowsCount(), 1, '仅 B 在册');
+});
+
+hostTest('L3 跨预设形态：两个预设行的条目按行隔离', () => {
+  resetDeliveryLedger();
+  const ctxP1 = { label: 'preset-async-row' };
+  const ctxP2 = { label: 'preset-async-create-row' };
+  ledger.registerRow(ctxP1);
+  ledger.registerRow(ctxP2);
+  ledger.noteJobStarted(ctxP1, { owningPreset: 'dsh-async' }, 'job-p1', 'sub-x');
+  ledger.noteFirstWaitArmed('job-p1', 2000);
+  ledger.noteJobStarted(ctxP2, { owningPreset: 'dsh-async-create' }, 'job-p2', 'sub-x');
+  ledger.jobs.get('job-p2').buffer = 'p2 未交付缓冲';
+  ledger.disposeRow(ctxP1);
+  assert.ok(!ledger.jobs.has('job-p1'), '预设 A 行条目清');
+  assert.ok(ledger.jobs.has('job-p2'), '预设 B 行条目保留');
+  assert.equal(ledger.jobs.get('job-p2').buffer, 'p2 未交付缓冲', '预设 B 行缓冲保留');
+  assert.equal(ledger.rowsCount(), 1, '预设 B 行仍在册');
+});
+
+hostTest('L4 全部行卸载后账本全空（对齐原 disposeAll 行为）', () => {
+  resetDeliveryLedger();
+  const ctxA = { on: () => () => {} };
+  const ctxB = { on: () => () => {} };
+  const ctxQ = {};
+  ledger.registerRow(ctxA);
+  ledger.registerRow(ctxB);
+  ledger.registerRow(ctxQ);
+  ledger.attachClaimedListener(ctxA);
+  ledger.attachClaimedListener(ctxB);
+  ledger.noteJobStarted(ctxA, {}, 'job-a', 'sub-a');
+  ledger.noteJobStarted(ctxB, {}, 'job-b', 'sub-b');
+  ledger.claimWait('sub-a');
+  // 镜像 index.js 卸载次序：先撤本行 claimed 监听，再行级清扫。
+  for (const ctx of [ctxA, ctxB, ctxQ]) {
+    ledger.claimedDisposers.get(ctx)?.();
+    ledger.disposeRow(ctx);
+  }
+  assert.equal(ledger.jobs.size, 0, '作业全空');
+  assert.equal(ledger.subjects.size, 0, '主体全空');
+  assert.equal(ledger.claimedDisposers.size, 0, 'claimed 监听全撤');
+  assert.equal(ledger.rowsCount(), 0, '在册行集合全空');
+});
+
+hostTest('L5 末行判定：只剩查询行在册时卸载之触发整体释放', () => {
+  resetDeliveryLedger();
+  const runCtx = {};
+  const queryCtx = {};
+  ledger.registerRow(runCtx);
+  ledger.registerRow(queryCtx);
+  ledger.noteJobStarted(runCtx, {}, 'job-l5', 'sub-l5');
+  ledger.disposeRow(runCtx);
+  // 生产者行先卸：作业已清，但查询行仍在册——不整体释放（subjects 可能残留）。
+  ledger.claimWait('sub-l5');
+  assert.ok(ledger.subjects.size > 0, '查询行在册时不整体释放（主体记录保留）');
+  ledger.disposeRow(queryCtx);
+  assert.equal(ledger.rowsCount(), 0, '末行出册');
+  assert.equal(ledger.subjects.size, 0, '末行卸载触发整体释放（主体清空）');
+  assert.equal(ledger.jobs.size, 0, '整体释放后作业为空');
+});
+
+hostTest('L7 行卸载撤本行作业保活链：abort 信号置位', () => {
+  resetDeliveryLedger();
+  const ctx = {};
+  ledger.registerRow(ctx);
+  ledger.noteJobStarted(ctx, {}, 'job-l7', 'sub-l7');
+  ledger.noteFirstWaitArmed('job-l7', 1000);
+  const chain = ledger.jobs.get('job-l7').chain;
+  ledger.disposeRow(ctx);
+  assert.ok(chain.signal.signal.aborted, 'detachJob 撤链＝abort 置位（宿主在册 waiter 抑制解除）');
+  assert.equal(ledger.jobs.size, 0, '条目删除');
+});
+
+hostTest('L8 挂监听失败的行不因他行卸载被整体释放（M2 反例）', () => {
+  resetDeliveryLedger();
+  // Rf：attachClaimedListener 内 ctx.on 抛错 → 返回空函数、不占 claimedDisposers
+  // 键，但 registerRow 已登记、其作业与缓存在册。
+  const rfCtx = {
+    on: (event) => {
+      if (event === 'agent/inbox/claimed') throw new Error('rf ctx.on refused');
+      return () => {};
+    }
+  };
+  const rfDispose = ledger.attachClaimedListener(rfCtx);
+  assert.equal(typeof rfDispose, 'function', '失败形态返回可调用空函数');
+  assert.equal(ledger.claimedDisposers.size, 0, '挂失败的行不占 claimedDisposers 键');
+  ledger.registerRow(rfCtx);
+  ledger.noteJobStarted(rfCtx, {}, 'job-rf', 'sub-rf');
+  ledger.jobs.get('job-rf').buffer = 'rf 未交付缓冲';
+  // R2：正常行（在册、有作业、有 claimed 监听）。
+  const r2Ctx = { on: () => () => {} };
+  ledger.attachClaimedListener(r2Ctx);
+  ledger.registerRow(r2Ctx);
+  ledger.noteJobStarted(r2Ctx, {}, 'job-r2', 'sub-r2');
+  // 卸载 R2（镜像 index.js 次序）：若末行判定按 claimedDisposers 推断，此刻
+  // 键数为 0 会误触发整体释放、删掉 Rf 的在册作业（本例红）。
+  ledger.claimedDisposers.get(r2Ctx)?.();
+  ledger.disposeRow(r2Ctx);
+  assert.ok(ledger.jobs.has('job-rf'), '挂监听失败行的作业保留');
+  assert.equal(ledger.jobs.get('job-rf').buffer, 'rf 未交付缓冲', '挂监听失败行的缓冲保留');
+  assert.equal(ledger.rowsCount(), 1, '仅 Rf 在册');
+  // 最后卸载 Rf：真正的末行，整体释放。
+  ledger.disposeRow(rfCtx);
+  assert.equal(ledger.rowsCount(), 0, '末行出册');
+  assert.equal(ledger.jobs.size, 0, '整体释放');
+});
+
+/**
+ * 装载边界替身：只替换 ctx.on / ctx.tools.register / ctx.effect 三个装载点。
+ * `refuseEvents` 让指定事件的 ctx.on 抛错（选定装载中途抛错的时点）；
+ * `refuseRegister` 让工具注册抛错。`state` 记录注册/撤销/事件/卸载体收支。
+ */
+function rowRig(options = {}) {
+  const state = { registered: [], unregistered: [], effectDisposers: [], onCalls: [] };
+  const ctx = {
+    effect(fn) { state.effectDisposers.push(fn()); },
+    on(event, listener) {
+      if (options.refuseEvents?.includes(event)) throw new Error(`rowRig ctx.on refused ${event}`);
+      const entry = { event, off: false };
+      state.onCalls.push(entry);
+      return () => { entry.off = true; };
+    },
+    tools: {
+      register(tool) {
+        if (options.refuseRegister === true) throw new Error('rowRig tools.register refused');
+        state.registered.push(tool.name);
+        return () => { state.unregistered.push(tool.name); };
+      }
+    },
+    logger: { info() {}, warn() {} }
+  };
+  return { ctx, state };
+}
+
+/** 依 cordis 卸载语义执行全部已注册 effect 的卸载体。 */
+const runRowDisposers = (state) => { for (const dispose of state.effectDisposers) dispose(); };
+
+hostTest('L9 装载中途抛错：行注销恒执行、已就位处置器执行、未就位跳过（三时点）', async () => {
+  // 时点一（早期）：未知 toolName——五个清理项全未就位，仅撤行登记。schema 的
+  // toolName 枚举在 resolveConfig 内先拒（ValidationError，`applyWith` 的未知
+  // 名检查是同判据的纵深防线）；本时点考察的是「抛错后卸载体的收支」，两种
+  // 抛错文案都属早期形。
+  resetDeliveryLedger();
+  const rig1 = rowRig();
+  assert.throws(() => applyRow(rig1.ctx, { toolName: 'async_nope' }), /toolName/, '未知 toolName 抛错');
+  assert.equal(ledger.rowsCount(), 1, '抛错后行仍在册（cordis 卸载前）');
+  runRowDisposers(rig1.state);
+  assert.equal(ledger.rowsCount(), 0, '卸载体执行后行出册（在册集合无泄漏）');
+  assert.equal(rig1.state.registered.length, 0, '早期形零工具注册');
+  assert.equal(rig1.state.onCalls.length, 0, '早期形零监听（五清理项全跳过）');
+  assert.equal(ledger.claimedDisposers.size, 0, 'claimed 无残留');
+
+  // 时点一（早期，另一形）：resolveConfig 跨字段违例抛错——同档断言。
+  resetDeliveryLedger();
+  const rig1b = rowRig();
+  assert.throws(() => applyRow(rig1b.ctx, {
+    toolName: 'async_run', settings: { minYieldMs: 30000, maxYieldMs: 25000 }
+  }), /minYieldMs(?:=\d+)? > maxYieldMs/, '跨字段违例在 resolveConfig 抛错（容忍自检回调与 assertCrossFieldOrder 两种文案）');
+  runRowDisposers(rig1b.state);
+  assert.equal(ledger.rowsCount(), 0, '行出册无泄漏');
+  assert.equal(rig1b.state.onCalls.length, 0, 'resolveConfig 形同样零监听');
+
+  // 时点二（工具注册点抛错；设计「工厂调用形」的替身实现——工厂构造对替身
+  // 无可注入抛错点，注册点是首个可达的同档时点：hide 监听已赋值、零工具注册）。
+  resetDeliveryLedger();
+  const rig2 = rowRig({ refuseRegister: true });
+  assert.throws(() => applyRow(rig2.ctx, { toolName: 'async_run' }), /rowRig tools.register refused/, '工具注册抛错');
+  runRowDisposers(rig2.state);
+  assert.equal(ledger.rowsCount(), 0, '行出册无泄漏');
+  assert.equal(rig2.state.registered.length, 0, '零工具注册');
+  const hide2 = rig2.state.onCalls.find((entry) => entry.event === 'agent/created');
+  assert.ok(hide2 !== undefined && hide2.off === true, '已就位的 job_output 隐藏监听照常撤销');
+  assert.ok(rig2.state.onCalls.every((entry) => entry.event !== 'agent/inbox/claimed'),
+    'claimed 监听未就位（不误撤）');
+  assert.equal(ledger.claimedDisposers.size, 0, 'claimed 无残留');
+
+  // 时点三（tools.register 之后的接线步抛错：provider 事件监听拒绝）——最多
+  // 处置器就位的形：工具注销、两类监听撤销、行出册、重装载回 1。
+  resetDeliveryLedger();
+  const rig3 = rowRig({ refuseEvents: ['subagent/provider-added'] });
+  assert.throws(
+    () => applyRow(rig3.ctx, { toolName: 'async_run' }),
+    /rowRig ctx.on refused subagent\/provider-added/,
+    '装载尾段抛错'
+  );
+  runRowDisposers(rig3.state);
+  assert.equal(ledger.rowsCount(), 0, '行出册无泄漏');
+  assert.deepEqual(rig3.state.unregistered, ['async_run'], '已注册工具被注销');
+  assert.ok(rig3.state.onCalls.filter((entry) => entry.off).length
+    === rig3.state.onCalls.length, '全部已挂监听被撤销');
+  assert.equal(ledger.claimedDisposers.size, 0, 'claimed 无残留');
+  const rig3b = rowRig();
+  applyRow(rig3b.ctx, { toolName: 'async_run' });
+  assert.equal(ledger.rowsCount(), 1, '同 toolName 再次装载成功（在册数回 1）');
+  runRowDisposers(rig3b.state);
+  assert.equal(ledger.rowsCount(), 0, '收尾：替身行出册');
 });
