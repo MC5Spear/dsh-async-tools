@@ -2605,3 +2605,19 @@ test('W-MIGRATE-C：同形态重复装载→每进程至多一行（键序去重
     await second.restore();
   }
 });
+
+test('W-MIGRATE-D：宿主行平铺（无 toolName 的 0.2.5 生产 patch 形态）→同样触发一行警告（盲测 F1 回归）', async (t) => {
+  // 0.2.5 生产 patch 把平铺设置键写在宿主行（无 toolName）——CHANGELOG 迁移节的
+  // 对照示例正是该形态。警告若只检工具行，照抄示例的部署升级后静默回落、零提示
+  //（隔离实例盲测 F1 实跑复现）；本测锁死宿主行分支的检测。
+  const rig = await makeApplyRig(t, { agentLang: 'zh' });
+  if (rig === undefined) return;
+  try {
+    const flat = rig.warnings.filter((line) => line.includes('flat settings keys'));
+    assert.equal(flat.length, 1, '宿主行平铺恰一行迁移警告（漏检形态＝0 警告，必红）');
+    assert.match(flat[0], /agentLang/, '警告列出误平铺键名（agentLang）');
+    assert.match(flat[0], /settings/, '警告指出正形（包进 settings 子树）');
+  } finally {
+    await rig.restore();
+  }
+});

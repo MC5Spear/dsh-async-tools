@@ -100,9 +100,9 @@ config: { settings: { agentLang: zh, defaultYieldMs: 30000 } }
   设置页读回也看不到这些预置。
 - **装载警告**：0.2.8 起装载时检测到根层平铺的设置键会在 stderr 输出一行英文警告
   （`[async-tools] row config carries flat settings keys this version ignores: [键名] —
-  move them under "settings:" …`），列出键名并指向本节；同一形态每进程只提示一次。
-  警告是尽力提示：它依赖宿主现行的配置透传行为，宿主日后改为严格丢弃未知键时
-  警告无法触发——警告缺席不证明配置正确。
+  move them under "settings:" …`），列出键名并指向本节；宿主行与工具行都检测，
+  同一形态每进程只提示一次。警告是尽力提示：它依赖宿主现行的配置透传行为，宿主
+  日后改为严格丢弃未知键时警告无法触发——警告缺席不证明配置正确。
 - **现存 0.2.5 生产 patch 必须改写**：升级前按上面对照把平铺键包进 `settings:`，
   改写后正形实证生效。
 
