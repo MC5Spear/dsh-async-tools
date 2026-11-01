@@ -10,6 +10,7 @@
 import assert from 'node:assert/strict';
 import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
 import { resolveConfig } from '../lib/config.js';
+import { LATE_ANSWER_EVENT } from '../lib/interrupts.js';
 import { checkedTool, inboxPayload } from './_helpers.mjs';
 
 // 宿主链动态守卫：lib/workflow.js、lib/wait.js（→ dsh-tools）与真注册表依赖
@@ -1276,11 +1277,12 @@ hostTest('W-WAKE-A：有目标等待不以迟到作答提前结束（作答留�
     const pending = rig.waiter.execute(
       { wait_ms: 400, targets: [{ kind: 'job', id: wf.job_id }] }, rig.exec()
     );
-    // 等待开始后再投递迟到作答（无目标才可被它唤醒——9.3.1）。
+    // 等待开始后经真实插件事件投递迟到作答（ask-takeover 通道；无目标等待
+    // 才可被它唤醒——9.3.1）。直接改 inbox 数组既不触发事件也不进扫描，
+    // 起不到激励作用（盲审计正）。
     setTimeout(() => {
-      rig.parent.inbox.nextStep.push({
-        id: 'msg-late-a', role: 'user', content: [{ type: 'text', text: 'late' }],
-        source: { kind: 'ask-takeover-late', form: 'notice', summary: 'late answer arrived' }
+      rig.ctx.emit(LATE_ANSWER_EVENT, {
+        agentId: rig.parent.id, questionId: 'late-q', kind: 'answer', summary: 'late answer arrived'
       });
     }, 60);
     const result = await pending;

@@ -447,7 +447,7 @@ async function collectSamples(agentLang) {
       : key === 'wait'
         ? [{ status: 'completed', job_id: 'j', output: t(agentLang, 'detail.exitCode', { code: 0 }), truncated: true, detail: t(agentLang, 'detail.exitCode', { code: 0 }) },
           { status: 'running', job_id: 'j', waited_ms: 1, note: output.waitAgainNote({ lang: agentLang, jobId: 'j', waitedMs: 1, maxWaitMs: config.maxWaitMs }) },
-          { status: 'interrupted', job_id: 'j', waited_ms: 1, note: output.interruptedNote({ lang: agentLang, subject: 'job j', waitedMs: 1, resume: 'async_wait(...)' }) }]
+          { status: 'interrupted', job_id: 'j', waited_ms: 1, note: output.interruptedNote({ lang: agentLang, waitedMs: 1, resume: 'async_wait(...)' }) }]
         : [{ agent_id: 'sa-1', note: t(agentLang, 'note.agentStarted', { agentId: 'sa-1', defaultWaitMs: config.defaultWaitMs }) + t(agentLang, 'route.inherits') }];
     for (const value of noteValues) {
       for (const block of renders({}, value)) samples.push([`render(${key})`, String(block?.text ?? '')]);
@@ -458,7 +458,7 @@ async function collectSamples(agentLang) {
     ['agentWaitAgainNote', output.agentWaitAgainNote({ lang: agentLang, agentId: 'sa-1', waitedMs: 1, maxWaitMs: config.maxWaitMs })],
     ['recheckFailedNote', output.recheckFailedNote({ lang: agentLang, jobId: 'async-command-1', waitedMs: 1, maxWaitMs: config.maxWaitMs })],
     ['agentRecheckFailedNote', output.agentRecheckFailedNote({ lang: agentLang, agentId: 'sa-1', waitedMs: 1, maxWaitMs: config.maxWaitMs })],
-    ['interruptedNote(agent)', output.interruptedNote({ lang: agentLang, subject: 'subagent sa-1', waitedMs: 1, resume: 'async_wait(...)' })],
+    ['interruptedNote(agent)', output.interruptedNote({ lang: agentLang, waitedMs: 1, resume: 'async_wait(...)' })],
     ['yieldDigest', output.yieldDigest(config)],
     ['waitDigest', output.waitDigest(config)]
   );

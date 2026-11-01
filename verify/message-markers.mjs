@@ -26,8 +26,8 @@
  * 插话文案：等待被打断，且**结束等待没有终止工作对象**。
  *
  * 出处 `lib/text.js` 的 `note.interrupted`（两语逐字；键名即锚，插行不漂）：
- * `等待被打断：一条用户消息已到达，将出现在你的下一条输入里（已等待 {waitedMs} ms）。结束等待没有终止 {subject} 的工作。…`
- * `Wait interrupted: a user message has arrived and will appear in your next input (waited {waitedMs} ms). Ending the wait did not stop {subject}. …`
+ * `等待被打断：一条用户消息已到达，将出现在你的下一条输入里（已等待 {waitedMs} ms）。结束等待没有终止被等待的后台工作。…`
+ * `Wait interrupted: a user message has arrived and will appear in your next input (waited {waitedMs} ms). Ending the wait did not stop the background work you were waiting on. …`
  *
  * 标记必须两语都认：agentLang 是设置项（需求 §5.3 两个独立语言开关），判据不能只在一种
  * 语言下成立。单语标记红的是语言，不是被测对象。
