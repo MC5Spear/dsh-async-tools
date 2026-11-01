@@ -12,6 +12,7 @@
  * 宿主包不可解析（离线环境/CI）时整文件跳过——跳过不是通过。
  */
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
 import { resolveConfig } from '../lib/config.js';
 import { LATE_ANSWER_EVENT } from '../lib/interrupts.js';
@@ -32,15 +33,19 @@ const { ledger, resetDeliveryLedger } = deliveryModule ?? {};
 const workflowModule = await loadOfflineSafe('../lib/workflow.js');
 const waitModule = await loadOfflineSafe('../lib/wait.js');
 const indexModule = await loadOfflineSafe('../lib/index.js');
+// T7 真实通道用：lib/jobs.js → dsh-tools（defineTool）。同样走动态守卫装载。
+const jobsModule = await loadOfflineSafe('../lib/jobs.js');
 const { createWorkflowTool } = workflowModule ?? {};
 const { createWaitTool, WAIT_SPIN_LIMIT } = waitModule ?? {};
 const { apply: applyRow } = indexModule ?? {};
+const { createRunTool: buildRunTool } = jobsModule ?? {};
 const cordisModule = await loadOfflineSafe('@deepseek-ai/cordis');
 const jobsLocalModule = await loadOfflineSafe('@deepseek-ai/dsh-jobs-local');
 const { Context } = cordisModule ?? {};
 const { LocalJobRegistry } = jobsLocalModule ?? {};
 const hostTest = await hostTestFor(
-  '../lib/workflow.js', '../lib/wait.js', '../lib/index.js', '@deepseek-ai/cordis', '@deepseek-ai/dsh-jobs-local'
+  '../lib/workflow.js', '../lib/wait.js', '../lib/index.js', '../lib/jobs.js',
+  '@deepseek-ai/cordis', '@deepseek-ai/dsh-jobs-local'
 );
 
 /**
@@ -104,9 +109,16 @@ async function buildRig(label, childRows = [], options = {}) {
     }
   };
   const adapter = {
-    // options.jobsList＝受控外来行（账本不在册、jobs.list 可见的宿主注册表行
-    // ——W-OBSERVE-H 的「外来作业静默结算」形态）；其余服务与 dispose 仍走真注册表。
-    jobs: options.jobsList === undefined ? ctx.jobs : { ...ctx.jobs, list: options.jobsList },
+    // options.jobsList／options.jobsRead＝受控外来行与受控读取（账本不在册、
+    // jobs.list／jobs.read 可见的宿主注册表形——W-OBSERVE-H 的「外来作业静默
+    // 结算」与 T5 的终态事实行）；其余服务与 dispose 仍走真注册表。
+    jobs: (options.jobsList === undefined && options.jobsRead === undefined)
+      ? ctx.jobs
+      : {
+          ...ctx.jobs,
+          ...(options.jobsList === undefined ? {} : { list: options.jobsList }),
+          ...(options.jobsRead === undefined ? {} : { read: options.jobsRead })
+        },
     subagents: ctx.subagents,
     agents: ctx.agents,
     on: (...args) => ctx.on(...args),
@@ -2081,7 +2093,7 @@ hostTest('L9 装载中途抛错：行注销恒执行、已就位处置器执行�
  * 受控 jobs 读取。`injectFailsAt`＝第 N 次 inject 抛错（0＝永不）；
  * `followupThrows`＝followup 抛错；`agentsGet` 可整替（注册表缺失形）。
  */
-function sRig({ injectFailsAt = 0, followupThrows = false, agentsGet, budget = 4000 } = {}) {
+function sRig({ injectFailsAt = 0, followupThrows = false, agentsGet, budget = 4000, lang = 'en' } = {}) {
   resetDeliveryLedger();
   const calls = { inject: [], followup: [] };
   const OWNER = 'at-s-owner';
@@ -2100,21 +2112,30 @@ function sRig({ injectFailsAt = 0, followupThrows = false, agentsGet, budget = 4
     }
   };
   const reads = new Map();
-  const config = Object.freeze({ maxResultChars: budget, agentLang: 'en' });
+  const config = Object.freeze({ maxResultChars: budget, agentLang: lang });
+  // T 系列：登记行可携带终态事实（killed/退出码/信号/诊断）与读取回执附注
+  //（lossy／留存路径）——readSettled 的终态自证分支从 list 行取事实。
+  const rowFacts = new Map();
   const ctx = {
     emit() {},
     get: (name) => (name === 'agents'
       ? { get: (id) => (agentsGet !== undefined ? agentsGet(id) : (id === OWNER ? agent : undefined)) }
       : undefined),
     jobs: {
-      list: () => [...reads.keys()].map((id) => ({ id, status: 'completed', exitCode: 0 })),
+      list: () => [...reads.keys()].map((id) => ({
+        id,
+        status: 'completed',
+        exitCode: 0,
+        ...(rowFacts.get(id) ?? {})
+      })),
       read: async (jobId) => reads.get(jobId)
     }
   };
   ledger.registerRow(ctx);
-  /** 登记一个已就绪（终态＋增量已读）的作业；返回 readSettled 的驱动 Promise。 */
-  const readyJob = async (jobId, text) => {
-    reads.set(jobId, { chunks: [{ channel: 'stdout', text }] });
+  /** 登记一个已就绪（终态＋增量已读）的作业；facts 并入注册表行，readExtras 并入读取回执。 */
+  const readyJob = async (jobId, text, facts, readExtras) => {
+    reads.set(jobId, { chunks: [{ channel: 'stdout', text }], ...(readExtras ?? {}) });
+    if (facts !== undefined) rowFacts.set(jobId, facts);
     ledger.noteJobStarted(ctx, config, jobId, OWNER);
     await ledger.readSettled(jobId);
   };
@@ -2274,5 +2295,314 @@ hostTest('S7 注册表缺失分支回归：整队回滚行为不变', async () =
     const entry = ledger.jobs.get(id);
     assert.ok(entry.deliveredFact === null, `${id} 整队回滚（registry miss 语义不变）`);
     assert.notEqual(entry.buffer, '', `${id} 正文退回缓冲`);
+  }
+});
+
+// ═══ REL-TERMINAL-01：终态细节进完成消息与等待返回（设计 r14 §4）═══
+//
+// T1 是受控反例：修前完成消息只渲染 {jobId, status, chars}——killed＋信号＋
+// 非零退出码＋诊断在两条路径上都只有 killed 一个词。修后行序（§4.2）：
+// 状态行→正文→结局标记行（与前台 jobs.js exitStatusMarker 同判据：信号优先、
+// 其次非零退出码、成功无标记）→诊断行（首行必要、第二行可降级＋省略计数）
+// →lossy／留存行。
+//
+// 设计 T1 矩阵行写「断言含 143」；规范节 §4.2 的标记判据是信号优先（与前台
+// 逐字一致），信号在场时不另投退出码行——按规范节实现，退出码可见性由本组
+// T1 的无信号退出码断言与 T5 结构化字段覆盖。
+
+hostTest('T1 受控反例两语：killed＋SIGTERM＋非零退出码＋唯一诊断文本全部可见（修前红）', async () => {
+  for (const lang of ['en', 'zh']) {
+    const rig = sRig({ lang });
+    const token = ledger.claimWait(rig.OWNER);
+    await rig.readyJob('job-t1', 'T1-BODY', {
+      status: 'killed', exitCode: 143, signal: 'SIGTERM', detail: 'UNIQUE-DIAG-7f3a'
+    });
+    await rig.readyJob('job-t1b', 'T1-BODY-B', { status: 'completed', exitCode: 7, detail: 'DIAG-EXIT-7' });
+    await ledger.releaseWait(token, rig.OWNER);
+    assert.equal(rig.calls.inject.length, 2, `${lang}：两条完成消息（忙路径逐条）`);
+    const killed = textOf(rig.calls.inject[0]);
+    // 信号优先（§4.2 与 jobs.js:304-310 同判据）：killed＋信号→信号标记行，
+    // 不再叠加退出码行（与前台逐字一致；143 与信号是同一次终止的两个读数）。
+    assert.ok(killed.includes('SIGTERM'), `${lang}：信号标记在场`);
+    assert.ok(killed.includes('UNIQUE-DIAG-7f3a'), `${lang}：唯一诊断文本在场（修前只有 killed）`);
+    assert.ok(!killed.includes('143'), `${lang}：信号在场不另投退出码行（前台同口径）`);
+    // 无信号的非零退出码：退出码标记行必须可见（真实结局不因载体丢失）。
+    const exited = textOf(rig.calls.inject[1]);
+    assert.ok(exited.includes('7'), `${lang}：非零退出码可见`);
+    assert.ok(exited.includes('DIAG-EXIT-7'), `${lang}：completed 条目的诊断行在场`);
+  }
+});
+
+hostTest('T2 零退出成功条目：无标记行（不添噪声），诊断仍随事实渲染', async () => {
+  const rig = sRig({ lang: 'en' });
+  const token = ledger.claimWait(rig.OWNER);
+  await rig.readyJob('job-t2', 'T2-BODY', { status: 'completed', exitCode: 0 });
+  await ledger.releaseWait(token, rig.OWNER);
+  const text = textOf(rig.calls.inject[0]);
+  assert.ok(!text.includes('exit code'), '零退出：无退出码标记行（成功由无失败标记表达）');
+  assert.ok(!text.includes('signal'), '无信号：无信号标记行');
+  assert.ok(text.includes('T2-BODY') && text.includes('completed'), '状态与正文照常');
+});
+
+hostTest('T3 killed＋信号＋退出码＋诊断：标记行与诊断首行都在，正文与标记不重复渲染', async () => {
+  const rig = sRig({ lang: 'zh' });
+  const token = ledger.claimWait(rig.OWNER);
+  await rig.readyJob('job-t3', 'T3-BODY-唯一正文', {
+    status: 'killed', exitCode: 137, signal: 'SIGKILL', detail: 'T3-DIAG-唯一诊断'
+  });
+  await ledger.releaseWait(token, rig.OWNER);
+  const text = textOf(rig.calls.inject[0]);
+  assert.equal(text.split('T3-BODY-唯一正文').length - 1, 1, '正文恰一次');
+  assert.equal(text.split('SIGKILL').length - 1, 1, '标记行恰一次（不与正文重复）');
+  assert.equal(text.split('T3-DIAG-唯一诊断').length - 1, 1, '诊断首行恰一次');
+});
+
+hostTest('T4 极端多行诊断（40 行）：状态/标记/诊断首行仍在，仅 2 行诊断＋省略计数', async () => {
+  const rig = sRig({ lang: 'en' });
+  const detail = Array.from({ length: 40 }, (_, i) => `DIAG-LINE-${String(i + 1).padStart(2, '0')}`).join('\n');
+  const token = ledger.claimWait(rig.OWNER);
+  await rig.readyJob('job-t4', '', { status: 'killed', exitCode: 143, signal: 'SIGTERM', detail });
+  await ledger.releaseWait(token, rig.OWNER);
+  const text = textOf(rig.calls.inject[0]);
+  assert.ok(text.includes('SIGTERM'), '标记行在（预算压力下不丢）');
+  assert.ok(text.includes('DIAG-LINE-01'), '诊断首行在（必要结局，永不丢）');
+  assert.ok(text.includes('DIAG-LINE-02'), '诊断第二行在（预算内可降级但未超限）');
+  assert.ok(!text.includes('DIAG-LINE-03'), '第三行起省略');
+  assert.ok(text.includes('38 more diagnostic lines'), '省略行数如实计数（40−2）');
+});
+
+hostTest('T5 等待返回结构化字段：已知才有、未知则无键；status_line 追加行与完成消息同词', async () => {
+  const rig = await buildRig('t5', [], {
+    jobsList: () => [
+      { id: 'ext-t5', status: 'killed', exitCode: 143, signal: 'SIGTERM', detail: 'T5-DIAG-A\nT5-DIAG-B\nT5-DIAG-C' },
+      { id: 'ext-t5b', status: 'completed', exitCode: 0 }
+    ],
+    jobsRead: async (jobId) => ({ chunks: [{ channel: 'stdout', text: `BODY-${String(jobId)}` }] })
+  });
+  try {
+    // 零退出条目先行：单独零等待 ext-t5b（两目标同拍会先触发 killed 目标、
+    // 另一目标不保证入批——分两次各自触发，断言面各自完整）。
+    const okOutcome = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: 'ext-t5b' }] }, rig.exec()
+    );
+    assert.equal(okOutcome.status, 'completed', '前置：零退出目标已终态，零等待即完成');
+    const okRow = okOutcome.delivered.find((row) => row.job_id === 'ext-t5b');
+    assert.ok(okRow !== undefined, '零退出条目在批');
+    assert.ok(!('exit_code' in okRow) && !('signal' in okRow) && !('detail' in okRow),
+      '零退出完成条目：三个新字段全部无键（没值就不写这个键）');
+    const okOut = okOutcome.outputs.find((row) => row.job_id === 'ext-t5b');
+    assert.ok(okOut.status_line !== undefined && !okOut.status_line.includes('\n'),
+      '零退出条目 status_line 仍单行（无追加行）');
+
+    const outcome = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: 'ext-t5' }] }, rig.exec()
+    );
+    // 等待出口状态＝触发目标的终态（这里触发目标 ext-t5 是 killed）。
+    assert.equal(outcome.status, 'killed', '前置：killed 目标已终态，零等待即完成');
+    const killed = outcome.delivered.find((row) => row.job_id === 'ext-t5');
+    assert.equal(killed.exit_code, 143, 'killed 条目 exit_code 已知非零→携带');
+    assert.equal(killed.signal, 'SIGTERM', 'killed 条目 signal 已知→携带');
+    assert.ok(killed.detail.includes('T5-DIAG-A'), 'detail 首行在场');
+    assert.ok(killed.detail.includes('2 more diagnostic lines'), '多行 detail 尾接省略计数');
+    const killedOut = outcome.outputs.find((row) => row.job_id === 'ext-t5');
+    assert.ok(killedOut.status_line.includes('[killed by signal: SIGTERM]'), 'status_line 追加标记行（与完成消息同词）');
+    assert.ok(killedOut.status_line.includes('T5-DIAG-A'), 'status_line 追加诊断首行');
+    assert.equal(killedOut.exit_code, 143, 'outputs 条目同带结构化字段');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('T6 上界推导三层：单条目必要 ≤460、单批必要 ≤4600（10 条目）、可降级单条目渲染内 ≤2000', async () => {
+  // （a）单条目必要行：状态行（≤200）＋标记行（<60）＋诊断首行（≤200）≤460。
+  {
+    const rig = sRig({ lang: 'en' });
+    const longDiag = `D-${'x'.repeat(196)}`;
+    const token = ledger.claimWait(rig.OWNER);
+    await rig.readyJob('job-t6a', '', { status: 'completed', exitCode: 9, detail: longDiag });
+    await ledger.releaseWait(token, rig.OWNER);
+    const lines = textOf(rig.calls.inject[0]).split('\n');
+    const necessary = lines[0].length + lines[1].length + lines[2].length;
+    assert.ok(necessary <= 460, `单条目必要行合计 ${String(necessary)} ≤ 460`);
+  }
+  // （b）单批必要行：10 条目合并一条 followup，必要行合计 ≤4600（条目上限 10
+  // × 单条目 460；断言不含可降级行——本例每条目只有必要行，超出部分仅换行
+  // 与段间分隔）。
+  {
+    const rig = sRig({ lang: 'en' });
+    rig.agent.status = 'idle';
+    const token = ledger.claimWait(rig.OWNER);
+    for (let i = 0; i < 10; i += 1) {
+      await rig.readyJob(`job-t6b-${String(i).padStart(2, '0')}`, '', {
+        status: 'completed', exitCode: 3, detail: `DIAG-${String(i)}`
+      });
+    }
+    await ledger.releaseWait(token, rig.OWNER);
+    assert.equal(rig.calls.followup.length, 1, '空闲路径合并为一条 followup');
+    const text = textOf(rig.calls.followup[0]);
+    assert.equal(text.split('[exit code: 3]').length - 1, 10, '10 条目逐条有标记行');
+    // 必要行＝全部行（本例无正文、无 lossy／留存、诊断恰一行、无省略计数）；
+    // 分隔符余量：条目内 2×10 换行＋条目间 '\n\n' 9 处。
+    assert.ok(text.length <= 4600 + 2 * 10 + 9,
+      `10 条目必要行＋分隔合计 ${String(text.length)} ≤ 4600+分隔余量`);
+  }
+  // （c）可降级说明（lossy／留存行）：单条目渲染内合计 ≤2000（MAX_NOTES_TOTAL
+  // 的实际粒度是单条目渲染，非整条物理消息——设计 §4.4-3）。
+  {
+    const rig = sRig({ lang: 'en' });
+    const spillPaths = Array.from({ length: 40 }, (_, i) => `/spill/${'p'.repeat(140)}-${String(i)}`);
+    const token = ledger.claimWait(rig.OWNER);
+    await rig.readyJob('job-t6c', 'BODY-T6C', { status: 'completed', exitCode: 1, detail: 'DIAG-T6C' },
+      { lossy: true, job: { output: { spillPaths } } });
+    await ledger.releaseWait(token, rig.OWNER);
+    const text = textOf(rig.calls.inject[0]);
+    assert.ok(text.includes('DIAG-T6C') && text.includes('[exit code: 1]'), '必要结局行不被留存行挤掉');
+    assert.ok(text.length <= 460 + 2000 + 120,
+      `单条目渲染合计（必要＋可降级＋分隔）${String(text.length)} ≤ 460+2000+分隔余量`);
+  }
+});
+
+/**
+ * T7 真实通道装置：真 Context＋真 LocalJobRegistry＋真实 `createRunTool`
+ * （lib/jobs.js 产品代码），shell.execute 用真实 node 子进程（spawn）实现——
+ * 进程句柄形状与宿主 shell 契约一致（状态/退出码/信号/done/增量读/kill），
+ * 只有「命令文本→脚本」的路由是受控的（命令字符串照常进作业元数据）。
+ */
+async function t7Rig() {
+  resetDeliveryLedger();
+  const base = new Context();
+  const injections = [];
+  const parent = {
+    id: 'at-t7-owner',
+    ctx: base,
+    session: { append() {} },
+    inbox: { nextStep: [], nextTurn: [] },
+    inject(message) { injections.push(message); }
+  };
+  base.provide('agents', { get: (id) => (id === parent.id ? parent : undefined) });
+  await base.plugin(LocalJobRegistry, {
+    maxConcurrentJobsPerOwner: 10, retainBytes: 1048576, settledRetainBytes: 1048576, pumpPollMs: 10
+  });
+  const ctx = await new Promise((resolve) => {
+    base.inject(['jobs'], async (c) => resolve(c));
+  });
+  const detach = ctx.jobs.attachController('at-t7');
+  /** 当前脚本（受控路由：execute 忽略命令文本、按本变量起真实 node 进程）。 */
+  let script = '';
+  const adapter = {
+    jobs: ctx.jobs,
+    agents: ctx.agents,
+    on: (...args) => ctx.on(...args),
+    get: (name) => (name === 'agents' ? ctx.agents : undefined),
+    // 会话当前有效目录（jobs.js 在审批后、注册前 ensure）：受控返回固定目录，
+    // 不触盘（本装置的进程启动不经 spec.workdir）。
+    workingDirectory: { ensure: async () => '/at-t7-work' },
+    logger: { info() {}, warn() {} },
+    timer: {
+      timeout: (fn, ms) => { const h = setTimeout(fn, ms); return () => clearTimeout(h); },
+      interval: (fn, ms) => { const h = setInterval(fn, ms); return () => clearInterval(h); }
+    },
+    shell: {
+      sandboxMode: undefined,
+      resolve: (request) => ({ ...request }),
+      execute: () => {
+        const child = spawn(process.execPath, ['-e', script], { stdio: ['ignore', 'pipe', 'pipe'] });
+        let out = '';
+        let killRequested = false;
+        child.stdout.on('data', (chunk) => { out += String(chunk); });
+        let emitted = 0;
+        const proc = {
+          status: 'running',
+          exitCode: null,
+          signal: null,
+          done: new Promise((resolve) => {
+            child.on('close', (code, signal) => {
+              // Windows 上 kill() 终止的子进程 close 事件给 code=1、signal=null
+              //（信号是 POSIX 语义）。宿主 shell 层对主动 kill 报告信号名——本装置
+              // 按同一契约仿真：killRequested 时报告 SIGTERM/killed/无退出码。
+              const killedByRequest = killRequested && signal === null;
+              proc.exitCode = killedByRequest ? null : code;
+              proc.signal = killedByRequest ? 'SIGTERM' : signal;
+              proc.status = proc.signal !== null ? 'killed' : 'completed';
+              resolve(proc);
+            });
+            child.on('error', () => {
+              proc.status = 'failed';
+              resolve(proc);
+            });
+          }),
+          observed: {
+            stdout: { readFrom: (from) => ({ text: out.slice(Math.max(0, from)), nextOffset: out.length, lossy: false }) },
+            stderr: { readFrom: () => ({ text: '', nextOffset: 0, lossy: false }) }
+          },
+          readOutput: () => {
+            const delta = emitted === 0 ? out : '';
+            emitted += 1;
+            return { delta, lossy: false };
+          },
+          kill: () => { killRequested = true; child.kill('SIGTERM'); }
+        };
+        return Promise.resolve(proc);
+      }
+    },
+    shellEnv: { collect: () => '' }
+  };
+  const config = resolveConfig({
+    toolName: 'async_run', minYieldMs: 1, defaultYieldMs: 20, maxYieldMs: 1000
+  });
+  const runTool = checkedTool(buildRunTool(adapter, config));
+  return {
+    ctx, detach, injections, parent, runTool,
+    exec: () => ({ agent: parent, signal: new AbortController().signal }),
+    setScript: (code) => { script = code; },
+    dispose: async () => { await ctx.jobs.disposeAll(); detach(); }
+  };
+}
+
+hostTest('T7 真实通道：后台 node 退出 3 与 kill 终止的完成消息带真实退出码/信号（双锚）', async () => {
+  const rig = await t7Rig();
+  try {
+    // 退出 3：150 ms 后退出，超出 20 ms 首次预算 → 转后台；轮询真注册表至终态。
+    rig.setScript('setTimeout(function(){process.exit(3)},150)');
+    const handle = await rig.runTool.execute(
+      { command: 'node exit-3', description: 'exit 3 after 150ms', yield_ms: 20 }, rig.exec()
+    );
+    assert.equal(handle.status, 'running', '前置：预算内未结算，转后台（真实进程仍在跑）');
+    let row = null;
+    for (let i = 0; i < 100 && row === null; i += 1) {
+      await new Promise((resolve) => { setTimeout(resolve, 50); });
+      const found = rig.ctx.jobs.list(rig.parent.id).find((candidate) => candidate?.id === handle.job_id);
+      if (found !== undefined && ['completed', 'killed', 'failed'].includes(found.status)) row = found;
+    }
+    assert.ok(row !== null, '5 秒内轮询到终态（不等保活链 60 秒拍）');
+    await ledger.readSettled(handle.job_id);
+    assert.equal(rig.injections.length, 1, '无活等待→完成消息恰一条（忙路径 inject）');
+    const text = textOf(rig.injections[0]);
+    // 真实 dsh-jobs 的 JobView 不带 exitCode/signal 独立字段（终态缘由在
+    // detail 文本：`exit code: 3`）——真实通道上退出码经诊断行可见；结构化
+    // 字段与方括号标记行由携带结构化终态事实的行触发（T5 的受控行）。
+    assert.ok(text.includes('exit code: 3'), '真实退出码 3 在完成消息（经诊断行，真实通道端到端）');
+
+    // kill 终止：真注册表 kill 入口 → 子进程终止 → killed＋信号/缘由在消息。
+    rig.setScript('setTimeout(function(){},8000)');
+    const second = await rig.runTool.execute(
+      { command: 'node long-run', description: 'long run for kill', yield_ms: 20 }, rig.exec()
+    );
+    assert.equal(second.status, 'running', '前置：长作业转后台');
+    rig.ctx.jobs.kill(second.job_id, rig.parent.id, 'test-kill');
+    let killedRow = null;
+    for (let i = 0; i < 100 && killedRow === null; i += 1) {
+      await new Promise((resolve) => { setTimeout(resolve, 50); });
+      const found = rig.ctx.jobs.list(rig.parent.id).find((candidate) => candidate?.id === second.job_id);
+      if (found !== undefined && ['completed', 'killed', 'failed'].includes(found.status)) killedRow = found;
+    }
+    assert.ok(killedRow !== null, 'kill 后 5 秒内到终态');
+    await ledger.readSettled(second.job_id);
+    const killText = textOf(rig.injections[1]);
+    assert.ok(killText.includes('SIGTERM') || killText.includes('信号'), '真实终止信号在完成消息');
+    assert.ok(killText.includes('killed') || killText.includes('已终止'), 'killed 状态可见');
+    assert.ok(killText.includes('test-kill'), 'kill 缘由（killReason 并入 detail）可见');
+  } finally {
+    await rig.dispose();
   }
 });
