@@ -90,7 +90,7 @@ const DIRECT_DEPS = ['@deepseek-ai/schemastery', 'zod'];
 
 const log = (msg) => console.log(`[probe] ${msg}`);
 
-// 1) 打包候选 tgz（npm pack --ignore-scripts；产物名含「+」，输出进 .local/——
+// 1) 打包候选 tgz（npm pack --ignore-scripts；产物名含「+」，产物落 .local/——
 //    本公开仓的统一本机材料目录，不在跟踪范围；探针结束自清，故障路径残留也在
 //    忽略范围）。目录缺席时创建。
 mkdirSync(join(repo, '.local'), { recursive: true });
@@ -190,7 +190,7 @@ let stdout = '';
 child.stdout.on('data', (c) => { stdout += c; });
 let stderrTail = '';
 child.stderr.on('data', (c) => { stderrTail = (stderrTail + c).slice(-4000); });
-// 兜底：任何未捕获异常走到进程退出时也停掉实例（同步 taskkill 在 exit 钩子里可用）。
+// 安全网：任何未捕获异常走到进程退出时也停掉实例（同步 taskkill 在 exit 钩子里可用）。
 process.on('exit', () => { killChild(); });
 const url = await new Promise((resolveUrl, rejectUrl) => {
   const timer = setTimeout(() => rejectUrl(new Error('实例 90s 内未就绪')), 90_000);
