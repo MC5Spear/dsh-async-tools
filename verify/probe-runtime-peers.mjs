@@ -52,13 +52,23 @@ const argOf = (name) => {
   return i >= 0 && i + 1 < args.length ? args[i + 1] : undefined;
 };
 const keep = args.includes('--keep');
+let home = null;
+const fail = (msg) => {
+  console.error(`[probe] FAULT: ${msg}\n[probe] 临时目录：${home ?? '（尚未创建）'}${keep ? '（--keep 保留）' : '（探针故障路径，请手动清理）'}`);
+  process.exit(2);
+};
 const serviceRootArg = argOf('service-root') ?? process.env.DSAT_SERVICE_ROOT;
 if (serviceRootArg === undefined || serviceRootArg.trim() === '') fail('缺少 --service-root（或环境变量 DSAT_SERVICE_ROOT）：指向装有各宿主树的根目录');
 const serviceRoot = resolve(serviceRootArg);
 const hostSubdir = argOf('host-subdir') ?? 'dsh-0.2.1-rc.5';
 const repo = resolve(argOf('repo') ?? process.cwd());
 const hostRoot = join(serviceRoot, hostSubdir);
-const hostVersion = JSON.parse(readFileSync(join(hostRoot, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'), 'utf8')).version;
+let hostVersion;
+try {
+  hostVersion = JSON.parse(readFileSync(join(hostRoot, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'), 'utf8')).version;
+} catch (error) {
+  fail(`无法读取宿主树版本（--service-root/--host-subdir 是否指向有效的 dsh 安装树？）：${String(error?.message ?? error)}`);
+}
 
 // 探针依赖 module.registerHooks（Node ≥22.15）——低版本上实例会因 NODE_OPTIONS
 // 加载钩子失败而提前退出，报错隐晦；此处提前给出可读提示。
@@ -79,11 +89,6 @@ const COMPANION_PEERS = ['@deepseek-ai/cordis', '@deepseek-ai/cordis-plugin-time
 const DIRECT_DEPS = ['@deepseek-ai/schemastery', 'zod'];
 
 const log = (msg) => console.log(`[probe] ${msg}`);
-let home = null;
-const fail = (msg) => {
-  console.error(`[probe] FAULT: ${msg}\n[probe] 临时目录：${home ?? '（尚未创建）'}${keep ? '（--keep 保留）' : '（探针故障路径，请手动清理）'}`);
-  process.exit(2);
-};
 
 // 1) 打包候选 tgz（npm pack --ignore-scripts；产物名含「+」，输出进 .local/——
 //    本公开仓的统一本机材料目录，不在跟踪范围；探针结束自清，故障路径残留也在
@@ -185,6 +190,8 @@ let stdout = '';
 child.stdout.on('data', (c) => { stdout += c; });
 let stderrTail = '';
 child.stderr.on('data', (c) => { stderrTail = (stderrTail + c).slice(-4000); });
+// 兜底：任何未捕获异常走到进程退出时也停掉实例（同步 taskkill 在 exit 钩子里可用）。
+process.on('exit', () => { killChild(); });
 const url = await new Promise((resolveUrl, rejectUrl) => {
   const timer = setTimeout(() => rejectUrl(new Error('实例 90s 内未就绪')), 90_000);
   const poll = setInterval(() => {
