@@ -1,6 +1,6 @@
 /**
  * 批次领取窗口与延后说明批级配额的实例级探针（REL-NOTES-01 验收的硬性前置，
- * 设计 §2.6「条目数与说明上限」／r16 设计 §1.8 第 2 层）。
+ * 设计 §2.6「条目数与说明上限」）。
  *
  * ## 探针在证什么
  *
@@ -61,7 +61,7 @@ if (!match) throw new Error(`url 形态不符（仅显示问号前的 origin 与
 const [, ORIGIN, TOKEN] = match;
 
 const EVIDENCE = process.env.DSAT_PROBE_EVIDENCE ?? join(process.cwd(), 'probe-batch-window.json');
-const JOBS_PER_WAVE = 14; // > 10 条目上限，必然触发延后说明
+const JOBS_PER_WAVE = 14; // > 10 条目上限：若 14 个同窗到达则必然触发延后说明（实例层波内结算优先被让出出口结构化携带，实测未同窗触顶）
 const WAVES = ['W1', 'W2'];
 
 // ── RPC（token 换 cookie；任意 fetch 拒绝各重试一次——长探针会撞上服务端

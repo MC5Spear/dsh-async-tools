@@ -75,7 +75,7 @@ const baselineCreate = readFileSync(PATCH_CREATE, 'utf8');
  *  （standard 6799 B／cordis 7406 B，锚点取哪边期望集都一致）；集合外的
  *  0.2.0-rc.2 树为 7511／8089 B（不同代基线）。P14 的期望集钉在 0.2.1
  *  兼容线（文件头 P14 定义），锚宿主是其他代际时对账不适用——用例内按锚内
- *  dsh 版本代际门显式 NOTE 跳过，不静默、不冒充对账通过。 */
+ *  dsh 版本做代际检查、显式 NOTE 跳过，不静默、不冒充对账通过。 */
 const WEB_APP_PRESETS = candidateModules(process.env.DSH_HOME ?? join(homedir(), '.dsh'))
   .map((dir) => join(dir, '@deepseek-ai', 'dsh-web-app', 'presets'))
   .find((dir) => existsSync(join(dir, 'standard.patch.yml')));
@@ -432,7 +432,7 @@ hostTest('validate-preset：创造补丁 toolName 写错必须拦住（P13，④
 
 hostTest('validate-preset：期望集必须与 shipped 基线的真实行集合逐条比对（P14，防快照漂移）', async () => {
   const { load } = await loadYaml();
-  // 代际门（P14 按定义只对 0.2.1 兼容线证据树对账）：锚宿主的 dsh 版本不是
+  // 代际检查（P14 按定义只对 0.2.1 兼容线证据树对账）：锚宿主的 dsh 版本不是
   // 0.2.1 线（如误把集合外的 0.2.0-rc.2 树当锚——其基线 7511/8089 B，与期望集
   // 不同代）时，逐条比对会把「基线代际差」误报成快照漂移。显式 NOTE 后跳过
   // 整组对账：不静默、不冒充对账通过；期望集仍在 0.2.1 线锚（本机与 CI 的

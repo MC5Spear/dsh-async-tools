@@ -1228,6 +1228,57 @@ hostTest('W-READ-A：宿主读取失败 → 失败态可见可重试，正文恰
   }
 });
 
+hostTest('WI-01：运行中增量读取失败不静默——零等待注记失败与重试出路，恢复后未消费增量完整交付（WAIT-INCREMENT-01）', async () => {
+  const rig = await buildRig('inc-read-fail');
+  try {
+    // 运行中作业（done 悬置，测试收尾再结算以便 disposeAll 不挂）：先产出一段
+    // 未消费增量，供「失败当次不交付、恢复后完整到达」两侧对照。
+    let finishLive;
+    const jobId = rig.ctx.jobs.start({
+      kind: 'at-r57-cmd', label: 'live incremental read fail', owner: rig.parent.id,
+      run(job) {
+        job.append('LIVE-INCREMENT\n');
+        return {
+          cancel() { finishLive({ status: 'completed', detail: 'exit code: 0' }); },
+          done: new Promise((resolve) => { finishLive = resolve; })
+        };
+      }
+    });
+    await new Promise((resolve) => { setTimeout(resolve, 10); });
+    // 装置内点状故障：运行中的增量读取抛错（修前缺陷形态＝静默 null，模型侧
+    // 只见空增量，不能区分「无输出」与「读取失败」）。
+    const realRead = rig.ctx.jobs.read.bind(rig.ctx.jobs);
+    let failNext = true;
+    rig.ctx.jobs.read = (...args) => {
+      if (failNext) throw new Error('incremental read exploded');
+      return realRead(...args);
+    };
+    const failed = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: jobId }] }, rig.exec());
+    const failedItem = (failed.outputs ?? []).find((item) => item.job_id === jobId);
+    assert.ok(failedItem !== undefined, '失败对象在场：该作业条目随零等待批次交付');
+    assert.match(String(failedItem?.note ?? ''), /读取失败|read failed/i,
+      '运行中读取失败必须显式注记（携带重试出路），不是空增量');
+    assert.equal(failedItem?.text ?? undefined, '',
+      '失败当次不交付正文（未消费增量留待恢复后交付）');
+    assert.match(String(failedItem?.status_line ?? ''), /仍在运行|still running/i,
+      '三要素之「状态行」：失败条目如实报告作业仍在运行（不冒充终态、不改写结局）');
+    // 故障排除后零等待重试：游标未被失败消费，未消费增量完整到达且不再注记失败。
+    failNext = false;
+    const recovered = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: jobId }] }, rig.exec());
+    const recoveredItem = (recovered.outputs ?? []).find((item) => item.job_id === jobId);
+    assert.ok(String(recoveredItem?.text ?? '').includes('LIVE-INCREMENT'),
+      '读取恢复后未消费增量完整交付');
+    assert.ok(!/读取失败|read failed/i.test(String(recoveredItem?.note ?? '')),
+      '恢复后不再注记失败（读取成功即翻回失败态）');
+    rig.ctx.jobs.read = realRead;
+    finishLive({ status: 'completed', detail: 'exit code: 0' });
+  } finally {
+    await rig.dispose();
+  }
+});
+
 hostTest('W-READY-A：入口已就绪的续段 → 无目标等待不挂起，直接汇集交付（readyCollect）', async () => {
   const rig = await buildRig('ready', [], { maxResultChars: 40 });
   try {
@@ -1241,7 +1292,7 @@ hostTest('W-READY-A：入口已就绪的续段 → 无目标等待不挂起，�
     const first = await rig.waiter.execute(waitArgs(jobId), rig.exec());
     assert.equal(first.status, 'completed');
     assert.equal(first.truncated, true, '前置：首访按 40 份额截断（partial 事实，中段留缓冲）');
-    // 无目标正等待：入口汇集就绪续段，不进入资格门挂起。
+    // 无目标正等待：入口汇集就绪续段，不进入资格检查挂起。
     const started = Date.now();
     const again = await rig.waiter.execute({ wait_ms: 300 }, rig.exec());
     const wall = Date.now() - started;
@@ -1666,7 +1717,7 @@ hostTest('W-GATE-B：停止胜出＋现读 running→不报 settled、不写登�
     );
     pending.then(() => { concluded = true; }, () => { concluded = true; });
     await sleep(120);
-    // 停止信号到达但注册表现读仍 running（投影滞后形态）：门拦下——不交付、
+    // 停止信号到达但注册表现读仍 running（投影滞后形态）：复核拦下——不交付、
     // 不写登记、标记续等。
     rig.ctx.emit('agent/status', { agent: { id: 'at-gate-b-child' }, status: 'idle' });
     await sleep(150);
@@ -1769,7 +1820,7 @@ hostTest('W-GATE-E：入口未领取结算通知同门现读——running→chan
   }
 });
 
-hostTest('W-GATE-F：同目标重复未证实复核事件不提前按到期交回（wall≈预算，自旋防线不触发）', async () => {
+hostTest('W-GATE-F：同目标重复未证实复核事件不提前按到期交回（实耗≈预算，自旋防线不触发）', async () => {
   resetAgentBaselines();
   const rig = await buildRig('gate-f', [{ id: 'at-gate-f-child' }], {
     pollIntervalMs: 250,
@@ -1784,7 +1835,7 @@ hostTest('W-GATE-F：同目标重复未证实复核事件不提前按到期交�
     await sleep(120);
     // 变异注释（W-GATE-F）：复核未证实分支若不重建观察器（直接 continue），已 resolve
     // 的一次性 settled promise 会被下一轮竞速再次胜出——每轮微任务复用、自旋
-    // 计数暴涨，在本预算内提前按到期口径交回（wall 断言必红）。
+    // 计数暴涨，在本预算内提前按到期口径交回（实耗断言必红）。
     for (let i = 0; i < 25; i += 1) {
       rig.ctx.emit('agent/status', { agent: { id: 'at-gate-f-child' }, status: 'idle' });
       await sleep(20);
@@ -1792,7 +1843,7 @@ hostTest('W-GATE-F：同目标重复未证实复核事件不提前按到期交�
     const outcome = await pending;
     const wall = Date.now() - started;
     assert.equal(outcome.status, 'running', '重复未证实事件不误报停止：到期口径交回');
-    assert.ok(wall >= 1350, `不提前交回（wall≈预算 1500；实耗 ${String(wall)} ms）——重建观察器防自旋`);
+    assert.ok(wall >= 1350, `不提前交回（实耗≈预算 1500；实耗 ${String(wall)} ms）——重建观察器防自旋`);
   } finally {
     await rig.dispose();
   }
@@ -1811,7 +1862,7 @@ hostTest('W-SPIN-A：MAX_SPINS 可测锚——注入小上限后超过上限次�
       const started = Date.now();
       // 变异注释（W-SPIN-A）：若定时周期胜者仍计入 spins（旧计数形态——备用轮询周期
       // 曾无条件计入），第 4 个周期（约 200 ms）即触发防线、提前按到期口径交回，
-      // wall 断言（≥570 ms）必红。
+      // 实耗断言（≥570 ms）必红。
       const outcome = await rig.waiter.execute(
         { wait_ms: 600, targets: [{ kind: 'agent', id: 'at-spin-a-child' }] },
         rig.exec()
@@ -2094,7 +2145,7 @@ hostTest('L9 装载中途抛错：行注销恒执行、已就位处置器执行�
 // ═══ REL-SEND-01：部分投递失败的精确回滚边界（设计 r14 §3）═══
 //
 // S1 是受控反例：修前 #flushPendingSends 的 catch 对整个 queue 回滚（含宿主
-// 已接受的条目）——第二次 inject 抛错后两项正文都重现。驱动走公开链路：
+// 已接受的条目）——第二次 inject 抛错后两项正文都重现。驱动走公开调用链：
 // claimWait 压住活等待 → readSettled 逐项就绪（不投）→ releaseWait 让位复查
 // 逐条 deferFlush 装配后**单次冲刷**（多元素队列的成例路径，delivery.js 的
 // releaseWait）。替身只替换装载边界：agents 注册表（可抛错的 inject/followup）
@@ -2475,6 +2526,29 @@ hostTest('REC-F：无活等待的读取失败——注记三要素（真实结�
   assert.equal(rig.calls.inject.length, 2, '恢复后的正文交付恰一条');
   assert.ok(textOf(rig.calls.inject[1]).includes('RECOVERED-BODY'), '正文在场');
   assert.ok(!/\[read failed\]|\[读取失败\]/.test(textOf(rig.calls.inject[1])), '正文交付不带失败标记');
+});
+
+hostTest('READF-01：读取失败注记的完整重试调用在长作业标识下不被截断（READF-NOTE-LEN-01）', async () => {
+  const rig = sRig({});
+  // 44 字符作业 id（真实形态为 kind 前缀＋16 位十六进制随机后缀，本包所见前缀
+  // 最长 async-workflow-＝15 字符 → 最长约 31；取 44 为自定安全线，余 13 字符）：
+  // 修前英文档模板固定部分 188 字符，44 字符 id 下 raw 约 276 超 clampNote(200)，
+  // 截断点落在重试调用内标识之前、该标识整体缺失——完整重试调用对模型不可执行；
+  // 压缩词条后固定部分 107 字符，44 字符 id 下 raw 195 在界内完整。
+  const longId = `job-readf-${'x'.repeat(34)}`;
+  assert.equal(longId.length, 44, '前置：作业 id 恰 44 字符（安全线）');
+  ledger.noteJobStarted(rig.ctx, rig.config, longId, rig.OWNER);
+  const entry = ledger.jobs.get(longId);
+  entry.terminal = { status: 'completed' };
+  rig.ctx.jobs.read = async () => { throw new Error('registry read exploded'); };
+  await ledger.readSettled(longId);
+  assert.equal(rig.calls.inject.length, 1, '注记恰一条（完成消息通道）');
+  const notice = textOf(rig.calls.inject[0]);
+  assert.ok(notice.includes(longId), '完整作业 id 在场（不截半）');
+  assert.ok(notice.includes(`id:"${longId}"`), '重试调用内的作业标识完整在场（修前该标识整体缺失）');
+  assert.match(notice, /\[read failed\]|\[读取失败\]/, '读取失败标记在场');
+  assert.match(notice, /wait_ms=\.\.\.\)/, '重试调用的闭合尾部完整（修前截断必红）');
+  assert.match(notice, /Retry async_wait|请重试 async_wait/, '重试出路在场');
 });
 
 hostTest('REC-G：读取失败再失败——新失败定论清占位恢复通知（每次失败至多一条，不跨载体堆积）', async () => {
@@ -3394,8 +3468,8 @@ hostTest('T8 真实注册表：准入上限与领取窗口解耦——触顶拒�
     await awaitTerminal(wave3.ids);
     await awaitReady(wave3.ids);
     // 释放活等待：15 个延后候选（波二 10＋波三 5）经完成消息路径——修前 15 条
-    // 线性消息；修后 3 逐条＋1 聚合（deferFlush 先登记后单次冲刷，聚合计数＝
-    // 集合最终值 12），其余 11 个零追加消息。
+    // 线性消息；修后 3 逐条＋1 聚合（deferFlush 先登记后单次冲刷，其余 12 个
+    // 候选并入聚合计数、不各自追加消息——首个候选触发聚合 send，其后零追加）。
     await ledger.releaseWait(hold, rig.parent.id);
     assert.equal(rig.injections.length, 4,
       `15 个延后候选：恰 3 逐条＋1 聚合（实得 ${String(rig.injections.length)}，修前 15）`);
