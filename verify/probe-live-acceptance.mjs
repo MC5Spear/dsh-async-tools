@@ -20,7 +20,8 @@
  *
  * 每步由模型回固定 token 判定执行到位；任一步超时或断言不成立按 FAIL 计。
  * 模型可能偶发不照单步指令执行——同一会话重试一次后仍不成立才判 FAIL，
- * 重试在证据中留痕，不静默吞掉。
+ * 重试在证据中留痕，不静默吞掉。正文类断言只认宿主侧载体（工具返回、完成
+ * 消息、注入消息）——模型文本只作回执，防模型转写指令里的 token 造成假 PASS。
  *
  * ## 用法
  *
@@ -29,6 +30,7 @@
  *
  * `--service-root` 必填（或设 `DSAT_SERVICE_ROOT`）——指向装有各宿主树的根目录；
  * `--repo` 缺省取当前目录。产物落 `.local/`，结束自清；`--keep` 保留临时 home。
+ * 退出码：0＝全部判定通过；1＝存在 FAIL 判定；2＝探针自身故障（FAULT）。
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
@@ -76,13 +78,14 @@ if (tgzName === undefined) fail('npm pack 未产出 dsh-async-tools tgz');
 const tgzPath = join(repo, '.local', tgzName);
 log(`tgz=${tgzName}`);
 
-// 2) 独立 DSH_HOME（系统临时目录）＋ 官方 CLI 安装（正式装载路径）。
+// 2) 独立 DSH_HOME（系统临时目录）＋ 官方 CLI 安装（正式装载路径；plugin add
+//    内部转 pnpm 装依赖可能较慢——给足超时并在失败时带出两侧输出）。
 home = mkdtempSync(join(tmpdir(), 'dsh-live-acc-'));
 const cliBin = join(hostRoot, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
 const addRun = spawnSync('node', [cliBin, 'plugin', '--profile', 'web', 'add', tgzPath], {
-  env: { ...process.env, DSH_HOME: home }, encoding: 'utf8'
+  cwd: serviceRoot, env: { ...process.env, DSH_HOME: home }, encoding: 'utf8', timeout: 300_000
 });
-if (addRun.status !== 0) fail(`plugin add 退出 ${String(addRun.status)}：${addRun.stderr}`);
+if (addRun.status !== 0) fail(`plugin add 退出 ${String(addRun.status)}：stderr 尾部 ${String(addRun.stderr).slice(-600)}／stdout 尾部 ${String(addRun.stdout).slice(-600)}`);
 log('plugin add 完成');
 
 // 3) 起隔离实例（随机端口；凭据取 serviceRoot 下 .env 由宿主装载）。
@@ -184,6 +187,14 @@ function toolCallNames(transcript) {
   }
   return names;
 }
+/** 转录中出现过的宿主事件类型集合（job/settled 等终态事件的机器证据来源）。 */
+function eventTypes(transcript) {
+  const types = new Set();
+  for (const r of transcript.records ?? []) {
+    if (typeof r.event?.type === 'string') types.add(r.event.type);
+  }
+  return types;
+}
 /** 完成消息注入（lib/delivery-sources.js 的 JOB_RESULT_SOURCE）。 */
 function completionSends(transcript) {
   const out = [];
@@ -224,7 +235,12 @@ async function driveStep(step) {
   const record = { name: step.name, attempts: [] };
   evidence.steps.push(record);
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    await prompt(step.prompt);
+    try {
+      await prompt(step.prompt);
+    } catch (error) {
+      killChild();
+      fail(`session/prompt 调用失败：${String(error?.message ?? error)}`);
+    }
     const deadline = Date.now() + STEP_TIMEOUT_MS;
     let lastDetail = '（无判定输出）';
     while (Date.now() < deadline) {
@@ -237,7 +253,8 @@ async function driveStep(step) {
         toolResults: toolResultTexts(transcript),
         toolNames: toolCallNames(transcript),
         completions: completionSends(transcript),
-        injected: injectedTexts(transcript)
+        injected: injectedTexts(transcript),
+        events: eventTypes(transcript)
       };
       const outcome = step.judge(ctx);
       if (outcome.ok === true) {
@@ -260,7 +277,7 @@ async function driveStep(step) {
     record.attempts.push({ attempt, ok: false, detail: lastDetail });
     log(`步骤 ${step.name} 第 ${String(attempt)} 次未成立（${lastDetail}）${attempt === 1 ? '，重试一次' : ''}`);
   }
-  judge(step.name, false, `两次尝试未成立；最后状态：${verdicts.at(-1) === undefined ? '' : ''}${evidence.steps.at(-1).attempts.at(-1).detail}`);
+  judge(step.name, false, `两次尝试未成立；最后状态：${String(record.attempts.at(-1).detail)}`);
   return false;
 }
 
@@ -279,9 +296,10 @@ await driveStep({
   name: 'LA-2 后台作业经等待领取正文',
   prompt: 'Run this single step and reply with exactly the token LA2_OK: call async_run with command "Start-Sleep -Seconds 22; Write-Output LA2-TOKEN-7c1", description "la2 background", yield_ms 20000 (it will outlive the first wait and go to background); then call async_wait with wait_ms 60000 to claim its result inline; after the claim returns, reply LA2_OK. No other tools, no questions.',
   judge: (ctx) => {
-    const claimed = ctx.toolResults.some((t) => t.includes('LA2-TOKEN-7c1')) || ctx.completions.some((t) => t.includes('LA2-TOKEN-7c1'));
+    const claimed = (ctx.toolResults.some((t) => t.includes('LA2-TOKEN-7c1')) || ctx.completions.some((t) => t.includes('LA2-TOKEN-7c1')))
+      && ctx.toolNames.has('async_run') && ctx.toolNames.has('async_wait');
     const ok = claimed && ctx.modelTexts.some((t) => t.includes('LA2_OK'));
-    return { ok, detail: ok ? '后台作业正文经等待领取或完成消息到达且模型回执' : `正文命中 ${String(claimed)}／回执 ${String(ctx.modelTexts.some((t) => t.includes('LA2_OK')))}` };
+    return { ok, detail: ok ? '后台作业正文经等待领取或完成消息到达（async_run＋async_wait 均在场）且模型回执' : `正文命中 ${String(claimed)}／回执 ${String(ctx.modelTexts.some((t) => t.includes('LA2_OK')))}` };
   }
 });
 
@@ -293,8 +311,12 @@ await driveStep({
     const receipt = ctx.modelTexts.some((t) => t.includes('LA3_OK'));
     const killSeen = ctx.toolNames.has('job_kill') && ctx.toolNames.has('job_list');
     const outputAbsent = !ctx.toolNames.has('job_output');
-    const ok = receipt && killSeen && outputAbsent;
-    return { ok, detail: ok ? 'job_kill＋job_list 在场、job_output 未出现在模型名册、模型回执' : `回执 ${String(receipt)}／job_kill ${String(ctx.toolNames.has('job_kill'))}／job_list ${String(ctx.toolNames.has('job_list'))}／job_output 缺席 ${String(outputAbsent)}` };
+    // 终态的机器证据：作业结算事件在场（模型转述不作数）；名册检查以「未出现在
+    // tool/call 记录」反推——「未调用」不严格等于「不可见」，此为脚本化抽样的
+    // 已知边界，离线排查靠快照。
+    const settledSeen = ctx.events.has('job/settled');
+    const ok = receipt && killSeen && outputAbsent && settledSeen;
+    return { ok, detail: ok ? 'job_kill＋job_list 在场、job/settled 事件在案、job_output 未出现在模型名册、模型回执' : `回执 ${String(receipt)}／job_kill ${String(ctx.toolNames.has('job_kill'))}／job_list ${String(ctx.toolNames.has('job_list'))}／job_output 缺席 ${String(outputAbsent)}／job/settled ${String(settledSeen)}` };
   }
 });
 
@@ -303,12 +325,14 @@ await driveStep({
   name: 'LA-4 后台子代理最终回答到达',
   prompt: 'Run this single step and reply with exactly the token LA4_OK: call async_agent with description "la4 child", prompt "Reply with exactly the single token LA4-CHILD-5e8 and nothing else."; it returns an agent_id immediately; then end your turn WITHOUT waiting. When the child agent answer reaches you (as a message or in any delivery form), reply with exactly LA4_OK in your next turn. No other tools, no questions.',
   judge: (ctx) => {
-    const childAnswer = ctx.modelTexts.some((t) => t.includes('LA4-CHILD-5e8'))
-      || ctx.completions.some((t) => t.includes('LA4-CHILD-5e8'))
+    // 子代理回答只认宿主侧载体（完成消息/注入消息/工具返回）——模型文本单独
+    // 命中不算到达：token 明文写在主代理指令里，模型转写即可伪造，恰会掩盖
+    // 「子代理回答丢失」这一本探针要抓的缺陷。
+    const childAnswer = ctx.completions.some((t) => t.includes('LA4-CHILD-5e8'))
       || ctx.injected.some((e) => e.text.includes('LA4-CHILD-5e8'))
       || ctx.toolResults.some((t) => t.includes('LA4-CHILD-5e8'));
     const ok = ctx.modelTexts.some((t) => t.includes('LA4_OK')) && childAnswer;
-    return { ok, detail: ok ? '子代理回答（任意载体）到达且主代理回执' : `子代理回答到达 ${String(childAnswer)}／主代理回执 ${String(ctx.modelTexts.some((t) => t.includes('LA4_OK')))}` };
+    return { ok, detail: ok ? '子代理回答经宿主侧载体到达且主代理回执' : `宿主侧载体命中 ${String(childAnswer)}／主代理回执 ${String(ctx.modelTexts.some((t) => t.includes('LA4_OK')))}` };
   }
 });
 
@@ -323,8 +347,9 @@ await driveStep({
   }
 });
 
-// 6) 收尾：停实例→留证据→清理。
+// 6) 收尾：停实例→等句柄释放→留证据→清理。
 killChild();
+await new Promise((r) => { setTimeout(r, 1500); });
 try { rmSync(home, { recursive: true, force: true }); log(`已清理临时 home：${home}`); }
 catch { console.error(`[probe] WARN: 临时目录清理失败，留存现场：${home}`); }
 try { rmSync(tgzPath, { force: true }); } catch { /* 产物清理尽力而为 */ }
