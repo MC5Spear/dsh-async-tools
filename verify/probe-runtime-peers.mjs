@@ -41,9 +41,9 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, readlinkSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname, resolve, relative } from 'node:path';
+import { join, dirname, resolve, relative, isAbsolute } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
 const args = process.argv.slice(2);
@@ -60,6 +60,16 @@ const repo = resolve(argOf('repo') ?? process.cwd());
 const hostRoot = join(serviceRoot, hostSubdir);
 const hostVersion = JSON.parse(readFileSync(join(hostRoot, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'), 'utf8')).version;
 
+// 探针依赖 module.registerHooks（Node ≥22.15）——低版本上实例会因 NODE_OPTIONS
+// 加载钩子失败而提前退出，报错隐晦；此处提前给出可读提示。
+{
+  const [major, minor] = process.versions.node.split('.').map((x) => Number.parseInt(x, 10));
+  if (major < 22 || (major === 22 && minor < 15)) {
+    console.error(`[probe] FAULT: 需要 Node ≥22.15（module.registerHooks），当前 ${process.versions.node}`);
+    process.exit(2);
+  }
+}
+
 const DSH_PEERS = [
   '@deepseek-ai/dsh', '@deepseek-ai/dsh-jobs', '@deepseek-ai/dsh-llm',
   '@deepseek-ai/dsh-sandbox', '@deepseek-ai/dsh-shell', '@deepseek-ai/dsh-shell-env',
@@ -69,19 +79,26 @@ const COMPANION_PEERS = ['@deepseek-ai/cordis', '@deepseek-ai/cordis-plugin-time
 const DIRECT_DEPS = ['@deepseek-ai/schemastery', 'zod'];
 
 const log = (msg) => console.log(`[probe] ${msg}`);
-const fail = (msg) => { console.error(`[probe] FAULT: ${msg}`); process.exit(2); };
+let home = null;
+const fail = (msg) => {
+  console.error(`[probe] FAULT: ${msg}\n[probe] 临时目录：${home ?? '（尚未创建）'}${keep ? '（--keep 保留）' : '（探针故障路径，请手动清理）'}`);
+  process.exit(2);
+};
 
-// 1) 打包候选 tgz（npm pack --ignore-scripts；产物名含「+」，路径原样使用）。
+// 1) 打包候选 tgz（npm pack --ignore-scripts；产物名含「+」，输出进 .local/——
+//    本公开仓的统一本机材料目录，不在跟踪范围；探针结束自清，故障路径残留也在
+//    忽略范围）。目录缺席时创建。
+mkdirSync(join(repo, '.local'), { recursive: true });
 log(`repo=${repo} hostRoot=${hostRoot} hostVersion=${hostVersion}`);
-const packRun = spawnSync('npm', ['pack', '--ignore-scripts'], { cwd: repo, encoding: 'utf8', shell: true });
+const packRun = spawnSync('npm', ['pack', '--ignore-scripts', '--pack-destination', '.local'], { cwd: repo, encoding: 'utf8', shell: true });
 if (packRun.status !== 0) fail(`npm pack 退出 ${String(packRun.status)}：${packRun.stderr}`);
 const tgzName = (packRun.stdout.match(/dsh-async-tools-[^\s]+\.tgz/g) ?? []).pop();
 if (tgzName === undefined) fail('npm pack 未产出 dsh-async-tools tgz');
-const tgzPath = join(repo, tgzName);
+const tgzPath = join(repo, '.local', tgzName);
 log(`tgz=${tgzName}`);
 
 // 2) 独立 DSH_HOME（系统临时目录，避开仓库祖先的依赖搜索——COMPAT-01 教训）。
-const home = mkdtempSync(join(tmpdir(), 'dsh-compat-peers-'));
+home = mkdtempSync(join(tmpdir(), 'dsh-compat-peers-'));
 const resolveLog = join(home, 'resolve.log');
 const hookPath = join(home, 'resolve-hook.mjs');
 writeFileSync(hookPath, `import { registerHooks } from 'node:module';
@@ -175,7 +192,7 @@ const url = await new Promise((resolveUrl, rejectUrl) => {
     if (m !== null) { clearTimeout(timer); clearInterval(poll); resolveUrl(m[0]); }
     if (child.exitCode !== null) { clearTimeout(timer); clearInterval(poll); rejectUrl(new Error(`实例提前退出 ${String(child.exitCode)}`)); }
   }, 200);
-}).catch((error) => fail(`${String(error.message)}\nstderr 尾部：\n${stderrTail}`));
+}).catch((error) => { killChild(); fail(`${String(error.message)}\nstderr 尾部：\n${stderrTail}`); });
 log(`实例就绪：${url.replace(/token=[^&]+/, 'token=***')}，等待装载解析落盘……`);
 await new Promise((r) => { setTimeout(r, 5000); });
 
@@ -184,7 +201,6 @@ await new Promise((r) => { setTimeout(r, 5000); });
 console.log('\n── 实例存活期 profile node_modules 结构 ──');
 {
   const nm = join(home, 'profiles', 'web', 'node_modules');
-  const { readdirSync, readlinkSync, statSync } = await import('node:fs');
   for (const name of readdirSync(nm)) {
     const full = join(nm, name);
     let target = null;
@@ -204,13 +220,14 @@ console.log('\n── 实例存活期 profile node_modules 结构 ──');
       console.log(`${name}（真实目录）`);
     }
   }
-  void statSync;
 }
 
 // 4b) RPC 驱动一轮真实会话：宿主为会话装载工具模块（懒装载在此触发——插件
 //     lib/index.js 的顶层 import 才是九项 DSH peer 的运行时解析点）。
-const [, ORIGIN, TOKEN] = url.match(/^(https?:\/\/[^/?#]+)\/?\?token=(.+)$/);
-const indexResponse = await fetch(`${ORIGIN}/?token=${TOKEN}`, { redirect: 'manual' });
+const urlMatch = url.match(/^(https?:\/\/[^/?#]+)\/?\?token=(.+)$/);
+if (urlMatch === null) { killChild(); fail(`实例 URL 形态不符：${url.split('?')[0]}`); }
+const [, ORIGIN, TOKEN] = urlMatch;
+const indexResponse = await fetch(`${ORIGIN}/?token=${TOKEN}`, { redirect: 'manual', signal: AbortSignal.timeout(30_000) });
 const COOKIE = (indexResponse.headers.getSetCookie?.() ?? []).map((e) => e.split(';', 1)[0]).join('; ');
 if (COOKIE.length === 0) { killChild(); fail('token exchange returned no cookie'); }
 async function rpc(endpoint, args) {
@@ -219,7 +236,8 @@ async function rpc(endpoint, args) {
     method: endpoint, payload: { args }
   });
   const response = await fetch(`${ORIGIN}/api/${endpoint}`, {
-    method: 'POST', headers: { 'content-type': 'application/json', cookie: COOKIE }, body
+    method: 'POST', headers: { 'content-type': 'application/json', cookie: COOKIE }, body,
+    signal: AbortSignal.timeout(30_000)
   });
   const parsed = JSON.parse(await response.text());
   if (parsed?.result?.ok !== true) throw new Error(`${endpoint}: ${JSON.stringify(parsed?.result?.error ?? '').slice(0, 200)}`);
@@ -282,12 +300,16 @@ try {
   resolutionEntries = resolution.entries.map((entry) => ({ name: entry.name, dir: entry.packageDir, version: entry.version, declarer: entry.declarer, scope: entry.scope }));
   log(`运行装载决议复算完成：${String(resolutionEntries.length)} 项条目。`);
 } catch (error) {
-  log(`决议复算失败（继续按动态观测判定）：${String(error?.message ?? error).slice(0, 200)}`);
+  log(`决议复算失败（降级为仅动态观测；若九项 peer 因此观测不足，将按未观测如实 FAIL）：${String(error?.message ?? error).slice(0, 200)}`);
 }
+
+// 取证完成后先停实例：判定段只读盘上日志与决议结果，不再依赖进程存活——
+// 后续任何异常都不会泄漏子进程。
+killChild();
+await new Promise((r) => { setTimeout(r, 1500); });
 
 // 5) 读解析日志，按发起方分组判定。
 if (!existsSync(resolveLog)) {
-  killChild();
   fail('解析日志不存在（钩子未生效或装载未发生任何被观测解析）');
 }
 const records = readFileSync(resolveLog, 'utf8').trim().split('\n')
@@ -299,7 +321,6 @@ const followRecords = pluginRecords.filter((r) => r.follow === true);
 const observedRecords = pluginRecords.filter((r) => r.follow !== true);
 const otherRecords = records.filter((r) => !pluginRecords.includes(r));
 if (pluginRecords.length === 0) {
-  killChild();
   fail('没有任何插件文件发起的被观测解析——插件可能未装载（检查 profile 三件套与拒载日志）');
 }
 const versionAt = (fileUrl) => {
@@ -321,7 +342,9 @@ const hostPkgVersion = (name) => {
 const inHostTree = (fileUrl) => {
   try {
     const rel = relative(join(hostRoot, 'node_modules'), fileURLToPath(fileUrl));
-    return rel !== '' && !rel.startsWith('..') && !resolve(rel).startsWith('..');
+    // Windows 下跨盘 relative 返回绝对路径（本部署宿主树与临时 home 分属 D:/C:），
+    // 不加 isAbsolute 判会把 profile 副本误判为宿主树——恰是本探针要抓的失败场景。
+    return rel !== '' && !isAbsolute(rel) && !rel.startsWith('..');
   } catch { return false; }
 };
 let failures = 0;
@@ -382,10 +405,9 @@ for (const r of rewrittenRecords) {
     observedNames.add(name);
   }
 }
-console.log('\n── 运行装载决议复算（宿主 createRuntimeResolution：装载映射的权威来源，同函数同输入同盘状态；安装锚优先序＝宿主同源契约）──');
+console.log('\n── 运行装载决议复算（宿主 createRuntimeResolution：对九项 peer（无本地候选、必走装载路由）是装载映射的直接来源；对直接依赖仅测其本地副本缺席时的回退条目）──');
 if (resolutionEntries === null) {
-  failures += 1;
-  console.log('FAIL  决议复算未完成（探针自身故障或宿主导出变更）');
+  console.log('WARN  决议复算未完成（探针侧降级——九项 peer 判定退化为仅动态观测；若动态观测也不足，按未观测 FAIL，见下）');
 } else {
   const targets = [...DSH_PEERS, ...COMPANION_PEERS, ...DIRECT_DEPS];
   const declarerNote = (entry) => (String(entry.declarer).includes('dsh-async-tools') ? '（声明者：dsh-async-tools）' : '');
@@ -402,7 +424,8 @@ if (resolutionEntries === null) {
       console.log(`${verdict(dirInHost)}  ${name}@${String(entry.version)} → ${entry.dir}（scope=${String(entry.scope)}）要求：宿主树（配套 peer 使用宿主提供的同名包）`);
     } else {
       const hostV = hostPkgVersion(name);
-      console.log(`${verdict(entry.version === hostV)}  ${name}@${String(entry.version)} → ${entry.dir}（scope=${String(entry.scope)}）要求：与宿主同名包 ${String(hostV)} 一致（允许 profile 副本）`);
+      const note = '；实际装载走本地副本优先，此条目为本地缺席时的回退（ZOD-NESTED-01）';
+      console.log(`${verdict(entry.version === hostV)}  ${name}@${String(entry.version)} → ${entry.dir}（scope=${String(entry.scope)}）要求：与宿主同名包 ${String(hostV)} 一致（允许 profile 副本）${note}`);
     }
     observedNames.add(name);
   }
@@ -410,7 +433,7 @@ if (resolutionEntries === null) {
 const missingFinal = [...DSH_PEERS, ...COMPANION_PEERS, ...DIRECT_DEPS].filter((n) => !observedNames.has(n));
 if (missingFinal.length > 0) {
   failures += missingFinal.length;
-  console.log(`FAIL  未观测到（装载/会话两期、包名与绝对路径两种形态均无插件侧解析记录，来源无法断言）：${missingFinal.join('，')}`);
+  console.log(`FAIL  未观测到（装载/会话两期、包名与绝对路径两种形态均无插件侧解析记录，来源无法断言；若会话驱动或决议复算环节失败，此项可能属环境/探针故障而非产品结论）：${missingFinal.join('，')}`);
 }
 console.log('\n── 标准链形态参考（follow：同 parent 上下文走默认解析链，不含宿主装载器定向——「裸解析」形态的自动复现，不参与判定）──');
 const seenFollow = new Set();
@@ -424,14 +447,13 @@ for (const r of followRecords) {
 if (otherRecords.length > 0) {
   console.log(`\n（另有宿主自身或其他发起方的被观测解析 ${String(otherRecords.length)} 条，不属于插件来源，不判定。）`);
 }
-killChild();
 if (!keep) {
-  await new Promise((r) => { setTimeout(r, 1500); });
   try { rmSync(home, { recursive: true, force: true }); log(`已清理临时 home：${home}`); }
   catch { console.error(`[probe] WARN: 临时目录清理失败，留存现场：${home}`); }
 } else {
   log(`--keep：保留临时 home ${home}`);
 }
+try { rmSync(tgzPath, { force: true }); } catch { /* 产物清理尽力而为 */ }
 console.log(failures === 0 ? '\n判定：全部通过（0 FAIL）' : `\n判定：${String(failures)} 项 FAIL`);
 process.exit(failures === 0 ? 0 : 1);
 
