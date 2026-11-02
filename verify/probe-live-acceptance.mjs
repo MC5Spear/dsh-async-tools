@@ -187,13 +187,19 @@ function toolCallNames(transcript) {
   }
   return names;
 }
-/** 转录中出现过的宿主事件类型集合（job/settled 等终态事件的机器证据来源）。 */
+/** 转录中出现过的宿主事件类型集合（终态事件的机器证据来源）。 */
 function eventTypes(transcript) {
   const types = new Set();
   for (const r of transcript.records ?? []) {
     if (typeof r.event?.type === 'string') types.add(r.event.type);
   }
   return types;
+}
+/** 是否存在 status==='killed' 的 job/settled 事件——killed 只能由 kill 产生，
+ *  不会被前序步骤的 completed 结算污染（JobSettledData 含 jobId 与 status，
+ *  dsh-jobs types.d.ts）。 */
+function hasKilledSettled(transcript) {
+  return (transcript.records ?? []).some((r) => r.event?.type === 'job/settled' && r.event.data?.status === 'killed');
 }
 /** 完成消息注入（lib/delivery-sources.js 的 JOB_RESULT_SOURCE）。 */
 function completionSends(transcript) {
@@ -254,7 +260,8 @@ async function driveStep(step) {
         toolNames: toolCallNames(transcript),
         completions: completionSends(transcript),
         injected: injectedTexts(transcript),
-        events: eventTypes(transcript)
+        events: eventTypes(transcript),
+        killedSettled: hasKilledSettled(transcript)
       };
       const outcome = step.judge(ctx);
       if (outcome.ok === true) {
@@ -311,12 +318,12 @@ await driveStep({
     const receipt = ctx.modelTexts.some((t) => t.includes('LA3_OK'));
     const killSeen = ctx.toolNames.has('job_kill') && ctx.toolNames.has('job_list');
     const outputAbsent = !ctx.toolNames.has('job_output');
-    // 终态的机器证据：作业结算事件在场（模型转述不作数）；名册检查以「未出现在
-    // tool/call 记录」反推——「未调用」不严格等于「不可见」，此为脚本化抽样的
-    // 已知边界，离线排查靠快照。
-    const settledSeen = ctx.events.has('job/settled');
-    const ok = receipt && killSeen && outputAbsent && settledSeen;
-    return { ok, detail: ok ? 'job_kill＋job_list 在场、job/settled 事件在案、job_output 未出现在模型名册、模型回执' : `回执 ${String(receipt)}／job_kill ${String(ctx.toolNames.has('job_kill'))}／job_list ${String(ctx.toolNames.has('job_list'))}／job_output 缺席 ${String(outputAbsent)}／job/settled ${String(settledSeen)}` };
+    // 终态的机器证据：存在 status==='killed' 的 job/settled 事件（见
+    // hasKilledSettled 注释）；名册检查以「未出现在 tool/call 记录」反推——
+    // 「未调用」不严格等于「不可见」，此为脚本化抽样的已知边界，离线排查靠快照。
+    const killedSettled = ctx.killedSettled;
+    const ok = receipt && killSeen && outputAbsent && killedSettled;
+    return { ok, detail: ok ? 'job_kill＋job_list 在场、job/settled(killed) 在案、job_output 未出现在模型名册、模型回执' : `回执 ${String(receipt)}／job_kill ${String(ctx.toolNames.has('job_kill'))}／job_list ${String(ctx.toolNames.has('job_list'))}／job_output 缺席 ${String(outputAbsent)}／job/settled(killed) ${String(killedSettled)}` };
   }
 });
 
