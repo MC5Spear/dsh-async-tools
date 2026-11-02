@@ -139,7 +139,7 @@ try {
     }
   });
 
-  // 等转录稳定（连续两拍记录条数相同）——同 `probe-settings-behavior-full` 的取样纪律。
+  // 等转录稳定（连续两个轮询周期记录条数相同）——同 `probe-settings-behavior-full` 的取样纪律。
   //
   // `session/page` 的 args 形状是
   // `{ request: { address: { kind:'session', sessionId }, throughSeq, maxMessages } }`——

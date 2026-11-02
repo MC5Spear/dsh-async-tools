@@ -259,7 +259,7 @@ hostTest('readSessionPreset＋isPresetBound（F3 范围判定基件，PRESET-BIN
   assert.equal(isPresetBound({ boundPresets: ['rwkv'] }, 'dsh-async'), false, '显式名单不再含内置主预设（未选预设天然隔离）');
   assert.equal(isPresetBound({ boundPresets: [] }, 'dsh-async'), false, '空名单＝解除全部绑定');
   assert.equal(isPresetBound({ boundPresets: [] }, 'rwkv'), false, '空名单对任何预设都不匹配');
-  assert.equal(isPresetBound({ boundPresets: 'oops' }, 'dsh-async'), true, '非数组名单折回默认（快照在场恒为数组的兜底形态）');
+  assert.equal(isPresetBound({ boundPresets: 'oops' }, 'dsh-async'), true, '非数组名单折回默认（快照在场恒为数组的回退形态）');
 });
 
 hostTest('P12（PRESET-BIND-01）：shouldTakeover 按名单匹配——无预设/读取失败不误匹配', () => {
@@ -1800,7 +1800,7 @@ test('恢复可见即刻本地重算——同步 notify 先于 poll 往返，重
 });
 
 test('AskItem 本地走秒——轮询挂起时读数照走，不冻结在最后一次成功轮询的值（V2-1）', async () => {  const react = makeMiniReact();
-  // 假 window：捕获 AskItem 挂的本地秒拍（1 s 间隔），与模型层轮询间隔无关。
+  // 假 window：捕获 AskItem 挂的本地秒级定时器（1 s 间隔），与模型层轮询间隔无关。
   const localTicks = [];
   const clearIntervalSeen = [];
   const product = await loadClientProduct(react, {
@@ -1824,19 +1824,19 @@ test('AskItem 本地走秒——轮询挂起时读数照走，不冻结在最后
       return String(span.children);
     };
     assert.match(leftSeconds(), /60 s/, '初始读数 60 s');
-    // 「轮询挂起」模拟：之后**只有**本地秒拍驱动重渲（无任何 store notify / poll 返回）。
+    // 「轮询挂起」模拟：之后**只有**本地秒级定时器驱动重渲（无任何 store notify / poll 返回）。
     const tick = localTicks.find((entry) => entry.ms === 1000);
-    assert.ok(tick !== undefined, 'AskItem 挂本地秒拍（1000 ms）');
+    assert.ok(tick !== undefined, 'AskItem 挂本地秒级定时器（1000 ms）');
     fakeNow += 1000; tick.fn();
-    assert.match(leftSeconds(), /59 s/, '+1 s：读数走秒（本地拍驱动倒计时刷新）');
+    assert.match(leftSeconds(), /59 s/, '+1 s：读数走秒（本地定时器驱动倒计时刷新）');
     fakeNow += 4000; tick.fn();
     assert.match(leftSeconds(), /55 s/, '+5 s 累计：继续走');
-    // 出窗：读数翻「已超时」同样由本地拍驱动（键名即 t 的回显）。
+    // 出窗：读数翻「已超时」同样由本地定时器驱动（键名即 t 的回显）。
     fakeNow += 60000; tick.fn();
-    assert.match(leftSeconds(), /ask\.expired/, '越过期限后本地拍也能翻到超时态');
-    // 卸载清理：重渲染同组件不重复挂拍（run-once effect）；清理函数在位。
+    assert.match(leftSeconds(), /ask\.expired/, '越过期限后本地定时器也能翻到超时态');
+    // 卸载清理：重渲染同组件不重复挂定时器（run-once effect）；清理函数在位。
     const disposers = react.__lastTree; // 树本身不含 disposer——清理走 effect 槽
-    assert.equal(localTicks.filter((entry) => entry.ms === 1000).length, 1, '本地秒拍只挂一次');
+    assert.equal(localTicks.filter((entry) => entry.ms === 1000).length, 1, '本地秒级定时器只挂一次');
     void disposers;
   } finally {
     Date.now = realNow;
@@ -1880,7 +1880,7 @@ test('sidebar 注册 label 闭包——经 apply 产品路径，随快照语言�
     uiWorkspace: { openSession() {} }
   };
   product.apply(ctx);
-  // seats 在 $mount promise 的微任务之后才装（真机同款顺序）——冲两拍微任务。
+  // seats 在 $mount promise 的微任务之后才装（真机同款顺序）——冲两轮微任务。
   await Promise.resolve();
   await Promise.resolve();
   const sidebarReg = registrations.find((reg) => reg.meta.name === 'sidebar.footer.action' && reg.meta.id === 'async-tools-ask');
@@ -2291,7 +2291,7 @@ function makeClock(start = 1_000_000) {
 }
 
 /**
- * 时钟调度替身：armed 项记 `dueAt = now + ms`，`advance()` 按到期序（同拍按
+ * 时钟调度替身：armed 项记 `dueAt = now + ms`，`advance()` 按到期序（同一时刻按
  * 武装序）触发**未撤销**项——「到期前不结、到期恰一次合成」两边界判据靠它
  * 可失败：把 take/extend 的武装 delay 改错（缩短/重置全窗口）而保留
  * expiresAt 元数据时，手动 fire 推不红，按到期序推进才红。`fakeTimer` +
@@ -2464,7 +2464,7 @@ hostTest('E6：出窗批 extend 返 0（不复活）；随后新批照常全额�
   const pending = registry_take(rig, agent, 'q1');
   const batch = [...rig.registry.batches.values()][0];
 
-  // 窗口耗尽后（真实形态：到期回调与点击同拍竞态）→ expired 相不可复活。
+  // 窗口耗尽后（真实形态：到期回调与点击同一时刻竞态）→ expired 相不可复活。
   clock.advance(6000);
   rig.timer.fire(0);
   await Promise.resolve();

@@ -81,9 +81,11 @@ const DOCUMENTS = [
   { file: 'docs/documentation-principles.md', role: 'current' },
   { file: 'docs/requirements.md', role: 'current' },
   { file: 'docs/design.md', role: 'current' },
-  // 过程性文档（dev-delivery-workflow 的问题清单）：生命周期与交付流程绑定——
-  // 每轮修正后清理、项目收尾时整份删除（历史由 git 承担）。删除时必须**同步撤掉
-  // 本登记行**，否则按幽灵红——这行注释就是留给收尾动作的提醒。
+  // 过程性文档（dev-delivery-workflow 的问题清单）：按 CONTRIBUTING 的生命周期——
+  // 只保留当前待处理项，修正后清理对应条目，全部解决后清空内容（不保存已解决
+  // 流水，历史由 git 承担）。文件本身的去留在收尾决定时同步处理：整份删除时须
+  // **同步撤掉本登记行**（否则按幽灵红），保留空文件则登记行照常——这行注释就是
+  // 留给收尾动作的提醒。
   { file: 'docs/issue-list.md', role: 'current' },
   // 验证目录的唯一脚本清单（`README.md` 明确指向它）。它**不在 `docs/` 下**，所以不受
   // "未分类/幽灵"对账管辖，也就没有任何判据盯着它的漂移（工具计数、清理承诺与目录

@@ -432,7 +432,7 @@ hostTest('async_run：请求必须带 shellEnv.collect(exec) 的 dshEnv', async 
   );
 });
 
-hostTest('async_run（R32-d）：插话与结算同拍 → 完成优先，返回结算结果而非句柄', async () => {
+hostTest('async_run（R32-d）：插话与结算同一时刻 → 完成优先，返回结算结果而非句柄', async () => {
   // 让插话先赢竞速、结算紧随其后——撤销后的复查必须承接，返回结算结果
   // （防模型重复等待；与 wait 工具同口径）。次序：emit 同步 resolve 插话成员 →
   // 注册表与进程翻终态 → 竞速由插话定局 → 复查读到终态 → 走结算路径。

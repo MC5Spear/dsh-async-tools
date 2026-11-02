@@ -103,7 +103,7 @@ for (;;) {
     }
   }
 
-  // 定位长等待（wait_ms=120000），两拍后发 queue 消息（窗口定位法与 async-e2e 同款）。
+  // 定位长等待（wait_ms=120000），两个轮询周期后发 queue 消息（窗口定位法与 async-e2e 同款）。
   const longWaitActive = page.records.some((r) => {
     if (r.event?.type !== 'tool/call' || r.event.data?.name !== 'async_wait') return false;
     return /wait_ms"\s*:\s*120000/.test(String(r.event.data.arguments ?? ''));

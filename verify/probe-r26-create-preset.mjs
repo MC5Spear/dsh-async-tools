@@ -272,7 +272,7 @@ async function phaseFace() {
     const taskStarted = (page.records ?? []).some((r) => r.event?.type === 'tool/call' && r.event.data?.name === 'async_agent');
 
     // 插话窗口（定位的是状态不是时刻）：async_wait（子代理目标）且 wait_ms
-    // 很大 → 两拍后发 steer；若这轮等待已正常返回而打断证据未出现，则在**下一次**
+    // 很大 → 两个轮询周期后发 steer；若这轮等待已正常返回而打断证据未出现，则在**下一次**
     // 长等待里重试（有界 3 次）。
     const longWaitActive = (() => {
       for (const record of page.records) {

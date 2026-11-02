@@ -400,7 +400,7 @@ test('（R30-d 互斥联测，通道轮）迟到作答专门分支与通用唤�
   assert.ok(await stillPending(late2.promise), '插话不得触发迟到唤醒分支');
   late2.dispose();
 
-  // ③ 子代理结算通知：结算专门通道 resolve，通用唤醒同拍命中 via=notice——
+  // ③ 子代理结算通知：结算专门通道 resolve，通用唤醒同一时刻命中 via=notice——
   //    双通道并存是设计（§2.2：结算通知同时是唤醒集合成员），等待侧用优先级
   //    定胜负，不在信号层去重。（wake 通道在②已消费，此处新建一个验证。）
   const wake3 = watchWakeSignal(ctx, agent);
@@ -412,7 +412,7 @@ test('（R30-d 互斥联测，通道轮）迟到作答专门分支与通用唤�
   assert.ok(await stillPending(pendings.activity), '结算不得触发转达唤醒');
   wake3.dispose();
 
-  // ④ 转达消息：转达通道 resolve，通用唤醒同拍命中 via=relay。
+  // ④ 转达消息：转达通道 resolve，通用唤醒同一时刻命中 via=relay。
   const wake2 = watchWakeSignal(ctx, agent);
   emit('agent/inbox/inserted', inboxPayload({
     agent, sourceKind: 'agent-message', form: 'relay', text: `Agent ${CHILD} sent a message`, target: 'next-step'

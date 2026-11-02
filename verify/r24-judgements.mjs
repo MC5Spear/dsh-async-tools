@@ -278,7 +278,7 @@ export function judgeHelpButtons(dom, expectedKeys) {
  * ④ 再点收起——展开区节点消失、aria-expanded 回 false。
  *
  * @param {{ open: { present: boolean, role: string, paragraphs: number, firstParagraph: string, expanded: boolean, describedby: string }, closed: { present: boolean, expanded: boolean }, saveDisabledBefore: boolean, saveDisabledAfter: boolean }} dom
- *   开合两拍 + 副作用读数（探针驱动点击并在每拍后取数）。
+ *   开合两步 + 副作用读数（探针驱动点击并在每步后取数）。
  * @returns {{ ok: boolean, detail: string }} 判据结论与读数。
  */
 export function judgeHelpInteraction(dom) {

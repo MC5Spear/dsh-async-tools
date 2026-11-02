@@ -14,7 +14,8 @@
 #   2. 不挂 tool-pwsh 行——前台同步 shell 到期杀进程树，与异步语义冲突（需求 §3.1）；
 #   3. tool-bash 之后连续成组新增四个 dsh-async-tools 顶层行（toolName 分派；其中
 #      async_list_subagent_models 是顶层只读行，需求 §2.3.4；各行携带
-#      owningPreset 归属声明——设计 §6.2 描述警示按行归属判定，非 volatile）；
+#      owningPreset 行身份声明——非 volatile 的装载期事实，供组合文件与诊断
+#      指认；防护内容按「会话实际预设 ∈ boundPresets」判定，与行声明无关）；
 #   4. tool-subagent 系委托入口（单发 / fork）置 disabled: true、config 逐字保留
 #      （需求 §3.1：派生入口唯一 = async_agent，结构性禁用强于提示词约束）；管理侧
 #      tool-subagent-control / -list-agents 与引擎服务 workflow-ptc 保持在场；

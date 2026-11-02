@@ -139,7 +139,7 @@ for (;;) {
   //
   // 现行做法：把窗口从"时刻"改成"**状态**"——
   //   ① 读转录里那次 `async_wait` 的**参数**，确认它的 `wait_ms` 很大（长作业的等待）；
-  //   ② 第一次看到它时记下时刻，**再等两拍**（轮询 2 秒一次，所以约 2–4 秒）才插话
+  //   ② 第一次看到它时记下时刻，**再等两个轮询周期**（轮询 2 秒一次，所以约 2–4 秒）才插话
   //      ——那时它必然还在等（`wait_ms` 是 600000，而整轮只有几十秒）；
   //   ③ 此刻发插话，必然落在等待活跃期内。
   //
@@ -163,14 +163,14 @@ for (;;) {
     longWaitFirstSeenPoll = pollCount;
     console.log(`+${String(Date.now() - startedAt)}ms 观测到长作业的等待（poll ${String(pollCount)}）：${longWaitArgs.slice(0, 60)}`);
   }
-  // 从第一次看到那次等待起，**再过两拍**才插话——那时它还在等的概率很高。
+  // 从第一次看到那次等待起，**再过两个轮询周期**才插话——那时它还在等的概率很高。
   const waitIsActive = longWaitFirstSeenPoll >= 0 && pollCount - longWaitFirstSeenPoll >= 2;
 
   // ── 插话：**有界重试**，而不是"发一次就认定成功" ─────────────────────────────
   //
   // 窗口错过的三个机制原因：
   //
-  // **窗口太窄。** "再等两拍"在真实会话里不够——模型可能把 `wait_ms=600000`
+  // **窗口太窄。** "再等两个轮询周期"在真实会话里不够——模型可能把 `wait_ms=600000`
   // 的等待**连发多次**，插话落在两次调用之间，成了排队消息、没有"打断"任何东西。
   //
   // **等待上限被夹小。** 若实例上残留 `maxWaitMs=2000`，每次"等待"只阻塞 2 秒，
@@ -184,7 +184,7 @@ for (;;) {
   if (!interrupted && waitIsActive && interjectionCount < MAX_INTERJECTIONS) {
     interjectionCount += 1;
     console.log(`+${String(Date.now() - startedAt)}ms 发送第 ${String(interjectionCount)} 次插话`
-      + `——长作业的等待已出现 ${String(pollCount - longWaitFirstSeenPoll)} 拍（轮询 2 秒一次）`
+      + `——长作业的等待已出现 ${String(pollCount - longWaitFirstSeenPoll)} 个轮询周期（轮询 2 秒一次）`
       + ` steps=${String(steps)} budget=${String(contextBudget(page))}`);
     await rpc('session/prompt', {
       request: {
@@ -199,7 +199,7 @@ for (;;) {
         clientTimeZone: 'Asia/Shanghai'
       }
     });
-    // 这一拍之后才开始找"等待被打断"的证据——**只认这次插话之后出现的**，
+    // 这一轮之后才开始找"等待被打断"的证据——**只认这次插话之后出现的**，
     // 否则前一次的成功会被算到这一次头上（重试就变成了自欺）。
     interjectionAt = Date.now();
   }

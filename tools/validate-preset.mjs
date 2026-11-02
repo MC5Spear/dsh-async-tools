@@ -374,10 +374,12 @@ export async function validatePatch(patchPath, { quiet = false, expectation } = 
     if (!actualToolNames.includes(expected)) fail(`toolName 五值缺 "${expected}"（实得 ${actualToolNames.join(', ') || '(无)'}）`);
   }
   if (dupToolNames.length > 0) fail(`toolName 有重复：${dupToolNames.join(',')}`);
-  // 归属声明（设计 §6.2）：五行必须各自携带 owningPreset 且等于本补丁的 config.id
-  // ——描述警示按行归属判定，漏声明＝警示对预设行静默消失，此处锁死。
+  // 行身份（设计 §6.2）：五行必须各自携带 owningPreset 且等于本补丁的 config.id
+  // ——组合文件与诊断据此指认「这一行属于哪份预设」；防护内容按「会话实际
+  // 预设 ∈ boundPresets」判定、与行声明无关（PRESET-ISOLATION-02），此检查
+  // 只锁行身份一致性，不承载警示在场判定。
   if (!asyncRows.every((child) => child?.config?.owningPreset === configId)) {
-    fail(`五行 dsh-async-tools 的 owningPreset 必须全部等于 "${String(configId)}"（描述警示按行归属判定）`);
+    fail(`五行 dsh-async-tools 的 owningPreset 必须全部等于 "${String(configId)}"（行身份声明）`);
   }
   // 行位：查询行必须在顶层（组外行消费的都是宿主全局服务，进组反而对编排
   // 会话外不可见）；delegation 组内行在嵌套序列里紧跟 tool-workflow。

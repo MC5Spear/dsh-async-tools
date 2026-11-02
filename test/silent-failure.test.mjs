@@ -34,7 +34,6 @@ import { resolve } from 'node:path';
 import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
 import { BUDGET_FIELD_KEYS, LANG_FIELD_KEYS, FLAG_FIELD_KEYS, DISPLAY_FIELD_KEYS, ASK_FIELD_KEYS, PRESET_FIELD_KEYS, resolveConfig } from '../lib/config.js';
 import { DENIAL_ANCHOR_PAIRS, hasCaptureForm, hasDenialAnchors, silentFailureNotes } from '../lib/silent-failure.js';
-import { resetGuardOwnershipEvidence } from '../lib/descriptions.js';
 import { t } from '../lib/text.js';
 import { seedSnapshot, clearSnapshot } from '../lib/settings.js';
 import { checkedTool, fakeAgent, fakeCtx, fakeProc } from './_helpers.mjs';
@@ -48,7 +47,7 @@ const hostHalf = await loadOfflineSafe('../lib/host.js');
 const hostIndex = await loadOfflineSafe('../lib/index.js');
 const { createRunTool: buildRunTool } = jobsModule ?? {};
 const { applyHostHalf } = hostHalf ?? {};
-const { refreshToolDescriptions } = hostIndex ?? {};
+const { refreshToolDescriptions, installRunDescriptionShadow: mountShadowInstaller } = hostIndex ?? {};
 const hostTest = await hostTestFor('../lib/jobs.js', '../lib/host.js', '../lib/index.js');
 
 const createRunTool = (ctx, config) => checkedTool(buildRunTool(ctx, config));
@@ -81,6 +80,36 @@ function confinedCtx(presetOf = 'dsh-async') {
   };
   f.ctx.sessionProjections = { stateOf: () => presetOf };
   return f;
+}
+
+/**
+ * 会话遮蔽装置（PRESET-ISOLATION-02）：对（假）行 ctx 装载
+ * `installRunDescriptionShadow`，随后派发一次 `agent/created`，返回该 Agent 的
+ * 遮蔽定义（经 `agent.ctx.tools.register` 捕获）、Agent 侧 effect 与行侧撤销器。
+ * @param {object} rowFake - `confinedCtx()`/`fakeCtx()` 返回的行装置（须先装
+ *   sessions/sessionProjections 桩——遮蔽 getter 经 `guardPresetFor` 读它们）。
+ * @param {object} tool - `buildRunTool` 产出的共享定义对象。
+ * @param {object} configView - 活配置视图。
+ * @param {string} [agentId] - Agent id（桩按会话对象把它映射到预设）。
+ * @param {Function} [agentRegister] - 可替换的 `agent.ctx.tools.register` 实现。
+ */
+function mountShadow(rowFake, tool, configView, agentId = 'session-1', agentRegister) {
+  const off = mountShadowInstaller(rowFake.ctx, tool, configView, 'async_run');
+  const registered = [];
+  const effects = [];
+  const register = agentRegister ?? ((def) => {
+    registered.push(def);
+    return () => {
+      const index = registered.indexOf(def);
+      if (index >= 0) registered.splice(index, 1);
+    };
+  });
+  const agentCtx = {
+    tools: { register },
+    effect(fn) { effects.push(fn); }
+  };
+  rowFake.emit('agent/created', { agent: { id: agentId, ctx: agentCtx } });
+  return { off, registered, effects };
 }
 
 test('R28 判据1：捕获形四模式任一命中，管道一票否决，多语句整体判', () => {
@@ -233,10 +262,14 @@ hostTest('R28 判据8：开关关 ⇒ 三防线同断（行为差异，不是存
   assert.deepEqual(silentFailureNotes({ ...armed, guard: false }), [], 'guard=false ⇒ 签名 2 不产出');
   assert.deepEqual(silentFailureNotes({ ...armed, guard: undefined, collector: collector('') }), [],
     'guard 缺席 ⇒ 签名 1 不产出（失效安全方向 = 关）');
-  // b：描述侧警示段消失。
+  // b：描述侧警示段消失——共享对象恒基础文本；会话投影（warnCapture）在开关
+  // 关时也不拼（三门缺一即无，PRESET-ISOLATION-02 后警示段只经投影出现）。
   const conf = confinedCtx();
   const tool = createRunTool(conf.ctx, resolveConfig({ toolName: 'async_run', silentFailureGuard: false, owningPreset: 'dsh-async' }));
   assert.doesNotMatch(tool.description, /die silently at process creation/, '关 ⇒ b 段不拼');
+  assert.doesNotMatch(
+    tool.rebuildText(resolveConfig({ toolName: 'async_run', silentFailureGuard: false }), true).description,
+    /die silently at process creation/, '关 ⇒ 会话投影（warnCapture）也不拼');
   // c：纪律段组稿为空串（快照现读，段本体不注销）。c 段只等 systemPrompt，
   // 预设过滤两服务经 ctx.get 现读（sessions 缺席同样是关，判据 12 已锁）。
   const snapHost = fakeCtx();
@@ -397,23 +430,22 @@ hostTest('F3（范围判定·后台）：结算时刻主体不在本包预设 �
   assert.equal(bareView.detail.includes('Silent-failure guard:'), false, '服务缺席 ⇒ 范围不可判定 ⇒ 不产生诊断（失效安全＝关）');
 });
 
-hostTest('R28 判据11：b 段四门组合矩阵 + 描述就地增删（不复制 c 的纪律文本；PRESET-BIND-01 后按名单）', async () => {
+hostTest('R28 判据11：b 段三门组合矩阵 + 会话遮蔽投影增删（不复制 c 的纪律文本；PRESET-BIND-01 按名单；PRESET-ISOLATION-02 按会话）', async () => {
   const warnAnchor = /can die silently at process creation/;
   // 归属前提（需求 §6.3＋9.4）：警示段是**三门**——执行器在场 × 开关开 ×
-  // 已核得「会话实际预设 ∈ 当场绑定名单」的运行时证据（不再读 owningPreset：
-  // 自建预设无须补改行声明）。证据是模块级单例，先清空隔离（本用例自带
-  // 执行入口核得证据的正反路径）。
-  resetGuardOwnershipEvidence();
+  // **读取描述的会话**实际预设 ∈ 当场绑定名单。PRESET-ISOLATION-02 后警示段
+  // 不再放共享定义对象（装载期静态文本读不到会话，原行级证据形态是本缺陷）：
+  // 共享对象恒基础文本；`warnCapture` 形态由 lib/index.js 的会话遮蔽定义在
+  // 每次投影时现算传入（rebuildText 第二参）。
   const owned = { toolName: 'async_run', silentFailureGuard: true };
+  // ① 共享描述（构造与执行后都＝基础文本）：三门即便全开也不含警示段
+  //    ——未绑定会话读共享对象任何时点不见警示（失效安全＝防护关）。
   const on = confinedCtx();
   assert.doesNotMatch(
     createRunTool(on.ctx, resolveConfig({ ...owned })).description,
-    warnAnchor, '有执行器 + 开 + 会话预设（dsh-async）在默认名单，但证据尚未核得（装载后未执行）⇒ 不拼');
+    warnAnchor, '共享描述＝基础文本（执行器 + 开 + 名单内会话也不拼）');
 
-  // 执行入口核得（confinedCtx 会话预设 dsh-async ∈ 默认名单）→ 证据按**本行
-  // 令牌**登记，就地重建描述 → 警示在场。注意用原始工具对象断言：就地重建写的
-  // 是 createRunTool 闭包内的那个对象，checkedTool 的浅拷贝看不到后续改写。
-  //（P8：无 owningPreset 声明的自建行同样核得——名单匹配取代声明比对。）
+  // ② 执行不再改写共享描述；会话投影（warnCapture=true）三门全开 ⇒ 警示在场。
   const quiet = fakeProc({ text: 'ok', exitCode: 0, status: 'running', autoResolve: false });
   on.installShellExecute(() => Promise.resolve(quiet.proc));
   const live = { ...resolveConfig({ ...owned }) };
@@ -423,70 +455,61 @@ hostTest('R28 判据11：b 段四门组合矩阵 + 描述就地增删（不复�
   quiet.settle();
   const settled = await pending;
   assert.equal(settled.status, 'completed');
-  assert.match(tool.description, warnAnchor, '执行核得 ⇒ 证据登记 + 描述就地重建（警示在场；无须行声明）');
-  // 证据按行隔离：**新行**是新的行令牌，未执行核得 ⇒ 不拼——他行核得的证据对
-  // 本行不可见（按预设全局共享会让全行刷新把警示泄漏到未核得的行）。
-  assert.doesNotMatch(
-    createRunTool(on.ctx, resolveConfig({ ...owned })).description,
-    warnAnchor, '证据按行隔离 ⇒ 新行（未执行核得）不拼');
+  assert.doesNotMatch(tool.description, warnAnchor, '执行后共享描述仍是基础文本（不再就地重建——未绑定会话不泄漏）');
+  assert.match(tool.rebuildText(view, true).description, warnAnchor, '会话投影（warnCapture）三门全开 ⇒ 警示在场');
+  assert.doesNotMatch(tool.rebuildText(view, false).description, warnAnchor, '未绑定会话形态（warnCapture 缺席）⇒ 基础文本');
 
-  // 开关关 / 无执行器 ⇒ 不拼（本行证据缺席或开关关都拦；
-  // 「已核得的行翻关 ⇒ 消失」由下文 flip 小节锁）。
-  const off = confinedCtx();
-  assert.doesNotMatch(
-    createRunTool(off.ctx, resolveConfig({ ...owned, silentFailureGuard: false })).description,
-    warnAnchor, '有执行器 + 关 ⇒ 不拼');
+  // ③ 开关关 / 无执行器 ⇒ 会话投影也不拼（三门缺一即无——不给走不通的指引）。
+  const offCfg = resolveConfig({ ...owned, silentFailureGuard: false });
+  const offTool = buildRunTool(confinedCtx().ctx, offCfg);
+  assert.doesNotMatch(offTool.rebuildText(offCfg, true).description, warnAnchor, '有执行器 + 关 ⇒ 投影不拼');
   const plainOn = fakeCtx();
   plainOn.installShellExecute(() => Promise.resolve(fakeProc({ text: 'ok' }).proc));
+  const plainCfg = resolveConfig({ ...owned });
+  const plainTool = buildRunTool(plainOn.ctx, plainCfg);
   assert.doesNotMatch(
-    createRunTool(plainOn.ctx, resolveConfig({ ...owned })).description,
-    warnAnchor, '无执行器 + 开 ⇒ 不拼（不给走不通的指引）');
+    plainTool.rebuildText(plainCfg, true).description,
+    warnAnchor, '无执行器 + 开 ⇒ 投影不拼（不给走不通的指引）');
   // b 段不得复制 c 的纪律文本（需求"不复制 c"条款）。
   assert.doesNotMatch(
-    tool.description,
+    tool.rebuildText(view, true).description,
     /Execution discipline for this deployment/, 'b 是紧凑警示段，不是纪律段复制');
 
-  // 就地增删：活视图翻转 + refreshToolDescriptions 重建（volatile 链的行为差异）。
-  // 翻转基线行先经执行核得本行证据（新行未执行不会拼，无法演示翻转）。
+  // ④ 活视图翻转（volatile 链的行为差异）：共享对象重刷仍基础文本；投影随
+  //    开关与名单翻转增删（遮蔽 getter 每次投影现读——无须重启）。
   const flip = confinedCtx();
   const quietFlip = fakeProc({ text: 'ok', exitCode: 0, status: 'running', autoResolve: false });
   flip.installShellExecute(() => Promise.resolve(quietFlip.proc));
   const current = { ...resolveConfig({ ...owned }) };
   const flipView = new Proxy({}, { get: (_target, key) => current[key] });
   const flipTool = buildRunTool(flip.ctx, flipView);
-  const flipRun = flipTool.execute({ command: 'echo flip', description: 'flip' }, exec);
-  quietFlip.settle();
-  await flipRun;
-  assert.match(flipTool.description, warnAnchor, '执行核得 ⇒ 初始在场（翻转基线）');
+  assert.match(flipTool.rebuildText(flipView, true).description, warnAnchor, '开 ⇒ 投影在场（翻转基线）');
   current.silentFailureGuard = false;
   refreshToolDescriptions(flipTool, flipView);
-  assert.doesNotMatch(flipTool.description, warnAnchor, '翻转关 + refresh ⇒ 警示段消失');
+  assert.doesNotMatch(flipTool.description, warnAnchor, '翻转关 + refresh ⇒ 共享描述仍基础文本');
+  assert.doesNotMatch(flipTool.rebuildText(flipView, true).description, warnAnchor, '翻转关 ⇒ 投影消失（buildToolText 自身的开关门）');
   current.silentFailureGuard = true;
   refreshToolDescriptions(flipTool, flipView);
-  assert.match(flipTool.description, warnAnchor, '翻转开 + refresh ⇒ 警示段出现（不重启）');
-  // 名单翻转（P11 取消绑定）：证据 dsh-async 已核得，但名单收窄到不含它 ⇒
-  // 撤段（名单活读——owningPreset 不再参与判定）。
+  assert.match(flipTool.rebuildText(flipView, true).description, warnAnchor, '翻转开 + refresh ⇒ 投影再现（不重启）');
+  // 名单翻转（P11 取消绑定）：会话预设 dsh-async 被移出名单 ⇒ 投影消失。
+  //（遮蔽 getter 经 guardPresetFor 活读名单——名单决定 warnCapture 传入值。）
   current.boundPresets = ['dsh-async-create'];
-  refreshToolDescriptions(flipTool, flipView);
-  assert.doesNotMatch(flipTool.description, warnAnchor, '名单移除已核得预设 ⇒ 警示段消失');
-  // 名单补回 ⇒ 再现（同一行证据仍在，名单决定在场）。
+  const { registered: flipShadows } = mountShadow(flip, flipTool, flipView, 'session-1');
+  assert.equal(flipShadows.length, 1, '装载后派发 agent/created 注册了一份遮蔽定义');
+  assert.doesNotMatch(flipShadows[0].description, warnAnchor, '名单移除会话预设 ⇒ 遮蔽投影消失（名单活读）');
   current.boundPresets = ['dsh-async'];
-  refreshToolDescriptions(flipTool, flipView);
-  assert.match(flipTool.description, warnAnchor, '名单补回 ⇒ 警示段再现（证据未丢，名单活读）');
-  // 复位证据：不得泄漏到其它用例（test:inproc 下共享单例）。
-  resetGuardOwnershipEvidence();
+  assert.match(flipShadows[0].description, warnAnchor, '名单补回 ⇒ 投影再现（下一次现读即生效）');
 });
 
-hostTest('F3b（§6.2 归属比对→PRESET-BIND-01 名单匹配）：会话预设∉名单 ⇒ 警示与诊断都不产生；∈名单 ⇒ 产生；读取失败 ⇒ 不产生', async () => {
+hostTest('F3b（§6.2 归属比对→名单匹配→PRESET-ISOLATION-02 会话遮蔽）：会话预设∉名单 ⇒ 警示与诊断都不产生；∈名单 ⇒ 产生；读取失败 ⇒ 失效安全', async () => {
   const warnAnchor = /can die silently at process creation/;
   const quiet = fakeProc({ text: '', exitCode: 1, status: 'running', autoResolve: false });
   quiet.proc.sandbox = { mode: 'workspace-write' };
   const owned = { toolName: 'async_run', silentFailureGuard: true, boundPresets: ['dsh-async'] };
-  resetGuardOwnershipEvidence();
 
-  // ① 会话实际预设 dsh-async-create ∉ 名单（名单只收 dsh-async）——描述警示
-  //    与结果诊断都不出现（P9 隔离：未选预设的会话不产生绑定内容）。
-  //    断言用**执行行自身**的描述对象（就地重建写的是闭包内对象）。
+  // ① 会话实际预设 dsh-async-create ∉ 名单（名单只收 dsh-async）——结果诊断
+  //    不出现；该会话的遮蔽投影也不含警示段（P9 隔离：未选预设的会话不产生
+  //    绑定内容）。共享描述恒基础文本。
   const mismatch = confinedCtx('dsh-async-create');
   mismatch.installShellExecute(() => Promise.resolve(quiet.proc));
   const mismatchTool = buildRunTool(mismatch.ctx, resolveConfig({ ...owned }));
@@ -495,26 +518,35 @@ hostTest('F3b（§6.2 归属比对→PRESET-BIND-01 名单匹配）：会话预�
   quiet.settle();
   const r1 = await pending1;
   assert.equal('note' in r1, false, '会话预设∉名单 ⇒ 前台诊断不拼（键都不出现）');
-  assert.doesNotMatch(mismatchTool.description,
-    warnAnchor, '会话预设∉名单 ⇒ 无运行时证据 ⇒ 描述警示不拼');
+  assert.doesNotMatch(mismatchTool.description, warnAnchor, '共享描述恒基础文本（不随执行变化）');
+  const mismatchView = resolveConfig({ ...owned });
+  const mismatchShadow = mountShadow(mismatch, mismatchTool, mismatchView, 'session-1');
+  assert.equal(mismatchShadow.registered.length, 1, '遮蔽定义已注册到 Agent 作用域');
+  assert.doesNotMatch(mismatchShadow.registered[0].description,
+    warnAnchor, '会话预设∉名单 ⇒ 遮蔽投影不含警示（guardPresetFor 判 null）');
 
-  // ② 会话实际预设 dsh-async ∈ 名单 ⇒ 诊断产生、执行核得证据后警示在场
-  //    （P8：无 owningPreset 声明同样生效）。
+  // ② 会话实际预设 dsh-async ∈ 名单 ⇒ 诊断产生；绑定会话的遮蔽投影**首次
+  //    投影即在場**（不须先执行——原行级证据形态在装载后首执行前缺席，是
+  //    PRESET-ISOLATION-02 修正的缺陷形态）。
   const match = confinedCtx('dsh-async');
   const quiet2 = fakeProc({ text: '', exitCode: 1, status: 'running', autoResolve: false });
   quiet2.proc.sandbox = { mode: 'workspace-write' };
   match.installShellExecute(() => Promise.resolve(quiet2.proc));
   const matchTool = buildRunTool(match.ctx, resolveConfig({ ...owned }));
+  const matchView = resolveConfig({ ...owned });
+  const matchShadow = mountShadow(match, matchTool, matchView, 'session-1');
+  assert.match(matchShadow.registered[0].description,
+    warnAnchor, '绑定会话 ⇒ 首次投影警示在场（未执行也在场）');
   const pending2 = matchTool
     .execute({ command: 'node x.mjs 2>&1', description: 'run node' }, exec);
   quiet2.settle();
   const r2 = await pending2;
   assert.match(r2.note, /Silent-failure guard:/, '会话预设∈名单 ⇒ 前台诊断在场');
-  assert.match(matchTool.description, warnAnchor, '本行核得证据 ⇒ 本行描述警示在场（无须行声明）');
+  assert.doesNotMatch(matchTool.description, warnAnchor, '执行后共享描述仍基础文本');
 
-  // ③ 读取失败（stateOf 抛错）⇒ 失效安全＝关：诊断不产生、该次执行不登记
-  //    新证据（先清空 ② 留下的证据，验证读取失败不产生新登记）。
-  resetGuardOwnershipEvidence();
+  // ③ 读取失败（stateOf 抛错）⇒ 失效安全＝关：诊断不产生；遮蔽 getter 退基础
+  //    文本、不外抛（created 监听器失败会被宿主按 reject 处理，任何故障都不得
+  //    放大成会话不可用）。
   const broken = confinedCtx('dsh-async');
   broken.ctx.sessionProjections = { stateOf() { throw new Error('projection read failed'); } };
   const quiet3 = fakeProc({ text: '', exitCode: 1, status: 'running', autoResolve: false });
@@ -526,9 +558,14 @@ hostTest('F3b（§6.2 归属比对→PRESET-BIND-01 名单匹配）：会话预�
   quiet3.settle();
   const r3 = await pending3;
   assert.equal('note' in r3, false, '读取失败 ⇒ 不产生诊断（失效安全＝关）');
-  assert.doesNotMatch(brokenTool.description,
-    warnAnchor, '读取失败 ⇒ 该次执行不登记证据 ⇒ 执行行自身的描述警示也不拼');
-  resetGuardOwnershipEvidence();
+  const brokenShadow = mountShadow(broken, brokenTool, resolveConfig({ ...owned }), 'session-1');
+  let projected = '';
+  try {
+    projected = brokenShadow.registered[0].description;
+  } catch (error) {
+    assert.fail(`遮蔽投影不得外抛（读取失败走基础文本）：${String(error?.message ?? error)}`);
+  }
+  assert.doesNotMatch(projected, warnAnchor, '读取失败 ⇒ 投影退基础文本（失效安全＝关）');
 });
 
 hostTest('R28 判据12：c 段经 ctx.inject 注册 systemPrompt（预设过滤经 ctx.get 现读），文本每次组稿现读快照', () => {
@@ -724,10 +761,10 @@ hostTest('P14（PRESET-BIND-01）：纪律变体按名单选择——两内置�
   }
 });
 
-hostTest('A-F13 回归：证据按行隔离——P 行执行核得后全行刷新，Q 行（未核得）警示缺席', async () => {
+hostTest('A-F13 回归（PRESET-ISOLATION-02）：警示段按会话隔离——共享对象不被执行改写；绑定会话经遮蔽看到；未绑定会话任何时点看不到', async () => {
   const warnAnchor = /can die silently at process creation/;
-  resetGuardOwnershipEvidence();
-  // 组合 P（会话预设 dsh-async ∈ 默认名单）：执行入口核得 ⇒ 本行证据登记。
+  // 组合 P（会话预设 dsh-async ∈ 默认名单）：执行不改写共享描述（原行级证据
+  // 形态经执行就地重建——共享对象随执行变化，是本缺陷的载体）。
   const p = confinedCtx('dsh-async');
   const quietP = fakeProc({ text: 'ok', exitCode: 0, status: 'running', autoResolve: false });
   p.installShellExecute(() => Promise.resolve(quietP.proc));
@@ -737,27 +774,140 @@ hostTest('A-F13 回归：证据按行隔离——P 行执行核得后全行刷�
   const pRun = pTool.execute({ command: 'echo p', description: 'p' }, exec);
   quietP.settle();
   await pRun;
-  assert.match(pTool.description, warnAnchor, 'P 行执行核得 ⇒ 本行警示在场');
+  assert.doesNotMatch(pTool.description, warnAnchor, 'P 行执行后共享描述仍是基础文本（不再就地重建）');
   // 组合 Q（会话预设 av0408-custom ∉ 名单）：同一工具实现的未选预设会话。
   const q = confinedCtx('av0408-custom');
   const qLive = { ...resolveConfig({ toolName: 'async_run', silentFailureGuard: true, owningPreset: 'dsh-async' }) };
   const qView = new Proxy({}, { get: (_t, k) => qLive[k] });
   const qTool = buildRunTool(q.ctx, qView);
-  // volatile 提交触发 refresh-bus 全行刷新：两行各自就地重建（同一模块实例的证据表）。
-  // 按预设全局共享证据时，Q 行在这里吃到 P 行核得的 'dsh-async' ⇒ 警示泄漏（原反例）。
+  // volatile 提交触发 refresh-bus 全行刷新：共享描述两侧都仍基础文本（原缺陷：
+  // 按预设全局共享证据时，Q 行在全行刷新后吃到 P 行核得的证据 ⇒ 警示泄漏）。
   refreshToolDescriptions(pTool, pView);
   refreshToolDescriptions(qTool, qView);
-  assert.doesNotMatch(qTool.description, warnAnchor, '全行刷新后 Q 行警示仍缺席（证据按行令牌隔离）');
-  assert.match(pTool.description, warnAnchor, 'P 行不受影响');
-  // Q 自身执行（会话预设∉名单）⇒ 不登记 ⇒ 再刷新仍缺席。
+  assert.doesNotMatch(qTool.description, warnAnchor, '全行刷新后 Q 行共享描述仍基础文本');
+  assert.doesNotMatch(pTool.description, warnAnchor, 'P 行共享描述恒基础文本');
+  // 会话遮蔽：P 会话（dsh-async）看到警示；Q 会话（av0408-custom）看不到——
+  // 包括 P 执行并全行刷新之后的投影（跨会话不泄漏）。
+  const pShadow = mountShadow(p, pTool, pView, 'agent-p');
+  assert.equal(pShadow.registered.length, 1, 'P 会话遮蔽已注册');
+  assert.match(pShadow.registered[0].description, warnAnchor, 'P 会话投影 ⇒ 警示在场');
+  const qShadow = mountShadow(q, qTool, qView, 'agent-q');
+  assert.equal(qShadow.registered.length, 1, 'Q 会话遮蔽已注册');
+  assert.doesNotMatch(qShadow.registered[0].description, warnAnchor, 'Q 会话投影 ⇒ 警示缺席（P 的执行与刷新不泄漏到 Q）');
+  // Q 自身执行（会话预设∉名单）⇒ 两侧仍不变。
   const quietQ = fakeProc({ text: 'ok', exitCode: 0, status: 'running', autoResolve: false });
   q.installShellExecute(() => Promise.resolve(quietQ.proc));
   const qRun = qTool.execute({ command: 'echo q', description: 'q' }, exec);
   quietQ.settle();
   await qRun;
-  refreshToolDescriptions(qTool, qView);
-  assert.doesNotMatch(qTool.description, warnAnchor, 'Q 自身执行（会话预设∉名单）不登记 ⇒ 仍缺席');
-  resetGuardOwnershipEvidence();
+  assert.doesNotMatch(qShadow.registered[0].description, warnAnchor, 'Q 自身执行后其投影仍缺席');
+  assert.match(pShadow.registered[0].description, warnAnchor, 'P 侧不受影响');
+});
+
+hostTest('会话遮蔽机理（PRESET-ISOLATION-02）：注册/撤销双持有、多行同实例去重、注册失败降级、共享引用不复制', () => {
+  const warnAnchor = /can die silently at process creation/;
+  const row = confinedCtx('dsh-async');
+  const live = { ...resolveConfig({ toolName: 'async_run', silentFailureGuard: true }) };
+  const view = new Proxy({}, { get: (_t, k) => live[k] });
+  const tool = buildRunTool(row.ctx, view);
+
+  // ① 注册 + Agent 侧 effect（世代回收持有）与行侧 off（行卸载撤销）双持有。
+  // 注意：同一行上每个安装器的监听都会收到同一 created 事件（祖先路由语义），
+  // 逐段验证前先摘掉上一段的监听，避免两份监听叠加注册。
+  const mounted = mountShadow(row, tool, view, 'session-1');
+  assert.equal(mounted.registered.length, 1, 'agent/created ⇒ 注册一份遮蔽定义');
+  assert.equal(mounted.effects.length, 1, 'Agent 侧 effect 挂撤销（随 Agent 世代回收）');
+  assert.match(mounted.registered[0].description, warnAnchor, '投影现算 ⇒ 警示在场');
+  // Agent 世代结束（effect 撤销）：effect 回调即撤销器返回函数（cordis
+  // `ctx.effect(() => dispose)` 形态），先调回调再调其返回的撤销器；撤销幂等。
+  const agentEffect = mounted.effects[0];
+  const agentDispose = agentEffect();
+  agentDispose();
+  assert.equal(mounted.registered.length, 0, 'Agent 结束 ⇒ 遮蔽注销');
+  agentDispose();
+  assert.equal(mounted.registered.length, 0, '撤销幂等（重复调用安全）');
+  mounted.off();
+  // 行卸载：off 撤销在世 Agent 的遮蔽 + 摘监听（新 Agent 不再挂）。
+  const mounted2 = mountShadow(row, tool, view, 'session-2');
+  mounted2.off();
+  assert.equal(mounted2.registered.length, 0, '行卸载 ⇒ 在世 Agent 的遮蔽撤销');
+  row.emit('agent/created', { agent: { id: 'session-3', ctx: { tools: { register(def) { mounted2.registered.push(def); return () => {}; } }, effect() {} } } });
+  assert.equal(mounted2.registered.length, 0, '行卸载后监听已摘（新 Agent 不再挂）');
+
+  // ② 多行同模块实例去重（WeakSet 按模块实例）：**同一 Agent 对象**的事件被
+  //    两行的监听先后收到（祖先路由的语义形态）——只有先到的一行注册。
+  const row2 = confinedCtx('dsh-async');
+  const tool2 = buildRunTool(row2.ctx, view);
+  const seen = [];
+  const collector = (def) => {
+    seen.push(def);
+    return () => { const index = seen.indexOf(def); if (index >= 0) seen.splice(index, 1); };
+  };
+  const first = { off: mountShadowInstaller(row.ctx, tool, view, 'async_run') };
+  const second = { off: mountShadowInstaller(row2.ctx, tool2, view, 'async_run') };
+  const agentDup = { id: 'agent-dup', ctx: { tools: { register: collector }, effect() {} } };
+  row.emit('agent/created', { agent: agentDup });
+  assert.equal(seen.length, 1, '先到的行注册一份');
+  row2.emit('agent/created', { agent: agentDup });
+  assert.equal(seen.length, 1, '同一 Agent 对象再到第二行不重复注册（模块级去重）');
+  first.off();
+  second.off();
+
+  // ③ 注册失败（同层重名等）⇒ warn 降级：不外抛（created 监听器失败会被宿主
+  //    按 reject 处理）、WeakSet 回退（同一 Agent 的后续监听可再注册）、共享
+  //    定义不受影响。
+  const failing = confinedCtx('dsh-async');
+  const failingTool = buildRunTool(failing.ctx, view);
+  const holder = { registered: [] };
+  let failOnce = true;
+  const offFailing = mountShadowInstaller(failing.ctx, failingTool, view, 'async_run');
+  const agentF = {
+    id: 'session-9',
+    ctx: {
+      tools: {
+        register(def) {
+          if (failOnce) {
+            failOnce = false;
+            throw new Error('duplicate name in scope');
+          }
+          holder.registered.push(def);
+          return () => {
+            const index = holder.registered.indexOf(def);
+            if (index >= 0) holder.registered.splice(index, 1);
+          };
+        }
+      },
+      effect() {}
+    }
+  };
+  failing.emit('agent/created', { agent: agentF });
+  assert.equal(holder.registered.length, 0, '注册失败 ⇒ 无遮蔽（降级为共享基础文本）');
+  assert.ok(failing.logs.some(([level]) => level === 'warn'), '注册失败 ⇒ warn 日志（不外抛）');
+  // WeakSet 已回退：同一 Agent 对象再经另一行的监听 ⇒ 可再注册。
+  const row3 = confinedCtx('dsh-async');
+  const offRow3 = mountShadowInstaller(row3.ctx, failingTool, view, 'async_run');
+  row3.emit('agent/created', { agent: agentF });
+  assert.equal(holder.registered.length, 1, 'WeakSet 已回退 ⇒ 同一 Agent 的后续监听可再注册');
+  offFailing();
+  offRow3();
+
+  // ④ 共享引用不复制：遮蔽与共享实现同一 execute/parameters/output 对象，
+  //    设置就地刷新对投影同样生效；共享对象任何时点不被投影改写。
+  const mounted4 = mountShadow(row, tool, view, 'session-4');
+  const shadow = mounted4.registered[0];
+  assert.equal(shadow.execute, tool.execute, 'execute 同一引用（行为一致）');
+  assert.equal(shadow.parameters, tool.parameters, 'parameters 同一引用（就地刷新对投影生效）');
+  assert.equal(shadow.output, tool.output, 'output 同一引用');
+  live.silentFailureGuard = false;
+  refreshToolDescriptions(tool, view);
+  assert.doesNotMatch(shadow.description, warnAnchor, '开关翻关 ⇒ 下一次投影即无警示（getter 现读活视图）');
+  assert.doesNotMatch(tool.description, warnAnchor, '共享对象恒基础文本');
+  live.silentFailureGuard = true;
+  assert.match(shadow.description, warnAnchor, '开关补开 ⇒ 下一次投影恢复');
+  // 并发投影（同时多次读 getter）互不干扰。
+  const reads = [shadow.description, shadow.description, shadow.description];
+  assert.ok(reads.every((text) => warnAnchor.test(text)), '并发投影结果一致');
+  mounted4.off();
 });
 
 // 真实宿主收集层形态：不用 fakeCtx 假件，直接装载真实 cordis Context 与真实

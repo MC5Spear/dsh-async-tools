@@ -593,7 +593,7 @@ hostTest('R58-l：说明两档上限——单条 200 截断、留存行合计 20
 });
 
 hostTest('R55（判据 2b·子代理侧）：next-step 滞留目标子代理的未领取结算通知 → settled（结束优先于插话）', async () => {
-  // r13 结算复查门后（W-GATE-E），入口通知的 settled 交付要求注册表现读非运行；
+  // r13 结算交付前的注册表复核（W-GATE-E）后，入口通知的 settled 交付要求注册表现读非运行；
   // 本判据测的是入口侧优先级（结束优先于插话），装置补静止读数、断言不变。
   const rig = await buildRig('pre2b', [], { agentsGet: (id) => ({ id, status: 'idle' }) });
   try {
@@ -949,7 +949,7 @@ hostTest('R58-g：批预算耗尽——完成消息延后不丢正文，wait_ms=
       }
     });
     // A 远超预算 60（先装配即占满本批）；B 50 字符（批内放不下、延后后应能完整
-    // 装进下一批）。两者都已终态，同拍并行等待＝同一批次（设计 §2.6 领取窗口）。
+    // 装进下一批）。两者都已终态，同一领取窗口并行等待＝同一批次（设计 §2.6）。
     const idA = startJob('r58g-a', 'fills the batch', 'A'.repeat(300));
     const idB = startJob('r58g-b', 'deferred entry', 'B'.repeat(50));
     await new Promise((resolve) => { setTimeout(resolve, 20); });
@@ -1039,7 +1039,11 @@ hostTest('R58-h：让位复查投全部就绪作业——两条正文+一条空�
       '空正文终态条目以状态行可见（N-2：不投空串消息）');
     for (const id of [idA, idB, idC]) {
       const entry = ledger.jobs.get(id);
-      assert.equal(entry.claimedBy, 'message', `${id} 已认领`);
+      // 认领生命周期（REL-RECOVER-02）：宿主接受点（followup 正常返回＝整队
+      // 已接受）释放认领——修前断言 claimedBy 停留 'message' 至下一轮询周期，
+      // 窗口内其他载体只见状态行、partial 续段不可恢复。
+      assert.equal(entry.claimedBy, null, `${id} 认领已在宿主接受点释放`);
+      assert.notEqual(entry.deliveredFact, null, `${id} 已交付事实保持（阻断重复交付）`);
       ledger.detachJob(id);
     }
   } finally {
@@ -1050,7 +1054,7 @@ hostTest('R58-h：让位复查投全部就绪作业——两条正文+一条空�
 // ── WAIT-EMPTY/WAIT-TIME/WAIT-AGENT-02/WAIT-READ/READY/SHARE 补测（B3）────────────
 //
 // 独立盲审登记的受控缺口：no-work/unconfirmed 出口、资格与诊断清单的竞速
-//（挂起/取消切断）、已报告静止目标的资格与轮询拍、读取失败可重试、入口
+//（挂起/取消切断）、已报告静止目标的资格与轮询周期、读取失败可重试、入口
 // 汇集、并行直付份额、有目标等待不以迟到作答结束、混合目标校验顺序。
 // 装置沿用真注册表；小额 wait_ms 走真定时器（装置显式 minWaitMs=1）。
 
@@ -1090,7 +1094,7 @@ hostTest('W-EMPTY-C：有运行中子代理 → 无目标等待真实挂起至�
   }
 });
 
-hostTest('W-TIME-A：资格清单悬置 → 与总截止竞速，拍内交回 unconfirmed（不无界阻塞）', async () => {
+hostTest('W-TIME-A：资格清单悬置 → 与总截止竞速，周期内交回 unconfirmed（不无界阻塞）', async () => {
   const rig = await buildRig('hang-list', [], {
     listChildren: () => new Promise(() => {})
   });
@@ -1121,7 +1125,7 @@ hostTest('W-TIME-B：资格清单悬置期间取消 → cancelled 出口及时�
   }
 });
 
-hostTest('W-TIME-C：目标屏障悬置 → 拍内交回 unconfirmed，不无界阻塞入口校验', async () => {
+hostTest('W-TIME-C：目标屏障悬置 → 周期内交回 unconfirmed，不无界阻塞入口校验', async () => {
   const rig = await buildRig('hang-barrier', [], {
     listChildren: () => new Promise(() => {})
   });
@@ -1158,13 +1162,13 @@ hostTest('W-SETTLED-A：已报告静止目标再次等待 → 立即返回「维
   }
 });
 
-hostTest('W-SETTLED-B：静止子代理＋运行中作业的混合等待 → 轮询拍不截断，作业结算交回', async () => {
+hostTest('W-SETTLED-B：静止子代理＋运行中作业的混合等待 → 轮询周期不截断，作业结算交回', async () => {
   const rig = await buildRig('mix', [{ id: 'at-child-quiet2' }], {
     agentsGet: (id) => ({ id, status: 'idle' }),
     pollIntervalMs: 80
   });
   try {
-    // 建立静止基准（首次 stop-once），此后轮询拍看到的静止是「维持」。
+    // 建立静止基准（首次 stop-once），此后轮询周期看到的静止是「维持」。
     const target = { kind: 'agent', id: 'at-child-quiet2' };
     await rig.waiter.execute({ wait_ms: 100, targets: [target] }, rig.exec());
     const wf = await rig.workflow.execute(WF_ARGS, rig.exec());
@@ -1172,10 +1176,10 @@ hostTest('W-SETTLED-B：静止子代理＋运行中作业的混合等待 → 轮
     const pending = rig.waiter.execute(
       { wait_ms: 4000, targets: [target, { kind: 'job', id: wf.job_id }] }, rig.exec()
     );
-    // 静止拍（~80ms×多拍）之后作业才结算：旧缺陷会在首个静止拍交回 settled。
+    // 静止周期（~80ms×多个周期）之后作业才结算：旧缺陷会在首个静止周期交回 settled。
     setTimeout(() => rig.finisher(), 500);
     const result = await pending;
-    assert.equal(result.status, 'completed', '等待以作业终态交回，不被静止轮询拍截断');
+    assert.equal(result.status, 'completed', '等待以作业终态交回，不被静止轮询周期截断');
     assert.ok(result.output.includes('AT_FINAL_PAYLOAD'), '作业正文随终态交付');
   } finally {
     await rig.dispose();
@@ -1366,12 +1370,12 @@ hostTest('W-OBSERVE-A：无目标挂起中子代理静默转 idle（无消息无
   try {
     const started = Date.now();
     const pending = rig.waiter.execute({ wait_ms: 2000 }, rig.exec());
-    await sleep(150);              // 入口资格检查完成、挂起开始（首拍 500 ms 未到）
+    await sleep(150);              // 入口资格检查完成、挂起开始（首个周期 500 ms 未到）
     childStatus = 'idle';          // 子代理静默转 idle：无消息、无通知
     const outcome = await pending;
     const wall = Date.now() - started;
     assert.equal(outcome.status, 'no-work', '复查确认无工作：及时交回（耗尽预算是旧缺陷形态）');
-    assert.ok(wall < 1600, `复查在拍内交回（pollIntervalMs=500＋容差；实耗 ${String(wall)} ms）`);
+    assert.ok(wall < 1600, `复查在周期内交回（pollIntervalMs=500＋容差；实耗 ${String(wall)} ms）`);
     assert.ok(outcome.waited_ms < 2000, 'waited_ms 为全程实际时长且未耗尽预算');
     assert.ok(outcome.note.includes(t('en', 'wait.workConcluded')), 'note 用 workConcluded 新键');
     assert.ok(!outcome.note.includes(t('en', 'wait.noWork')), '不是入口 no-work 键（两键不得混用）');
@@ -1401,21 +1405,21 @@ hostTest('W-OBSERVE-B：复查节奏对齐 pollIntervalMs（间隔调大后时�
   };
   const fast = await runOnce('obs-b-fast', 100);
   const slow = await runOnce('obs-b-slow', 700);
-  assert.equal(fast.outcome.status, 'no-work', '快拍：复查交回');
-  assert.equal(slow.outcome.status, 'no-work', '慢拍：复查交回');
-  assert.ok(fast.wall < 450, `快拍（100 ms）应近拍交回（实耗 ${String(fast.wall)} ms）`);
-  assert.ok(slow.wall >= 600, `慢拍（700 ms）交回不早于首拍（实耗 ${String(slow.wall)} ms）——节奏对齐 pollIntervalMs`);
+  assert.equal(fast.outcome.status, 'no-work', '快周期：复查交回');
+  assert.equal(slow.outcome.status, 'no-work', '慢周期：复查交回');
+  assert.ok(fast.wall < 450, `快周期（100 ms）应近周期交回（实耗 ${String(fast.wall)} ms）`);
+  assert.ok(slow.wall >= 600, `慢周期（700 ms）交回不早于首个周期（实耗 ${String(slow.wall)} ms）——节奏对齐 pollIntervalMs`);
   assert.ok(slow.wall <= 3300, '全程上界仍为有效 wait_ms＋300 ms');
 });
 
-hostTest('W-OBSERVE-C：复查拍在途时插话/取消先到→各自既有出口及时交回（竞速切断，不拖到拍结束）', async () => {
+hostTest('W-OBSERVE-C：复查周期在途时插话/取消先到→各自既有出口及时交回（竞速切断，不拖到周期结束）', async () => {
   resetAgentBaselines();
   const makeGateRig = async (label) => {
     let calls = 0;
     const gates = [];
     const rig = await buildRig(label, [{ id: `${label}-child` }], {
       pollIntervalMs: 300,
-      // 首次调用＝入口资格检查（返回在册）；后续＝复查拍（挂起不答：宿主慢目录形态）。
+      // 首次调用＝入口资格检查（返回在册）；后续＝复查周期（挂起不答：宿主慢目录形态）。
       listChildren: () => new Promise((resolve) => {
         calls += 1;
         if (calls === 1) return resolve([{ id: `${label}-child` }]);
@@ -1429,7 +1433,7 @@ hostTest('W-OBSERVE-C：复查拍在途时插话/取消先到→各自既有出�
     try {
       const started = Date.now();
       const pending = rig.waiter.execute({ wait_ms: 5000 }, rig.exec());
-      await sleep(450);            // 首拍 300 ms 已发起、复查查询在途
+      await sleep(450);            // 首个周期 300 ms 已发起、复查查询在途
       rig.ctx.emit('agent/inbox/inserted', inboxPayload({
         agent: rig.parent, sourceKind: 'user', text: 'steer during recheck', target: 'next-step'
       }));
@@ -1462,7 +1466,7 @@ hostTest('W-OBSERVE-C：复查拍在途时插话/取消先到→各自既有出�
   }
 });
 
-hostTest('W-OBSERVE-D：复查拍内 listChildren 挂起→不判无工作、续等不交回；恢复应答后照常按 no-work 交回', async () => {
+hostTest('W-OBSERVE-D：复查周期内 listChildren 挂起→不判无工作、续等不交回；恢复应答后照常按 no-work 交回', async () => {
   resetAgentBaselines();
   let calls = 0;
   const gates = [];
@@ -1479,20 +1483,20 @@ hostTest('W-OBSERVE-D：复查拍内 listChildren 挂起→不判无工作、续
     let concluded = false;
     const pending = rig.waiter.execute({ wait_ms: 5000 }, rig.exec());
     pending.then(() => { concluded = true; }, () => { concluded = true; });
-    await sleep(1200);             // 首拍 250 ms 发起、查询挂起至今
+    await sleep(1200);             // 首个周期 250 ms 发起、查询挂起至今
     assert.equal(concluded, false, '查询挂起＝未证实：续等不交回（把挂起当无工作是缺陷形态）');
-    assert.ok(gates.length >= 1, '复查拍确实发起过查询');
+    assert.ok(gates.length >= 1, '复查周期确实发起过查询');
     for (const release of gates) release([]);   // 宿主目录恢复应答：清单空＝无运行中子代理
     const outcome = await pending;
     const wall = Date.now() - started;
-    assert.equal(outcome.status, 'no-work', '恢复应答后照常交回（在途跳拍防线不永久卡死）');
-    assert.ok(wall < 1200 + 2500, `恢复后在拍内交回（实耗 ${String(wall)} ms）`);
+    assert.equal(outcome.status, 'no-work', '恢复应答后照常交回（在途周期跳过防线不永久卡死）');
+    assert.ok(wall < 1200 + 2500, `恢复后在周期内交回（实耗 ${String(wall)} ms）`);
   } finally {
     await rig.dispose();
   }
 });
 
-hostTest('W-OBSERVE-E：账本在册作业运行期间——挂起窗口 listChildren 调用数=0（复查拍账本短路，零目录查询）', async () => {
+hostTest('W-OBSERVE-E：账本在册作业运行期间——挂起窗口 listChildren 调用数=0（复查周期账本短路，零目录查询）', async () => {
   resetAgentBaselines();
   let listCalls = 0;
   const rig = await buildRig('obs-e', [{ id: 'at-obs-e-child' }], {
@@ -1503,8 +1507,8 @@ hostTest('W-OBSERVE-E：账本在册作业运行期间——挂起窗口 listChi
     const wf = await rig.workflow.execute(WF_ARGS, rig.exec());
     assert.equal(wf.status, 'running', '前置：账本在册的运行中作业提供挂起资格');
     const outcome = await rig.waiter.execute({ wait_ms: 1200 }, rig.exec());
-    assert.equal(outcome.status, 'budget', '作业仍在跑：挂起到预算（复查拍全部短路续等）');
-    assert.equal(listCalls, 0, '账本在册非终态作业使入口检查与每拍复查都同步短路——零目录查询');
+    assert.equal(outcome.status, 'budget', '作业仍在跑：挂起到预算（复查周期全部短路续等）');
+    assert.equal(listCalls, 0, '账本在册非终态作业使入口检查与每周期复查都同步短路——零目录查询');
   } finally {
     await rig.dispose();
   }
@@ -1523,13 +1527,13 @@ hostTest('W-OBSERVE-F：复查确认资格消失时账本就绪内容随 no-work
     })
   });
   try {
-    // 子代理清单提供挂起资格；首拍（300 ms）复查查询挂起（gate 在途——主循环
+    // 子代理清单提供挂起资格；首个周期（300 ms）复查查询挂起（gate 在途——主循环
     // 此刻不在竞速里，就绪事件不抢先出口）；在途窗口内经真 workflow 起作业并
     // 结算，账本缓冲就绪后再放行 gate：复查确认无工作 → no-work 出口的批次
     // 顺带携带就绪内容（§2.6 随批顺带交付）。
     const pending = rig.waiter.execute({ wait_ms: 4000 }, rig.exec());
     await sleep(450);
-    assert.ok(gates.length >= 1, '前置：复查拍查询已发起且在途');
+    assert.ok(gates.length >= 1, '前置：复查周期查询已发起且在途');
     const wf = await rig.workflow.execute(WF_ARGS, rig.exec());
     assert.equal(wf.status, 'running', '前置：作业让出为 running');
     rig.finisher();                // 结算 → 保活链读取 → 账本缓冲就绪
@@ -1579,11 +1583,11 @@ hostTest('W-OBSERVE-G：复查交回不写跨调用基准——再指定该子�
   }
 });
 
-hostTest('W-OBSERVE-H：jobs.list 短路路径后复查不卡死——外来行静默转终态→下一拍 no-work 交回（不耗尽预算）', async () => {
+hostTest('W-OBSERVE-H：jobs.list 短路路径后复查不卡死——外来行静默转终态→下一周期 no-work 交回（不耗尽预算）', async () => {
   resetAgentBaselines();
-  // 外来（账本不在册）作业在 jobs.list 有 running 行：首拍复查走第二级同步短路
+  // 外来（账本不在册）作业在 jobs.list 有 running 行：首个周期复查走第二级同步短路
   //（listChildren 从未发起）。行随后静默转终态＋子代理静默转 idle——复查应在
-  // 下一拍确认无工作按 no-work 交回。修复前形态：短路路径不清跳拍标志，
+  // 下一周期确认无工作按 no-work 交回。修复前形态：短路路径不清周期跳过标志，
   // recheckQueryInFlight 永久卡 true，后续复查全部跳过、等待退化到预算到期
   //（盲审实跑复现在案——本断言对旧代码必红）。
   let externalRows = [{ id: 'ext-job-h', status: 'running' }];
@@ -1596,13 +1600,13 @@ hostTest('W-OBSERVE-H：jobs.list 短路路径后复查不卡死——外来行�
   try {
     const started = Date.now();
     const pending = rig.waiter.execute({ wait_ms: 1500 }, rig.exec());
-    await sleep(250);               // 首拍（100 ms 节拍）已走 jobs.list 短路
+    await sleep(250);               // 首个周期（100 ms 查询周期）已走 jobs.list 短路
     externalRows = [];              // 外来行静默转终态（不经账本、无就绪事件）
     childStatus = 'idle';           // 子代理同步静默转 idle（无消息无通知）
     const outcome = await pending;
     const wall = Date.now() - started;
     assert.equal(outcome.status, 'no-work', '短路后复查继续工作：确认无工作及时交回（卡死形态＝budget，必红）');
-    assert.ok(wall < 900, `下一拍即交回、未耗尽预算（pollIntervalMs=100；实耗 ${String(wall)} ms；卡死形态 ≈1500 ms 必红）`);
+    assert.ok(wall < 900, `下一周期即交回、未耗尽预算（pollIntervalMs=100；实耗 ${String(wall)} ms；卡死形态 ≈1500 ms 必红）`);
     assert.ok(outcome.note.includes(t('en', 'wait.workConcluded')), 'note 用 workConcluded 键');
   } finally {
     await rig.dispose();
@@ -1622,7 +1626,7 @@ hostTest('W-GATE-A：停止胜出（agent/status 转 idle）＋注册表现读 i
       rig.exec()
     );
     await sleep(120);              // 入口屏障与挂起完成
-    childStatus = 'idle';          // 注册表静止与 idle 事件同拍（门现读即非运行）
+    childStatus = 'idle';          // 注册表静止与 idle 事件同一时刻到达（复核现读即非运行）
     rig.ctx.emit('agent/status', { agent: { id: 'at-gate-a-child' }, status: 'idle' });
     const outcome = await pending;
     assert.equal(outcome.status, 'settled', '非运行读数：停止胜出按现行交付 settled（门放行）');
@@ -1639,7 +1643,7 @@ hostTest('W-GATE-A：停止胜出（agent/status 转 idle）＋注册表现读 i
   }
 });
 
-hostTest('W-GATE-B：停止胜出＋现读 running→不报 settled、不写登记；一拍内转 idle→翻转出口 settled、note 注明结算通知已见；等待不因通知提前结束', async () => {
+hostTest('W-GATE-B：停止胜出＋现读 running→不报 settled、不写登记；一个周期内转 idle→翻转出口 settled、note 注明结算通知已见；等待不因通知提前结束', async () => {
   resetAgentBaselines();
   let childStatus = 'running';
   const rig = await buildRig('gate-b', [{ id: 'at-gate-b-child' }], {
@@ -1659,7 +1663,7 @@ hostTest('W-GATE-B：停止胜出＋现读 running→不报 settled、不写登�
     rig.ctx.emit('agent/status', { agent: { id: 'at-gate-b-child' }, status: 'idle' });
     await sleep(150);
     assert.equal(concluded, false, '注册表仍观察到运行：不报 settled（通知本身不结束等待）');
-    childStatus = 'idle';          // ≤一拍内注册表翻转
+    childStatus = 'idle';          // ≤一个周期内注册表翻转
     const outcome = await pending;
     assert.equal(outcome.status, 'settled', '翻转出口交付 settled（via.idle 首次确认）');
     assert.ok(outcome.note.includes(t('en', 'via.idle')), '翻转出口的 via.idle 文案');
@@ -1757,7 +1761,7 @@ hostTest('W-GATE-E：入口未领取结算通知同门现读——running→chan
   }
 });
 
-hostTest('W-GATE-F：同目标重复门化事件不提前按到期交回（wall≈预算，自旋防线不触发）', async () => {
+hostTest('W-GATE-F：同目标重复未证实复核事件不提前按到期交回（wall≈预算，自旋防线不触发）', async () => {
   resetAgentBaselines();
   const rig = await buildRig('gate-f', [{ id: 'at-gate-f-child' }], {
     pollIntervalMs: 250,
@@ -1770,7 +1774,7 @@ hostTest('W-GATE-F：同目标重复门化事件不提前按到期交回（wall�
       rig.exec()
     );
     await sleep(120);
-    // 变异注释（W-GATE-F）：门化分支若不重建观察器（直接 continue），已 resolve
+    // 变异注释（W-GATE-F）：复核未证实分支若不重建观察器（直接 continue），已 resolve
     // 的一次性 settled promise 会被下一轮竞速再次胜出——每轮微任务复用、自旋
     // 计数暴涨，在本预算内提前按到期口径交回（wall 断言必红）。
     for (let i = 0; i < 25; i += 1) {
@@ -1779,14 +1783,14 @@ hostTest('W-GATE-F：同目标重复门化事件不提前按到期交回（wall�
     }
     const outcome = await pending;
     const wall = Date.now() - started;
-    assert.equal(outcome.status, 'running', '重复门化事件不误报停止：到期口径交回');
+    assert.equal(outcome.status, 'running', '重复未证实事件不误报停止：到期口径交回');
     assert.ok(wall >= 1350, `不提前交回（wall≈预算 1500；实耗 ${String(wall)} ms）——重建观察器防自旋`);
   } finally {
     await rig.dispose();
   }
 });
 
-hostTest('W-SPIN-A：MAX_SPINS 可测锚——注入小上限后超过上限次数的定时拍续排不提前交回（定时拍胜者不计入计数）', async () => {
+hostTest('W-SPIN-A：MAX_SPINS 可测锚——注入小上限后超过上限次数的定时周期续排不提前交回（定时周期胜者不计入计数）', async () => {
   resetAgentBaselines();
   const original = WAIT_SPIN_LIMIT.value;
   WAIT_SPIN_LIMIT.value = 3;
@@ -1797,8 +1801,8 @@ hostTest('W-SPIN-A：MAX_SPINS 可测锚——注入小上限后超过上限次�
     });
     try {
       const started = Date.now();
-      // 变异注释（W-SPIN-A）：若定时拍胜者仍计入 spins（旧计数形态——备用轮询拍
-      // 曾无条件计入），第 4 拍（约 200 ms）即触发防线、提前按到期口径交回，
+      // 变异注释（W-SPIN-A）：若定时周期胜者仍计入 spins（旧计数形态——备用轮询周期
+      // 曾无条件计入），第 4 个周期（约 200 ms）即触发防线、提前按到期口径交回，
       // wall 断言（≥570 ms）必红。
       const outcome = await rig.waiter.execute(
         { wait_ms: 600, targets: [{ kind: 'agent', id: 'at-spin-a-child' }] },
@@ -1806,7 +1810,7 @@ hostTest('W-SPIN-A：MAX_SPINS 可测锚——注入小上限后超过上限次�
       );
       const wall = Date.now() - started;
       assert.equal(outcome.status, 'running', '到期口径交回（防线未触发）');
-      assert.ok(wall >= 570, `12 拍（600/50）远超注入上限 3 仍不提前交回（实耗 ${String(wall)} ms）`);
+      assert.ok(wall >= 570, `12 个周期（600/50）远超注入上限 3 仍不提前交回（实耗 ${String(wall)} ms）`);
     } finally {
       await rig.dispose();
     }
@@ -2093,13 +2097,13 @@ hostTest('L9 装载中途抛错：行注销恒执行、已就位处置器执行�
  * 受控 jobs 读取。`injectFailsAt`＝第 N 次 inject 抛错（0＝永不）；
  * `followupThrows`＝followup 抛错；`agentsGet` 可整替（注册表缺失形）。
  */
-function sRig({ injectFailsAt = 0, followupThrows = false, agentsGet, budget = 4000, lang = 'en' } = {}) {
+function sRig({ injectFailsAt = 0, followupThrows = false, agentsGet, budget = 4000, lang = 'en', status = 'running' } = {}) {
   resetDeliveryLedger();
   const calls = { inject: [], followup: [] };
   const OWNER = 'at-s-owner';
   const agent = {
     id: OWNER,
-    status: 'running',
+    status,
     inject(message) {
       calls.inject.push(message);
       if (calls.inject.length === injectFailsAt) {
@@ -2273,7 +2277,7 @@ hostTest('S6 并发冲刷互不波及：A 队失败回滚不碰 B 队已投项',
   };
   await readyB('job-s6b1', 'BODY-S6-B1');
   await readyB('job-s6b2', 'BODY-S6-B2');
-  // 「同拍」两冲刷：先后触发（取队列到投递间无 await 交错面，见设计 §3.4）。
+  // 「同一领取窗口」两冲刷：先后触发（取队列到投递间无 await 交错面，见设计 §3.4）。
   await ledger.releaseWait(tokenA, rigA.OWNER);
   await ledger.releaseWait(tokenB, OWNER_B);
   assert.equal(agentB.calls.length, 2, 'B 队两项全部投递成功');
@@ -2297,6 +2301,482 @@ hostTest('S7 注册表缺失分支回归：整队回滚行为不变', async () =
     assert.notEqual(entry.buffer, '', `${id} 正文退回缓冲`);
   }
 });
+
+// ═══ r15 验收缺陷：认领生命周期／读取失败注记／条目上限（受控回归）═══
+//
+// REC 系列（lib/delivery.js 的 ledger 级回归，REL-RECOVER-02／REL-READ-02／
+// REL-SEND-02／REL-BATCH-02）：全部走 sRig 的受控通道（busy＝逐条 inject），
+// 等待出口的批语义经 claimWait/releaseWait/closeBatchIfIdle 显式驱动——
+// closeBatchIfIdle 即「等待返回全部提交后的关批判定」，关批后恢复全额批预算。
+
+hostTest('REC-A：完成消息载体 partial——认领在接受点释放，关批后续段整条领取、不重发首尾、不重读宿主（REL-RECOVER-02）', async () => {
+  const rig = sRig({ budget: 8 });
+  const { truncate, omittedMiddle } = await import('../lib/output.js');
+  const readCalls = [];
+  const realRead = rig.ctx.jobs.read;
+  rig.ctx.jobs.read = async (jobId) => { readCalls.push(jobId); return realRead(jobId); };
+  // 结算读取成功且无活等待 ⇒ readSettled 内即走完成消息路径（预算 8 < 正文 12
+  // ⇒ 截断交付：首尾保留，中段留缓冲）。
+  await rig.readyJob('job-rec-a', 'ABCDEFGHIJKL');
+  assert.equal(rig.calls.inject.length, 1, '完成消息恰一条（忙通道逐条 inject）');
+  const first = textOf(rig.calls.inject[0]);
+  assert.match(first, /job-rec-a/, '状态行在场');
+  const entry = ledger.jobs.get('job-rec-a');
+  // 认领生命周期（REL-RECOVER-02）：宿主接受点（inject 正常返回）释放认领——
+  // 修前认领滞留，窗口内其他载体只见状态行、续段无法恢复。
+  assert.equal(entry.claimedBy, null, '认领在宿主接受点已释放');
+  assert.equal(entry.deliveredFact.partial, true, '截断交付置 partial 事实');
+  const expectedMiddle = omittedMiddle('ABCDEFGHIJKL', 8);
+  assert.equal(entry.buffer, expectedMiddle, '省略中段按原文留缓冲');
+  assert.ok(truncate('ABCDEFGHIJKL', 8, 'en').text !== 'ABCDEFGHIJKL', '前置：份额确实截断');
+  // 等待出口关批 → 零等待领取续段（full 预算）：只交付中段，不重发首尾。
+  ledger.closeBatchIfIdle(rig.OWNER);
+  const { delivered } = ledger.collectBatch(rig.OWNER, {});
+  assert.equal(delivered.length, 1, 'partial 续段条目进批（事实的 partial 例外）');
+  assert.equal(delivered[0].text, expectedMiddle, '续段＝省略中段原文');
+  assert.equal(delivered[0].truncated, false, '关批后恢复全额预算：续段完整交付');
+  assert.equal(entry.buffer, '', '续段交付清空缓冲');
+  assert.equal(entry.deliveredFact.partial, undefined, '完全交付覆盖事实');
+  // 宿主一次性 result 只消费一次（读取计数锚定——续段恢复不重读宿主）。
+  assert.equal(readCalls.filter((id) => id === 'job-rec-a').length, 1,
+    '宿主 jobs.read 对该作业只调用一次（一次性 result 单次消费）');
+  const again = ledger.collectBatch(rig.OWNER, {});
+  assert.equal(again.delivered.length, 0, '完全交付后不再有条目（不重复交付）');
+});
+
+hostTest('REC-B：完成消息回滚保缓冲与追加增量——凭据四字段（original/remainder）使装配后增量不丢（REL-RECOVER-02）', async () => {
+  const rig = sRig({ budget: 8 });
+  // readSettled 即投首条截断完成消息（partial 形态前置）。
+  await rig.readyJob('job-rec-b', 'HEAD' + 'm'.repeat(24) + 'TAIL');
+  const entry = ledger.jobs.get('job-rec-b');
+  assert.equal(rig.calls.inject.length, 1, '截断完成消息已投（前置）');
+  assert.ok(entry.buffer.length > 0, '中段留缓冲（前置：partial 形态）');
+  // 关批后再次装配（模拟下一等待出口领取），随后模拟通道失败回滚：
+  // 装配后缓冲＝remainder；再追加增量（模拟 readIncremental/保活链新读）后回滚，
+  // 凭据必须恢复「装配前原文＋追加增量」——修前凭据丢弃 remainder，回滚退成
+  // 「空 original ＋ tail」，装配份额（中段原文）永久丢失。
+  ledger.closeBatchIfIdle(rig.OWNER);
+  const { delivered } = ledger.collectBatch(rig.OWNER, {});
+  assert.equal(delivered.length, 1, '续段装配成功（前置）');
+  entry.buffer += 'APPENDED-INCREMENT';
+  ledger.undoClaim(rig.OWNER, delivered);
+  const expected = (delivered[0].original ?? '') + 'APPENDED-INCREMENT';
+  assert.equal(entry.buffer, expected,
+    '回滚退回装配前原文＋装配后追加增量（original/remainder 凭据）');
+  assert.equal(entry.claimedBy, null, '回滚撤销认领');
+  assert.equal(entry.deliveredFact, null, '回滚清事实（正文可重投）');
+});
+
+hostTest('REC-C：空正文条目注入失败回滚——凭据不带 original，缓冲保持、事实清除、可重投（REL-SEND-02）', async () => {
+  const rig = sRig({ injectFailsAt: 1 });
+  // readSettled 即投：空正文状态行消息，inject 失败 ⇒ 回滚。
+  await rig.readyJob('job-rec-c', '');
+  const entry = ledger.jobs.get('job-rec-c');
+  assert.equal(rig.calls.inject.length, 1, '注入尝试恰一次（失败）');
+  assert.equal(entry.buffer, '', '空正文回滚后缓冲仍为空（不误造正文）');
+  assert.equal(entry.claimedBy, null, '回滚撤销认领');
+  assert.equal(entry.deliveredFact, null, '回滚清事实——空输出作业的结局不得被误记已交付');
+  // 通道修复后（failOnce 已消耗）：让位终局复查触发重投——状态行可见。
+  const token = ledger.claimWait(rig.OWNER);
+  await ledger.releaseWait(token, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 2, '重投：空正文状态行一条');
+  assert.match(textOf(rig.calls.inject[1]), /job-rec-c/, '空正文条目重投在场');
+  assert.match(textOf(rig.calls.inject[1]), /0 chars|0 字符/, '状态行零字符形态');
+  // 新作业结算 ⇒ 独立完成消息（正文路径不受回滚残留影响）。
+  await rig.readyJob('job-rec-c2', 'BODY-AFTER-FIX');
+  assert.equal(rig.calls.inject.length, 3, '新作业正文独立投递');
+  assert.match(textOf(rig.calls.inject[2]), /BODY-AFTER-FIX/, '新作业正文交付');
+});
+
+hostTest('REC-D：条目上限对空正文条目同样生效——12 条空输出作业一批至多 10 条，余者延后说明＋下一批补投（REL-BATCH-02）', async () => {
+  const rig = sRig({ budget: 4000 });
+  const token = ledger.claimWait(rig.OWNER);
+  for (let i = 1; i <= 12; i += 1) {
+    await rig.readyJob(`job-rec-d${String(i).padStart(2, '0')}`, '');
+  }
+  await ledger.releaseWait(token, rig.OWNER);
+  // 修前形态：条目上限只对非空正文生效 ⇒ 12 条空正文状态行一次全发。修后：
+  // 10 条状态行进批，第 11/12 条不认领、不投注记本体，各投一条延后说明。
+  assert.equal(rig.calls.inject.length, 12,
+    `10 条状态行 + 2 条延后说明（实得 ${String(rig.calls.inject.length)}）`);
+  const batchTexts = rig.calls.inject.slice(0, 10).map(textOf);
+  assert.ok(batchTexts.every((text) => /0 chars/.test(text)), '前 10 条都是状态行（零字符形态）');
+  assert.ok(!batchTexts.some((text) => /job-rec-d1[12]/.test(text)), '第 11/12 条不在本批');
+  for (const text of rig.calls.inject.slice(10).map(textOf)) {
+    assert.match(text, /did not fit the current delivery batch|没有排进当前交付批次/, '延后说明形态');
+    assert.match(text, /wait_ms=0/, '延后说明给领取出路');
+  }
+  // 关批 → 下一轮窗口补投剩余两条状态行。
+  ledger.closeBatchIfIdle(rig.OWNER);
+  const token2 = ledger.claimWait(rig.OWNER);
+  await ledger.releaseWait(token2, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 14, '下一批补投剩余两条状态行');
+  assert.match(textOf(rig.calls.inject[12]), /job-rec-d11/, '第 11 条补投在场');
+  assert.match(textOf(rig.calls.inject[13]), /job-rec-d12/, '第 12 条补投在场');
+});
+
+hostTest('REC-E：字符预算耗尽但条目未满——空正文条目仍按状态行交付，不因预算延后（REL-BATCH-02 反向）', async () => {
+  const rig = sRig({ budget: 8 });
+  const token = ledger.claimWait(rig.OWNER);
+  await rig.readyJob('job-rec-e1', 'XXXXXXXX'); // 恰耗尽预算（8/8）
+  await rig.readyJob('job-rec-e2', ''); // 空正文：预算为零也不延后
+  await ledger.releaseWait(token, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 2,
+    '两条都投：预算只约束非空正文（修前把空正文也按预算延后）');
+  assert.match(textOf(rig.calls.inject[0]), /XXXXXXXX/, '非空正文消耗预算');
+  assert.match(textOf(rig.calls.inject[1]), /job-rec-e2/, '空正文以状态行同窗交付');
+});
+
+hostTest('REC-F：无活等待的读取失败——注记三要素（真实结局＋失败标记＋重试出路）经完成消息可见，不置已交付事实（REL-READ-02）', async () => {
+  const rig = sRig({ injectFailsAt: 0 });
+  ledger.noteJobStarted(rig.ctx, rig.config, 'job-rec-f', rig.OWNER);
+  const entry = ledger.jobs.get('job-rec-f');
+  entry.terminal = { status: 'completed' };
+  // 读取持续失败：readSettled 捕获 → readFailed 定论 → #deliverIfNoWait 注记。
+  const realRead = rig.ctx.jobs.read;
+  rig.ctx.jobs.read = async () => { throw new Error('registry read exploded'); };
+  await ledger.readSettled('job-rec-f');
+  assert.equal(entry.readFailed, true, '读取失败定论置位');
+  assert.equal(rig.calls.inject.length, 1, '注记恰一条（完成消息通道）');
+  const notice = textOf(rig.calls.inject[0]);
+  // 三要素：真实结局（状态行）＋读取失败标记＋重试出路（V1：走完整渲染管线，
+  // 修前只有单行标记）。
+  assert.match(notice, /job-rec-f/, '真实结局在场（终态状态行）');
+  assert.match(notice, /\[read failed\]|\[读取失败\]/, '读取失败标记在场');
+  assert.match(notice, /Retry async_wait|请重试 async_wait/, '重试出路在场');
+  assert.equal(entry.deliveredFact, null, '注记不置已交付事实（重试成功后正文仍可首次交付）');
+  assert.equal(entry.claimedBy, null, '注记接受后认领释放');
+  assert.equal(entry.readFailedNoted, true, '一次性占位置位（跨载体）');
+  // 让位复查不重复通知：同一次失败的占位在后续扫描中被抑制。
+  const token = ledger.claimWait(rig.OWNER);
+  await ledger.releaseWait(token, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 1, '同一次失败不重复通知（readFailedNoted 一次性）');
+  // 读取恢复：正文经完成消息首次交付，注记不重发。
+  rig.reads.set('job-rec-f', { chunks: [{ channel: 'stdout', text: 'RECOVERED-BODY' }] });
+  rig.ctx.jobs.read = realRead;
+  await ledger.readSettled('job-rec-f');
+  assert.equal(entry.readFailed, false, '成功读取清失败态');
+  assert.equal(rig.calls.inject.length, 2, '恢复后的正文交付恰一条');
+  assert.ok(textOf(rig.calls.inject[1]).includes('RECOVERED-BODY'), '正文在场');
+  assert.ok(!/\[read failed\]|\[读取失败\]/.test(textOf(rig.calls.inject[1])), '正文交付不带失败标记');
+});
+
+hostTest('REC-G：读取失败再失败——新失败定论清占位恢复通知（每次失败至多一条，不跨载体堆积）', async () => {
+  const rig = sRig({});
+  ledger.noteJobStarted(rig.ctx, rig.config, 'job-rec-g', rig.OWNER);
+  const entry = ledger.jobs.get('job-rec-g');
+  entry.terminal = { status: 'completed' };
+  rig.ctx.jobs.read = async () => { throw new Error('read fail 1'); };
+  await ledger.readSettled('job-rec-g');
+  assert.equal(rig.calls.inject.length, 1, '第一次失败通知一条');
+  // 第二次尝试仍失败：失败定论清占位 → 新通知（按次一次性，不按条目一次性）。
+  await ledger.readSettled('job-rec-g');
+  assert.equal(rig.calls.inject.length, 2, '新失败定论 ⇒ 新通知（占位在新定论时清除）');
+  // 第三次同样失败：仍按次一条。
+  await ledger.readSettled('job-rec-g');
+  assert.equal(rig.calls.inject.length, 3, '第三次失败 ⇒ 第三条通知');
+});
+
+hostTest('REC-H：满批后到达的读取失败结算——注记按条目上限延后（不认领、不清占位），下一批投递', async () => {
+  const rig = sRig({ budget: 4000 });
+  const token = ledger.claimWait(rig.OWNER);
+  for (let i = 1; i <= 10; i += 1) {
+    await rig.readyJob(`job-rec-h${String(i).padStart(2, '0')}`, `BODY-H-${String(i)}`);
+  }
+  // 第 11 个：读取失败的结算——releaseWait 扫描构造时条目已达上限 ⇒ 延后说明。
+  ledger.noteJobStarted(rig.ctx, rig.config, 'job-rec-h11', rig.OWNER);
+  const entry = ledger.jobs.get('job-rec-h11');
+  entry.terminal = { status: 'killed' };
+  rig.ctx.jobs.read = async (jobId) => (jobId === 'job-rec-h11'
+    ? Promise.reject(new Error('read fail'))
+    : rig.reads.get(jobId));
+  await ledger.readSettled('job-rec-h11');
+  await ledger.releaseWait(token, rig.OWNER);
+  // 10 条正文 + 1 条延后说明（不是注记本体——注记按条目上限延后）。
+  assert.equal(rig.calls.inject.length, 11,
+    `10 条正文 + 1 条延后说明（实得 ${String(rig.calls.inject.length)}）`);
+  const last = textOf(rig.calls.inject[10]);
+  assert.match(last, /job-rec-h11/, '延后说明点名作业');
+  assert.match(last, /wait_ms=0/, '延后说明给领取出路');
+  assert.ok(!/\[read failed\]|\[读取失败\]/.test(last), '失败注记本体不在本批（I2：只投延后说明）');
+  assert.equal(entry.claimedBy, null, '延后不认领');
+  assert.equal(entry.readFailedNoted, false, '延后不清占位（下一批照常通知）');
+  // 关批 → 下一窗口：注记本体投递（三要素）。
+  ledger.closeBatchIfIdle(rig.OWNER);
+  const token2 = ledger.claimWait(rig.OWNER);
+  await ledger.releaseWait(token2, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 12, '注记本体在下一批投递');
+  const notice = textOf(rig.calls.inject[11]);
+  assert.match(notice, /\[read failed\]|\[读取失败\]/, '失败标记在场');
+  assert.match(notice, /killed/, '真实结局（killed 状态行）在场');
+  assert.equal(entry.readFailedNoted, true, '投递后占位置位');
+});
+
+hostTest('REC-I：注记与正文完成消息同队列部分失败——注记回滚清占位可重投，已接受正文事实保持', async () => {
+  const rig = sRig({ injectFailsAt: 2 });
+  const token = ledger.claimWait(rig.OWNER);
+  await rig.readyJob('job-rec-i1', 'BODY-I-ACCEPTED');
+  // 第二条：读取失败的注记（busy 逐条 inject 的第 2 条失败 ⇒ 注记回滚）。
+  ledger.noteJobStarted(rig.ctx, rig.config, 'job-rec-i2', rig.OWNER);
+  const entry = ledger.jobs.get('job-rec-i2');
+  entry.terminal = { status: 'completed' };
+  rig.ctx.jobs.read = async (jobId) => (jobId === 'job-rec-i2'
+    ? Promise.reject(new Error('read fail'))
+    : rig.reads.get(jobId));
+  await ledger.readSettled('job-rec-i2');
+  await ledger.releaseWait(token, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 2, '第 1 条正文接受、第 2 条（注记）失败');
+  const firstEntry = ledger.jobs.get('job-rec-i1');
+  assert.equal(firstEntry.claimedBy, null, '已接受正文认领释放');
+  assert.notEqual(firstEntry.deliveredFact, null, '已接受正文事实保持（不重现）');
+  assert.equal(entry.claimedBy, null, '注记回滚撤销认领');
+  assert.equal(entry.readFailedNoted, false, '注记回滚清占位（通知没送达，允许重投）');
+  assert.equal(entry.deliveredFact, null, '注记条目不置事实');
+  // 重投：注记本体送达。
+  const token2 = ledger.claimWait(rig.OWNER);
+  await ledger.releaseWait(token2, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 3, '注记重投恰一条');
+  assert.match(textOf(rig.calls.inject[2]), /\[read failed\]|\[读取失败\]/, '注记三要素重投在场');
+  assert.equal(entry.readFailedNoted, true, '送达后占位置位');
+});
+
+hostTest('REC-K：完成消息载体回滚凭据四字段——装配后增量经原路保留（V2 防退化锚，修前红）', async () => {
+  // 预算 8 < 正文 32 ⇒ 完成消息按截断形态装配（text≠original）——删凭据的
+  // original 走「text 拼接」分支会把截断文本混进缓冲（红），删 remainder 丢
+  // 装配后增量（红）：两字段同时受锚。
+  const rig = sRig({ budget: 8 });
+  const original = 'HEAD' + 'm'.repeat(24) + 'TAIL';
+  const token = ledger.claimWait(rig.OWNER);
+  await rig.readyJob('job-rec-k', original); // 活等待在场：readSettled 不投
+  const entry = ledger.jobs.get('job-rec-k');
+  assert.equal(entry.buffer, original, '前置：装配前原文在缓冲');
+  // 装配与回滚之间落入增量（模拟保活链/结算读取新到块）：通道抛错前追加——
+  // 完成消息路径的凭据映射若丢 original/remainder（修前形态），回滚退成
+  // 「截断文本拼接」或丢掉装配后增量，宿主一次性 result 已消费、正文永久缺损。
+  const realInject = rig.agent.inject;
+  rig.agent.inject = () => {
+    entry.buffer += 'INC-AFTER-ASSEMBLY';
+    throw new Error('channel refused');
+  };
+  await ledger.releaseWait(token, rig.OWNER); // 构造（claim＋takeShare 截断）→ flush → inject 抛错 → 回滚
+  rig.agent.inject = realInject;
+  const expected = original + 'INC-AFTER-ASSEMBLY';
+  assert.equal(entry.buffer, expected,
+    '回滚＝装配前原文＋装配后增量（完成消息载体凭据带 original/remainder）');
+  assert.equal(entry.claimedBy, null, '回滚撤销认领');
+  assert.equal(entry.deliveredFact, null, '回滚清事实（正文可重投）');
+  assert.equal(rig.calls.inject.length, 0, '通道未送达（前置：记录器只在真通道上计数）');
+  // 关批 → 下一批装配见到完整缓冲（凭据链完整性经装配的 original 再现）。
+  ledger.closeBatchIfIdle(rig.OWNER);
+  const { delivered } = ledger.collectBatch(rig.OWNER, {});
+  assert.equal(delivered.length, 1, '重装配进批');
+  assert.equal(delivered[0].original, expected, '下一批凭据的 original＝原文＋增量（缓冲未损）');
+  assert.equal(delivered[0].truncated, true, '预算 8 仍截断（前置：本批未整条交清）');
+});
+
+hostTest('REC-L：读取失败注记回滚保非空缓冲——凭据不带 original（B1 防复发锚，修前红）', async () => {
+  const rig = sRig({ injectFailsAt: 1 });
+  const token = ledger.claimWait(rig.OWNER);
+  ledger.noteJobStarted(rig.ctx, rig.config, 'job-rec-l', rig.OWNER);
+  const entry = ledger.jobs.get('job-rec-l');
+  // 形态：首等待 partial（中段留缓冲）后终态读取失败——readFailed 与非空缓冲并存。
+  entry.terminal = { status: 'completed' };
+  entry.buffer = 'MIDDLE-REMAINDER-XXXX';
+  entry.readFailed = true;
+  entry.deliveredFact = { via: 'wait', partial: true };
+  await ledger.releaseWait(token, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 1, '注记投递尝试恰一次（失败）');
+  assert.equal(entry.buffer, 'MIDDLE-REMAINDER-XXXX',
+    '注记回滚保非空缓冲（凭据不带 original——修前空 original 分支会清空中段）');
+  assert.equal(entry.readFailedNoted, false, '回滚清占位（未送达可重投）');
+  assert.equal(entry.claimedBy, null, '回滚撤销认领');
+  ledger.closeBatchIfIdle(rig.OWNER);
+  const token2 = ledger.claimWait(rig.OWNER);
+  await ledger.releaseWait(token2, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 2, '注记重投送达');
+  assert.match(textOf(rig.calls.inject[1]), /\[read failed\]|\[读取失败\]/, '注记三要素在场');
+  assert.equal(entry.buffer, 'MIDDLE-REMAINDER-XXXX', '注记送达不动缓冲（正文仍待成功读取后交付）');
+});
+
+hostTest('REC-M：闲通道 followup 失败——注记与正文整队回滚，缓冲与占位恢复（REC-L 的闲通道形）', async () => {
+  const rig = sRig({ followupThrows: true, status: 'idle' });
+  const token = ledger.claimWait(rig.OWNER);
+  await rig.readyJob('job-rec-m1', 'BODY-M-IDLE');
+  ledger.noteJobStarted(rig.ctx, rig.config, 'job-rec-m2', rig.OWNER);
+  const entry = ledger.jobs.get('job-rec-m2');
+  entry.terminal = { status: 'completed' };
+  entry.buffer = 'MIDDLE-M-REMAINDER';
+  entry.readFailed = true;
+  entry.deliveredFact = { via: 'wait', partial: true };
+  await ledger.releaseWait(token, rig.OWNER);
+  // 空闲路径单次合并 followup、无部分接受：抛错＝整队回滚（正文退回、注记清占位）。
+  assert.equal(rig.calls.followup.length, 1, '合并 followup 恰尝试一次（失败）');
+  const body = ledger.jobs.get('job-rec-m1');
+  assert.equal(body.buffer, 'BODY-M-IDLE', '正文整队回滚退回缓冲');
+  assert.equal(body.claimedBy, null, '正文认领回滚');
+  assert.equal(entry.buffer, 'MIDDLE-M-REMAINDER', '读取失败条目缓冲原样保留');
+  assert.equal(entry.readFailedNoted, false, '注记占位回滚（允许重投）');
+  assert.equal(entry.claimedBy, null, '注记认领回滚');
+  // 通道修复后同窗口重投：合并一条送达。
+  rig.agent.followup = (message) => { rig.calls.followup.push(message); };
+  ledger.closeBatchIfIdle(rig.OWNER);
+  const token2 = ledger.claimWait(rig.OWNER);
+  await ledger.releaseWait(token2, rig.OWNER);
+  assert.equal(rig.calls.followup.length, 2, '重投合并一条 followup');
+  const resent = textOf(rig.calls.followup[1]);
+  assert.ok(resent.includes('BODY-M-IDLE'), '正文随重投送达');
+  assert.match(resent, /\[read failed\]|\[读取失败\]/, '注记随重投送达');
+});
+
+hostTest('REC-N：非零退出码的读取失败注记——真实结局携带退出码行（三要素齐全）', async () => {
+  const rig = sRig({});
+  ledger.noteJobStarted(rig.ctx, rig.config, 'job-rec-n', rig.OWNER);
+  const entry = ledger.jobs.get('job-rec-n');
+  entry.terminal = { status: 'completed', exitCode: 1, detail: 'exit code: 1' };
+  rig.ctx.jobs.read = async () => { throw new Error('read fail'); };
+  await ledger.readSettled('job-rec-n');
+  assert.equal(rig.calls.inject.length, 1, '注记恰一条');
+  const notice = textOf(rig.calls.inject[0]);
+  assert.match(notice, /job-rec-n/, '状态行在场');
+  assert.match(notice, /exit code: 1|退出码：? ?1|non-zero|非零/, '非零退出码可见（终态细节走完整渲染管线）');
+  assert.match(notice, /\[read failed\]|\[读取失败\]/, '读取失败标记在场');
+  assert.match(notice, /Retry async_wait|请重试 async_wait/, '重试出路在场');
+});
+
+hostTest('REC-O：让位终局复查投 partial 续段——中段经完成消息第三载体恢复（REL-RECOVER-02）', async () => {
+  const rig = sRig({ budget: 8 });
+  const { omittedMiddle } = await import('../lib/output.js');
+  await rig.readyJob('job-rec-o', 'ABCDEFGHIJKL'); // readSettled 即投截断首条
+  const entry = ledger.jobs.get('job-rec-o');
+  assert.equal(entry.deliveredFact.partial, true, '前置：partial 形态（首尾已付、中段留缓冲）');
+  const middle = omittedMiddle('ABCDEFGHIJKL', 8);
+  // 让位终局复查（无活等待后的被动投递）是 partial 续段的第三载体——认领已随
+  // 宿主接受点释放，复查按 partial 例外投中段，不重发首尾。首条消息的批次在
+  // 无活等待时按关批判定关闭（下一批恢复全额预算）。
+  ledger.closeBatchIfIdle(rig.OWNER);
+  const token = ledger.claimWait(rig.OWNER);
+  await ledger.releaseWait(token, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 2, '续段经完成消息恢复（让位复查载体）');
+  const second = textOf(rig.calls.inject[1]);
+  assert.ok(second.includes(middle), '中段原文在场');
+  assert.ok(!second.includes('ABC'), '不重发首段（已交付首尾阻断）');
+  assert.equal(entry.buffer, '', '续段投出后缓冲清空');
+  assert.equal(entry.deliveredFact.partial, undefined, '完全交付覆盖事实');
+});
+
+hostTest('REC-P：partial 后读取再失败——注记只报待领取份额，不声称「约 0 字符已附带」（读取失败形态的 trigger 不算附带）', async () => {  const rig = await buildRig('rec-p', [], { maxResultChars: 40 });
+  try {
+    const { ledger: led } = await import('../lib/delivery.js');
+    const jobId = rig.ctx.jobs.start({
+      kind: 'at-r57-cmd', label: 'partial then read fail', owner: rig.parent.id,
+      run(job) {
+        job.append(`HEAD-9-CHARS${'y'.repeat(160)}TAIL-10\n`);
+        return { cancel() {}, done: Promise.resolve({ status: 'completed', detail: 'exit code: 0' }) };
+      }
+    });
+    // 首访截断（partial 事实，中段留缓冲）。
+    const first = await rig.waiter.execute(waitArgs(jobId), rig.exec());
+    assert.equal(first.truncated, true, '前置：首访截断');
+    const entry = led.jobs.get(jobId);
+    assert.equal(entry.deliveredFact.partial, true, '前置：partial 事实');
+    // 复合边界：保活链增量读取失败置 readFailed（账本级定论）——再访时该条
+    // 目以「状态行＋重试出路」进批（正文 ''、chars 0），不得拼 partialDelivered。
+    entry.readFailed = true;
+    const second = await rig.waiter.execute(waitArgs(jobId), rig.exec());
+    assert.equal(second.status, 'completed');
+    // 该形态批条目只带状态行与重试出路（正文 ''、chars 0）——出口 output 为空、
+    // 由注记解释；核心断言：不得拼 partialDelivered。
+    const note = second.note ?? '';
+    assert.ok(!/attached with this batch/.test(note),
+      '读取失败形态的 trigger 不算「已附带」——不得声称约 0 字符已随批附带');
+    assert.match(note, /were not attached this time|本次未随附/,
+      '仍为 partial ⇒ 只报待领取份额（partialPending）');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('REC-Q：空输出作业首等不误报 alreadyDelivered——第二分支准入＝装配前已有交付事实（状态行 0 chars 即正确解释）', async () => {
+  const rig = await buildRig('rec-q', [], { maxResultChars: 40 });
+  try {
+    const jobId = rig.ctx.jobs.start({
+      kind: 'at-r57-cmd', label: 'empty output', owner: rig.parent.id,
+      run(job) {
+        job.append(''); // 空输出结算（touch/mkdir 类命令的形态）
+        return { cancel() {}, done: Promise.resolve({ status: 'completed', detail: 'exit code: 0' }) };
+      }
+    });
+    // 首次等待（入口终态分支）：本次装配自置 {via:'wait'}——不得把它当
+    // 「先前已交付」误报 alreadyDelivered（修前该形态无注记；放宽分支后曾误报，
+    // factBefore 门控后恢复）。零等待同口径。
+    const first = await rig.waiter.execute(waitArgs(jobId), rig.exec());
+    assert.equal(first.status, 'completed');
+    const note1 = first.note ?? '';
+    assert.ok(!/delivered earlier|先前已交付/.test(note1),
+      '空输出首达不声称「结果此前已交付、空输出非无产出」——状态行 0 chars 即正确解释');
+    // 复等（装配前事实在场）：空输出此时才由 alreadyDelivered 解释（R58 判据）。
+    const second = await rig.waiter.execute(waitArgs(jobId), rig.exec());
+    assert.equal(second.status, 'completed');
+    assert.match(second.note ?? '', /delivered earlier|先前已交付/,
+      '复等空输出＝解释空 output（防误读为「完成且无输出」）');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('REC-J：等待出口注记两分——续段附带给 partialDelivered（trigger.chars 口径），再截断并陈 partialPending；无续段不谎称（REL-RECOVER-02）', async () => {
+  const rig = await buildRig('rec-j', [], { maxResultChars: 40 });
+  try {
+    const { ledger: led } = await import('../lib/delivery.js');
+    const jobId = rig.ctx.jobs.start({
+      kind: 'at-r57-cmd', label: 'partial notes', owner: rig.parent.id,
+      run(job) {
+        job.append(`HEAD-9-CHARS${'y'.repeat(160)}TAIL-10\n`);
+        return { cancel() {}, done: Promise.resolve({ status: 'completed', detail: 'exit code: 0' }) };
+      }
+    });
+    // 首访：装配 40 份额截断（partial 事实，中段留缓冲）——首次交付不产生
+    // partial 注记（factBefore 为空，无「已附带续段」可陈述）。
+    const first = await rig.waiter.execute(waitArgs(jobId), rig.exec());
+    assert.equal(first.status, 'completed');
+    assert.equal(first.truncated, true, '前置：首访截断（partial 形态）');
+    assert.ok(first.note === undefined || !/attached with this batch/.test(first.note),
+      '首次交付不声称续段已附带');
+    const entry = led.jobs.get(jobId);
+    assert.equal(entry.deliveredFact.partial, true, '前置：partial 事实');
+    // 续访：trigger 携带续段（预算 40 < 缓冲 144 ⇒ 再截断）——双事实并陈：
+    // 已附带份额（partialDelivered，chars＝装配条目份额＝output 长度）＋待领取
+    // 份额（partialPending，chars＝剩余缓冲长度）。
+    const second = await rig.waiter.execute(waitArgs(jobId), rig.exec());
+    assert.equal(second.status, 'completed');
+    assert.ok(second.output.length > 0, '续段正文随 output 附带');
+    assert.match(second.note ?? '', /attached with this batch/, '已附带份额注记在场（partialDelivered）');
+    assert.ok(second.note.includes(`about ${String(second.output.length)} chars`),
+      `chars 口径＝本批装配份额（${String(second.output.length)}）：partialDelivered 的数值与 output 一致`);
+    assert.match(second.note ?? '', /about \d+ chars of the omitted middle were not attached this time/,
+      '待领取份额并陈（partialPending）——只报其一即谎报');
+    assert.ok(!second.output.includes('HEAD-9-CHARS'), '续段不重发首访已付正文');
+    // 末段：续访直到整条装下（每次 40 份额）——最后一访只陈述附带份额
+    //（无剩余 ⇒ 不再有 partialPending）；随后事实完全 ⇒ alreadyDelivered。
+    let latest = second;
+    for (let i = 0; i < 6 && latest.truncated === true; i += 1) {
+      latest = await rig.waiter.execute(waitArgs(jobId), rig.exec());
+      assert.equal(latest.status, 'completed', '续访按终态返回');
+      assert.match(latest.note ?? '', /attached with this batch/, '附带份额注记在场');
+      if (latest.truncated === true) {
+        assert.match(latest.note ?? '', /were not attached this time/, '仍有剩余 ⇒ 并陈待领取份额');
+      }
+    }
+    assert.equal(latest.truncated, false, '末访完整交付（循环收敛）');
+    assert.ok(!/were not attached this time/.test(latest.note ?? ''), '无剩余 ⇒ 不再有 partialPending');
+    const fourth = await rig.waiter.execute(waitArgs(jobId), rig.exec());
+    assert.match(fourth.note ?? '', /already finished|先前已交付/, '完全已交付 ⇒ alreadyDelivered 解释空输出');
+    assert.equal(fourth.output, '', '正文不重复出现');
+  } finally {
+    await rig.dispose();
+  }
+});
+
 
 // ═══ REL-TERMINAL-01：终态细节进完成消息与等待返回（设计 r14 §4）═══
 //
@@ -2380,7 +2860,7 @@ hostTest('T5 等待返回结构化字段：已知才有、未知则无键；stat
     jobsRead: async (jobId) => ({ chunks: [{ channel: 'stdout', text: `BODY-${String(jobId)}` }] })
   });
   try {
-    // 零退出条目先行：单独零等待 ext-t5b（两目标同拍会先触发 killed 目标、
+    // 零退出条目先行：单独零等待 ext-t5b（两目标同一领取窗口会先触发 killed 目标、
     // 另一目标不保证入批——分两次各自触发，断言面各自完整）。
     const okOutcome = await rig.waiter.execute(
       { wait_ms: 0, targets: [{ kind: 'job', id: 'ext-t5b' }] }, rig.exec()
@@ -2574,7 +3054,7 @@ hostTest('T7 真实通道：后台 node 退出 3 与 kill 终止的完成消息�
       const found = rig.ctx.jobs.list(rig.parent.id).find((candidate) => candidate?.id === handle.job_id);
       if (found !== undefined && ['completed', 'killed', 'failed'].includes(found.status)) row = found;
     }
-    assert.ok(row !== null, '5 秒内轮询到终态（不等保活链 60 秒拍）');
+    assert.ok(row !== null, '5 秒内轮询到终态（不等保活链 60 秒周期）');
     await ledger.readSettled(handle.job_id);
     assert.equal(rig.injections.length, 1, '无活等待→完成消息恰一条（忙路径 inject）');
     const text = textOf(rig.injections[0]);

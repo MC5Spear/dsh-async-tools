@@ -3,12 +3,12 @@
  * 该测必红；`verify/mutate-agent-policy.mjs` 打检查器侧）。
  *
  * 实时口径（需求 §2.3.2）后本模块只剩两样被测物：投影定义的**形状副本**
- * （与宿主同形的 fold＋zod stateSchema——它是解读原生会话投影与钉版看守的
+ * （与宿主同形的 fold＋zod stateSchema——它是解读原生会话投影与逐行互锚检查的
  * 形状依据）与 **`policyOf`**（init null 折 undefined 的读取语义）。采样链已
  * 随派生路径改现读 `subagentModelSelection` 服务而删除——相关用例改住在
  * `test/agent.test.mjs`（服务假件）。
  *
- * 夹具纪律：**不读宿主树**（钉版看守 `verify/check-agent-policy.mjs` 管树锚；
+ * 夹具纪律：**不读宿主树**（逐行互锚检查 `verify/check-agent-policy.mjs` 管树锚；
  * 单测只测本包逻辑）。迷你投影注册表按「事件列表惰性 fold」实现——与真注册表
  * 同款读时补折语义。
  *
@@ -46,7 +46,7 @@ function makeSession({ events = [] } = {}) {
   return { __events: events };
 }
 
-test('常量与宿主同串同值（钉版看守的值锚被单测再钉一层）', () => {
+test('常量与宿主同串同值（逐行互锚检查的值锚被单测再钉一层）', () => {
   assert.equal(POLICY_KEY, 'subagentModelSelectionPolicy');
   assert.equal(POLICY_STATE_VERSION, 1);
   assert.equal(POLICY_EVENT, 'subagent/model-selection-policy');

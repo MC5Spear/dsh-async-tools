@@ -831,7 +831,7 @@ test('T16：plugins.bundle.config keyed 槽契约 + 毫秒换算秒读数', asyn
     effect: function (fn) { return fn(); }
   };
   product.apply(fakeCtx);
-  // ask 座位在 $mount promise 的微任务之后注册（真机同款顺序）——冲两拍微任务再数。
+  // ask 座位在 $mount promise 的微任务之后注册（真机同款顺序）——冲两轮微任务再数。
   await Promise.resolve();
   await Promise.resolve();
   // apply() 注册**三**个座位：设置卡 + ask overlay + ask sidebar（后两个默认关——
@@ -1085,7 +1085,7 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
     },
     effect: (fn) => fn()
   });
-  // ask 模型在 $mount promise 的微任务之后取控制器——冲两拍再数。
+  // ask 模型在 $mount promise 的微任务之后取控制器——冲两轮再数。
   await Promise.resolve();
   await Promise.resolve();
   const Card = registrations[0];
@@ -1732,7 +1732,7 @@ test('T23（PRESET-BIND-01·需求 9.4.2）：预设绑定块——目录四态/
     return node;
   };
   const renderCard = () => expand({ type: Card, props: { view: 'page', t } });
-  // 宏任务一拍：排空全部在途微任务（then 链的跳数不固定，按拍数等不可靠）。
+  // 宏任务一轮：排空全部在途微任务（then 链的跳数不固定，按轮数等不可靠）。
   const settle = () => new Promise((resolveTick) => { setTimeout(resolveTick, 0); });
   const replace = (next) => { current = next; for (const listener of listeners) listener(); };
   const buttonByLabel = (aTree, label) =>
@@ -2360,8 +2360,10 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     }
   }
 
-  // ⑦ T21 在场断言扩展：20 字段的字段名键、hint.<键>、help.<键> 两档全必须在场
-  //    （删任一键即红——本循环逐键断言；含 PRESET-BIND-01 的 boundPresets）。
+  // ⑦ 在场断言扩展（T18c 内循环）：20 字段的字段名键、hint.<键>、help.<键> 两档
+  //    全必须在场（删任一键即红——本循环逐键断言；含 PRESET-BIND-01 的
+  //    boundPresets）。两语键集一致性另由 tools/check-model-text.mjs 的静态键集层
+  //    检查；T21 是另一条用例，核对语言选择与缺键回退宿主。
   for (const key of Object.keys(NAMES_ZH)) {
     for (const lang of ['zh', 'en']) {
       for (const prefix of ['', 'hint.', 'help.']) {
@@ -2695,7 +2697,8 @@ test('T23d（正整数体系）：maxResultChars 非整数草稿 parse 拒绝＋
   assert.match(code, /notInteger\s*\? t\("invalidInteger"\)/, '非整数草稿必须给出 invalidInteger 档的原因文案');
   assert.match(code, /INTEGER_FIELDS = \{ maxResultChars: true \}/, '整数字段表只登记 maxResultChars');
 
-  // ④ 词典两档都带 invalidInteger 键（zh/en 键集一致由 T21 守，这里守内容）。
+  // ④ 词典两档都带 invalidInteger 键（zh/en 键集一致由 tools/check-model-text.mjs
+  //    的静态键集层守，这里守内容）。
   assert.ok(product.DICTIONARIES.zh.invalidInteger.length > 0, 'zh invalidInteger 在场');
   assert.ok(product.DICTIONARIES.en.invalidInteger.length > 0, 'en invalidInteger 在场');
   assert.match(product.DICTIONARIES.zh.invalidInteger, /整数/, 'zh 文案必须说"整数"');
@@ -2750,7 +2753,8 @@ test('T23b（R29-d·判据 14）：卡片层跨字段配对——pollIntervalMs 
   assert.match(code, /t\("invalidPair\." \+ field\.key\)\.replace\(\/\\{ref\\}\/g, t\(pairHit\)\)/,
     '配对违例要有专用文案（按字段键拼 invalidPair.<键> 并把 {ref} 换成参照字段名）');
 
-  // 词典两语言键集成对（词典纪律：zh/en 键集一致由 T21 守，这里守新增键的内容）。
+  // 词典两语言键集成对（词典纪律：zh/en 键集一致由 tools/check-model-text.mjs
+  // 的静态键集层守，这里守新增键的内容）。
   assert.ok(product.DICTIONARIES.zh['invalidPair.pollIntervalMs'].length > 0, 'zh 配对文案在场');
   assert.ok(product.DICTIONARIES.en['invalidPair.pollIntervalMs'].length > 0, 'en 配对文案在场');
   assert.match(product.DICTIONARIES.zh.invalidRange, /\{max\}/, 'zh invalidRange 必须带 {max} 插位');

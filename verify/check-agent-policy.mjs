@@ -1,9 +1,9 @@
 /**
- * 钉版看守（设计 §3.3 有限锚集）：本包 `lib/agent-policy.js` 的投影定义形状
+ * 逐行互锚检查（设计 §3.3 有限锚集）：本包 `lib/agent-policy.js` 的投影定义形状
  * 副本与宿主 `dsh-tool-subagent` 的现行源按**有限锚集**逐行互锚——锚外漂移不红、
  * **不证明语义等价**，也不代替实际指定路由验证（清单以本脚本的锚表为准）。
- * 只看守形状副本与宿主定义的同形、不锚定采样链——派生路径现读实时策略
- * （需求 §2.3.2，无会话采样），形状副本只服务于原生会话投影的解读与钉版
+ * 只检查形状副本与宿主定义的同形、不锚定采样链——派生路径现读实时策略
+ * （需求 §2.3.2，无会话采样），形状副本只服务于原生会话投影的解读与互锚
  * （设计 §3.3）。
  *
  * ## 为什么要有它
@@ -202,7 +202,7 @@ export async function resolveHostSource({ hostFile, env = process.env, root = RO
 // CLI 尾：只在作为主模块运行时执行（变异看守 import 纯函数时不自跑）。
 const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? '').href;
 if (isMain) {
-  const WHAT = 'verify/check-agent-policy.mjs（模型策略钉版看守）';
+  const WHAT = 'verify/check-agent-policy.mjs（模型策略逐行互锚检查）';
   const hostArgIdx = process.argv.indexOf('--host-file');
   const hostFile = hostArgIdx < 0 ? undefined : process.argv[hostArgIdx + 1];
   // 显式来源给了就必须可用：缺值不回退本机配置（回退会把调用错误读成"锚漂移"或跳过）。
@@ -233,7 +233,7 @@ if (isMain) {
   for (const line of report) console.log(line);
   console.log(`宿主源：${resolved.hostPath}（来源：${resolved.source}）`);
   console.log(failures === 0
-    ? `agent-policy 钉版看守全绿（宿主 ${String(HOST_ANCHORS.length)} 锚 + 本包 ${String(OUR_ANCHORS.length)} 锚）`
-    : `agent-policy 钉版看守 ${String(failures)} 处红`);
+    ? `agent-policy 逐行互锚检查全绿（宿主 ${String(HOST_ANCHORS.length)} 锚 + 本包 ${String(OUR_ANCHORS.length)} 锚）`
+    : `agent-policy 逐行互锚检查 ${String(failures)} 处红`);
   process.exitCode = failures === 0 ? 0 : 1;
 }

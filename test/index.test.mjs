@@ -231,7 +231,7 @@ function ctxGetLiterals(text) {
  *   `{enabled, allowedModels}`（启动前重读防撤回），`async_list_subagent_models`
  *   的目标适用性判断同读。缺席或读取失败只影响这两条路径（可读拒绝／未确认），
  *   工具照常注册——写进 `inject` 会让未挂 model-selection-settings 的部署
- *   整行不激活（六个工具陪葬）。
+ *   整行不激活（五个工具陪葬）。
  *
  * - `llm`：LLM 目录与调用配置服务（预检 `resolveCallConfig`；查询工具的
  *   `listProviders`／`listModels`／`resolveModelInfo`，需求 §2.3.1/§2.3.4）。

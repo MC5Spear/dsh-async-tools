@@ -89,7 +89,7 @@ async function until(describe, predicate, timeoutMs) {
   }
 }
 
-/** 定位"指定 wait_ms 的等待已经出现在转录里且会话在跑"后再等两拍，返回是否到达发消息的窗口。 */
+/** 定位"指定 wait_ms 的等待已经出现在转录里且会话在跑"后再等两个轮询周期，返回是否到达发消息的窗口。 */
 async function waitForWaitWindow(waitMs, timeoutMs) {
   const startedAt = Date.now();
   let firstSeen = -1;

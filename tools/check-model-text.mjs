@@ -232,8 +232,8 @@ const OPERATOR_MARKERS = ['LOG_PREFIX', 'logger.', 'logger?.', 'diag(', 'process
  * 允许的有三类——**定长标记**（宿主同款英文，不是句子）、**校验/断言错误**
  * （操作者一侧：降级 stderr 与开发期断言，schemastery 同层也是英文）与
  * **宿主逐字同形副本**：宿主源码里逐字存在的
- * 串，钉版看守（有限锚集）要求被锚住的串与宿主逐字同形——双语化即破坏锚、即与宿主
- * 行为漂移。判定特征统一为"宿主侧同串同现 + 看守锚定于宿主源"。
+ * 串，逐行互锚检查（有限锚集）要求被锚住的串与宿主逐字同形——双语化即破坏锚、即与宿主
+ * 行为漂移。判定特征统一为"宿主侧同串同现 + 互锚检查锚定于宿主源"。
  */
 const PROSE_ALLOWLIST = {
   'jobs.js': [
@@ -299,6 +299,8 @@ const PROSE_ALLOWLIST = {
   'index.js': [
     { needle: 'the tool-jobs row must be part of', why: '操作者一侧诊断（ctx.logger.warn——job_output 隐藏登记降级行的尾段字面量，不进模型上下文；agent/created 挂点改版后的新措辞，needle 须与被抽取字面量同段）' },
     { needle: 'agent.ctx.tools.restrict unavailable', why: '操作者一侧诊断（同上降级路径 throw 的 Error 消息——只在进程内被 catch 转 warn，不进模型上下文）' },
+    { needle: 'agent.ctx.tools.register unavailable', why: '操作者一侧诊断（会话遮蔽注册降级的 warn 前缀——PRESET-ISOLATION-02 防御路径，不进模型上下文）' },
+    { needle: 'shared description stays session-neutral', why: '同上（遮蔽注册失败降级行的说明尾段——共享定义回落基础文本的操作者侧交代）' },
     { needle: 'async-tools: job_output hide', why: 'cordis effect 卸载标签（行卸载时摘限制句柄的登记名，宿主日志一侧，不进模型上下文）' }
   ],
   'delivery.js': [
@@ -306,14 +308,15 @@ const PROSE_ALLOWLIST = {
     { needle: 'keep-alive beat', why: '同上（预注册心跳被注册表拒绝的 warn 行；jobId 与错误文本来自变量插值）' },
     { needle: 'settled read', why: '同上（结算读取失败的 warn 行）' },
     { needle: 'incremental read', why: '同上（增量读取失败的 warn 行）' },
-    { needle: 'completion delivery for', why: '同上（完成消息投递失败/registry miss 的 warn 行——owner 与错误文本来自变量插值，两条同前缀合并登记）' }
+    { needle: 'completion delivery for', why: '同上（完成消息投递失败/registry miss 的 warn 行——owner 与错误文本来自变量插值，两条同前缀合并登记）' },
+    { needle: 'post-settle delivery for', why: '同上（#settleReady 加固 catch 的 warn 行——结算后补投失败的防御路径，jobId 与错误文本来自变量插值）' }
   ],
   // 宿主副本豁免类：assertRoutes 三条 + fold 空名单 throw 一条，全部是宿主
-  // `dsh-tool-subagent` 源码的逐字同形串——verify/check-agent-policy.mjs 钉版看守
+  // `dsh-tool-subagent` 源码的逐字同形串——verify/check-agent-policy.mjs 逐行互锚检查
   // （有限锚集）锚住这些串的逐字形态；改一字（含双语化）看守即红、
   // 本包即与宿主行为漂移。宿主侧同串同现，不是本包自有文案。
   'agent-policy.js': [
-    { needle: 'subagent model selection requires an array of routes', why: '宿主逐字同形副本（assertRoutes ↔ 宿主 assertAllowedModelRoutes；钉版看守锚住该串、要求逐字，双语化即破坏锚）' },
+    { needle: 'subagent model selection requires an array of routes', why: '宿主逐字同形副本（assertRoutes ↔ 宿主 assertAllowedModelRoutes；逐行互锚检查锚住该串、要求逐字，双语化即破坏锚）' },
     { needle: 'subagent model selection requires non-empty provider and model ids', why: '同上（宿主 assertAllowedModelRoutes 的第二条校验串）' },
     { needle: 'subagent model selection repeats route', why: '同上（重复路由 throw 的模板串；needle 取插值前的稳定前缀）' },
     { needle: 'requires at least one route', why: '宿主逐字同形副本（fold 空名单 throw ↔ 宿主投影定义同串；「≥1 条」分列在此处与 settings current() 等三处校验，不在 assertRoutes）' }
@@ -466,7 +469,7 @@ async function collectSamples(agentLang) {
   let waitError = '';
   try { resolveWait(undefined, resolveConfig({ agentLang })); } catch (error) { waitError = String(error?.message ?? error); }
   samples.push(['error.waitRequired', waitError]);
-  // WAIT-OBSERVE-01／WAIT-SETTLE-GATE-01 的四个新键（周期复查交回与结算复查门）：
+  // WAIT-OBSERVE-01／WAIT-SETTLE-GATE-01 的四个新键（周期复查交回与结算交付前的注册表复核）：
   // 经 t() 直接取样——运行时层判据（en 零 CJK、zh 换语言）对新键同样成立。
   samples.push(
     ['t(wait.workConcluded)', t(agentLang, 'wait.workConcluded')],

@@ -301,7 +301,7 @@ hostTest('供应商数量口径：依据确认→允许计数（不因列举失�
   assert.equal(byIdU.zai.model_count, 2, '目录已知数取目录全量（与名单无关）');
   assert.match(toolAbsent.output.render({}, unconfirmed)[0].text, /zai — Z\.ai \(2 model\(s\) in catalog\)/);
 
-  // ② 开关关（not-allowed）：同拍标目录已知数（不能冒称允许模型数）。
+  // ② 开关关（not-allowed）：同一时刻标目录已知数（不能冒称允许模型数）。
   const envOff = listEnv({ selection: { enabled: false, allowedModels: ROUTES } });
   const toolOff = checkedTool(createListModelsTool(envOff.ctx, envOff.view));
   const off = await toolOff.execute({}, envOff.exec);

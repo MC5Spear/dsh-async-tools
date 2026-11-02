@@ -27,7 +27,7 @@ import { LocalConfigInvalid, LOCAL_DIR } from '../tools/_local-config.mjs';
 
 const ROOT = resolve(import.meta.dirname, '..');
 
-/** 本包侧被测源（现行实现，钉版看守的另一半）。 */
+/** 本包侧被测源（现行实现，逐行互锚检查的另一半）。 */
 const OUR_TEXT = readFileSync(join(ROOT, 'lib', 'agent-policy.js'), 'utf8');
 
 /**

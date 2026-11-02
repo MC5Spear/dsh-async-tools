@@ -563,7 +563,7 @@ async function phaseAgent() {
     // ── 实时腿：同一会话内开关翻转（不重开会话——与采样口径的分水岭）──
     // ① 关：本会话下一次指定路由必须可读拒绝（selectionDisabled 或启动前重读
     //    撤回 routeRecheckFailed——两者都是实时口径的合法拒绝形态），且零派生；
-    //    查询工具同拍判"不允许显式选择"（双向差异，§2.3.4）。
+    //    查询工具同一时刻判"不允许显式选择"（双向差异，§2.3.4）。
     await rpc('settings/update', { ns: SEL_NS, patch: { enabled: false } });
     await ask(sid, [
       'Follow these steps in order and do nothing else:',

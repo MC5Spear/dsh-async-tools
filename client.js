@@ -32,8 +32,10 @@ var module = { exports: {} }; var exports = module.exports;
 // - 帮助（需求 5.5/5.6）：每个字段标签旁带圈问号按钮（官方
 //   `IconQuestionOutlineRegular`），点击在字段下方展开 `help.<键>` 正文、再点收起；
 //   开合只存 `FieldShell` 局部 state，不碰草稿/保存/mutate；缺键回退＝按钮/说明行
-//   退场（`resolveCopy`），T21 在场断言守键组（标签/hint/help 三前缀）两档齐全
-//  （`boundPresets` 的三个同前缀键随新字段入表同受守护）。
+//   退场（`resolveCopy`）。20 字段的键组在场断言（标签/hint/help 三前缀两档齐全，
+//   含 `boundPresets` 的三个同前缀键）由 test/two-planes.test.mjs 的 T18c 在场
+//   断言循环守；两语键集一致性另由 tools/check-model-text.mjs 的静态键集层检查
+//  （T21 实际核对的是语言选择与缺键回退宿主，见同文件）。
 // - 毫秒字段的秒数读数（需求 §5.4）长在说明行里，
 //   **与字段说明换行**（行首不带点，样式照同机参考插件的读数行）：说明行 =
 //   字段说明 + 换行 + 「生效：S s」+「 · 」+「输入：T s」。值**只写秒文本**
@@ -312,7 +314,9 @@ function flagFieldSpec(key) {
  *
  * - `format`：数组原样 JSON 串；非数组（含降级态 describe 出来的损坏原值）
  *   折回 `'[]'`——复选框块按空草稿渲染，损坏值不在草稿层爆开；
- * - `parse`：空文本判清除（恢复默认＝unset 路径→schema 默认两预设）；JSON
+ * - `parse`：空文本判清除（恢复默认＝unset 只清用户覆盖；生效值按配置优先级
+ *   重取——组合层仍配置时优先生效，组合层与用户覆盖都不在时才是 schema 默认
+ *   两预设）；JSON
  *   解析后必须是**无重复的非空字符串数组**（与服务端 `resolveConfig` 同判据，
  *   需求 9.4.3 空数组合法＝解除全部绑定）；其余判非法（undefined → 官方非法
  *   通道 → 保存禁用）。复选框 UI 结构上不产生重复，这层校验防程序化写入口；
@@ -880,7 +884,8 @@ function createPresetCatalog() {
  * - 块头：标签（词典键 `boundPresets`）＋带圈问号帮助（`help.boundPresets`，
  *   开合模式照 `FieldShell`）＋「刷新」按钮（只重读目录，不碰草稿/保存/mutate）；
  * - 生效值行：当前生效名单（value 层）＋覆盖徽标＋恢复默认按钮（走通用字段
- *   重置 → unset → schema 默认两预设）；
+ *   重置 → unset 只清用户覆盖；生效值按配置优先级重取——组合层仍配置时保持
+ *   组合值，组合层与用户覆盖都不在时才是 schema 默认两预设）；
  * - 状态行：loading／目录空（与失败区分）／失败（带原因＋重试）；
  * - 条目行：目录项 = 原生 checkbox（键盘与辅助技术天然可操作）＋宿主显示名称
  *   （不由本包翻译）＋ID 小字；`broken` 项已绑定可取消、未绑定禁选；已绑定但
@@ -1283,7 +1288,7 @@ var DICTIONARIES = {
     "opt.uiLang.en": "English",
     "opt.agentLang.en": "English（默认）",
     "opt.agentLang.zh": "中文",
-    // 预设功能绑定（需求 9.4）：标签/hint/help 三前缀随 FIELDS 入表受 T21
+    // 预设功能绑定（需求 9.4）：标签/hint/help 三前缀随 FIELDS 入表受 T18c
     // 在场断言守护；preset.* 系列两语成对由词典键集相等断言守护。
     "boundPresets": "适用预设",
     "hint.boundPresets": "选中后向该预设的会话注入异步执行纪律；静默失败提示与待答面板提问处理仍分别受各自开关控制。按会话当前实际预设匹配。",
@@ -1412,7 +1417,7 @@ var DICTIONARIES = {
     "opt.uiLang.en": "English",
     "opt.agentLang.en": "English (default)",
     "opt.agentLang.zh": "中文",
-    // Preset binding (req. 9.4): label/hint/help prefixes guarded by the T21
+    // Preset binding (req. 9.4): label/hint/help prefixes guarded by the T18c
     // presence assertion via FIELDS; the preset.* series is guarded by the
     // dictionary key-set equality assertion (zh/en must stay paired).
     "boundPresets": "Applicable presets",
@@ -1439,7 +1444,7 @@ var DICTIONARIES = {
 // 组装位置参数）；回执 `{ok,value|error}`（voice-input 同款判法）。总开关关 → 模型停
 // 轮询、两座位渲染 null——零行为。
 
-/** 轮询间隔（待答状态的轮询节拍；1000 ms，与 host 侧 state() 的轮询预期一致）。 */
+/** 轮询间隔（待答状态的轮询周期；1000 ms，与 host 侧 state() 的轮询预期一致）。 */
 var ASK_STATE_POLL_MS = 1000;
 /** 命名空间与服务键（设计 §4.3；与宿主 `lib/ask-takeover.js` 同串，对账锚点）。 */
 var ASK_NAMESPACE = "async-tools-ask";
@@ -1996,7 +2001,7 @@ function AskItem(props) {
   var setDraft = draftPair[1];
   var busyRef = React.useRef(false);
   var rerender = React.useState(0)[1];
-  // 本地走秒（需求 §4.3「倒计时继续运行」）：显示层每秒自跳一拍，**不依赖轮询返回**——
+  // 本地走秒（需求 §4.3「倒计时继续运行」）：显示层每秒自跳一格，**不依赖轮询返回**——
   // 轮询挂起（宿主忙、RPC 排队）时读数照走，不再冻结在最后一次成功轮询的值上；
   // 服务端期限仍是权威，`skew` 校准在每轮成功轮询后自校。后台标签的浏览器
   // 节流只降低刷新密度，不破坏正确性（文本每次重渲都按 Date.now() 现算）。

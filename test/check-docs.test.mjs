@@ -45,8 +45,9 @@ const SCRIPT = 'tools/check-docs.mjs';
  * 静态导入有顺带执行整场检查的风险（函数形态只在调用时跑，但双份清单的漂移风险
  * 本来就是 C5 要盯的）。重复一份的代价是可能漂移，所以 C5 顺便断言这些文件都存在。
  */
-// 过程性文档（问题清单）同属公开范围 docs/ 的现行文件——收尾整份删除时同步撤
-// 本名单与 tools/check-docs.mjs 责任表里的登记行（C5 与未分类对账两侧都盯着）。
+// 过程性文档（问题清单）同属公开范围 docs/ 的现行文件——按条目清理、全部解决后
+// 清空内容（CONTRIBUTING）；文件去留在收尾决定时同步：整份删除时同步撤本名单与
+// tools/check-docs.mjs 责任表里的登记行（C5 与未分类对账两侧都盯着）。
 const CURRENT_DOCS = ['requirements.md', 'design.md', 'user-reference.md', 'user-reference.en.md', 'documentation-principles.md', 'issue-list.md'];
 
 /**

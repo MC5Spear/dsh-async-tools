@@ -79,10 +79,10 @@ npm run check:alias-tokens
 
 | 脚本 | 当前用途与边界 |
 | --- | --- |
-| [`check-agent-policy.mjs`](<check-agent-policy.mjs>) | 钉版看守本包 `lib/agent-policy.js` 的形状副本与宿主 `dsh-tool-subagent` 现行源同形（有限锚集，宿主侧 H1–H8 对本包侧 O1–O14，其中两锚钉行号）；不注册投影、不锚定采样链——派生路径现读宿主模型选择服务（`subagentModelSelection.current()`），会话投影只用于原生目标的适用性判断；锚外漂移不红，也不证明语义等价或代替实际指定路由验证 |
+| [`check-agent-policy.mjs`](<check-agent-policy.mjs>) | 用固定锚集核对本包 `lib/agent-policy.js` 的形状副本与宿主 `dsh-tool-subagent` 现行源逐字同形（有限锚集，宿主侧 H1–H8 对本包侧 O1–O14，其中两锚按行号定位）——锚内文本任一侧变动（含宿主升版改形而本包未跟）即红，锚外漂移不红；同一锚集固定「无投影注册、无采样」的现行事实；不注册投影、不锚定采样链——派生路径现读宿主模型选择服务（`subagentModelSelection.current()`），会话投影只用于原生目标的适用性判断；同形不证明语义等价，也不代替实际指定路由验证 |
 | [`d05-readme-composition.mjs`](<d05-readme-composition.mjs>) | 用户参考 delegation 组示例（cordis:group＋workflow-ptc 引擎行＋async_workflow 行）的进程内装载语义：工具进组、workflowEngine 组隔离、缺引擎行可读拒绝＋零作业；带引擎组合的纯编排成功以真机 dsh-async 预设转录为证（进程内树无 ptcRuntime 提供者，不伪造激活）；需要宿主锚 |
 | [`check-junctions.mjs`](<check-junctions.mjs>) | 开发树接线目标与声明版本核对；dsh* 接受支持集合内任一 rc，但要求四条同 rc、全部 junction 指向同一棵宿主树；缺席、错树、错版、混 rc 分开，不证明内存已加载同一模块 |
-| [`../tools/check-host-compat.mjs`](<../tools/check-host-compat.mjs>) | 宿主兼容声明与**给定宿主树**的解析来源：官方 `evaluatePluginCompatibility` 放行支持集合三项、拒载集合外边界（并确认拒载来自九条 peer、无 `engines.dsh`、无版本豁免），再核对九个 dsh peer 与 cordis／timer 两个 peer 在宿主树顶层、九个 dsh peer 同 rc；dependencies 叶子按 `--leaf-layout` 判（host 全同树；profile 允许同版本地副本）。支持集合只读包清单 peer 原文，不另存版本表。**不覆盖**已安装插件在真实 runtime 实际取得的 peer 路径——那由运行期观测核对，不用本检查的通过代替 |
+| [`../tools/check-host-compat.mjs`](<../tools/check-host-compat.mjs>) | 宿主兼容声明与**给定宿主树**的解析来源：官方 `evaluatePluginCompatibility` 放行支持集合四项（`0.2.1-rc.2`／`rc.3`／`rc.4`／`rc.5`）、拒载集合外边界（并确认拒载来自九条 peer、无 `engines.dsh`、无版本豁免），再核对九个 dsh peer 与 cordis／timer 两个 peer 在宿主树顶层、九个 dsh peer 同 rc；dependencies 叶子按 `--leaf-layout` 判（host 全同树；profile 允许同版本地副本）。支持集合只读包清单 peer 原文，不另存版本表。**不覆盖**已安装插件在真实 runtime 实际取得的 peer 路径——那由运行期观测核对，不用本检查的通过代替 |
 | [`diff-trees.mjs`](<diff-trees.mjs>) | 安装树包级字节差异，属于调研，不以零差异代替行为回归 |
 | [`check-facts-anchors.mjs`](<check-facts-anchors.mjs>) | 维护者事实条目四字段及文件／行号可解析性，不判引用语义正确；缺来源与坏引用分开 |
 | [`message-markers.mjs`](<message-markers.mjs>) | 从当前双语文案取得判断标记，不能让用例只在一种语言成立 |

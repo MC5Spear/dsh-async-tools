@@ -15,8 +15,9 @@
 #      async_list_subagent_models 是顶层只读行——查询工具不进 delegation 组，
 #      设计 §3.5）；第五个工具 async_workflow 在 delegation 组内 tool-workflow 行后
 #      ——编排引擎是组内隔离服务，组外行取不到（需求 §3.2 末条、设计 §3.4）。
-#      五行 config 均携带 owningPreset 归属声明（设计 §6.2——描述警示按行归属
-#      判定，非 volatile）；
+#      五行 config 均携带 owningPreset 行身份声明（非 volatile、RPC 不可写——
+#      组合文件与诊断指认「这一行属于哪份预设」用；防护内容的判定统一按
+#      「会话实际预设 ∈ boundPresets」，与行声明无关，设计 §6.2）；
 #   4. tool-workflow 与 tool-subagent 系委托入口（单发 / fork）置 disabled: true
 #      （需求 §3.1：委托／编排入口收归本包——派生入口唯一化为 async_agent、
 #      编排入口唯一化为 async_workflow，统一等待预算与消息纪律；原生
