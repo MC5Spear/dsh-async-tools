@@ -2804,12 +2804,12 @@ test('T8b（R29-a·判据 15 附）：settings 的悬空动态 import 必须 .ca
 // ═════════════════════════════════════════════════════════════════════
 // W-MIGRATE（MIGRATE-01）：0.2.5 平铺行 config 的迁移警告。
 //
-// 机制事实（丢失点归因，见 docs/issue-list.md MIGRATE-01）：平铺键经
-// schemastery object resolve 的 merge 透传与 cordis internal/config waterfall
-// 原样到达 apply；本包 normalizeConfigInput 的 `settings` 缺省 `{}` 短路使
-// 预置值回落默认——静默。装载警告（lib/index.js applyWith，一行英文 stderr）
-// 是**尽力提示非保证**（宿主改 strict 丢弃时入口 config 通道消失，警告缺席
-// 不证明正形）。
+// 机制事实（丢失点归因与对照示例见 `CHANGELOG.md`「从 0.2.5 形态的行配置迁移」
+// 节——公开仓档案，随版本保留；装载警告实现见 `lib/index.js` applyWith）：
+// 平铺键经 schemastery object resolve 的 merge 透传与 cordis internal/config
+// waterfall 原样到达 apply；本包 normalizeConfigInput 的 `settings` 缺省 `{}`
+// 短路使预置值回落默认——静默。装载警告是**尽力提示非保证**（宿主改 strict
+// 丢弃时入口 config 通道消失，警告缺席不证明正形）。
 //
 // 装置：真 cordis Context + 假九服务（index.test.mjs 的 makeContext 形态），
 // 经真 `apply` 通道装载工具行；console.warn 收集警告（警告恰一行、键名在场）。

@@ -29,13 +29,16 @@
  * P27 锚句表快照锁（⑤b）——文案侧删句由 P26 全表逐锚击杀看守（表内每条
  * 锚被删必红）；表侧弱化（删行、改锚、加锚）由 P27 的独立期望清单看守，
  * 两方向都要显式改测试才会动。
+ * 通用纪律变体（VERIFY-GENERIC-01，判据 ⑤c）用例：P28 通用锚句表逐锚删除
+ * 变异、P29 通用锚句表快照锁、P30 整段置空变异（en/zh 各一次 × 两份补丁——
+ * 固化验收受控反例「置空仍通过」修后必不成立）。
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { validatePatch, EXPECTATIONS, expectedTopFromBaseline, loadYaml } from '../tools/validate-preset.mjs';
+import { validatePatch, EXPECTATIONS, GENERIC_DISCIPLINE_ANCHORS, expectedTopFromBaseline, loadYaml } from '../tools/validate-preset.mjs';
 import { candidateModules } from '../tools/_host-resolve.mjs';
 import { t } from '../lib/text.js';
 import { hostTestByProbe } from './_host-gate.mjs';
@@ -68,8 +71,11 @@ const baselineCreate = readFileSync(PATCH_CREATE, 'utf8');
  *  （与 `tools/_host-resolve.mjs` 同一套候选），**不写死机器路径**——公开仓的 CI 用
  *  `npm install @deepseek-ai/dsh@<精确宿主版本>`（支持集合逐宿主）提供这个包。
  *
- *  npm 安装树（本机与 CI 同源装出）的两份基线文件字节固定（standard 6799 B、
- *  cordis 7406 B——基线漂移会先在这里露头）。锚点取哪边期望集都一致。 */
+ *  基线文件按宿主代际而变：0.2.1 兼容线（支持集全体）两份基线字节相同
+ *  （standard 6799 B／cordis 7406 B，锚点取哪边期望集都一致）；集合外的
+ *  0.2.0-rc.2 树为 7511／8089 B（不同代基线）。P14 的期望集钉在 0.2.1
+ *  兼容线（文件头 P14 定义），锚宿主是其他代际时对账不适用——用例内按锚内
+ *  dsh 版本代际门显式 NOTE 跳过，不静默、不冒充对账通过。 */
 const WEB_APP_PRESETS = candidateModules(process.env.DSH_HOME ?? join(homedir(), '.dsh'))
   .map((dir) => join(dir, '@deepseek-ai', 'dsh-web-app', 'presets'))
   .find((dir) => existsSync(join(dir, 'standard.patch.yml')));
@@ -426,6 +432,17 @@ hostTest('validate-preset：创造补丁 toolName 写错必须拦住（P13，④
 
 hostTest('validate-preset：期望集必须与 shipped 基线的真实行集合逐条比对（P14，防快照漂移）', async () => {
   const { load } = await loadYaml();
+  // 代际门（P14 按定义只对 0.2.1 兼容线证据树对账）：锚宿主的 dsh 版本不是
+  // 0.2.1 线（如误把集合外的 0.2.0-rc.2 树当锚——其基线 7511/8089 B，与期望集
+  // 不同代）时，逐条比对会把「基线代际差」误报成快照漂移。显式 NOTE 后跳过
+  // 整组对账：不静默、不冒充对账通过；期望集仍在 0.2.1 线锚（本机与 CI 的
+  // 主验锚，线内两树基线字节相同）上被本用例钉死。
+  const anchorDsh = JSON.parse(readFileSync(
+    join(WEB_APP_PRESETS, '..', '..', 'dsh', 'package.json'), 'utf8')).version;
+  if (!anchorDsh.startsWith('0.2.1')) {
+    console.log(`NOTE P14 期望集钉在 0.2.1 兼容线基线；当前锚宿主 dsh@${anchorDsh} 的基线为另一代，逐条对账不适用，跳过（防把代际差误报成快照漂移）。`);
+    return;
+  }
   for (const { configId, baselineFile, baselineName } of RECONCILE) {
     if (baselineFile === undefined || !existsSync(baselineFile)) {
       assert.fail(`P14 对账依赖的基线补丁读不到：@deepseek-ai/dsh-web-app/presets/${baselineName}（期望集 ${configId} 的出处就是它）。候选锚 = DSAT_HOST_MODULES → DSH_HOME/profiles → %APPDATA%/npm 全局树；CI 上由 npm install @deepseek-ai/dsh@<精确宿主版本>（支持集合逐宿主）提供。锚缺失不许静默跳过。`);
@@ -759,6 +776,7 @@ hostTest('validate-preset：锚句表快照锁——表删行、改锚或加锚�
       en: [
         'ALWAYS',
         'async_agent is the ONLY delegation entry',
+        'delivered directly',
         'wait with async_wait',
         'never pass run_in_background: false',
         'Do not poll in a loop',
@@ -770,6 +788,7 @@ hostTest('validate-preset：锚句表快照锁——表删行、改锚或加锚�
       zh: [
         '一律在后台',
         '唯一的委托入口',
+        '结果正文直接交付',
         '需要后台子代理的结果时用 async_wait',
         '绝不要传 run_in_background: false',
         '不要循环轮询',
@@ -783,6 +802,7 @@ hostTest('validate-preset：锚句表快照锁——表删行、改锚或加锚�
       en: [
         'ALWAYS',
         'async_agent is the ONLY delegation entry',
+        'delivered directly',
         'wait with async_wait',
         'disabled here; do not call them',
         'Do not poll in a loop',
@@ -794,6 +814,7 @@ hostTest('validate-preset：锚句表快照锁——表删行、改锚或加锚�
       zh: [
         '一律在后台',
         '唯一的委托入口',
+        '结果正文直接交付',
         '需要后台子代理的结果时用 async_wait',
         '已禁用，不要调用',
         '不要循环轮询',
@@ -808,6 +829,78 @@ hostTest('validate-preset：锚句表快照锁——表删行、改锚或加锚�
     for (const lang of ['en', 'zh']) {
       assert.deepEqual(EXPECTATIONS[configId].disciplineAnchors[lang], expected[lang],
         `锚句表与独立期望清单不一致（${configId} ${lang} 档）——表被弱化或锁未同步，两处需同改并过评审`);
+    }
+  }
+});
+
+hostTest('validate-preset：通用锚句表逐锚删除变异——表内任一锚被删必红（P28，⑤c，两档全表）', async () => {
+  // 与 P26 同法（表驱动删除变异），对象换成通用变体（discipline.preset.generic，
+  // VERIFY-GENERIC-01）：⑤c 独立于期望集、随每份补丁校验执行——这里用基线
+  // 补丁驱动。提问角色四组与内置逐字同文：删 ASK 锚时 ⑤b 与 ⑤c 同时红，
+  // 断言只认点名 generic 的一行。
+  for (const lang of ['en', 'zh']) {
+    for (const anchor of GENERIC_DISCIPLINE_ANCHORS[lang]) {
+      const killed = await validatorWithText((src) => src.split(anchor).join(''));
+      const result = await killed.validate(PATCH, { quiet: true });
+      assert.equal(result.ok, false, `删通用锚句必须被拦（generic ${lang} 档：${anchor}）`);
+      assert.ok(result.lines.some((l) => l.includes(anchor) && l.includes(`${lang} 档`) && l.includes('discipline.preset.generic')),
+        `报错必须点名通用变体缺失锚句（generic ${lang} 档），实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
+    }
+  }
+});
+
+hostTest('validate-preset：通用锚句表快照锁——表删行、改锚或加锚必红（P29，⑤c，两档）', () => {
+  // 与 P27 同理：P28 的击杀清单派生自通用锚句表本身，测不出表自身被静默
+  // 弱化——测试内独立持份清单逐项 deepEqual，两处同改才过得去。
+  const LOCKED_GENERIC = {
+    en: [
+      'Delegations are created with async_agent in the background',
+      'never pass run_in_background: false',
+      'delivered directly (attached to an in-flight async_wait return, or as a completion message)',
+      'wait with async_wait',
+      'Do not poll in a loop',
+      'no personal pronouns for the actor, authorizer, or owner',
+      'explicit, distinguishable role names',
+      'role plus the action',
+      'keep role references consistent'
+    ],
+    zh: [
+      '委托一律经 async_agent 在后台创建',
+      '也不传 run_in_background: false',
+      '结果正文直接交付',
+      '需要子代理的结果时，用 async_wait',
+      '不要循环轮询',
+      '不使用指代执行者、授权者或归属对象的人称代词',
+      '明确、可区分的角色名称',
+      '写清角色与动作',
+      '与所选角色名称保持一致'
+    ]
+  };
+  for (const lang of ['en', 'zh']) {
+    assert.deepEqual(GENERIC_DISCIPLINE_ANCHORS[lang], LOCKED_GENERIC[lang],
+      `通用锚句表与独立期望清单不一致（generic ${lang} 档）——表被弱化或锁未同步，两处需同改并过评审`);
+  }
+});
+
+hostTest('validate-preset：通用纪律段整段置空必红（P30，⑤c，en/zh 各一次 × 两份补丁）', async () => {
+  // 固化验收受控反例（VERIFY-GENERIC-01）：修前把英文或中文
+  // discipline.preset.generic 整段置空，两份预设补丁校验都仍通过——修后
+  // ⑤c 随每份补丁校验执行，任一档置空两份补丁都必须红。text.js 里该键的
+  // en/zh 值各占一行，按出现序（en 在前、zh 在后）定位替换。
+  const killGenericAt = (index) => (src) => {
+    let seen = -1;
+    return src.replace(/'discipline\.preset\.generic': '.*',/g, (match) => {
+      seen += 1;
+      return seen === index ? "'discipline.preset.generic': ''," : match;
+    });
+  };
+  for (const [index, lang] of [[0, 'en'], [1, 'zh']]) {
+    const killed = await validatorWithText(killGenericAt(index));
+    for (const [name, patchPath] of [['dsh-async', PATCH], ['dsh-async-create', PATCH_CREATE]]) {
+      const result = await killed.validate(patchPath, { quiet: true });
+      assert.equal(result.ok, false, `通用纪律段 ${lang} 档整段置空必须被拦（${name}）`);
+      assert.ok(result.lines.some((l) => l.includes('discipline.preset.generic') && l.includes(`${lang} 档`)),
+        `报错必须点名通用变体（${name}，${lang} 档），实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
     }
   }
 });

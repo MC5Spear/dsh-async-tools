@@ -2269,8 +2269,9 @@ function apply(ctx) {
     return ctx.locale.register(NS, DICTIONARIES);
   }, "async-tools: dictionaries");
   // ── 预设功能绑定（需求 9.4.2）：目录模型 + 动态注入 + 变更通知 ────────────
-  // inject 清单**不加** `remote.agentPresets`——硬依赖会让服务缺席的部署整卡
-  // 不装。改为设置卡 whileServed 条件内**动态注入**（与 ask 座位同一成例）：
+  // inject 清单**不加** `remote.agentPresets`——把该服务声明为必需依赖（inject
+  // 硬性等待）会让服务缺席的部署整卡不装。改为设置卡 whileServed 条件内
+  // **动态注入**（与 ask 座位同一成例）：
   // 服务在场 → catalog.attach 触发首读；永不到场 → 停在 error 态（服务缺席
   // 文案＋重试），设置卡与其余字段不受影响，已存绑定仍可查看与取消。
   var presetCatalog = createPresetCatalog();

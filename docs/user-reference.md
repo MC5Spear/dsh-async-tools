@@ -11,7 +11,7 @@
 
 安装地址取不到源码时，先核对仓库地址与提交号，再检查网络或代理；仍无法获取时，联系提供安装来源的维护者，询问可用安装件。
 
-安装来源为 `github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1`。分支会移动；需要固定来源时，先在本地检出源码，用 `git rev-parse HEAD` 取得完整提交，再把 `#` 后内容换为该提交，安装后可用同一提交核对安装件来源。包不从 npm 分发，无分支的 GitHub spec 不能替你选择正确的宿主适配。
+安装来源为 `github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1`。分支会移动；需要固定来源时，先在本地检出源码，用 `git rev-parse HEAD` 取得完整提交，再把 `#` 后内容换为该提交，安装后可用同一提交核对安装件来源。包不从 npm 分发；安装 spec 不带分支或提交限定（如仅 `github:MC5Spear/dsh-async-tools`）时不能替你选择正确的宿主适配。
 
 安装前先确认运行环境：建议 Node.js 24。插件清单的 `>=20` 只是插件声明；宿主依赖 commander 15 要求 `>=22.12.0`，也只是已知下界，不是整套宿主经验证的最低版本。确认目标宿主依赖能在所选运行时解析后，再安装。
 
@@ -117,7 +117,7 @@ async_wait(targets=[{kind:"job", id:"<返回的job_id>"}], wait_ms=30000)
 | `sandbox_permissions` | string enum | 条件可选 | 仅有约束执行器时出现，模式取宿主工具声明 |
 | `justification` | string | 与上一键一起提供 | 解释同轮刚被拒命令的一次性重试为何需要更宽权限 |
 
-权限仍走宿主审批；不得拿更宽权限启动另一个任意任务。目录解析失败在启动前可读拒绝，不偷偷换目录。显式 workdir 准备失败的诊断保留请求值、解析路径、会话目录、失败时核实结论和修正出路；ENOENT本身不证明目录不存在。
+权限仍走宿主审批；不得拿更宽权限启动另一个任意任务。目录解析失败在启动前返回可读错误，不偷偷换目录。显式 workdir 准备失败的诊断保留请求值、解析路径、会话目录、失败时核实结论和修正出路；ENOENT本身不证明目录不存在。
 
 首次等待完成返回 `{status, output, truncated, exit_code?, signal?, note?}`；`completed` 不代表退出码为0，读取退出标记。`signal` 是进程终止信号。被终止可返回 `{status:'killed', detail?, output?, truncated?}`。后台返回 `{status:'running', job_id, elapsed_ms, note}`。作业从启动时注册，不等到首次等待到期才出现。
 
@@ -138,19 +138,19 @@ async_wait(targets=[{kind:"job", id:"<返回的job_id>"}], wait_ms=30000)
 
 | 参数 | 类型 | 必填/默认 | 规则 |
 | --- | --- | --- | --- |
-| `description` | string | 必填 | 3—5词展示标签 |
-| `prompt` | string | 必填 | 完整任务；spawn独立子代理看不到父对话 |
-| `cwd` | string | 继承父当前有效目录 | 相对父当前目录解析；后续目录变化互不影响 |
-| `provider` | string | 可选，与model成对 | 非空准确LLM供应商ID |
-| `model` | string | 可选，与provider成对 | 非空准确模型ID |
-| `reasoning_effort` | string | 可选 | 非空、模型支持的强度ID；可单独指定 |
-| `agent_preset` | string | 条件可选 | 仅行配置allowedAgentPresets且后端支持独立预设时暴露；须在允许集合中 |
+| `description` | string | 必填 | 提供3—5词展示标签 |
+| `prompt` | string | 必填 | 提供完整任务；spawn独立子代理看不到父对话 |
+| `cwd` | string | 继承父当前有效目录 | 指定子代理初始工作目录；相对父当前目录解析，后续目录变化互不影响 |
+| `provider` | string | 可选，与model成对 | 指定该子代理使用的准确供应商ID；提供时必须与model成对 |
+| `model` | string | 可选，与provider成对 | 指定该子代理的准确模型ID；提供时必须与provider成对，先按第5节查询 |
+| `reasoning_effort` | string | 可选 | 指定推理强度ID；可单独提供，按最终有效模型校验 |
+| `agent_preset` | string | 条件可选 | 为子代理指定独立预设；仅行配置允许集非空且后端支持时出现，取值须在允许集合中 |
 
 无 `run_in_background` 参数，也不等待最终答案。成功立即返回 `{status:'started', agent_id, note}`，说明实际路由来源及等待入口；拒绝不返回虚构编号。默认两预设未配置允许预设集合，因此不暴露agent_preset。继承上下文型后端的子代理可见父上下文；任务书按实际后端编写。
 
-通常只需填写任务书。需要指定模型时，先按第 5 节查询准确 ID，再提供成对的 `provider`／`model`。`reasoning_effort` 可单独提供，但仍按最终有效模型校验。`agentOptions`、`agentPreset`、`allowedAgentPresets` 是高级组合中的固定行配置，不能当作调用参数，也不属于 20 项界面设置。
+通常只需填写任务书。需要指定模型时，先按第 5 节查询准确 ID，再提供成对的 `provider`／`model`；`reasoning_effort` 可单独提供，但仍按最终有效模型校验。
 
-**支持预检何时运行：** 显式提供路由或推理强度，或行 `agentOptions` 中配置了 `provider`、`model`、`reasoningEffort`，都会触发创建前的支持预检。仅配置 `maxTokens` 等非路由选项不会触发。后端 `agentRouteDefaults` 只在触发预检时参与合并；显式参数覆盖行选项，行选项覆盖后端默认，缺少的路由部分由父路由补齐。允许名单检查仍只针对显式选择请求，行默认触发预检不等于显式请求。
+**高级合并与预检：** 行配置 `agentOptions`／`agentPreset`／`allowedAgentPresets` 是高级组合的固定配置，不是调用参数、也不属于 20 项界面设置。显式提供路由或推理强度，或行 `agentOptions` 中配置了 `provider`、`model`、`reasoningEffort`，都会触发创建前的支持预检；仅配置 `maxTokens` 等非路由选项不会触发。后端 `agentRouteDefaults` 只在触发预检时参与合并；显式参数覆盖行选项，行选项覆盖后端默认，缺少的路由部分由父路由补齐。允许名单检查仍只针对显式选择请求，行默认触发预检不等于显式请求。
 
 **最终创建携带什么：** 任何一层贡献选项时，创建请求携带合并后的 `agentOptions`；没有贡献时省略它，由宿主继承父选项，不额外套用后端路由默认。支持预检临时采用的兼容父推理强度或模型默认，不会被预检结果回填到创建请求。最终子代理继承以实际请求和宿主合并为准，不能仅凭预检值推断。换路由而未指定强度时，预检不沿用旧路由不兼容的值。
 
@@ -184,7 +184,7 @@ const results = await pipeline(args.items,
 return results.filter(value => value !== null);
 ```
 
-完成返回 `{status:'completed', result}`，result是渲染后的字符串，并非直接返回JSON对象；终止返回 `{status:'killed', detail?}`，后台返回 `{status:'running', job_id, elapsed_ms, note}`。后台运行的结果经async_wait或完成消息交付；job_kill才请求取消。缺编排引擎时可读拒绝且零作业，正确组合见第7节。
+完成返回 `{status:'completed', result}`，result是渲染后的字符串，并非直接返回JSON对象；终止返回 `{status:'killed', detail?}`，后台返回 `{status:'running', job_id, elapsed_ms, note}`。后台运行的结果经async_wait或完成消息交付；job_kill才请求取消。缺编排引擎时在启动前返回可读错误、不创建作业；正确组合见第7节。
 
 ### 3.5 async_list_subagent_models
 
@@ -266,7 +266,7 @@ async_list_subagent_models(provider="<准确ID>", model="<准确ID>", target_too
 
 提交后先看确认结果。明确失败时，按显示的原因打开原会话直接回复；记录缺席且标有 `undelivered` 时也这样处理。若只是未收到确认，先等面板刷新核对，不直接断言未送达。`gone` 若表示其他客户端已经回答，不要重复提交。
 
-24小时是惰性清扫阈值：超过到期24小时的expired记录仅在下一次新批接管时清扫，没有新批可保留更久；迟到提交自身不按24小时拒收。重启或卸载会丢内存过期记录，未结请求交回原生流程；需要保留的答案及时写入原会话。
+24小时是惰性清扫阈值：超过到期24小时的expired记录仅在下一次新批接管时清扫，没有新批可保留更久；迟到提交自身不按24小时拒收。重启或卸载会丢失保存在内存中的过期记录，未结请求交回原生流程；需要保留的答案及时写入原会话。
 
 silentFailureGuard默认false，作用于`boundPresets`名单内的会话（默认即本包两份预设）。启用后按条件提供结果诊断、描述警示和执行纪律；描述警示在绑定会话首次投影工具描述时就在场，无须先执行命令。受限环境的捕获形命令可能在创建前静默失败；无输出、无退出标记时先用无害裸调用确认执行，查宿主日志，不把空结果当成功。不据提醒断言所有捕获都失败；更宽权限重试仍需同轮授权审批。
 

@@ -138,19 +138,19 @@ A job terminal result is `{status:'completed'|'killed'|'failed', job_id, output,
 
 | Argument | Type | Required/default | Rules |
 | --- | --- | --- | --- |
-| `description` | string | Required | 3–5-word display label |
-| `prompt` | string | Required | Complete task; an independent spawn child cannot see the parent conversation |
-| `cwd` | string | Parent's current effective directory | Relative to that directory; later directory changes are independent |
-| `provider` | string | Optional; paired with model | Nonempty exact LLM provider ID |
-| `model` | string | Optional; paired with provider | Nonempty exact model ID |
-| `reasoning_effort` | string | Optional | Nonempty supported effort ID; may be supplied alone |
-| `agent_preset` | string | Conditionally available | Requires row-level allowedAgentPresets and independent preset support; value must be allowed |
+| `description` | string | Required | Provide a 3–5-word display label |
+| `prompt` | string | Required | Provide the complete task; an independent spawn child cannot see the parent conversation |
+| `cwd` | string | Parent's current effective directory | Specify the child's initial working directory; relative paths resolve against the parent's current directory, and later directory changes are independent |
+| `provider` | string | Optional; paired with model | Specify the exact LLM provider ID for this child; when provided it must be paired with model |
+| `model` | string | Optional; paired with provider | Specify the exact model ID for this child; when provided it must be paired with provider — query IDs per section 5 first |
+| `reasoning_effort` | string | Optional | Specify a reasoning-effort ID; may be supplied alone, checked against the effective model |
+| `agent_preset` | string | Conditionally available | Assign the child an independent preset; appears only when the row-level allowed set is nonempty and the backend supports it, and the value must be in that set |
 
 There is no `run_in_background` argument and no wait for the final answer. Success immediately returns `{status:'started', agent_id, note}`, with the effective route source and wait guidance. Rejection does not invent an ID. The shipped presets do not configure an allowed preset set, so agent_preset is not exposed. A context-inheriting backend can expose the parent conversation to its child; write tasks according to the actual backend.
 
-Usually, a task prompt is sufficient. To choose a model, query exact IDs as described in section 5, then supply `provider` and `model` together. `reasoning_effort` may be supplied alone but is checked against the effective model. `agentOptions`, `agentPreset`, and `allowedAgentPresets` are fixed row configuration for advanced composition, not call arguments or part of the 20 UI settings.
+Usually, a task prompt is sufficient. To choose a model, query exact IDs as described in section 5, then supply `provider` and `model` together; `reasoning_effort` may be supplied alone but is checked against the effective model.
 
-**When support preflight runs:** an explicit route or effort choice, or row `agentOptions` containing `provider`, `model`, or `reasoningEffort`, triggers a support check before creation. Non-route options such as `maxTokens` alone do not. Backend `agentRouteDefaults` join the merge only when preflight is triggered. Explicit arguments override row options, row options override backend defaults, and missing route components come from the parent. Allowed-set checks still apply only to explicit choices; a row default triggering preflight does not make the request explicit.
+**Advanced merging and preflight:** row configuration `agentOptions`/`agentPreset`/`allowedAgentPresets` is fixed configuration for advanced composition, not call arguments and not part of the 20 UI settings. An explicit route or effort choice, or row `agentOptions` containing `provider`, `model`, or `reasoningEffort`, triggers a support check before creation; non-route options such as `maxTokens` alone do not. Backend `agentRouteDefaults` join the merge only when preflight is triggered. Explicit arguments override row options, row options override backend defaults, and missing route components come from the parent. Allowed-set checks still apply only to explicit choices; a row default triggering preflight does not make the request explicit.
 
 **What creation receives:** if any layer contributes options, the creation request carries the merged `agentOptions`. Otherwise it omits that field and lets the host inherit parent options, without additionally applying backend route defaults. A compatible parent effort or model default used temporarily by preflight is not copied back from the preflight result into the creation request. Actual child inheritance depends on that request and the host merge, not merely on the preflight values. When the route changes without an explicit effort, preflight does not reuse an incompatible effort from the old route.
 
@@ -184,7 +184,7 @@ const results = await pipeline(args.items,
 return results.filter(value => value !== null);
 ```
 
-Completion returns `{status:'completed', result}`; result is a rendered string, not the original JSON object. A killed run returns `{status:'killed', detail?}`; a background run returns `{status:'running', job_id, elapsed_ms, note}`. A background run's result is delivered through async_wait or a completion message; job_kill requests cancellation. Missing workflow wiring yields a readable refusal and zero jobs. See section 7 for composition.
+Completion returns `{status:'completed', result}`; result is a rendered string, not the original JSON object. A killed run returns `{status:'killed', detail?}`; a background run returns `{status:'running', job_id, elapsed_ms, note}`. A background run's result is delivered through async_wait or a completion message; job_kill requests cancellation. Missing workflow wiring returns a readable error before startup and creates no jobs. See section 7 for composition.
 
 ### 3.5 async_list_subagent_models
 

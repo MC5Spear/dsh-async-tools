@@ -220,10 +220,17 @@ export async function checkHostCompat({ root = MODULE_ROOT, hostRoot, hostVersio
   }
   const { evaluatePluginCompatibility } = await import(pathToFileURL(appBoot.entry).href);
 
+  // 官方判定的未满足项字段按宿主代际而异：支持集（0.2.1 线）叫 `requirements`
+  //（含 engines.dsh 裁决），集合外的 0.2.0-rc.2 树叫 `peers`。检查器取宿主树自己
+  // 的判定实现，归一两种形态——否则把它指向集合外树时会在「宿主版本不在支持
+  // 集合内」这条**正确失败**出现之前先 TypeError 崩溃，可读失败变崩溃。两者都
+  // 缺席＝形态再变，同样按可读失败暴露。
+  const unmetOf = (issue) => issue.requirements ?? issue.peers ?? null;
+
   for (const version of members) {
     const issue = evaluatePluginCompatibility(manifest, {}, version);
     if (issue === undefined) say(`OK   放行 dsh ${version}（官方判定无未满足要求）`);
-    else fail(`放行 dsh ${version}：官方判定仍要求 ${JSON.stringify(issue.requirements)}`);
+    else fail(`放行 dsh ${version}：官方判定仍要求 ${JSON.stringify(unmetOf(issue))}`);
   }
   for (const [version, label] of REJECTED_BOUNDARIES) {
     if (members.includes(version)) {
@@ -235,10 +242,15 @@ export async function checkHostCompat({ root = MODULE_ROOT, hostRoot, hostVersio
       fail(`拒载 dsh ${version}（${label}）：官方判定放行，集合外宿主因此可以装载本包`);
       continue;
     }
-    const unmet = Object.keys(issue.requirements);
-    const offPeer = unmet.filter((name) => !dshPeers.includes(name) || issue.requirements[name] !== range);
+    const unmetMap = unmetOf(issue);
+    if (unmetMap === null) {
+      fail(`拒载 dsh ${version}（${label}）：官方判定的未满足项形态不可读（requirements／peers 均缺席）`);
+      continue;
+    }
+    const unmet = Object.keys(unmetMap);
+    const offPeer = unmet.filter((name) => !dshPeers.includes(name) || unmetMap[name] !== range);
     if (offPeer.length > 0) fail(`拒载 dsh ${version}（${label}）：未满足项不是九条 dsh peer 原文（${offPeer.join('、')}）`);
-    else if (Object.hasOwn(issue.requirements, 'engines.dsh')) fail(`拒载 dsh ${version}（${label}）：拒载来自 engines.dsh`);
+    else if (Object.hasOwn(unmetMap, 'engines.dsh')) fail(`拒载 dsh ${version}（${label}）：拒载来自 engines.dsh`);
     else if (issue.exempted) fail(`拒载 dsh ${version}（${label}）：判定带版本豁免，不能作为集合外拒载证据`);
     else if (unmet.length !== dshPeers.length) fail(`拒载 dsh ${version}（${label}）：未满足项 ${String(unmet.length)} 条，应覆盖九条 peer`);
     else say(`OK   拒载 dsh ${version}（${label}）：九条 dsh peer 未满足，无 engines.dsh、无豁免`);

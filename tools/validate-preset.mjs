@@ -8,7 +8,7 @@
  * 宿主包树按真实路径 import 宿主自带的 js-yaml 并注册同一形状的自定义 `js` 类型
  * （`!!js` 表达式解析为**字符串**，这正好让"disabled 必须是布尔"这类判据可区分）。
  *
- * 十四条判据（③b、⑤b、⑧b 各独立计一条；骨架两套共用、期望随套切换）：
+ * 十五条判据（③b、⑤b、⑤c、⑧b 各独立计一条；骨架两套共用、期望随套切换）：
  * 1. 补丁恰一条 `insert`，行 `name` 是 `@deepseek-ai/dsh-agent-preset`，行 `id` 与
  *    `config.id` 等于期望集的 `rowId` / `configId`；未知 `config.id` 即红（不许
  *    "套不上就放行"）；
@@ -30,6 +30,11 @@
  *     传」句（zh），create 为「已禁用、不要调用」句）+ 提问角色纪律四组锚词
  *     （ASK-01，人称代词禁用 / 明确角色名称 / 角色加动作 / 指向一致，两套同值）
  *     ——语言档由 agentLang 管理（需求 §5.3），zh 档锚句必须与 en 档语义同源；
+ * 5c. 通用纪律锚句（VERIFY-GENERIC-01）：`discipline.preset.generic` 的 en/zh
+ *     两档每档须含通用锚句表（后台创建／不传 `run_in_background: false`／
+ *     直接交付／有界等待／不循环轮询＋提问角色四组，ASK 与内置同值）的每一条
+ *     ——不随期望集切换，随每份补丁校验各执行一次（无参 CLI 重复输出属预期）；
+ *     「唯一入口」不设通用锚（通用变体按 §3.5.4 不声称宿主入口已禁用）；
  * 6. 预设行**不得**出现 `disabled` 护栏（护栏会在 agentPresets 就绪前把行静默杀死，
  *    cordis-plugin-loader/lib/index.js:359-363）；
  * 7. 互斥判据（期望集 `bothAliveRule` 开时；两套都开）：活 `tool-subagent`
@@ -53,9 +58,10 @@
  * 即非零退出；带参 = 只校验那一份。
  *
  * 也可作为模块导入：`validatePatch(patchPath, { quiet })` 返回 `{ ok, failures, lines }`，
- * `loadYaml()` / `EXPECTATIONS` 一并导出——`test/preset.test.mjs` 用它们在**进程内**跑
- * 变异副本（子进程 spawn 在沙箱里会被 EPERM 拦，且进程内调用让"变异 → 断言红"同轮完成），
- * 并把期望集与真实基线补丁对账（防快照漂移）。
+ * `loadYaml()` / `EXPECTATIONS` / `GENERIC_DISCIPLINE_ANCHORS` 一并导出——
+ * `test/preset.test.mjs` 用它们在**进程内**跑变异副本（子进程 spawn 在沙箱里会被
+ * EPERM 拦，且进程内调用让"变异 → 断言红"同轮完成），并把期望集与真实基线补丁
+ * 对账（防快照漂移）。
  */
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
@@ -150,6 +156,30 @@ const ASK_ANCHORS_ZH = [
   '与所选角色名称保持一致'
 ];
 
+/** 通用纪律变体（`discipline.preset.generic`，判据 ⑤c／VERIFY-GENERIC-01）的
+ * 强制锚句表：只取现行文案里的**指令式**句子——通用变体按设计 §3.5.4 不声称
+ * 宿主入口已禁用，「唯一入口」句对自建组合不真实，故不设该锚；提问角色四组
+ * 与内置期望集同值（ASKING RULES 段三变体逐字同文，ASK-01）。锚句只是
+ * `includes` 判据，不向变体文本新增内容。 */
+export const GENERIC_DISCIPLINE_ANCHORS = {
+  en: [
+    'Delegations are created with async_agent in the background',
+    'never pass run_in_background: false',
+    'delivered directly (attached to an in-flight async_wait return, or as a completion message)',
+    'wait with async_wait',
+    'Do not poll in a loop',
+    ...ASK_ANCHORS
+  ],
+  zh: [
+    '委托一律经 async_agent 在后台创建',
+    '也不传 run_in_background: false',
+    '结果正文直接交付',
+    '需要子代理的结果时，用 async_wait',
+    '不要循环轮询',
+    ...ASK_ANCHORS_ZH
+  ]
+};
+
 /** 宿主基线 persona 身份句（shipped standard/cordis 补丁逐字同源）——预设
  * prefix 与它逐字一致，任何增改即红（宿主原生身份句不承载本包内容）。 */
 const BASELINE_IDENTITY = 'You are a coding agent powered by the {{model}} model.';
@@ -181,6 +211,7 @@ export const EXPECTATIONS = {
       en: [
         'ALWAYS',
         'async_agent is the ONLY delegation entry',
+        'delivered directly',
         'wait with async_wait',
         'never pass run_in_background: false',
         'Do not poll in a loop',
@@ -189,6 +220,7 @@ export const EXPECTATIONS = {
       zh: [
         '一律在后台',
         '唯一的委托入口',
+        '结果正文直接交付',
         '需要后台子代理的结果时用 async_wait',
         '绝不要传 run_in_background: false',
         '不要循环轮询',
@@ -222,6 +254,7 @@ export const EXPECTATIONS = {
       en: [
         'ALWAYS',
         'async_agent is the ONLY delegation entry',
+        'delivered directly',
         'wait with async_wait',
         'disabled here; do not call them',
         'Do not poll in a loop',
@@ -230,6 +263,7 @@ export const EXPECTATIONS = {
       zh: [
         '一律在后台',
         '唯一的委托入口',
+        '结果正文直接交付',
         '需要后台子代理的结果时用 async_wait',
         '已禁用，不要调用',
         '不要循环轮询',
@@ -427,6 +461,21 @@ export async function validatePatch(patchPath, { quiet = false, expectation } = 
     }
   }
   if (disciplineOk) emit(`OK    ⑤b 纪律锚句齐全（discipline.preset.${String(configId)}，en/zh 两档）`);
+
+  // ── ⑤c 通用纪律锚句（discipline.preset.generic，en/zh 两档） ─────────────
+  // 独立于期望集、每份补丁校验都执行（通用变体不属于任何一份补丁的期望集；
+  // 无参 CLI 校验两份补丁 → 本行输出两遍属预期，不为去重引入跨调用状态）。
+  let genericDisciplineOk = true;
+  for (const lang of ['en', 'zh']) {
+    const genericText = t(lang, 'discipline.preset.generic');
+    for (const anchor of GENERIC_DISCIPLINE_ANCHORS[lang]) {
+      if (!genericText.includes(anchor)) {
+        fail(`discipline.preset.generic（${lang} 档）缺强制规则锚句：${JSON.stringify(anchor)}`);
+        genericDisciplineOk = false;
+      }
+    }
+  }
+  if (genericDisciplineOk) emit('OK    ⑤c 通用纪律锚句齐全（discipline.preset.generic，en/zh 两档）');
 
   // ── ⑥ 预设行不得带 disabled 护栏 ──
   // loader 的 refresh() 在服务就绪前求值 disabled：`!ctx.get('agentPresets')` 为真

@@ -130,6 +130,7 @@ npm run check:alias-tokens
 | [`probe-r30-ask-takeover.mjs`](<probe-r30-ask-takeover.mjs>) | 超时、迟到、范围、位置和语言；改设置，after-restart 阶段需人工维护窗口 |
 | [`probe-r32-run-interruptible.mjs`](<probe-r32-run-interruptible.mjs>) | 插话／停止、卡片、触顶、短命令与通知计数；(b)(c) 经 blank 会话＋agentPresets/select 定预设后走 composer，含浏览器的整跑需提权，不用历史读数证明当前判据 |
 | [`probe-r34-async-workflow.mjs`](<probe-r34-async-workflow.mjs>) | 首次等待、任务卡、并发、两预设及运行记录；浏览器与模型运行有权限前提，不用历史读数证明当前目标 |
+| [`probe-batch-window.mjs`](<probe-batch-window.mjs>) | 完成消息领取窗口（REL-NOTES-01）：每波 14 个错峰后台作业经真实模型会话结算，断言窗口消息有界、作业标记零丢失（完成消息与让出出口结构化附着合并计）、next-step 领取事件在案；>10 条目的触顶窗口才判配额说明——真实宿主领取点在每个模型步进边界实发，自然流未触顶时如实登记「未触发」，配额路径由套件层 `test/wait-delivery.test.mjs` 的 T8/RN-* 在真实注册表锚定，不伪造触发。须授权的临时实例与模型运行，证据经 `DSAT_PROBE_EVIDENCE` 落盘，不含令牌 |
 
 ## 4. 清理、状态与诊断工具
 

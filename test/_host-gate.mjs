@@ -4,8 +4,8 @@
  * ## 这层守卫在挡什么
  *
  * 本包九个 `@deepseek-ai/dsh*` 是 peer，离线安装形态（`--legacy-peer-deps`）下
- * 它们缺席；`lib/` 的宿主链模块（jobs、workflow、wait-job、wait-agent、
- * agent、host、index 等）顶层静态 import 这些包，缺席时加载即
+ * 它们缺席；`lib/` 的宿主链模块（jobs、workflow、wait、wait-job-target、
+ * wait-agent-target、agent、host、index 等）顶层静态 import 这些包，缺席时加载即
  * `ERR_MODULE_NOT_FOUND`。契约：需要宿主锚的用例
  * 在锚缺席时**自跳过并打印理由**，而不是整片测试文件崩掉——离线形态的读数是
  * `pass + skip` 等于用例总数，`fail = 0`。

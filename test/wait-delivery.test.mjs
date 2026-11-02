@@ -53,6 +53,14 @@ const hostTest = await hostTestFor(
  * `finisher()` 让引擎以 completed 结算（value 带 `AT_FINAL_PAYLOAD` 标记）。
  */
 async function buildRig(label, childRows = [], options = {}) {
+  // 每装置整体复位账本（与下方 t7Rig 同一先例）：账本是模块级单例，而装置每次
+  // 新建注册表实例——支持集内（0.2.1 线）注册表发随机后缀作业 id，天然不相撞；
+  // 但把套件指向集合外宿主树（如 0.2.0-rc.2，其注册表发**每实例顺序号**）时，
+  // 先装置的账本条目会让后装置同号作业在 `noteJobStarted` 去重下静默串账、在
+  // JobTarget 防串账守卫上误报 foreign job。装置级复位＝按「每进程一注册表」的
+  // 生产形态隔离每个装置，杜绝跨装置账本耦合（对合法锚是隔离加固，对误用锚是
+  // 防污染）。
+  resetDeliveryLedger();
   const base = new Context();
   const followups = [];
   const injections = [];
@@ -2117,11 +2125,16 @@ function sRig({ injectFailsAt = 0, followupThrows = false, agentsGet, budget = 4
   };
   const reads = new Map();
   const config = Object.freeze({ maxResultChars: budget, agentLang: lang });
+  // claimed 监听登记（RN 系列关批锚点）：registerRow 会挂 agent/inbox/claimed
+  //（两处关批点之一）；假 ctx 无 on 时监听挂不上——提供最小 on 形状，测试经
+  // listeners 直接触发关批（不改既有用例行为：无人触发即惰性）。
+  const listeners = new Map();
   // T 系列：登记行可携带终态事实（killed/退出码/信号/诊断）与读取回执附注
   //（lossy／留存路径）——readSettled 的终态自证分支从 list 行取事实。
   const rowFacts = new Map();
   const ctx = {
     emit() {},
+    on: (name, handler) => { listeners.set(name, handler); return () => listeners.delete(name); },
     get: (name) => (name === 'agents'
       ? { get: (id) => (agentsGet !== undefined ? agentsGet(id) : (id === OWNER ? agent : undefined)) }
       : undefined),
@@ -2136,6 +2149,9 @@ function sRig({ injectFailsAt = 0, followupThrows = false, agentsGet, budget = 4
     }
   };
   ledger.registerRow(ctx);
+  // 产品接线里 claimed 监听由装载行 apply 挂（lib/index.js）；假 ctx 环境显式
+  // 挂同一入口（RN 系列的关批锚点①），惰性——无人经 listeners 触发即不生效。
+  ledger.attachClaimedListener(ctx);
   /** 登记一个已就绪（终态＋增量已读）的作业；facts 并入注册表行，readExtras 并入读取回执。 */
   const readyJob = async (jobId, text, facts, readExtras) => {
     reads.set(jobId, { chunks: [{ channel: 'stdout', text }], ...(readExtras ?? {}) });
@@ -2143,7 +2159,7 @@ function sRig({ injectFailsAt = 0, followupThrows = false, agentsGet, budget = 4
     ledger.noteJobStarted(ctx, config, jobId, OWNER);
     await ledger.readSettled(jobId);
   };
-  return { agent, calls, OWNER, config, ctx, reads, readyJob };
+  return { agent, calls, OWNER, config, ctx, reads, listeners, readyJob };
 }
 
 /** 装置产出的消息正文（inject/followup 的 content 拼接）。 */
@@ -2778,6 +2794,220 @@ hostTest('REC-J：等待出口注记两分——续段附带给 partialDelivered
 });
 
 
+// ═══ r16 验收缺陷：完成消息路径延后说明的批级限量（REL-NOTES-01）═══
+//
+// RN 系列（ledger 级受控回归）：完成消息路径两个超限分支（readFailed 超限与
+// 正文超限）的延后说明每批至多 3 条逐条（delivery.deferredNotice）＋1 条聚合
+// 摘要（delivery.deferredAggregate，不带 targets 的一并领取示例），同批同
+// 作业去重，配额随两处关批点（claimed 监听／closeBatchIfIdle）复位——修前
+// 每个超限候选各投一条说明，条数与字符随同批候选数线性增长（验收受控反例：
+// 100 候选 → 90 条说明、共 100 条物理消息、14949 字符）。
+
+hostTest('RN-A：12 条空输出结算——10 状态行＋2 逐条延后说明（配额内不投聚合），行为与 REC-D 一致', async () => {
+  const rig = sRig({ budget: 4000 });
+  const token = ledger.claimWait(rig.OWNER);
+  for (let i = 1; i <= 12; i += 1) {
+    await rig.readyJob(`job-rn-a${String(i).padStart(2, '0')}`, '');
+  }
+  await ledger.releaseWait(token, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 12, '10 状态行＋2 逐条说明（2 ≤ 配额 3，无聚合）');
+  for (const text of rig.calls.inject.slice(10).map(textOf)) {
+    assert.match(text, /did not fit the current delivery batch|没有排进当前交付批次/, '逐条说明形态');
+    assert.match(text, /wait_ms=0/, '领取出路照抄（定向示例）');
+    assert.ok(!/also deferred|同样延后/.test(text), '配额内不投聚合');
+  }
+});
+
+hostTest('RN-B：100 条空输出结算——物理消息恰 14（10＋3＋1），说明字符合计 ≤800；关批后下一批补投 FIFO（再 14 条封顶）', async () => {
+  const rig = sRig({ budget: 4000 });
+  const token = ledger.claimWait(rig.OWNER);
+  for (let i = 1; i <= 100; i += 1) {
+    await rig.readyJob(`job-rn-b${String(i).padStart(3, '0')}`, '');
+  }
+  await ledger.releaseWait(token, rig.OWNER);
+  // 修前反例：90 条延后说明、共 100 条物理消息、14949 字符（线性无界）。
+  assert.equal(rig.calls.inject.length, 14,
+    `10 状态行＋3 逐条＋1 聚合（实得 ${String(rig.calls.inject.length)}，修前 100）`);
+  const individual = rig.calls.inject.slice(10, 13).map(textOf);
+  for (const text of individual) {
+    assert.match(text, /did not fit the current delivery batch|没有排进当前交付批次/, '逐条说明恰 3 条（配额）');
+  }
+  const aggregate = textOf(rig.calls.inject[13]);
+  assert.match(aggregate, /were also deferred|同样延后/, '聚合摘要在场');
+  assert.match(aggregate, /wait_ms=0/, '聚合带领取出路');
+  assert.ok(!/targets=/.test(aggregate), '聚合示例不带 targets（一并领取全部就绪结果）');
+  const notesText = [...individual, aggregate].join('\n');
+  assert.ok(notesText.length <= 800, `说明字符合计 ${String(notesText.length)} ≤ 800（数值固定可测）`);
+  // 未逐一说明的候选不静默丢失：内容在缓冲（空正文零内容）＋下一批 FIFO 补投。
+  ledger.closeBatchIfIdle(rig.OWNER);
+  const token2 = ledger.claimWait(rig.OWNER);
+  await ledger.releaseWait(token2, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 28, '下一批再 10 条目＋3 逐条＋1 聚合（配额随关批复位）');
+  assert.match(textOf(rig.calls.inject[14]), /job-rn-b011/, 'FIFO：第 11 条最先补投');
+});
+
+hostTest('RN-C：非空正文超限两形态——预算 1 只容 1 条（1＋3＋1＝5）；预算充足由条目上限触发（10＋3＋1＝14）；延后正文留缓冲可恢复', async () => {
+  // 形态①：正文预算 1——首条 1 字符整装（批剩余归零），其余 99 条整条延后。
+  {
+    const rig = sRig({ budget: 1 });
+    const token = ledger.claimWait(rig.OWNER);
+    await rig.readyJob('job-rn-c1', 'X');
+    for (let i = 2; i <= 100; i += 1) {
+      await rig.readyJob(`job-rn-c${String(i).padStart(3, '0')}`, 'Y');
+    }
+    await ledger.releaseWait(token, rig.OWNER);
+    assert.equal(rig.calls.inject.length, 5, '1 条目＋3 逐条＋1 聚合＝5（预算耗尽触发）');
+    assert.ok(textOf(rig.calls.inject[0]).includes('X'), '唯一条目带正文');
+    assert.equal(ledger.jobs.get('job-rn-c1').deliveredFact.via, 'message', '首条完整交付（1 字符未截断）');
+    for (const id of ['job-rn-c002', 'job-rn-c050', 'job-rn-c100']) {
+      const entry = ledger.jobs.get(id);
+      assert.equal(entry.buffer, 'Y', `${id} 延后正文整条留缓冲（不丢）`);
+      assert.equal(entry.deliveredFact, null, `${id} 未置已交付事实`);
+      assert.equal(entry.claimedBy, null, `${id} 未认领`);
+    }
+    assert.match(textOf(rig.calls.inject[4]), /were also deferred|同样延后/, '聚合在场（预算耗尽形态）');
+  }
+  // 形态②：预算充足＋100 个小非空输出——条目上限触发（10＋3＋1）；关批后零等待
+  // 批装配（collectBatch）完整恢复延后正文。
+  {
+    const rig = sRig({ budget: 4000 });
+    const token = ledger.claimWait(rig.OWNER);
+    for (let i = 1; i <= 100; i += 1) {
+      await rig.readyJob(`job-rn-d${String(i).padStart(3, '0')}`, 'Z');
+    }
+    await ledger.releaseWait(token, rig.OWNER);
+    assert.equal(rig.calls.inject.length, 14, '10 条目＋3 逐条＋1 聚合＝14（条目上限触发）');
+    assert.ok(rig.calls.inject.slice(0, 10).map(textOf).every((text) => text.includes('Z')),
+      '前 10 条带正文');
+    assert.match(textOf(rig.calls.inject[13]), /were also deferred|同样延后/, '聚合在场（条目上限形态）');
+    ledger.closeBatchIfIdle(rig.OWNER);
+    const { delivered } = ledger.collectBatch(rig.OWNER, {});
+    assert.equal(delivered.length, 10, '零等待批装配交付 10 条延后正文');
+    assert.equal(delivered[0].text, 'Z', '延后正文完整恢复（全额批预算）');
+  }
+});
+
+hostTest('RN-D：读取失败超限共用配额——20 个 readFailed 候选：10 注记条目＋3 逐条＋1 聚合（计数 7）；超限不认领、不清占位', async () => {
+  const rig = sRig({ budget: 4000 });
+  const token = ledger.claimWait(rig.OWNER);
+  rig.ctx.jobs.read = async () => { throw new Error('registry read exploded'); };
+  for (let i = 1; i <= 20; i += 1) {
+    const id = `job-rn-e${String(i).padStart(2, '0')}`;
+    rig.reads.set(id, { chunks: [{ channel: 'stdout', text: '' }] });
+    ledger.noteJobStarted(rig.ctx, rig.config, id, rig.OWNER);
+    const entry = ledger.jobs.get(id);
+    entry.terminal = { status: 'completed' };
+    await ledger.readSettled(id);
+  }
+  await ledger.releaseWait(token, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 14, '10 注记条目＋3 逐条＋1 聚合（readFailed 超限共用配额）');
+  for (const id of ['job-rn-e11', 'job-rn-e12', 'job-rn-e13']) {
+    assert.match(rig.calls.inject.slice(10, 13).map(textOf).join('\n'), new RegExp(id), `${id} 逐条说明`);
+  }
+  const aggregate = textOf(rig.calls.inject[13]);
+  assert.match(aggregate, /7 more settled job|另有 7 个/, '聚合计数＝7（14..20，活计数）');
+  for (const id of ['job-rn-e11', 'job-rn-e20']) {
+    const entry = ledger.jobs.get(id);
+    assert.equal(entry.claimedBy, null, `${id} 超限未认领`);
+    assert.equal(entry.readFailedNoted, false, `${id} 占位未清（下一批仍可投注记）`);
+    assert.equal(entry.readFailed, true, `${id} 读取失败事实保持（可重试）`);
+  }
+});
+
+hostTest('RN-E：同批重复释放或重查——第二次触发零新 send；聚合计数不因重复注册放大', async () => {
+  const rig = sRig({ budget: 4000 });
+  const token = ledger.claimWait(rig.OWNER);
+  for (let i = 1; i <= 15; i += 1) {
+    await rig.readyJob(`job-rn-f${String(i).padStart(2, '0')}`, '');
+  }
+  await ledger.releaseWait(token, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 14, '前置：10＋3＋1（11..13 逐条，14 聚合，15 入集合不追加 send）');
+  // 同批（未关批）重复让位复查：已交付条目被事实阻断，已说明条目被同批去重。
+  const token2 = ledger.claimWait(rig.OWNER);
+  await ledger.releaseWait(token2, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 14, '第二次 releaseWait 零新 send');
+  // 重复结算重查（readSettled 重跑）同样零新 send——Set 重复注册计数不变。
+  await ledger.readSettled('job-rn-f14');
+  await ledger.readSettled('job-rn-f15');
+  assert.equal(rig.calls.inject.length, 14, '重复 readSettled 零新 send');
+  assert.match(textOf(rig.calls.inject[13]), /2 more settled job|另有 2 个/,
+    '聚合计数＝2（14/15），不因重查放大');
+});
+
+hostTest('RN-F：两处关批点后配额复位——单独触发得新批条目交付（非说明）；再次超限时 3＋1 按新批重计、聚合计数只含新批成员', async () => {
+  const rig = sRig({ budget: 4000 });
+  const token = ledger.claimWait(rig.OWNER);
+  for (let i = 1; i <= 14; i += 1) {
+    await rig.readyJob(`job-rn-g${String(i).padStart(2, '0')}`, '');
+  }
+  await ledger.releaseWait(token, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 14, '前置：10＋3＋1');
+  // 关批点①：claimed 监听（领取事件）——批对象丢弃，配额随批复位。
+  const claimed = rig.listeners.get('agent/inbox/claimed');
+  assert.ok(typeof claimed === 'function', '前置：claimed 监听已挂（attachClaimedListener）');
+  claimed({ agent: { id: rig.OWNER } });
+  // 关批后单独再触发一个延后就绪条目：新批 items=0 → 条目交付，不产生说明。
+  await rig.readyJob('job-rn-g15', '');
+  assert.equal(rig.calls.inject.length, 15, '新批条目交付（一条状态行）');
+  assert.match(textOf(rig.calls.inject[14]), /job-rn-g15/, '第 15 条以状态行交付');
+  assert.ok(!/did not fit|没有排进/.test(textOf(rig.calls.inject[14])), '不是延后说明（条目分支）');
+  // 关批点②：closeBatchIfIdle（活等待全提交）——再 17 个就绪条目再次超限：
+  // 前 10 条（16..25）FIFO 入批，26..28 逐条，29 聚合。结算路径（readSettled）
+  // 即时冲刷：聚合计数＝冲刷时集合大小（1，恰含 29），30..32 入集合不追加
+  // send——「计数＝最终值」的形态由 RN-G ①（deferFlush 循环）覆盖。
+  ledger.closeBatchIfIdle(rig.OWNER);
+  for (let i = 16; i <= 32; i += 1) {
+    await rig.readyJob(`job-rn-g${String(i).padStart(2, '0')}`, '');
+  }
+  assert.equal(rig.calls.inject.length, 29, '再一批：10 条目＋3 逐条＋1 聚合（配额从 0 重计）');
+  assert.match(textOf(rig.calls.inject[28]), /1 more settled job|另有 1 个/,
+    '新批聚合计数＝冲刷时集合大小（1），旧批成员不并入');
+});
+
+hostTest('RN-G：聚合活计数与关批竞速——deferFlush 先登记后冲刷得最终计数；push 与冲刷之间关批：渲染不抛、计数保持、不回滚', async () => {
+  // ① 活计数：releaseWait 的 deferFlush 循环先登记、末尾单次冲刷——render 现读
+  // push 时捕获的 aggJobs 集合，计数＝冲刷时最终大小（7），非首触发的中间值。
+  {
+    const rig = sRig({ budget: 4000 });
+    const token = ledger.claimWait(rig.OWNER);
+    for (let i = 1; i <= 20; i += 1) {
+      await rig.readyJob(`job-rn-h${String(i).padStart(2, '0')}`, '');
+    }
+    await ledger.releaseWait(token, rig.OWNER);
+    assert.equal(rig.calls.inject.length, 14, '10＋3＋1');
+    assert.match(textOf(rig.calls.inject[13]), /7 more settled job|另有 7 个/,
+      '聚合计数＝7（14..20 全部登记后的最终值）');
+  }
+  // ② 关批竞速：冲刷读 agent.status 时（push 之后、render 之前）触发 claimed——
+  // subject.batch 置 null；聚合 render 只读捕获引用，渲染不抛、投递不回滚。
+  // （若 render 经 subject.batch 重寻址，此处抛 TypeError → 整队回滚，本例红。）
+  {
+    const rig = sRig({ budget: 4000 });
+    const token = ledger.claimWait(rig.OWNER);
+    for (let i = 1; i <= 14; i += 1) {
+      await rig.readyJob(`job-rn-i${String(i).padStart(2, '0')}`, '');
+    }
+    const claimed = rig.listeners.get('agent/inbox/claimed');
+    let fired = false;
+    Object.defineProperty(rig.agent, 'status', {
+      get() {
+        if (!fired) { fired = true; claimed({ agent: { id: rig.OWNER } }); }
+        return 'running';
+      }
+    });
+    await ledger.releaseWait(token, rig.OWNER);
+    assert.equal(fired, true, '前置：claimed 在冲刷读 status 时（push 之后、render 之前）触发');
+    assert.equal(rig.calls.inject.length, 14, '渲染不抛、整队投递不回滚（busy 逐条 14 条）');
+    assert.match(textOf(rig.calls.inject[13]), /1 more settled job|另有 1 个/,
+      '聚合计数保持该批最终值（捕获引用不受关批影响）');
+    for (let i = 1; i <= 10; i += 1) {
+      assert.ok(ledger.jobs.get(`job-rn-i${String(i).padStart(2, '0')}`).deliveredFact !== null,
+        `第 ${String(i)} 条交付事实保持（不回滚）`);
+    }
+  }
+});
+
+
 // ═══ REL-TERMINAL-01：终态细节进完成消息与等待返回（设计 r14 §4）═══
 //
 // T1 是受控反例：修前完成消息只渲染 {jobId, status, chars}——killed＋信号＋
@@ -3082,6 +3312,135 @@ hostTest('T7 真实通道：后台 node 退出 3 与 kill 终止的完成消息�
     assert.ok(killText.includes('SIGTERM') || killText.includes('信号'), '真实终止信号在完成消息');
     assert.ok(killText.includes('killed') || killText.includes('已终止'), 'killed 状态可见');
     assert.ok(killText.includes('test-kill'), 'kill 缘由（killReason 并入 detail）可见');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('T8 真实注册表：准入上限与领取窗口解耦——触顶拒收零进程；让出出口结构化携带就绪批，超限延后在消息载体上恰 3＋1（REL-NOTES-01）', async () => {
+  const rig = await t7Rig();
+  try {
+    // (b) 领取窗口侧（真实载体的自然形态）：压住一个活等待令牌（claimWait，
+    // 模拟主体正在等待调用中——#beat 的结算读取让位不投、closeBatchIfIdle 不
+    // 关批）。波一 10 作业结算就绪后，波二首个 async_run 的让出出口经
+    // collectBatch 把 10 条**结构化**附进返回（delivered/outputs——一条载体，
+    // 非 10 条消息）；批 items 满后，波三出口对超限候选附延后说明（单条 note）；
+    // 释放活等待时，15 个延后候选经完成消息路径收拢为 3 逐条＋1 聚合——修前
+    // 15 条线性消息。运行上限 10 只约束并发，不约束领取窗口累计候选数。
+    const hold = ledger.claimWait(rig.parent.id);
+    const startWave = async (count, script) => {
+      rig.setScript(script);
+      const ids = [];
+      const handles = [];
+      for (let i = 0; i < count; i += 1) {
+        const handle = await rig.runTool.execute(
+          { command: 'node t8-wave', description: 't8 wave job', yield_ms: 20 }, rig.exec()
+        );
+        assert.equal(handle.status, 'running', '波内作业转后台（真实进程，窗口内未结算）');
+        ids.push(handle.job_id);
+        handles.push(handle);
+      }
+      return { ids, handles };
+    };
+    const awaitTerminal = async (ids) => {
+      for (const id of ids) {
+        let done = false;
+        for (let i = 0; i < 100 && !done; i += 1) {
+          await new Promise((resolve) => { setTimeout(resolve, 50); });
+          const row = rig.ctx.jobs.list(rig.parent.id).find((candidate) => candidate?.id === id);
+          if (row !== undefined && ['completed', 'killed', 'failed'].includes(row.status)) done = true;
+        }
+        assert.ok(done, `5 秒内到终态：${String(id)}`);
+      }
+    };
+    // 注册表终态 ≠ 账本就绪：#beat 的 readSettled（置 terminal、读正文）在结算
+    // 后异步到达——下一波起跑前先等账本就绪，消除携带条数的竞态。
+    const awaitReady = async (ids) => {
+      for (const id of ids) {
+        let done = false;
+        for (let i = 0; i < 100 && !done; i += 1) {
+          await new Promise((resolve) => { setTimeout(resolve, 50); });
+          const entry = ledger.jobs.get(id);
+          if (entry !== undefined && entry.terminal !== null && entry.readFailed === false) done = true;
+        }
+        assert.ok(done, `5 秒内账本就绪（terminal 置位且读取成功）：${String(id)}`);
+      }
+    };
+    // 波一：10 × 2500ms（脚本寿命＞波内 execute 跨度——含 spawn 延迟每次
+    // execute 实占 60-100ms、重载下 spawn 单次可近 150ms，2500ms 保有约 2 倍
+    // 余量；波内不得有结算，否则后续出口会携带本波条目）。
+    // 结算就绪（#beat 读入账本，活等待压住不投）。
+    const wave1 = await startWave(10, 'setTimeout(function(){process.stdout.write("T8")},2500)');
+    await awaitTerminal(wave1.ids);
+    await awaitReady(wave1.ids);
+    assert.equal(rig.injections.length, 0, '波一就绪候选被活等待压住（零消息）');
+    // 波二：10 × 2500ms——首个让出出口把波一 10 条结构化附进返回（一条载体）。
+    const wave2 = await startWave(10, 'setTimeout(function(){process.stdout.write("T8")},2500)');
+    assert.equal(wave2.handles[0].delivered?.length ?? 0, 10, '首个让出出口结构化携带 10 条（delivered）');
+    assert.equal(wave2.handles[0].outputs?.length ?? 0, 10, 'outputs 同 10 条（正文随行）');
+    assert.ok(wave2.handles[0].outputs.every((item) => item.text === 'T8'), '携带正文完整（T8）');
+    assert.ok(wave2.handles.slice(1).every((handle) => (handle.delivered?.length ?? 0) === 0),
+      '后续出口无就绪内容（波二自身未结算）');
+    assert.equal(rig.injections.length, 0, '结构化携带不产生消息');
+    await awaitTerminal(wave2.ids);
+    await awaitReady(wave2.ids);
+    // 波三：5 × 2500ms——批 items 已满（10），首个出口对波二超限候选附延后说明。
+    const wave3 = await startWave(5, 'setTimeout(function(){process.stdout.write("T8")},2500)');
+    const third = wave3.handles[0];
+    assert.equal(third.deferred?.length ?? 0, 10, '首个让出出口附延后清单（10 条结构化 deferred）');
+    assert.match(third.note ?? '', /deferred by the batch budget|因批次预算延后/,
+      '让出出口的延后说明在场（单条 note，非逐条线性）');
+    assert.equal(rig.injections.length, 0, '让出出口仍零消息（载体是工具返回）');
+    await awaitTerminal(wave3.ids);
+    await awaitReady(wave3.ids);
+    // 释放活等待：15 个延后候选（波二 10＋波三 5）经完成消息路径——修前 15 条
+    // 线性消息；修后 3 逐条＋1 聚合（deferFlush 先登记后单次冲刷，聚合计数＝
+    // 集合最终值 12），其余 11 个零追加消息。
+    await ledger.releaseWait(hold, rig.parent.id);
+    assert.equal(rig.injections.length, 4,
+      `15 个延后候选：恰 3 逐条＋1 聚合（实得 ${String(rig.injections.length)}，修前 15）`);
+    for (const text of rig.injections.slice(0, 3).map(textOf)) {
+      assert.match(text, /did not fit the current delivery batch|没有排进当前交付批次/, '逐条说明形态');
+    }
+    const aggregate = textOf(rig.injections[3]);
+    assert.match(aggregate, /12 more settled job|另有 12 个/, '聚合计数＝12（集合最终值）');
+    assert.ok(!/targets=/.test(aggregate), '聚合示例不带 targets（一并领取）');
+    // 同批重查去重：再次压住-释放循环，零新消息。
+    const rehold = ledger.claimWait(rig.parent.id);
+    await ledger.releaseWait(rehold, rig.parent.id);
+    assert.equal(rig.injections.length, 4, '同批重复让位复查零新 send');
+    // 延后候选不丢：关批后批装配交付下一批 10 条完整正文。
+    ledger.closeBatchIfIdle(rig.parent.id);
+    const { delivered } = ledger.collectBatch(rig.parent.id, {});
+    assert.equal(delivered.length, 10, '零等待批装配：延后条目下一批 FIFO 恢复');
+    assert.ok(delivered.every((item) => item.text === 'T8'), '延后正文完整（T8）');
+
+    // (a) 准入侧：10 个长作业在跑 → 第 11 个 async_run 在注册表准入被拒（触顶）：
+    // 进程未启动（清单无新增运行行），错误可读（limit 注记）。
+    rig.setScript('setTimeout(function(){},8000)');
+    const longIds = [];
+    for (let i = 0; i < 10; i += 1) {
+      const handle = await rig.runTool.execute(
+        { command: 'node t8-long', description: 't8 long job', yield_ms: 20 }, rig.exec()
+      );
+      assert.equal(handle.status, 'running', '长作业转后台');
+      longIds.push(handle.job_id);
+    }
+    await assert.rejects(
+      () => rig.runTool.execute(
+        { command: 'node t8-over', description: 't8 over cap', yield_ms: 20 }, rig.exec()
+      ),
+      (error) => {
+        assert.match(String(error.message), /limit: 10/, '触顶错误带 limit 注记（可读可行动）');
+        return true;
+      },
+      '第 11 个并发运行被准入拒绝'
+    );
+    const listed = rig.ctx.jobs.list(rig.parent.id);
+    assert.equal(longIds.filter((id) => listed.some((row) => row?.id === id)).length, 10,
+      '10 个长作业在册');
+    assert.ok(!listed.some((row) => row?.status === 'running' && !longIds.includes(row.id)),
+      '被拒作业零注册零进程（清单无第 11 个运行行）');
   } finally {
     await rig.dispose();
   }
