@@ -339,7 +339,7 @@ async function driveStep(step) {
       const wallSpan = wallCallAt !== null && wallResultAt !== null ? wallResultAt - wallCallAt : null;
       // 本步窗口内的作业 id：以 job/registered 事件（宿主注册时必发，含 jobId）
       // 为主源，与插件默认 jobKind 无耦合（jobKind 改名不影响身份过滤）；本步
-      // 工具返回文本中的 id 形态作为兜底合并。结算断言按身份过滤，跨步残留
+      // 工具返回文本中的 id 形态作为回退来源合并。结算断言按身份过滤，跨步残留
       // 作业（如 WS-4 有意不杀的长作业）的结算不误伤本步判定。
       const stepText = toolResultTexts(transcript, beforeCount).join('\n');
       const stepJobIds = new Set([...stepText.matchAll(/async-command-[0-9a-f]+/g)].map((m) => m[0]));
