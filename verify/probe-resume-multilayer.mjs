@@ -18,29 +18,42 @@
  * 3. RM-3 恢复会话续派子代理：resume 后同会话再派 async_agent——agent_id
  *    回执＋最终回答到达——「恢复会话的实时模型选择一致」的行为面（派生
  *    许可与配置在恢复会话中继续生效）；
- * 4. RM-4 恢复会话中的排队消息：queue 通道注入→回合边界领取→回执（宿主
- *    下一轮语义在恢复会话不漂移）；
- * 5. RM-5 等待挂起之外的插话：主代理执行约 60s 前台命令（async_run
- *    yield_ms 600000——非等待挂起形态）期间经 steer 通道注入消息——命令
- *    照常完成（正文 token 在场）、插话不丢失（模型按插话指令回执）；
+ * 4. RM-4 恢复会话中的排队消息：忙碌窗（async_run 约 20s 前台命令——工具
+ *    调用在场门控）期间 queue 通道注入→回合边界领取→回执，判据含忙碌窗
+ *    实锚（async_run 在场＋命令输出 token 经宿主侧载体到达——宿主下一轮
+ *    语义在恢复会话不漂移）；
+ * 5. RM-5 首等工具执行中的插话：主代理执行约 60s 命令（async_run
+ *    yield_ms 600000——首等窗内、非等待挂起形态）期间经 steer 通道注入
+ *    ——实测锚定形态：steer 结束首次等待→返回同一作业句柄（本包契约
+ *    「插话只结束等待、绝不终止命令」）→命令后台续跑→正文经后续等待到
+ *    达（未终止）＋插话指令被履行（唯一 token 回执；agent/inbox/spliced
+ *    事件在场为旁证——该宿主对上下文注入同样产生 spliced，不单独归因）；
  * 6. RM-6 多层链与主代理层插话共存：主代理派中间子代理→中间代理再派
  *    孙代理（回固定 token）→孙代理回答经中间代理中转、中间代理最终回答
- *    经宿主侧载体到达主会话；期间主会话 steer 插话照达主代理层（宿主
- *    rc.5 不允许后台子代理直接请求人类交互——插话的落点是主代理层，
- *    子代理层不被打扰即「多层中的插话不漂移」）。
+ *    经宿主侧载体到达主会话；期间主会话 steer 插话照达主代理层（唯一
+ *    token 回执，spliced 旁证）——宿主 rc.5 不允许后台子代理直接请求人类
+ *    交互——插话的落点是主代理层，子代理层不被打扰即「多层中的插话不
+ *    漂移」。
  *
- * 装置边界（如实声明）：「实时模型选择一致」锚定行为面（恢复会话/多层链
- * 的派生可用与回答投递、许可链畅通）；配置变更（新增/删除路由后派生被拒）
- * 的拒绝面不在本装置（由套件层许可链用例承担，不冒称实例层覆盖）。
- * RM-2 依赖「不卸载重启后 resume 成功」——若宿主在特定形态下拒绝 resume
- * （如 IL-3 实测的卸载后 generation 引用失效），按 FAIL 取证并留证据归因，
- * 不预设宿主立场。RM-5 的插话到达形态依赖宿主把 steer 消息交到当前回合
- * （工具步进边界），时序不精确断言——只断言「命令完成＋插话指令被履行」
- * 两宿主侧事实。RM-6 的中间代理指令依赖模型两跳依从（主→中间→孙），
- * 中间层失败时按 FAIL 取证（attempts 留痕区分模型未依从与投递丢失——
- * 快照含注入消息形态）。每步超时或断言不成立同会话重试一次（模型偶发
- * 不执行单步指令不等于产品缺陷，重试留痕）；RM-1/RM-3/RM-6 的重试派新
- * 子代理、投递事件落在新窗内；RM-5 重试跑新命令，同形态。
+ * 装置边界（如实声明）：「实时模型选择一致」锚定行为面（恢复会话/多层
+ * 子代理链的派生可用与回答投递、许可链畅通）；配置变更（新增/删除路由后
+ * 派生被拒）的拒绝面不在本装置（由套件层许可链用例承担，不冒称实例层覆
+ * 盖）。RM-2 的 resume 拒绝形态发生在 session/prompt RPC 层——探针用 rpc()
+ * 原样捕获错误体判 FAIL（错误体入证据，不混入 FAULT）；老会话不在重启后
+ * 名册同样按 FAIL 如实记录。RM-5 锚定「首等工具执行中」形态（steer 经首
+ * 等打断机制处理——契约「插话只结束等待、绝不终止命令」）；纯无等待形
+ * 态（如纯生成中插话）不在本装置。steer 的 spliced 事件仅作旁证——该宿
+ * 主对上下文注入同样产生 agent/inbox/spliced，插话到达的主锚是唯一
+ * token 回执。RM-5 时序不精确断言（只断「命令完成＋插话被履行」两宿主侧
+ * 事实）。RM-6 依赖模型两跳依从（主→中间→孙），中间层失败时按 FAIL 取
+ * 证（attempts 留痕区分模型未依从与投递丢失——快照含注入消息形态）。
+ * 每步超时或断言不成立同会话重试一次（模型偶发不执行单步指令不等于产品
+ * 缺陷，重试留痕）；RM-1/RM-3/RM-6 的重试派新子代理、新投递事件落在新
+ * 窗内、RM-5 重试跑新命令同形态——同 token 边界：首试子代理/命令迟到结
+ * 算时可落入重试窗满足重试判据（窗按下标切、不按尝试身份切），属已知
+ * 缺口、概率极低，attempts 快照可事后归因。长跑命令依赖 PowerShell
+ * （Start-Sleep）——非 PowerShell 宿主上 RM-4/RM-5 按输出正文缺席 FAIL
+ * （非 FAULT）取证。
  *
  * ## 用法
  *
@@ -50,8 +63,7 @@
  * `--service-root` 必填（或设 `DSAT_SERVICE_ROOT`）。探针以
  * `<serviceRoot>/patches/zai-glm.yml` 作为实例模型路由 patch——该文件由本机
  * 部署环境提供，缺失时实例在就绪等待处 FAULT（90s 超时＋stderr 尾部），请
- * 自备同位 patch 或改参。长跑命令依赖 PowerShell（Start-Sleep）——非
- * PowerShell 宿主上 RM-5 按 FAIL（非 FAULT）取证。tgz 产物结束自清；证据
+ * 自备同位 patch 或改参。tgz 产物结束自清；证据
  * JSON 每次落盘保留在 `.local/`（FAULT 路径的 tgz 与临时 home 都不清——
  * fail() 会打印 home 路径，重跑前可手动清理）。退出码：0＝全部判定通过；
  * 1＝存在 FAIL 判定；2＝探针自身故障（FAULT）。
@@ -300,16 +312,19 @@ async function driveStep(sessionId, step) {
     while (Date.now() < deadline) {
       await new Promise((r) => { setTimeout(r, POLL_MS); });
       if (child !== null && child.exitCode !== null) { killChild(); fail('实例在步骤中途退出'); }
-      // 步骤专属动作：主体进入工作形态后注入（RM-5 的干活中插话）。
+      let transcript;
+      try { transcript = await transcriptOf(sessionId); } catch { continue; }
+      // 步骤专属动作：观察到本窗相应工具调用（gate）后注入（RM-4/5 的
+      // async_run、RM-6 的 async_agent——门控注入不早于工作形态开始）。
       if (!acted && step.afterWorking !== undefined) {
-        const working = await step.afterWorking(sessionId);
-        if (working) {
+        const workingSeen = step.gate === undefined
+          || toolCallNames(transcript, beforeCount).has(step.gate);
+        if (workingSeen) {
           acted = true;
+          await step.afterWorking(sessionId);
           log(`步骤 ${step.name}：主体进入工作形态，注入动作完成。`);
         }
       }
-      let transcript;
-      try { transcript = await transcriptOf(sessionId); } catch { continue; }
       const ctx = {
         modelTexts: modelTexts(transcript, beforeCount),
         toolResults: toolResultTexts(transcript, beforeCount),
@@ -377,18 +392,45 @@ await rebind(url2);
 const listing2 = await rpcOk('session/list', { _request: {} });
 const oldRow = listing2.items.find((item) => item.sessionId === s1.sessionId);
 evidence.phases.oldSessionAfterRestart = oldRow === undefined ? null : { sessionId: s1.sessionId };
-// 老会话继续发指令的回执由 driveStep 驱动（judge 由 RM-2 步骤承担）。
-await driveStep(s1.sessionId, {
-  name: 'RM-2 恢复会话继续接受指令（resume 回执）',
-  // 老会话不在名册时 driveStep 的 transcriptOf 会 FAULT——先按名册形态判 FAIL。
-  maxAttempts: 1,
-  prompt: 'Reply with exactly RM2_DONE and end your turn. No tools, no questions.',
-  timeoutMs: 180_000,
-  judge: (ctx) => {
-    const receipt = ctx.modelTexts.some((t) => t.includes('RM2_DONE'));
-    return { ok: receipt, detail: receipt ? '恢复会话指令回执到达（未卸载重启后 resume 成功——与 IL-3 卸载后 resume 被拒对照）' : '回执未到达（resume 被拒或指令未执行——快照留痕归因）' };
+// RM-2 独立驱动：resume 的拒绝形态发生在 session/prompt RPC 层（IL-3 实测
+// 同层）——用 rpc() 原样捕获错误体判 FAIL（不混入 FAULT），成功时轮询回执。
+if (oldRow === undefined) {
+  judge('RM-2 恢复会话继续接受指令（resume 回执）', false, `老会话不在重启后名册（宿主形态如实记录——session/list 无 ${s1.sessionId.slice(0, 14)}…）`);
+} else {
+  const resumePrompt = await rpc('session/prompt', {
+    request: {
+      requestId: `req-${Math.random().toString(36).slice(2, 10)}`,
+      sessionId: s1.sessionId, mode: 'queue',
+      content: [{ type: 'text', text: 'Reply with exactly RM2_DONE and end your turn. No tools, no questions.' }],
+      clientTimeZone: 'Asia/Shanghai'
+    }
+  });
+  if (resumePrompt.ok !== true) {
+    evidence.phases.resumePrompt = { ok: false, error: resumePrompt.error };
+    judge('RM-2 恢复会话继续接受指令（resume 回执）', false, `resume 指令被宿主拒（错误体入证据——与 IL-3 卸载后 resume 被拒同层形态）：${JSON.stringify(resumePrompt.error).slice(0, 200)}`);
+  } else {
+    evidence.phases.resumePrompt = { ok: true };
+    // 轮询回执；中途 session/page 被拒时按超时 FAIL 取证（错误形态留痕于快照外循环）。
+    const resumeDeadline = Date.now() + 180_000;
+    let resumeOk = false;
+    let resumeDetail = '回执未到达（resume 被拒或指令未执行——180s 超时）';
+    while (Date.now() < resumeDeadline) {
+      await new Promise((r) => { setTimeout(r, POLL_MS); });
+      if (child !== null && child.exitCode !== null) { killChild(); fail('实例在 RM-2 轮询中退出'); }
+      let transcript;
+      try { transcript = await transcriptOf(s1.sessionId); } catch (error) {
+        resumeDetail = `session/page 被拒：${String(error?.message ?? error).slice(0, 160)}`;
+        break;
+      }
+      if (modelTexts(transcript).some((t) => t.includes('RM2_DONE'))) {
+        resumeOk = true;
+        resumeDetail = '恢复会话指令回执到达（未卸载重启后 resume 成功——与 IL-3 卸载后 resume 被拒对照）';
+        break;
+      }
+    }
+    judge('RM-2 恢复会话继续接受指令（resume 回执）', resumeOk, resumeDetail);
   }
-});
+}
 
 // ── RM-3 恢复会话续派子代理（实时模型选择的恢复会话面）──
 console.log('\n── RM-3 恢复会话续派子代理 ──');
@@ -412,40 +454,48 @@ console.log('\n── RM-4 恢复会话排队消息 ──');
 await driveStep(s1.sessionId, {
   name: 'RM-4 排队消息经回合边界领取（恢复会话不漂移）',
   prompt: 'Run this single step: call async_run with command "Start-Sleep -Seconds 20; Write-Output RM4-BUSY-8d3", description "rm4 busy window", yield_ms 30000 and wait for its foreground output. Then end your turn with exactly RM4_BUSY_DONE.',
+  gate: 'async_run',
   afterWorking: async (sessionId) => {
-    // 主体已发指令即注入（queue 通道——回合边界领取，宿主下一轮语义）。
+    // 忙碌已开始（async_run 调用在场门控）即注入（queue 通道——回合边界领取）。
     await sendPrompt(sessionId, 'Queued follow-up: after your current work, reply with exactly RM4_DONE (in addition to anything you already planned) and end your turn. Do not call more tools.', 'queue');
-    return true;
   },
   judge: (ctx) => {
+    // 忙碌窗实锚：async_run 在场＋命令输出 token 经宿主侧载体到达（模型跳过
+    // 命令直回 token 的假 PASS 被拦截；非 PowerShell 宿主上输出缺席按 FAIL）。
+    const runUsed = ctx.toolNames.has('async_run');
+    const busyOutput = ctx.toolResults.some((t) => t.includes('RM4-BUSY-8d3'));
     const busyDone = ctx.modelTexts.some((t) => t.includes('RM4_BUSY_DONE'));
-    // 回执 RM4_DONE＝queue 消息被领取并履行（不丢失、不打断当前步）。
+    // 回执 RM4_DONE＝queue 消息被领取并履行（token 只在注入文本出现——queue
+    // 丢失时模型无法产出，该方向闭合）。
     const queuedReceipt = ctx.modelTexts.some((t) => t.includes('RM4_DONE'));
-    const ok = busyDone && queuedReceipt;
-    return { ok, detail: ok ? '忙碌窗完成＋排队消息经回合边界领取并履行（恢复会话的宿主下一轮语义不漂移）' : `忙碌回执 ${String(busyDone)}／排队消息回执 ${String(queuedReceipt)}` };
+    const ok = runUsed && busyOutput && busyDone && queuedReceipt;
+    return { ok, detail: ok ? '忙碌窗实锚（async_run＋输出正文）＋排队消息经回合边界领取并履行（恢复会话的宿主下一轮语义不漂移）' : `async_run 在场 ${String(runUsed)}／忙碌输出 ${String(busyOutput)}／忙碌回执 ${String(busyDone)}／排队消息回执 ${String(queuedReceipt)}` };
   }
 });
 
-// ── RM-5 等待挂起之外的插话（干活中 steer）──
-console.log('\n── RM-5 干活中的插话（等待挂起之外）──');
+// ── RM-5 首等工具执行中的插话（等待挂起之外形态）──
+console.log('\n── RM-5 首等工具执行中的插话 ──');
 await driveStep(s1.sessionId, {
-  name: 'RM-5 干活中 steer 插话不丢失且命令不终止',
-  prompt: 'Run this single step: call async_run with command "Start-Sleep -Seconds 60; Write-Output RM5-TOKEN-4e7", description "rm5 foreground work", yield_ms 600000 and wait for its foreground output. Then end your turn with exactly RM5_DONE.',
+  name: 'RM-5 首等工具执行中 steer 插话不丢失且命令不终止',
+  prompt: 'Run this single step: call async_run with command "Start-Sleep -Seconds 60; Write-Output RM5-TOKEN-4e7", description "rm5 first-wait work", yield_ms 600000 and wait for the command to finish (foreground, or via a follow-up async_wait if your first wait ends early). Then end your turn with exactly RM5_DONE.',
+  gate: 'async_run',
   afterWorking: async (sessionId) => {
-    // 命令启动后约 8s 经 steer 通道注入（工具执行中——非等待挂起形态）。
+    // 命令调用在场门控后约 8s 经 steer 通道注入（首等窗内——非等待挂起形态）。
     await new Promise((r) => { setTimeout(r, 8000); });
-    await sendPrompt(sessionId, 'Steering message while you work: when your command finishes, also reply with exactly RM5_STEER_DONE (in addition to RM5_DONE) in the same final message. Do not restart or kill the command.', 'steer');
-    return true;
+    await sendPrompt(sessionId, 'Steering message while you work: when the command finishes, also reply with exactly RM5_STEER_DONE (in addition to RM5_DONE) in the same final message. Do not restart or kill the command.', 'steer');
   },
   judge: (ctx) => {
-    // 命令照常完成：前台正文含输出 token（async_run 在场＋正文到达）。
+    // 命令未终止：输出 token 经宿主侧载体到达（实测形态：steer 结束首次等待
+    // →同一作业句柄→命令后台续跑→正文经后续等待到达——不限定前台/等待载体，
+    // 只锚「命令完成且正文在场」这一宿主侧事实）。
     const runUsed = ctx.toolNames.has('async_run');
     const outputThere = ctx.toolResults.some((t) => t.includes('RM5-TOKEN-4e7'));
-    // 插话不丢失：steer 指令被履行（回执）＋spliced 事件在案。
+    // 插话不丢失：steer 指令被履行（RM5_STEER_DONE 唯一 token 回执——主锚）；
+    // spliced 事件在场为旁证（该宿主对上下文注入同样产生 spliced，不单独归因）。
     const steerReceipt = ctx.modelTexts.some((t) => t.includes('RM5_STEER_DONE'));
     const spliced = ctx.spliced;
     const ok = runUsed && outputThere && steerReceipt && spliced;
-    return { ok, detail: ok ? '命令前台正文在场（未终止）＋steer 插话经 agent/inbox/spliced 进入并被履行——等待挂起之外的插话面' : `async_run 在场 ${String(runUsed)}／命令正文 ${String(outputThere)}／插话回执 ${String(steerReceipt)}／spliced ${String(spliced)}` };
+    return { ok, detail: ok ? '命令正文到达（未终止——实测经句柄＋后续等待）＋steer 插话被履行（唯一 token 回执，spliced 旁证）——首等工具执行中的插话面' : `async_run 在场 ${String(runUsed)}／命令正文 ${String(outputThere)}／插话回执 ${String(steerReceipt)}／spliced 旁证 ${String(spliced)}` };
   }
 });
 
@@ -454,24 +504,26 @@ console.log('\n── RM-6 多层链（孙代理）与主代理层插话 ──'
 await driveStep(s1.sessionId, {
   name: 'RM-6 多层链通且主代理层插话照达',
   prompt: 'Run this single step: call async_agent with description "rm6 middle agent", prompt "Run this single step: call async_agent with description \'rm6 grandchild\', prompt \'Reply with exactly the single token GRAND-9c4 and nothing else.\' — it returns an agent_id; end your turn WITHOUT waiting. When that child answer reaches you, reply with exactly MID_DONE plus that token." — it returns an agent_id immediately; end your turn WITHOUT waiting. When the middle agent final answer reaches you AND any newer user message, reply with exactly RM6_DONE plus the grandchild token, then end your turn. No other tools, no questions.',
+  gate: 'async_agent',
   afterWorking: async (sessionId) => {
-    // 中间代理在等孙代理期间（主代理已结束回合、等注入），主会话 steer 插话
-    // ——落点是主代理层（宿主不允许后台子代理直接人类交互）。
+    // 中间代理派生在场门控后约 12s（中间代理在等孙代理期间——主代理已结束
+    // 回合、等注入），主会话 steer 插话——落点是主代理层（宿主不允许后台
+    // 子代理直接人类交互）。
     await new Promise((r) => { setTimeout(r, 12000); });
     await sendPrompt(sessionId, 'Steering message: when the middle agent answer reaches you, make sure your final reply contains RM6_STEER_OK as well. Do not call more tools.', 'steer');
-    return true;
   },
   judge: (ctx) => {
     // 多层链：主代理 async_agent 在场＋中间代理最终回答（MID_DONE＋GRAND-9c4）
     // 经宿主侧载体到达主会话。
     const spawnUsed = ctx.toolNames.has('async_agent');
     const midAnswer = ctx.injected.some((e) => e.text.includes('MID_DONE') && e.text.includes('GRAND-9c4'));
-    // 主代理层插话：steer 回执＋spliced 事件。
+    // 主代理层插话：steer 回执（RM6_STEER_OK 唯一 token——主锚）；spliced
+    // 事件在场为旁证（对上下文注入同样产生，不单独归因）。
     const steerReceipt = ctx.modelTexts.some((t) => t.includes('RM6_STEER_OK'));
     const spliced = ctx.spliced;
     const receipt = ctx.modelTexts.some((t) => t.includes('RM6_DONE') && t.includes('GRAND-9c4'));
     const ok = spawnUsed && midAnswer && steerReceipt && spliced && receipt;
-    return { ok, detail: ok ? '多层链（孙代理 token 双跳到达主会话）＋主代理层 steer 插话照达（spliced 在案）＋回执' : `async_agent 在场 ${String(spawnUsed)}／中间回答到达 ${String(midAnswer)}／插话回执 ${String(steerReceipt)}／spliced ${String(spliced)}／回执 ${String(receipt)}` };
+    return { ok, detail: ok ? '多层链（孙代理 token 双跳到达主会话）＋主代理层 steer 插话被履行（唯一 token 回执，spliced 旁证）＋回执' : `async_agent 在场 ${String(spawnUsed)}／中间回答到达 ${String(midAnswer)}／插话回执 ${String(steerReceipt)}／spliced 旁证 ${String(spliced)}／回执 ${String(receipt)}` };
   }
 });
 
