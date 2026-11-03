@@ -19,9 +19,11 @@
  *    回执＋最终回答到达——「恢复会话的实时模型选择一致」的行为面（派生
  *    许可与配置在恢复会话中继续生效）；
  * 4. RM-4 恢复会话中的排队消息：忙碌窗（async_run 约 20s 前台命令——工具
- *    调用在场门控）期间 queue 通道注入→回合边界领取→回执，判据含忙碌窗
- *    实锚（async_run 在场＋命令输出 token 经宿主侧载体到达——宿主下一轮
- *    语义在恢复会话不漂移）；
+ *    调用在场门控（gate））期间 queue 通道注入→回合边界领取→回执，判据含
+ *    忙碌窗实锚（async_run 在场＋命令输出 token 经宿主侧载体到达）与回合
+ *    边界顺序锚（RM4_DONE 首现的模型消息晚于忙碌回执首现消息——queue 若
+ *    被漂移为回合中拼接则同消息共现、断言不成立——宿主下一轮语义在恢复
+ *    会话不漂移）；
  * 5. RM-5 首等工具执行中的插话：主代理执行约 60s 命令（async_run
  *    yield_ms 600000——首等窗内、非等待挂起形态）期间经 steer 通道注入
  *    ——实测锚定形态：steer 结束首次等待→返回同一作业句柄（本包契约
@@ -33,7 +35,13 @@
  *    经宿主侧载体到达主会话；期间主会话 steer 插话照达主代理层（唯一
  *    token 回执，spliced 旁证）——宿主 rc.5 不允许后台子代理直接请求人类
  *    交互——插话的落点是主代理层，子代理层不被打扰即「多层中的插话不
- *    漂移」。
+ *    漂移」。RM-6 假 PASS 方向披露：中间代理可不派孙代理、直接转写
+ *    prompt 中的 token 满足判据（孙代理的派生发生在中间代理自己的会话、
+ *    主会话面不可核验）——判据要求中间回答附孙 agent_id 形态（成功返回
+ *    经宿主 render 的产物，提高转写成本）但无法根除伪造，双跳结论以模
+ *    型两跳依从为前提。快照语义：attempts 快照只记录最后一次「未成立」
+ *    轮询的状态，PASS 时不更新（证据 JSON 中 PASS 步骤的快照字段反映早
+ *    前轮询、可能为空属预期）。
  *
  * 装置边界（如实声明）：「实时模型选择一致」锚定行为面（恢复会话/多层
  * 子代理链的派生可用与回答投递、许可链畅通）；配置变更（新增/删除路由后
@@ -243,8 +251,7 @@ function modelTexts(transcript, fromIndex = 0) {
     .filter((r) => r.event?.type === 'assistant/message' || r.event?.type === 'model/message')
     .map((r) => (r.event.data?.message?.content ?? r.event.data?.content ?? [])
       .map((c) => String(c.text ?? '')).join('\n'));
-}
-function toolResultTexts(transcript, fromIndex = 0) {
+}function toolResultTexts(transcript, fromIndex = 0) {
   return stepRecords(transcript, fromIndex)
     .filter((r) => r.event?.type === 'tool/result')
     .map((r) => (r.event.data?.message?.content ?? [])
@@ -421,9 +428,10 @@ if (oldRow === undefined) {
     await shutdownAndFinish();
   } else {
     evidence.phases.resumePrompt = { ok: true };
-    // 轮询回执；prompt 层拒绝已由上面 rpc() 捕获（IL-3 实测拒绝层），轮询
-    // 中途 session/page 的网络层异常/'session not found' 抛错同样按超时
-    // FAIL 取证（page 层 RPC 拒绝形态走 rpcOk→FAULT，不在此分支内）。
+    // 轮询回执；prompt 层拒绝已由上面 rpc() 捕获（IL-3 实测拒绝层）；轮询
+    // 中途 session/page 的网络层异常/'session not found' 抛错立即 break 以
+    // 「session/page 被拒」detail 判 FAIL（page 层 RPC 拒绝形态走
+    // rpcOk→FAULT，不在此分支内）。
     const resumeDeadline = Date.now() + 180_000;
     let resumeOk = false;
     let resumeDetail = '回执未到达（resume 被拒或指令未执行——180s 超时）';
@@ -484,8 +492,14 @@ await driveStep(s1.sessionId, {
     // 回执 RM4_DONE＝queue 消息被领取并履行（token 只在注入文本出现——queue
     // 丢失时模型无法产出，该方向闭合）。
     const queuedReceipt = ctx.modelTexts.some((t) => t.includes('RM4_DONE'));
-    const ok = runUsed && busyOutput && busyDone && queuedReceipt;
-    return { ok, detail: ok ? '忙碌窗实锚（async_run＋输出正文）＋排队消息经回合边界领取并履行（恢复会话的宿主下一轮语义不漂移）' : `async_run 在场 ${String(runUsed)}／忙碌输出 ${String(busyOutput)}／忙碌回执 ${String(busyDone)}／排队消息回执 ${String(queuedReceipt)}` };
+    // 回合边界顺序锚：RM4_DONE 首现的模型消息必须晚于 RM4_BUSY_DONE 首现的
+    // 模型消息（两 token 分属先后消息）——若 queue 被漂移为回合中拼接，模型
+    // 可在同一消息内先出 RM4_DONE（此时两 findIndex 相等，断言不成立）。
+    const busyFirstIdx = ctx.modelTexts.findIndex((t) => t.includes('RM4_BUSY_DONE'));
+    const queuedFirstIdx = ctx.modelTexts.findIndex((t) => t.includes('RM4_DONE'));
+    const boundaryOrder = busyFirstIdx >= 0 && queuedFirstIdx > busyFirstIdx;
+    const ok = runUsed && busyOutput && busyDone && queuedReceipt && boundaryOrder;
+    return { ok, detail: ok ? '忙碌窗实锚（async_run＋输出正文）＋排队消息经回合边界领取并履行（RM4_DONE 首现消息晚于忙碌回执——回合边界顺序锚在案）' : `async_run 在场 ${String(runUsed)}／忙碌输出 ${String(busyOutput)}／忙碌回执 ${String(busyDone)}／排队消息回执 ${String(queuedReceipt)}／边界顺序 ${String(boundaryOrder)}（busy@${String(busyFirstIdx)}／queued@${String(queuedFirstIdx)}）` };
   }
 });
 
@@ -519,7 +533,7 @@ await driveStep(s1.sessionId, {
 console.log('\n── RM-6 多层链（孙代理）与主代理层插话 ──');
 await driveStep(s1.sessionId, {
   name: 'RM-6 多层链通且主代理层插话照达',
-  prompt: 'Run this single step: call async_agent with description "rm6 middle agent", prompt "Run this single step: call async_agent with description \'rm6 grandchild\', prompt \'Reply with exactly the single token GRAND-9c4 and nothing else.\' — it returns an agent_id; end your turn WITHOUT waiting. When that child answer reaches you, reply with exactly MID_DONE plus that token." — it returns an agent_id immediately; end your turn WITHOUT waiting. When the middle agent final answer reaches you AND any newer user message, reply with exactly RM6_DONE plus the grandchild token, then end your turn. No other tools, no questions.',
+  prompt: 'Run this single step: call async_agent with description "rm6 middle agent", prompt "Run this single step: call async_agent with description \'rm6 grandchild\', prompt \'Reply with exactly the single token GRAND-9c4 and nothing else.\' — it returns an agent_id; end your turn WITHOUT waiting. When that child answer reaches you, reply with exactly MID_DONE plus that token and the grandchild agent_id." — it returns an agent_id immediately; end your turn WITHOUT waiting. When the middle agent final answer reaches you AND any newer user message, reply with exactly RM6_DONE plus the grandchild token, then end your turn. No other tools, no questions.',
   gate: 'async_agent',
   afterWorking: async (sessionId) => {
     // 中间代理派生在场门控后约 12s（中间代理在等孙代理期间——主代理已结束
@@ -529,10 +543,12 @@ await driveStep(s1.sessionId, {
     await sendPrompt(sessionId, 'Steering message: when the middle agent answer reaches you, make sure your final reply contains RM6_STEER_OK as well. Do not call more tools.', 'steer');
   },
   judge: (ctx) => {
-    // 多层链：主代理 async_agent 在场＋中间代理最终回答（MID_DONE＋GRAND-9c4）
-    // 经宿主侧载体到达主会话。
+    // 多层链：主代理 async_agent 在场＋中间代理最终回答（MID_DONE＋GRAND-9c4
+    // ＋孙 agent_id 形态共现——孙代理的 async_agent 成功返回经宿主 render 进
+    // 中间代理的回答文本，提高无派生转写的成本；主会话面不可核验孙会话，
+    // 转写假 PASS 方向以两跳依从为前提，见头注）经宿主侧载体到达主会话。
     const spawnUsed = ctx.toolNames.has('async_agent');
-    const midAnswer = ctx.injected.some((e) => e.text.includes('MID_DONE') && e.text.includes('GRAND-9c4'));
+    const midAnswer = ctx.injected.some((e) => e.text.includes('MID_DONE') && e.text.includes('GRAND-9c4') && /agent_id/i.test(e.text));
     // 主代理层插话：steer 回执（RM6_STEER_OK 唯一 token——主锚）；spliced
     // 事件在场为旁证（对上下文注入同样产生，不单独归因）。
     const steerReceipt = ctx.modelTexts.some((t) => t.includes('RM6_STEER_OK'));
