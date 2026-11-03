@@ -11,8 +11,10 @@
  * 针侧断言：设置读写与 session/create 的成败即载体，不经模型周转）：
  *
  * 1. SD-0 指引在场（静态）：client.js 两语词典键 `uninstallRisk`（各含
- *    agent-preset/not-found 与清选／重选动作）＋中英两语首页与用户参考的
- *    指引段在场。设置页提示块的渲染与深浅主题可读性不装置（GUI 面）。
+ *    agent-preset/not-found 与清选／重选动作）与设置页渲染调用
+ *    t("uninstallRisk") 在场（词典保留而渲染调用被删时判 FAIL——提示块
+ *    渲染质量与深浅主题可读性仍属 GUI 面不装置）＋中英两语首页与用户
+ *    参考的指引段在场。
  * 2. SD-1 风险复现：装载→经公开设置接口把 selectedDefault 写为 dsh-async
  *    （与 GUI 同一条链：settings/update）→describe 复核生效→官方 CLI
  *    plugin remove→重启实例→无指定预设的 session/create 被拒且错误形态
@@ -298,10 +300,13 @@ const createdRisk = await rpc('session/create', { request: { cwd: home } });
 evidence.phases.createDefaultAfterRemove = createdRisk.ok
   ? { ok: true, agentPreset: createdRisk.value?.agentPreset ?? '?' }
   : { ok: false, error: createdRisk.error };
+// 自归因：错误数据里的 agentPreset 就是已撤预设名——字段缺席或异值都判负
+// （不依赖 SD-1c 联合归因；字段漂移形态本身要拦）。
+const riskAgent = createdRisk.ok === true ? undefined
+  : (createdRisk.error?.details?.agentPreset ?? createdRisk.error?.data?.agentPreset);
 const riskRejected = createdRisk.ok !== true
   && String(createdRisk.error?.code ?? '') === 'agent-preset/not-found'
-  // 自归因：错误数据里的 agentPreset 就是已撤预设名（不依赖 SD-1c 联合归因）。
-  && String(createdRisk.error?.details?.agentPreset ?? createdRisk.error?.data?.agentPreset ?? 'dsh-async') === 'dsh-async';
+  && riskAgent !== undefined && String(riskAgent) === 'dsh-async';
 judge('SD-1 默认指向已撤预设时新会话被拒（not-found 形态）', riskRejected,
   riskRejected ? `可读错误（不静默回落）：${JSON.stringify(createdRisk.error).slice(0, 160)}` : `形态未锚定：${createdRisk.ok ? `create 成功且预设=${String(createdRisk.value?.agentPreset)}` : JSON.stringify(createdRisk.error).slice(0, 160)}——宿主回退了默认或形态漂移`);
 // 宿主不自动清除该选择：describe 复核 selectedDefault 仍指向已撤预设。
@@ -311,21 +316,24 @@ evidence.phases.selectedDefaultAfterRestart = { value: nsAfter?.value?.selectedD
 judge('SD-1c 宿主不自动清除该选择（重启后 describe 复核）', kept,
   kept ? 'selectedDefault=dsh-async 仍在（user 覆盖层在案）——清选/重选是用户动作' : `读回 ${JSON.stringify(nsAfter?.value?.selectedDefault ?? null)}`);
 
-// ── SD-2 重选路径（改写为宿主可用预设→默认会话恢复）──
-// standard＝rc.5 实测部署默认（宿主可用名单首位）；换部署默认不同的宿主树时
-// 此步按 FAIL 取证（假 FAIL 方向、形态记录在证据）。
+// ── SD-2 重选路径（改写为部署默认可用预设→默认会话恢复）──
+// 部署默认（宿主 Config.default）不经设置面暴露——describe 的 value 投影只
+// 含 volatile 用户字段（实测 value.default=null）；standard＝rc.5 实测部署
+// 默认（IL-3b 同源）硬编码，换部署默认不同的宿主树时此步按 FAIL 取证（假
+// FAIL 方向、形态记录在证据）。
 console.log('\n── SD-2 重选路径 ──');
-const updateReselect = await rpc('settings/update', { ns: PRESET_NS, patch: { selectedDefault: 'standard' } });
+const DEPLOY_DEFAULT = 'standard';
+const updateReselect = await rpc('settings/update', { ns: PRESET_NS, patch: { selectedDefault: DEPLOY_DEFAULT } });
 if (updateReselect.ok !== true) {
-  judge('SD-2 重选后默认会话恢复（落 standard）', false, `写入失败：${JSON.stringify(updateReselect.error).slice(0, 160)}`);
+  judge('SD-2 重选后默认会话恢复（落部署默认）', false, `写入失败：${JSON.stringify(updateReselect.error).slice(0, 160)}`);
 } else {
   const nsReselect = await readPresetNs();
-  const reselectRead = nsReselect.value?.selectedDefault === 'standard';
+  const reselectRead = nsReselect.value?.selectedDefault === DEPLOY_DEFAULT;
   const createdReselect = await rpc('session/create', { request: { cwd: home } });
-  const recovered = createdReselect.ok === true && createdReselect.value?.agentPreset === 'standard';
-  evidence.phases.reselect = { describe: nsReselect.value?.selectedDefault ?? null, create: createdReselect.ok ? { agentPreset: createdReselect.value?.agentPreset ?? '?' } : { error: createdReselect.error } };
-  judge('SD-2 重选后默认会话恢复（落 standard）', reselectRead && recovered,
-    `describe=${String(reselectRead)}／create=${createdReselect.ok ? `落 ${String(createdReselect.value?.agentPreset)}` : JSON.stringify(createdReselect.error).slice(0, 120)}`);
+  const recovered = createdReselect.ok === true && createdReselect.value?.agentPreset === DEPLOY_DEFAULT;
+  evidence.phases.reselect = { deployDefault: DEPLOY_DEFAULT, describe: nsReselect.value?.selectedDefault ?? null, create: createdReselect.ok ? { agentPreset: createdReselect.value?.agentPreset ?? '?' } : { error: createdReselect.error } };
+  judge('SD-2 重选后默认会话恢复（落部署默认）', reselectRead && recovered,
+    `部署默认（rc.5 实测）=${DEPLOY_DEFAULT}／describe=${String(reselectRead)}／create=${createdReselect.ok ? `落 ${String(createdReselect.value?.agentPreset)}` : JSON.stringify(createdReselect.error).slice(0, 120)}`);
 }
 
 // ── SD-3 清选路径（unset 回继承层→默认会话落部署默认）──
@@ -335,13 +343,15 @@ if (unsetRun.ok !== true) {
   judge('SD-3 清选后默认会话落部署默认', false, `unset 失败：${JSON.stringify(unsetRun.error).slice(0, 160)}`);
 } else {
   const nsCleared = await readPresetNs();
-  const clearedRead = (nsCleared.value?.selectedDefault ?? null) !== 'dsh-async' && (nsCleared.value?.selectedDefault ?? null) !== 'standard';
+  const clearedRead = (nsCleared.value?.selectedDefault ?? null) !== 'dsh-async' && (nsCleared.value?.selectedDefault ?? null) !== DEPLOY_DEFAULT;
   const createdCleared = await rpc('session/create', { request: { cwd: home } });
   const presetCleared = createdCleared.ok === true ? String(createdCleared.value?.agentPreset ?? '?') : null;
-  const recovered = createdCleared.ok === true && presetCleared !== '' && presetCleared !== '?' && presetCleared !== 'dsh-async';
-  evidence.phases.createAfterClear = createdCleared.ok ? { agentPreset: presetCleared } : { error: createdCleared.error };
+  // 落点与部署默认（rc.5 实测 standard）精确比对——漂移即 FAIL，不按「按实
+  // 测记录」的宽松形态标注。
+  const recovered = createdCleared.ok === true && presetCleared === DEPLOY_DEFAULT;
+  evidence.phases.createAfterClear = { deployDefault: DEPLOY_DEFAULT, create: createdCleared.ok ? { agentPreset: presetCleared } : { error: createdCleared.error } };
   judge('SD-3 清选后默认会话落部署默认', clearedRead && recovered,
-    `describe=${JSON.stringify(nsCleared.value?.selectedDefault ?? null)}（unset 生效＝不指向探针写入值）／create=${presetCleared === null ? JSON.stringify(createdCleared.error).slice(0, 120) : `落 ${presetCleared}（部署默认，按实测记录）`}`);
+    `describe=${JSON.stringify(nsCleared.value?.selectedDefault ?? null)}（unset 生效＝不指向探针写入值）／create=${presetCleared === null ? JSON.stringify(createdCleared.error).slice(0, 120) : `落 ${presetCleared}（${presetCleared === DEPLOY_DEFAULT ? `＝部署默认（rc.5 实测）${DEPLOY_DEFAULT}` : `≠部署默认（rc.5 实测）${DEPLOY_DEFAULT}——漂移即 FAIL`}）`}`);
 }
 
 // 7) 收尾：停实例→留证据→清理。
