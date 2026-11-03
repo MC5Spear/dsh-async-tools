@@ -17,7 +17,7 @@
  *    （对照设计的总述见上——平行分组、先后推进、口径非墙钟）
  * 3. EC-C 对照判定：B 的模型轮次（assistant/message 事件数——每轮恰产出
  *    一条；llm attempt 重试走 assistant/attempt 不计，口径按逻辑轮、物理请
- *    求数可略多，两臂对称不受影响；两会话自创建起 fromIndex=0 对称累计，公
+ *    求数可略多，两组对称不受影响；两会话自创建起 fromIndex=0 对称累计，公
  *    平对照；步骤重试会抬高各自轮次——A 侧抬高走保守方向可假 FAIL，B 侧任
  *    何轮次抬高都放宽差值判据，次数锚保证成功尝试确为轮询形态、失败尝试
  *    的抬高幅度可由 attempts 留痕离线区分）显著多于 A（差值 ≥2 且 A ≤3）；
@@ -385,7 +385,8 @@ const listing = await rpcOk('session/list', { _request: {} });
 const rowA = listing.items.find((i) => i.sessionId === sA.sessionId);
 const rowB = listing.items.find((i) => i.sessionId === sB.sessionId);
 // usage 读取路径：session/list 行的 usage 聚合在 projections.values.tokenUsage
-// （uncachedInput/output/cacheRead/cacheWrite），pressureTokens/projectedTokens
+// （uncachedInputTokens／outputTokens／cacheReadTokens／cacheWriteTokens——
+// 证据与文档中的简写省略 Tokens 后缀），pressureTokens/projectedTokens
 // 在 projections.values.contextPressure 下（宿主 SessionSummary schema——顶层
 // 无 usage 字段）。供应商未报告时字段缺席，按「可取得的」口径记录。
 const valuesOf = (row) => row?.projections?.values ?? null;
