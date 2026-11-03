@@ -13,10 +13,14 @@
  *    预算挂起 → 作业完成正文经等待返回 → 回执；
  * 2. EC-B 轮询式：async_run（约 45s 作业，token B）转后台 → 按指令反复
  *    async_wait wait_ms=0（零等待立即检查）直至正文到达 → 回执；
- * 3. EC-C 对照判定：B 的模型轮次（assistant/message 事件数，自作业启动步起
- *    切窗）显著多于 A（差值 ≥2 且 A ≤3）；session/list 两行的 usage 聚合与
- *    pressureTokens/projectedTokens（供应商报告时在场）落证据作旁证——usage
- *    由供应商报告决定在场与否，缺席不构成 FAIL，按「可取得的」口径记录。
+ * 3. EC-C 对照判定：B 的模型轮次（assistant/message 事件数——每轮一次模型
+ *    请求恰产出一条；两会话自创建起 fromIndex=0 对称累计，公平对照；步骤重
+ *    试会抬高各自轮次——A 侧抬高走保守方向可假 FAIL，B 侧抬高与差值判据同
+ *    向、由「async_wait ≥2 次」的次数锚约束）显著多于 A（差值 ≥2 且 A ≤3）；
+ *    session/list 两行的 usage 聚合（projections.values.tokenUsage）与
+ *    pressureTokens/projectedTokens（projections.values.contextPressure）落
+ *    证据作旁证——usage 由供应商报告决定在场与否，缺席不构成 FAIL，按「可
+ *    取得的」口径记录。
  *
  * 装置边界（如实声明）：模型轮次对照依赖模型依从单步指令（B 依从「反复零
  * 等待」指令、A 依从「挂起等待」指令）；B 的实际轮数随模型节奏浮动，判据只
@@ -182,6 +186,8 @@ function stepRecords(transcript, fromIndex) {
   return (transcript.records ?? []).slice(fromIndex);
 }
 function modelTexts(transcript, fromIndex = 0) {
+  // 'model/message' 为旧宿主事件名析取（rc.5 宿主只有 assistant/message，
+  // 死析取无害——沿姊妹探针同款写法保持两探针口径一致）。
   return stepRecords(transcript, fromIndex)
     .filter((r) => r.event?.type === 'assistant/message' || r.event?.type === 'model/message')
     .map((r) => (r.event.data?.message?.content ?? r.event.data?.content ?? [])
@@ -207,6 +213,16 @@ function toolCallNames(transcript, fromIndex = 0) {
     if (typeof name === 'string') names.add(name);
   }
   return names;
+}
+/** 按名计数工具调用（判据锚定「反复 async_wait」的次数形态）。 */
+function toolCallCounts(transcript, fromIndex = 0) {
+  const counts = new Map();
+  for (const r of stepRecords(transcript, fromIndex)) {
+    if (r.event?.type !== 'tool/call') continue;
+    const name = r.event.data?.name ?? r.event.data?.toolName ?? r.event.data?.message?.name;
+    if (typeof name === 'string') counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return counts;
 }
 function completionSends(transcript, fromIndex = 0) {
   const out = [];
@@ -261,6 +277,7 @@ async function driveStep(sessionId, step) {
         modelTurns: modelTurnCount(transcript, beforeCount),
         toolResults: toolResultTexts(transcript, beforeCount),
         toolNames: toolCallNames(transcript, beforeCount),
+        toolCounts: toolCallCounts(transcript, beforeCount),
         completions: completionSends(transcript, beforeCount),
         baselineDegraded
       };
@@ -301,7 +318,8 @@ evidence.sessions.A = sA.sessionId;
 evidence.sessions.B = sB.sessionId;
 log(`会话 A（等待式）=${sA.sessionId}／会话 B（轮询式）=${sB.sessionId}`);
 
-// EC-A 步骤 1：等待式启动＋挂起（作业 45s；预算 150s——挂到完成，期间推进 B）。
+// EC-A 步骤 1：等待式启动＋挂起（作业 45s；预算 150s——挂到完成）。
+// 串行装置：A 完成后再推进 B（对照口径是模型轮次而非墙钟，见头注）。
 await driveStep(sA.sessionId, {
   name: 'EC-A 等待式启动并挂起',
   prompt: 'Run this single step: call async_run with command "Start-Sleep -Seconds 45; Write-Output EC-A-TOKEN-9e1", description "economy wait-mode job", yield_ms 20000 — it goes to background. Then immediately call async_wait with wait_ms 150000 on that job and wait inside it until the job result arrives. When it returns, reply with exactly EC_A_DONE. No other tools, no questions.',
@@ -309,9 +327,13 @@ await driveStep(sA.sessionId, {
   judge: (ctx) => {
     const runUsed = ctx.toolNames.has('async_run');
     const waitUsed = ctx.toolNames.has('async_wait');
+    // 正文锚：作业结算时结果正文直接附在挂起等待的返回里——模型从未挂起
+    // （仅零等待一次即回执）时不得 PASS（否则「等待式」形态未被锚定，对照
+    // 主张落空）。
+    const claimed = ctx.toolResults.some((t) => t.includes('EC-A-TOKEN-9e1'));
     const receipt = ctx.modelTexts.some((t) => t.includes('EC_A_DONE'));
-    const ok = runUsed && waitUsed && receipt;
-    return { ok, detail: ok ? `等待式完成（async_run＋async_wait 挂起在场，模型轮次 ${String(ctx.modelTurns)}）` : `async_run 在场 ${String(runUsed)}／async_wait 在场 ${String(waitUsed)}／回执 ${String(receipt)}` };
+    const ok = runUsed && waitUsed && claimed && receipt;
+    return { ok, detail: ok ? `等待式完成（正文经挂起等待返回到达，async_run＋async_wait 在场，模型轮次 ${String(ctx.modelTurns)}）` : `async_run 在场 ${String(runUsed)}／async_wait 在场 ${String(waitUsed)}／正文 ${String(claimed)}／回执 ${String(receipt)}` };
   }
 });
 const baselineA = (await transcriptOf(sA.sessionId)).records?.length ?? 0;
@@ -324,10 +346,15 @@ await driveStep(sB.sessionId, {
   timeoutMs: 420_000,
   judge: (ctx) => {
     const runUsed = ctx.toolNames.has('async_run');
+    const waitUsed = ctx.toolNames.has('async_wait');
+    // 「反复零等待」的次数形态：async_wait 调用 ≥2 次才构成轮询（一次挂起
+    // 或一次零等待都不算）；调用次数落 attempts 留痕。
+    const waitCount = ctx.toolCounts.get('async_wait') ?? 0;
+    const polled = waitCount >= 2;
     const claimed = ctx.toolResults.some((t) => t.includes('EC-B-TOKEN-6c3'));
     const receipt = ctx.modelTexts.some((t) => t.includes('EC_B_DONE'));
-    const ok = runUsed && claimed && receipt;
-    return { ok, detail: ok ? `轮询式完成（正文经零等待检查到达，模型轮次 ${String(ctx.modelTurns)}）` : `async_run 在场 ${String(runUsed)}／正文 ${String(claimed)}／回执 ${String(receipt)}` };
+    const ok = runUsed && waitUsed && polled && claimed && receipt;
+    return { ok, detail: ok ? `轮询式完成（正文经 ${String(waitCount)} 次零等待检查到达，模型轮次 ${String(ctx.modelTurns)}）` : `async_run 在场 ${String(runUsed)}／async_wait 在场 ${String(waitUsed)}（${String(waitCount)} 次）／正文 ${String(claimed)}／回执 ${String(receipt)}` };
   }
 });
 const baselineB = (await transcriptOf(sB.sessionId)).records?.length ?? 0;
@@ -343,10 +370,15 @@ evidence.phases.turnsB = turnsB;
 const listing = await rpcOk('session/list', { _request: {} });
 const rowA = listing.items.find((i) => i.sessionId === sA.sessionId);
 const rowB = listing.items.find((i) => i.sessionId === sB.sessionId);
-evidence.phases.usageA = rowA?.usage ?? null;
-evidence.phases.usageB = rowB?.usage ?? null;
-evidence.phases.pressureA = rowA?.pressureTokens ?? null;
-evidence.phases.pressureB = rowB?.pressureTokens ?? null;
+// usage 读取路径：session/list 行的 usage 聚合在 projections.values.tokenUsage
+// （uncachedInput/output/cacheRead/cacheWrite），pressureTokens/projectedTokens
+// 在 projections.values.contextPressure 下（宿主 SessionSummary schema——顶层
+// 无 usage 字段）。供应商未报告时字段缺席，按「可取得的」口径记录。
+const valuesOf = (row) => row?.projections?.values ?? null;
+evidence.phases.usageA = valuesOf(rowA)?.tokenUsage ?? null;
+evidence.phases.usageB = valuesOf(rowB)?.tokenUsage ?? null;
+evidence.phases.pressureA = valuesOf(rowA)?.contextPressure ?? null;
+evidence.phases.pressureB = valuesOf(rowB)?.contextPressure ?? null;
 const diff = turnsB - turnsA;
 const bOutPollsA = diff >= 2;
 const aLean = turnsA <= 3;
