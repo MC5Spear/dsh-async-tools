@@ -4,10 +4,11 @@
  *
  * ## 探针在证什么
  *
- * 等待语义探针（probe-wait-semantics）已证行为面（挂起、出口、打断、协作）；
- * 本探针补**计量面**：同一时长的后台作业下，「async_wait 挂起等待」与「模型
- * 反复零等待轮询」两种形态的模型请求数对照——等待式不逐轮消耗模型请求，
- * 是「等待必要性」的收益实证。两形态各一会话、同实例同模型路由并行对照：
+ * 等待语义探针（probe-wait-semantics）已证行为维度（挂起、出口、打断、协
+ * 作）；本探针补**计量维度**：同一时长的后台作业下，「async_wait 挂起等待」
+ * 与「模型反复零等待轮询」两种形态的模型轮次与用量对照——等待式不逐轮消
+ * 耗模型请求，是「等待必要性」的收益实证。两形态各一会话、同实例同模型路
+ * 由平行分组对照（先后推进，对照口径是轮次与用量而非墙钟）：
  *
  * 1. EC-A 等待式：async_run（约 45s 作业，token A）转后台 → async_wait 以足额
  *    预算挂起 → 作业完成正文经等待返回 → 回执；
@@ -15,21 +16,24 @@
  *    async_wait wait_ms=0（零等待立即检查）直至正文到达 → 回执；
  *    （两会话同实例同模型路由、作业时长相同——平行分组对照；先后推进，
  *    对照口径是模型轮次与用量而非墙钟）
- * 3. EC-C 对照判定：B 的模型轮次（assistant/message 事件数——每轮一次模型
- *    请求恰产出一条；两会话自创建起 fromIndex=0 对称累计，公平对照；步骤重
- *    试会抬高各自轮次——A 侧抬高走保守方向可假 FAIL，B 侧抬高与差值判据同
- *    向，次数锚保证成功尝试确为轮询形态、失败尝试的抬高幅度可由 attempts
- *    留痕离线区分）显著多于 A（差值 ≥2 且 A ≤3）；
+ * 3. EC-C 对照判定：B 的模型轮次（assistant/message 事件数——每轮恰产出
+ *    一条；llm attempt 重试走 assistant/attempt 不计，口径按逻辑轮、物理请
+ *    求数可略多，两臂对称不受影响；两会话自创建起 fromIndex=0 对称累计，公
+ *    平对照；步骤重试会抬高各自轮次——A 侧抬高走保守方向可假 FAIL，B 侧任
+ *    何轮次抬高都放宽差值判据，次数锚保证成功尝试确为轮询形态、失败尝试
+ *    的抬高幅度可由 attempts 留痕离线区分）显著多于 A（差值 ≥2 且 A ≤3）；
  *    session/list 两行的 usage 聚合（projections.values.tokenUsage）与
  *    pressureTokens/projectedTokens（projections.values.contextPressure）落
  *    证据作旁证——usage 由供应商报告决定在场与否，缺席不构成 FAIL，按「可
  *    取得的」口径记录。
  *
  * 装置边界（如实声明）：模型轮次对照依赖模型依从单步指令（B 依从「反复零
- * 等待」指令、A 依从「挂起等待」指令）；B 的实际轮数随模型节奏浮动，判据只
- * 锚定差值下限与 A 的上限，不锚定绝对轮数。两作业时长刻意相同（45s），
- * 排除时长差引入的偏差；两会话先后推进（先 A 后 B，对照口径是模型轮次而非
- * 墙钟），总运行时长约 3-4 分钟。轮询形态是对照装置，不是本包推荐的用法。
+ * 等待」指令、A 依从「挂起等待」指令；等待预算由模型自选——指令给足额上
+ * 限、实测自选更短但几何上仍闭合，过短时走保守 FAIL＋重试）；B 的实际轮数
+ * 随模型节奏浮动，判据只锚定差值下限与 A 的上限，不锚定绝对轮数。两作业时
+ * 长刻意相同（45s），排除时长差引入的偏差；两会话先后推进（先 A 后 B，对
+ * 照口径是模型轮次而非墙钟），总运行时长约 3-4 分钟。轮询形态是对照装置，
+ * 不是本包推荐的用法。
  *
  * 转录取证同既有探针（下标切窗、宿主侧载体；正文断言只认 tool/result 与
  * 完成消息，模型文本只作回执）。每步超时或断言不成立同会话重试一次（重试
@@ -153,18 +157,20 @@ async function rpc(endpoint, argsBody) {
     type: 'client-request', rpcId: `probe-${Math.random().toString(36).slice(2, 10)}`,
     method: endpoint, payload: { args: argsBody }
   });
+  const once = () => fetch(`${ORIGIN}/api/${endpoint}`, {
+    method: 'POST', headers: { 'content-type': 'application/json', cookie: COOKIE }, body,
+    signal: AbortSignal.timeout(60_000)
+  });
+  // 计量装置对重复投递敏感：session/prompt（非幂等端点）不走自动重试——
+  // 首次请求已达宿主而响应连接被断时，重试会重复投递同文指令、直接翻倍
+  // 模型轮次污染对照（宽松方向）。幂等端点（list/page）失败重试一次。
+  if (endpoint === 'session/prompt') return once();
   let response;
   try {
-    response = await fetch(`${ORIGIN}/api/${endpoint}`, {
-      method: 'POST', headers: { 'content-type': 'application/json', cookie: COOKIE }, body,
-      signal: AbortSignal.timeout(60_000)
-    });
+    response = await once();
   } catch (connError) {
     log(`rpc ${endpoint} 首次请求失败，重试一次：${String(connError?.message ?? connError)}`);
-    response = await fetch(`${ORIGIN}/api/${endpoint}`, {
-      method: 'POST', headers: { 'content-type': 'application/json', cookie: COOKIE }, body,
-      signal: AbortSignal.timeout(60_000)
-    });
+    response = await once();
   }
   const parsed = JSON.parse(await response.text());
   if (parsed?.result?.ok !== true) return { ok: false, error: parsed?.result?.error ?? null };
@@ -293,6 +299,7 @@ async function driveStep(sessionId, step) {
       lastDetail = outcome.detail ?? lastDetail;
       record.snapshot = {
         toolNames: [...ctx.toolNames],
+        toolCounts: Object.fromEntries(ctx.toolCounts),
         modelTurns: ctx.modelTurns,
         toolResults: ctx.toolResults.slice(-8).map((t) => t.slice(-400)),
         completions: ctx.completions.slice(-4).map((t) => t.slice(-250)),
@@ -306,7 +313,7 @@ async function driveStep(sessionId, step) {
   judge(step.name, false, `两次尝试未成立；最后状态：${String(evidence.steps.at(-1).attempts.at(-1).detail)}`);
   return false;
 }
-/** 会话自某步起的累计模型轮次（对照计量用——从两形态共同起点起算）。 */
+/** 会话的累计模型轮次（EC-C 对照口径：两会话都自创建起 fromIndex=0）。 */
 async function turnsSince(sessionId, fromIndex) {
   const t = await transcriptOf(sessionId);
   return modelTurnCount(t, fromIndex);
@@ -340,6 +347,8 @@ await driveStep(sA.sessionId, {
   }
 });
 const baselineA = (await transcriptOf(sA.sessionId)).records?.length ?? 0;
+// baseline 仅作阶段留痕（步骤完成时的记录条数），不参与判定——EC-C 用
+// fromIndex=0 对称累计。
 evidence.phases.baselineA = baselineA;
 
 // EC-B 步骤 1：轮询式启动＋反复零等待（作业同样 45s）。
