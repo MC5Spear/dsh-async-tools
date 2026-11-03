@@ -1,6 +1,6 @@
 /**
- * 等待语义真机探针（VERIFY-01：需求 8.2「目标判断／共用等待／等待必要性」
- * 的实例层装置）。
+ * 等待语义真机探针（VERIFY-01：需求 8.2「目标判断／共用等待／等待必要性与
+ * 协作续接」的实例层装置）。
  *
  * ## 探针在证什么
  *
@@ -275,10 +275,12 @@ function waitSpanSince(transcript, fromIndex) {
     if (records[j].event?.type === 'tool/result') {
       const callAt = atOf(records[i]);
       const at = atOf(records[j]);
+      // 时间戳合法性：at 缺席或差值为负（乱序/异常）都交墙钟回退，负 span
+      // 不进入上界型断言（<10s/<90s 对负值恒真，会架空判据）。
       const diff = callAt !== null && at !== null ? at - callAt : null;
       const content = records[j].event.data?.message?.content ?? [];
       const resultText = content.filter((c) => c.type === 'text').map((c) => String(c.text ?? '')).join('\n');
-      return { callSeen: true, resultSeen: true, spanMs: diff !== null && Number.isFinite(diff) ? diff : null, resultText };
+      return { callSeen: true, resultSeen: true, spanMs: diff !== null && Number.isFinite(diff) && diff >= 0 ? diff : null, resultText };
     }
   }
   return { callSeen: true, resultSeen: false, spanMs: null, resultText: '' };
@@ -335,11 +337,17 @@ async function driveStep(step) {
         log(`步骤 ${step.name}：等待已挂起，注入动作完成。`);
       }
       const wallSpan = wallCallAt !== null && wallResultAt !== null ? wallResultAt - wallCallAt : null;
-      // 本步窗口内出现的作业 id（async_run 返回与 wait 目标状态都带 id）——
-      // 结算断言按身份过滤，跨步残留作业（如 WS-4 有意不杀的长作业）的结算
-      // 不误伤本步判定。
+      // 本步窗口内的作业 id：以 job/registered 事件（宿主注册时必发，含 jobId）
+      // 为主源，与插件默认 jobKind 无耦合（jobKind 改名不影响身份过滤）；本步
+      // 工具返回文本中的 id 形态作为兜底合并。结算断言按身份过滤，跨步残留
+      // 作业（如 WS-4 有意不杀的长作业）的结算不误伤本步判定。
       const stepText = toolResultTexts(transcript, beforeCount).join('\n');
       const stepJobIds = new Set([...stepText.matchAll(/async-command-[0-9a-f]+/g)].map((m) => m[0]));
+      for (const r of stepRecords(transcript, beforeCount)) {
+        if (r.event?.type !== 'job/registered') continue;
+        const id = r.event.data?.jobId;
+        if (typeof id === 'string' && id !== '') stepJobIds.add(id);
+      }
       const settledEvents = stepRecords(transcript, beforeCount)
         .filter((r) => r.event?.type === 'job/settled')
         .map((r) => ({ jobId: String(r.event.data?.jobId ?? ''), status: r.event.data?.status ?? '?' }))
@@ -403,6 +411,9 @@ await driveStep({
   name: 'WS-2 目标完成即交回（不等满预算）',
   prompt: 'Run this single step and reply with exactly the token WS2_DONE: (1) call async_run with command "Start-Sleep -Seconds 30; Write-Output WS2-TOKEN-4d9", description "ws2 target", yield_ms 20000 — it goes to background, note its job_id; (2) immediately call async_wait with targets [{kind:"job", id:<that job_id>}] and wait_ms 180000, waiting inline until it returns; (3) after the wait returns, reply WS2_DONE. No other tools, no questions.',
   judge: (ctx) => {
+    // claimed 与 span 锚定同一次调用：本步 async_wait 调用恰 1 次（模型违规
+    // 自行补一次领取会使 span 取第二次调用、与正文来源脱钩）。
+    const singleCall = (ctx.toolCallCounts.get('async_wait') ?? 0) === 1;
     const claimed = ctx.toolResults.some((t) => t.includes('WS2-TOKEN-4d9'));
     const span = ctx.waitSpan;
     // span 是「wait 调用起的剩余等待」——async_run 先前台等满首等下限，转后台
@@ -410,8 +421,8 @@ await driveStep({
     // 需求 8.2 目标判断行「已就绪内容……及时交回」）也合法。提前交回的判别在
     // 上限侧：远小于 180s 预算；正文到达是主判据。
     const early = span !== null && span < 150_000;
-    const ok = claimed && early && ctx.modelTexts.some((t) => t.includes('WS2_DONE'));
-    return { ok, detail: ok ? `正文到达＋等待挂起 ${String(Math.round(span / 1000))}s 交回（远小于 180s 预算）` : `正文 ${String(claimed)}／挂起时长 ${span === null ? '未取得' : `${String(Math.round(span / 1000))}s`}／回执 ${String(ctx.modelTexts.some((t) => t.includes('WS2_DONE')))}` };
+    const ok = claimed && early && singleCall && ctx.modelTexts.some((t) => t.includes('WS2_DONE'));
+    return { ok, detail: ok ? `正文到达＋单次等待挂起 ${String(Math.round(span / 1000))}s 交回（远小于 180s 预算）` : `正文 ${String(claimed)}／单次调用 ${String(singleCall)}（${String(ctx.toolCallCounts.get('async_wait') ?? 0)} 次）／挂起时长 ${span === null ? '未取得' : `${String(Math.round(span / 1000))}s`}／回执 ${String(ctx.modelTexts.some((t) => t.includes('WS2_DONE')))}` };
   }
 });
 
@@ -420,13 +431,15 @@ await driveStep({
   name: 'WS-3 非目标通知不提前结束等待',
   prompt: 'Run this single step and reply with exactly the token WS3_DONE: (1) call async_run twice: job A with command "Start-Sleep -Seconds 20; Write-Output WS3-A-2e7", description "ws3 job A", yield_ms 20000; job B with command "Start-Sleep -Seconds 65; Write-Output WS3-B-8c4", description "ws3 job B", yield_ms 20000 — both go to background, note both job_ids; (2) immediately call async_wait with targets [{kind:"job", id:<B job_id>}] and wait_ms 180000, waiting inline; job A is NOT a target — its completion must not end your wait early; (3) after the wait returns, reply WS3_DONE. No other tools, no questions.',
   judge: (ctx) => {
+    // 与 WS-2 同理：claimed 与 span 锚定同一次调用。
+    const singleCall = (ctx.toolCallCounts.get('async_wait') ?? 0) === 1;
     const claimed = ctx.toolResults.some((t) => t.includes('WS3-B-8c4'));
     const span = ctx.waitSpan;
     // 期望交回贴 B 的剩余窗口（wait 起点约在 B 启动后 20s+，B 剩约 45s±周转）；
     // 装置边界见头注——A 时序上早于 wait 完成，本判据主证「B 正文＋时长窗口」。
     const nearB = span !== null && span >= 25_000 && span < 150_000;
-    const ok = claimed && nearB && ctx.modelTexts.some((t) => t.includes('WS3_DONE'));
-    return { ok, detail: ok ? `B 正文到达＋挂起 ${String(Math.round(span / 1000))}s（贴 B 剩余窗口）` : `B 正文 ${String(claimed)}／挂起时长 ${span === null ? '未取得' : `${String(Math.round(span / 1000))}s`}／回执 ${String(ctx.modelTexts.some((t) => t.includes('WS3_DONE')))}` };
+    const ok = claimed && nearB && singleCall && ctx.modelTexts.some((t) => t.includes('WS3_DONE'));
+    return { ok, detail: ok ? `B 正文到达＋单次等待挂起 ${String(Math.round(span / 1000))}s（贴 B 剩余窗口）` : `B 正文 ${String(claimed)}／单次调用 ${String(singleCall)}（${String(ctx.toolCallCounts.get('async_wait') ?? 0)} 次）／挂起时长 ${span === null ? '未取得' : `${String(Math.round(span / 1000))}s`}／回执 ${String(ctx.modelTexts.some((t) => t.includes('WS3_DONE')))}` };
   }
 });
 
