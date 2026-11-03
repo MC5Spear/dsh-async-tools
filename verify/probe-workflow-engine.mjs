@@ -2,14 +2,14 @@
 /**
  * 编排 PTC 钩子真机探针（VERIFY-01「编排 PTC 钩子仍缺完整实例证据」项）。
  *
- * 链路与姊妹探针（probe-concurrent-wait／probe-wait-semantics）同款：npm pack
+ * 流程骨架与姊妹探针（probe-concurrent-wait／probe-wait-semantics）同款：npm pack
  * 受测 tgz→mkdtemp 独立 DSH_HOME→官方 CLI plugin add→随机端口隔离实例（模型
  * 路由 patch 取 `<serviceRoot>/patches/zai-glm.yml`）→RPC→单会话（agentPreset
  * ='dsh-async'）→三步单步指令（prompt 显式要求串行单工具调用）。
  *
  * 三步（对应需求 4 章 async_workflow 行为约定 232-257）：
  *
- * 1. WF-1 pipeline 逐条独立流过＋局部降 null（249-250 行）：纯 JS 阶段（不派
+ * 1. WF-1 pipeline 逐条独立流过＋局部降 null（249 行 pipeline 条款）：纯 JS 阶段（不派
  *    子代理——pipeline 阶段是编排脚本内同步函数，只有 agent() 钩子派子代理），
  *    三条目中间条在第二阶段抛错——该条降 null、跳过其余阶段，其余条目正常，
  *    整个脚本照常 return（局部错误不终止，致命误用才终止）。判据锚结果正文
@@ -34,11 +34,17 @@
  *    ＋回执。
  *
  * 三步共通：单次 async_workflow（结果正文与调用数锚定同一次调用）＋串行单工
- * 具。装置边界：并行/总量上限与「并发槽满排队」不触发（三步各 ≤1 子代理，
- * 上限面由套件层锚定）；GUI 回放持久节点（257 行「运行开始、子代理开始／结
- * 束、运行结束」）的界面呈现不在 RPC 装置范围（记录在证据快照，判据不锚）；
- * meta.phases 声明匹配（「已声明阶段按精确标题匹配」）不单独装置（phase 标题
- * 进度属界面观感）。
+ * 具。装置边界：并发/总量/组合上限与「并发槽满排队」属宿主 PTC 引擎出厂行
+ * 为（设计 §「宿主 PTC 编排引擎的核验基准」；需求 236 本包不重写引擎与配
+ * 置），本装置各步 ≤1 子代理不触发，也不由本仓套件锚定（套件两处编排引擎
+ * 均为替身）——按宿主行为边界不装置不另锚定。同属编排契约但不单独装置：
+ * parallel 普通函数错误降 null（250 行——与 pipeline 局部降 null 同语义不
+ * 同钩子，WF-1 只装置 pipeline 侧）、agent() schema 白名单外字段拒绝（248
+ * 行）、meta 未知字段拒绝（245 行）。GUI 回放持久节点（257 行「运行开始、
+ * 子代理开始／结束、运行结束」）的界面呈现不在 RPC 装置范围，也不进本探针
+ * 证据快照（五类提取器按 event.type 过滤、不含 recorder 事件）——需要时可
+ * 从会话档案另查；meta.phases 声明匹配（「已声明阶段按精确标题匹配」）不
+ * 单独装置（phase 标题进度属界面观感）。
  *
  * ## 用法
  *
@@ -360,9 +366,9 @@ await driveStep({
   judge: (ctx) => {
     const singleCall = (ctx.toolCallCounts.get('async_workflow') ?? 0) === 1;
     const textAll = [...ctx.toolResults, ...ctx.completions].join('\n');
-    // 错误文案在场：未知选项拒绝（effort 字样＋错误语标记——宽松：effort 与
-    // error/错误/unknown/拒绝/option 任一共现，或工具返回 ok:false 形态文案）。
-    const errorRead = textAll.includes('effort') && /(error|错误|unknown|option|选项|reject|拒绝|invalid|不支持)/i.test(textAll);
+    // 错误文案在场：未知选项拒绝（同一文本内 effort 与错误语标记共现——
+    // 收紧到单条载体，避免跨条目拼凑）。
+    const errorRead = [...ctx.toolResults, ...ctx.completions].some((t) => t.includes('effort') && /(error|错误|unknown|option|选项|reject|拒绝|invalid|不支持)/i.test(t));
     // 子代理 token 缺席：误用必须终止——子代理回答不得作为正常结果出现。
     const agentAbsent = !textAll.includes('WF2-NEVER-TOKEN');
     const receipt = ctx.modelTexts.some((t) => t.includes('WF2_DONE'));
