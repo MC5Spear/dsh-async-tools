@@ -22,11 +22,11 @@
  *    证据）。
  * 2. AP-2 拒绝：同工作区外目标（另一文件名）＋标记 PROBE:REJECT。断言：
  *    工具错误文本含宿主拒绝文案（the user rejected escalating）；审计对
- *    outcome='rejected'；job_list 无新作业（审批失败在注册之前——零注册）；
- *    **目标文件不存在**（零进程启动的硬证据：进程若跑了文件就会在）。
+ *    outcome='rejected'；本窗零宿主作业注册事件（审批失败在注册之前）；
+ *    **目标文件不存在**（零进程启动的直接证据：进程若跑了文件就会在）。
  * 3. AP-3 非严格加宽（同级）：sandbox_permissions='workspace-write'（与
  *    会话当前模式同级）。断言：插件预检文案（escalationSameLevel 错误）；
- *    **无审批审计对**（同级预检不走 seam）；job_list 无新作业；零进程。
+ *    **无审批审计对**（同级预检不走 seam）；本窗零注册；命令正文未出现。
  *
  * ## 观测与断言口径
  *
@@ -36,21 +36,26 @@
  *   asked→decided 按 id 配对。
  * - 正文与错误断言只认 tool/result 载体（模型文本只作回执）。
  * - answerer 必须以 { prepend: true } 注册：宿主 api-remotes 转发器在 bundle
- *   层先注册且不调 next()（无浏览器连接时把请求挂进 gateway pending），
- *   后注册的监听器收不到——prepend 抢到链头才能作答。
+ *   层先注册，请求入队 gateway pending 后不调 next()（无浏览器连接且无人
+ *   作答时占链挂起），后注册的监听器收不到——prepend 抢到链头才能作答。
  * - 探针实例不设 DSH_PERMISSION_MODE（默认 workspace-write → 审批策略
  *   'ask'；若设 danger-full-access 会变 'never' 直接 rejected，装置前提被
  *   破坏）。
  *
- * 装置边界（如实声明）：「审批服务缺席」（seam 不组合）与「无人作答」
- * （waterfall 空转 → unavailable）、web 默认形态（转发器占链、无浏览器时
- * 挂起）两条路径需要额外 overlay 禁用组合行，本装置不覆盖，issue-list 继
+ * 装置边界（如实声明）：「审批服务缺席」（seam 不组合）、「无人作答」
+ * （waterfall 空转 → unavailable）与 web 默认形态（转发器占链、无浏览器时
+ * 挂起）三个变体需要额外 overlay 禁用组合行，本装置不覆盖，issue-list 继
  * 追踪；「取消」（cancelled）变体不单独装置（与 rejected 同链，仅
- * outcome/文案不同）。审批链依赖模型依从单步指令带齐提权参数（sandbox_
- * permissions＋justification 成对）；指令给出精确参数名与值，依从性由
- * 审计对与错误文案双向锚定（模型不带参数则 asked 缺席、断言 FAIL——保守
- * 方向）。同级预检（AP-3）由插件在委托宿主之前完成（宿主对同级免审批放
- * 行，与本包口径不同——lib/jobs.js 预检注释），故无审计事件是预期形态。
+ * outcome/文案不同）。AP-2「文件不存在」作为零进程直接证据依赖两个前提：
+ * 模型如实转写命令文本（指令给出精确路径）、写操作本身不因环境原因失败
+ * （目标目录为本机开发树、普通用户可写）——两前提破坏需模型改路径与插件
+ * 无视拒绝两个错误叠加，装置不另行区分。审批链依赖模型依从单步指令带齐
+ * 提权参数（sandbox_permissions＋justification 成对）；指令给出精确参数名
+ * 与值，依从性由审计对与错误文案双向锚定（模型不带参数则 asked 缺席、断
+ * 言 FAIL——保守方向）。同级预检（AP-3）由插件在委托宿主之前完成（宿主
+ * 对同级免审批放行，与本包口径不同——lib/jobs.js 预检注释），故无审计事
+ * 件是预期形态。FAULT 路径不清理工作区外目标文件（evidence.phases 记录路
+ * 径，供手动清理；正常路径结尾自清）。
  *
  * 每步超时或断言不成立同会话重试一次（重试留痕；AP-1/AP-2 各自目标文件
  * 名含随机后缀，重试不残留歧义）。转录取证同既有探针（下标切窗、宿主侧
@@ -84,7 +89,7 @@ const repo = resolve(argOf('repo') ?? process.cwd());
 let home = null;
 let evidence = null;
 const fail = (msg) => {
-  console.error(`[probe] FAULT: ${msg}\n[probe] 临时目录：${home ?? '（尚未创建）'}${keep ? '（--keep 保留）' : '（探针故障路径，请手动清理）'}`);
+  console.error(`[probe] FAULT: ${msg}\n[probe] 临时目录：${home ?? '（尚未创建）'}${keep ? '（--keep 保留）' : '（探针故障路径，请手动清理）'}${evidence?.phases?.outsideAllow !== undefined || evidence?.phases?.outsideReject !== undefined ? `（工作区外目标文件不清理，路径见 ${join('.local', 'probe-approval-flow.json')} 的 phases）` : ''}`);
   try {
     if (evidence !== null) {
       mkdirSync(join(repo, '.local'), { recursive: true });
@@ -318,6 +323,10 @@ function asyncRunCallIds(transcript, fromIndex = 0) {
   }
   return ids;
 }
+/** 本窗内宿主作业注册事件数（审批失败在注册之前——零注册断言用）。 */
+function jobRegisteredCount(transcript, fromIndex = 0) {
+  return stepRecords(transcript, fromIndex).filter((r) => r.event?.type === 'job/registered').length;
+}
 
 // 7) 步骤驱动（单步指令＋固定回执 token；首不成重试一次）。
 const STEP_TIMEOUT_MS = 300_000;
@@ -361,6 +370,7 @@ async function driveStep(sessionId, step) {
         toolResults: toolResultTexts(transcript, beforeCount),
         approvals: approvalPairs(transcript, beforeCount),
         runCallIds: asyncRunCallIds(transcript, beforeCount),
+        jobRegistrations: jobRegisteredCount(transcript, beforeCount),
         baselineDegraded
       };
       const outcome = step.judge(ctx);
@@ -429,10 +439,13 @@ await driveStep(s1.sessionId, {
       ask.toolName === 'async_run' && ctx.runCallIds.has(ask.callId)
       && String(ask.reason ?? '').includes('PROBE:REJECT') && decided.outcome === 'rejected');
     const fileAbsent = !existsSync(outsideReject);
-    const ok = receipt && denied && pair !== undefined && fileAbsent;
+    // 零注册断言：审批失败在 startForegroundJob 之前——本窗宿主作业注册
+    // 事件应为零（文件缺席是零进程的直接证据；注册事件是零注册的转录证据）。
+    const zeroRegistered = ctx.jobRegistrations === 0;
+    const ok = receipt && denied && pair !== undefined && fileAbsent && zeroRegistered;
     return { ok, detail: ok
-      ? `审批对（rejected，callId 配对）＋宿主拒绝文案到达＋目标文件不存在（零进程启动）`
-      : `回执 ${String(receipt)}／拒绝文案 ${String(denied)}／审计对 ${String(pair !== undefined)}／文件不存在 ${String(fileAbsent)}` };
+      ? `审批对（rejected，callId 配对）＋宿主拒绝文案到达＋目标文件不存在（零进程）＋零注册`
+      : `回执 ${String(receipt)}／拒绝文案 ${String(denied)}／审计对 ${String(pair !== undefined)}／文件不存在 ${String(fileAbsent)}／零注册 ${String(zeroRegistered)}（注册 ${String(ctx.jobRegistrations)}）` };
   }
 });
 
@@ -446,10 +459,11 @@ await driveStep(s1.sessionId, {
     const refused = ctx.toolResults.some((t) => /not a widening request|不是加宽请求|equals this call's current sandbox mode|与本次调用的当前沙箱模式相同/.test(t));
     const noApproval = ctx.approvals.pairs.length === 0 && ctx.approvals.orphanAsked.length === 0;
     const bodyAbsent = !ctx.toolResults.some((t) => t.includes('AP3-SHOULD-NOT-RUN'));
-    const ok = receipt && refused && noApproval && bodyAbsent;
+    const zeroRegistered = ctx.jobRegistrations === 0;
+    const ok = receipt && refused && noApproval && bodyAbsent && zeroRegistered;
     return { ok, detail: ok
-      ? `同级预检文案到达＋无审批审计（预检在 seam 之前）＋命令正文未出现（零进程启动）`
-      : `回执 ${String(receipt)}／预检文案 ${String(refused)}／零审计 ${String(noApproval)}／正文未出现 ${String(bodyAbsent)}` };
+      ? `同级预检文案到达＋无审批审计（预检在 seam 之前）＋命令正文未出现（零进程）＋零注册`
+      : `回执 ${String(receipt)}／预检文案 ${String(refused)}／零审计 ${String(noApproval)}／正文未出现 ${String(bodyAbsent)}／零注册 ${String(zeroRegistered)}（注册 ${String(ctx.jobRegistrations)}）` };
   }
 });
 
