@@ -410,7 +410,9 @@ if (oldRow === undefined) {
     judge('RM-2 恢复会话继续接受指令（resume 回执）', false, `resume 指令被宿主拒（错误体入证据——与 IL-3 卸载后 resume 被拒同层形态）：${JSON.stringify(resumePrompt.error).slice(0, 200)}`);
   } else {
     evidence.phases.resumePrompt = { ok: true };
-    // 轮询回执；中途 session/page 被拒时按超时 FAIL 取证（错误形态留痕于快照外循环）。
+    // 轮询回执；prompt 层拒绝已由上面 rpc() 捕获（IL-3 实测拒绝层），轮询
+    // 中途 session/page 的网络层异常/'session not found' 抛错同样按超时
+    // FAIL 取证（page 层 RPC 拒绝形态走 rpcOk→FAULT，不在此分支内）。
     const resumeDeadline = Date.now() + 180_000;
     let resumeOk = false;
     let resumeDetail = '回执未到达（resume 被拒或指令未执行——180s 超时）';
@@ -429,6 +431,9 @@ if (oldRow === undefined) {
       }
     }
     judge('RM-2 恢复会话继续接受指令（resume 回执）', resumeOk, resumeDetail);
+    // RM-2 FAIL（resume 被拒/回执未达）即收尾——后续 RM-3 的 sendPrompt 会在
+    // 同层被拒处 FAULT，先按 FAIL 判定收束退出码 1（错误体已留证据）。
+    if (!resumeOk) await shutdownAndFinish();
   }
 }
 
