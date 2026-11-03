@@ -37,10 +37,18 @@
  * 装置边界（如实声明）：「等待取消与交付重叠」「条目上限 10／批预算截断的
  * 延后与恢复」「完成消息路径的批级配额」属套件层受控装置（test/
  * wait-delivery.test.mjs），真机内容量小、不足以触发上限，本探针不覆盖；
- * CW-1 的 A/B 并发起跑依模型依从性（并行一次消息或先后两次调用都接受——
- * 断言只锚结果形态：B 正文经等待返回、A 正文同批在场、span 下界不被 A
- * 时刻顶穿）；「已有消息同窗交付不重复到等待返回」（去重义务）需要同窗
- * 消息与等待交回的精确重叠，真机时序不可控，不装置。
+ * CW-1 的 A/B 起跑形态：各步 prompt 显式要求串行单工具调用（逐个等待
+ * 结果）；模型违规并行时 span 配对可靠性下降（误差方向假 FAIL，重试自
+ * 愈——模型稳定偏并行时不自愈，按 FAIL 如实取证）——断言只锚结果形态；
+ * 「已有消息同窗交付不重复到等待返回」（去重义务）需要同窗
+ * 消息与等待交回的精确重叠，真机时序不可控，不装置。「同批」断言以同窗
+ * 近似（同一模型输入边界宿主不可辨：P 经上批完成消息＋Q 经等待返回也过
+ * 判据）。作业命令依赖 PowerShell（Start-Sleep）——非 PowerShell 宿主上
+ * 作业失败会以正文缺席形态按 FAIL 取证（非 FAULT），Linux 侧由问题清单
+ * 另项追踪。首跑 CW-3 出现 span≈121s（挂满 120s 预算才交回两正文）形态，
+ * 成因未定：串行假设下复跑 3/3 未复现；并行调用配对失准的推演只能把
+ * span 配小、到不了 121s，不排除实现侧就绪唤醒或周期复查通道的低概率
+ * 缺口——判据保留「挂满预算按 FAIL 拦截」，复现即转入问题清单查实现。
  *
  * ## 用法
  *
@@ -275,9 +283,10 @@ function completionSends(transcript, fromIndex = 0) {
 }
 /** async_wait 挂起时长与其返回文本：以数组下标取「fromIndex 之后」的最后一个
  *  tool/call(name=async_wait) 与其后第一个 tool/result——装置假设模型按指令
- *  串行单工具调用（各步指令均要求），违规并行时配对可能失准，误差方向是
- *  假 FAIL（重试自愈）而非假 PASS。优先转录 at 时间戳，缺席时由调用侧用
- *  轮询墙钟回退（±一个轮询间隔）。 */
+ *  串行单工具调用（各步 prompt 均显式要求 issue each call in sequence and
+ *  wait for its result），并行调用时配对可能失准，误差方向是假 FAIL（重试
+ *  自愈）而非假 PASS。优先转录 at 时间戳，缺席时由调用侧用轮询墙钟回退
+ *  （±一个轮询间隔）。 */
 function waitSpanSince(transcript, fromIndex) {
   const records = (transcript.records ?? []).slice(fromIndex);
   const callIdx = [];
@@ -319,13 +328,14 @@ async function driveStep(step) {
   evidence.steps.push(record);
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     // 步骤基线：当前记录条数（seq 可能缺席，append-only 下标即坐标）；拉取
-    // 失败时沿用上一成功基线（首步按 0——回执 token 步内唯一，主要代价是
-    // 多扫旧记录而非误判）。基线是跨步内部状态，不入证据 JSON。
+    // 失败时沿用上一成功基线（首步按 0）并打标——退化窗会把前步等待计入
+    // singleWait／span 配对（假 FAIL 方向），留痕供离线区分退化与真 FAIL。
     let beforeCount = lastBaselineShared.value;
+    let baselineDegraded = false;
     try {
       beforeCount = (await transcriptOf()).records?.length ?? 0;
       lastBaselineShared.value = beforeCount;
-    } catch { /* 沿用上一成功基线 */ }
+    } catch { baselineDegraded = beforeCount !== 0; }
     // 墙钟回退：首次观察到本步 async_wait 调用与其结果的时刻（±轮询间隔）。
     let wallCallAt = null;
     let wallResultAt = null;
@@ -357,7 +367,7 @@ async function driveStep(step) {
       };
       const outcome = step.judge(ctx);
       if (outcome.ok === true) {
-        record.attempts.push({ attempt, ok: true, detail: outcome.detail });
+        record.attempts.push({ attempt, ok: true, detail: outcome.detail, baselineDegraded });
         judge(step.name, true, outcome.detail);
         return true;
       }
@@ -373,7 +383,7 @@ async function driveStep(step) {
         waitResultTail: ctx.waitResultText.slice(-400)
       };
     }
-    record.attempts.push({ attempt, ok: false, detail: lastDetail });
+    record.attempts.push({ attempt, ok: false, detail: lastDetail, baselineDegraded });
     log(`步骤 ${step.name} 第 ${String(attempt)} 次未成立（${lastDetail}）${attempt === 1 ? '，重试一次' : ''}`);
   }
   judge(step.name, false, `两次尝试未成立；最后状态：${String(evidence.steps.at(-1).attempts.at(-1).detail)}`);
@@ -389,7 +399,7 @@ await driveStep({
   // 11s），若误把非目标 A 当唤醒条件 span≈11s；串行形态 wait 起点约在
   // 起跑后 19s（A 已完成、经完成消息交付），span 贴 B 剩余约 31s。下界
   // 25s 对两形态的正确路径都通过、对误触发形态都拦住。
-  prompt: 'Run this single step and reply with exactly the token CW1_DONE: (1) start job A with async_run: command "Start-Sleep -Seconds 15; Write-Output CW1-A-5e8", description "cw1 job A", yield_ms 8000; (2) start job B with async_run: command "Start-Sleep -Seconds 50; Write-Output CW1-B-3d6", description "cw1 job B", yield_ms 8000; (3) immediately call async_wait with targets [{kind:"job", id:<B job_id>}] and wait_ms 240000, waiting inline until it returns — job A is NOT a target, its earlier completion must NOT end the wait early; (4) after the wait returns, reply CW1_DONE — job A result may have reached you earlier as a completion notice, that is fine. No other tools, no extra waits, no job_output, no questions.',
+  prompt: 'Run this single step, issuing each tool call in sequence and waiting for its result before the next call, and reply with exactly the token CW1_DONE: (1) start job A with async_run: command "Start-Sleep -Seconds 15; Write-Output CW1-A-5e8", description "cw1 job A", yield_ms 8000; (2) start job B with async_run: command "Start-Sleep -Seconds 50; Write-Output CW1-B-3d6", description "cw1 job B", yield_ms 8000; (3) immediately call async_wait with targets [{kind:"job", id:<B job_id>}] and wait_ms 240000, waiting inline until it returns — job A is NOT a target, its earlier completion must NOT end the wait early; (4) after the wait returns, reply CW1_DONE — job A result may have reached you earlier as a completion notice, that is fine. No other tools, no extra waits, no job_output, no questions.',
   judge: (ctx) => {
     const singleWait = (ctx.toolCallCounts.get('async_wait') ?? 0) === 1;
     const bInWait = ctx.toolResults.some((t) => t.includes('CW1-B-3d6'));
@@ -412,7 +422,7 @@ await driveStep({
 console.log('\n── CW-2 多目标任一满足即返回（A≈60s／B≈25s，都在目标列表）──');
 await driveStep({
   name: 'CW-2 任一目标完成即交回（B 先、A 后）',
-  prompt: 'Run this single step and reply with exactly the token CW2_DONE: (1) start job A with async_run: command "Start-Sleep -Seconds 60; Write-Output CW2-A-7f1", description "cw2 job A", yield_ms 8000; (2) start job B with async_run: command "Start-Sleep -Seconds 25; Write-Output CW2-B-9b4", description "cw2 job B", yield_ms 8000; (3) immediately call async_wait with targets [{kind:"job", id:<A job_id>}, {kind:"job", id:<B job_id>}] and wait_ms 240000, waiting inline — ANY ONE target completing ends the wait (B finishes first); do NOT wait for all targets, do NOT issue a second wait; (4) after the single wait returns (carrying job B result), reply CW2_DONE and end your turn — do NOT wait for job A again, do NOT kill it. No other tools, no job_output, no questions.',
+  prompt: 'Run this single step, issuing each tool call in sequence and waiting for its result before the next call, and reply with exactly the token CW2_DONE: (1) start job A with async_run: command "Start-Sleep -Seconds 60; Write-Output CW2-A-7f1", description "cw2 job A", yield_ms 8000; (2) start job B with async_run: command "Start-Sleep -Seconds 25; Write-Output CW2-B-9b4", description "cw2 job B", yield_ms 8000; (3) immediately call async_wait with targets [{kind:"job", id:<A job_id>}, {kind:"job", id:<B job_id>}] and wait_ms 240000, waiting inline — ANY ONE target completing ends the wait (B finishes first); do NOT wait for all targets, do NOT issue a second wait; (4) after the single wait returns (carrying job B result), reply CW2_DONE and end your turn — do NOT wait for job A again, do NOT kill it. No other tools, no job_output, no questions.',
   judge: (ctx) => {
     const singleWait = (ctx.toolCallCounts.get('async_wait') ?? 0) === 1;
     // B 正文在场（载体不限：等待返回或同窗完成消息——两起跑形态下 B 完成
@@ -438,7 +448,7 @@ await driveStep({
 console.log('\n── CW-3 无目标等待＋同拍完成同批（两作业各≈12s 同拍结算）──');
 await driveStep({
   name: 'CW-3 同拍完成两正文并入同一次等待返回',
-  prompt: 'Run this single step and reply with exactly the token CW3_DONE: (1) start two jobs, both with async_run: job P with command "Start-Sleep -Seconds 12; Write-Output CW3-P-2c9", description "cw3 job P", yield_ms 8000; job Q with command "Start-Sleep -Seconds 12; Write-Output CW3-Q-6a5", description "cw3 job Q", yield_ms 8000; (2) immediately call async_wait with NO targets (omit targets entirely) and wait_ms 120000, waiting inline — both jobs finish at about the same moment; BOTH results should arrive together in that single wait return (or as completion notices in the same window); (3) after the wait returns, reply CW3_DONE. No other tools, no extra waits, no job_output, no questions.',
+  prompt: 'Run this single step, issuing each tool call in sequence and waiting for its result before the next call, and reply with exactly the token CW3_DONE: (1) start two jobs, both with async_run: job P with command "Start-Sleep -Seconds 12; Write-Output CW3-P-2c9", description "cw3 job P", yield_ms 8000; job Q with command "Start-Sleep -Seconds 12; Write-Output CW3-Q-6a5", description "cw3 job Q", yield_ms 8000; (2) immediately call async_wait with NO targets (omit targets entirely) and wait_ms 120000, waiting inline — both jobs finish at about the same moment; BOTH results should arrive together in that single wait return (or as completion notices in the same window); (3) after the wait returns, reply CW3_DONE. No other tools, no extra waits, no job_output, no questions.',
   judge: (ctx) => {
     const singleWait = (ctx.toolCallCounts.get('async_wait') ?? 0) === 1;
     // 两正文载体不限（等待返回∪完成消息）：两起跑形态下结算时刻可能早于
@@ -446,9 +456,9 @@ await driveStep({
     // 两正文都在场＋span 未挂满预算。
     const pArrived = ctx.toolResults.some((t) => t.includes('CW3-P-2c9')) || ctx.completions.some((t) => t.includes('CW3-P-2c9'));
     const qArrived = ctx.toolResults.some((t) => t.includes('CW3-Q-6a5')) || ctx.completions.some((t) => t.includes('CW3-Q-6a5'));
-    // 首跑实测出现过「挂满 120s 预算才交回已就绪内容」形态（span≈121s）——
-    // 无目标等待在全部工作结算后应因可用内容交回（需求 9.3.2 场景 2），
-    // 挂满预算交回按 FAIL 取证；复现则转入问题清单查实现。
+    // 首跑实测出现过「挂满 120s 预算才交回已就绪内容」形态（span≈121s），
+    // 成因未定（见头注装置边界）：不排除实现侧就绪唤醒／复查通道低概率
+    // 缺口——挂满预算交回按 FAIL 取证，复现即转入问题清单查实现。
     const span = ctx.waitSpan;
     const notFull = span !== null && span >= 0 && span < 70_000;
     const noReadTool = !ctx.toolNames.has('job_output');
