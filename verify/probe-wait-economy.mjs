@@ -14,8 +14,7 @@
  *    预算挂起 → 作业完成正文经等待返回 → 回执；
  * 2. EC-B 轮询式：async_run（约 45s 作业，token B）转后台 → 按指令反复
  *    async_wait wait_ms=0（零等待立即检查）直至正文到达 → 回执；
- *    （两会话同实例同模型路由、作业时长相同——平行分组对照；先后推进，
- *    对照口径是模型轮次与用量而非墙钟）
+ *    （对照设计的总述见上——平行分组、先后推进、口径非墙钟）
  * 3. EC-C 对照判定：B 的模型轮次（assistant/message 事件数——每轮恰产出
  *    一条；llm attempt 重试走 assistant/attempt 不计，口径按逻辑轮、物理请
  *    求数可略多，两臂对称不受影响；两会话自创建起 fromIndex=0 对称累计，公
@@ -165,6 +164,9 @@ async function rpc(endpoint, argsBody) {
   // 首次请求已达宿主而响应连接被断时，重试会重复投递同文指令、直接翻倍
   // 模型轮次污染对照（宽松方向）。幂等端点（list/page）失败重试一次。
   if (endpoint === 'session/prompt') return once();
+  // 注：session/create 同为非幂等（连接失败重试可能建双会话）——对照会话固
+  // 定为返回值不污染轮次计量，孤儿会话随临时实例销毁；按计量通道性质不同
+  // 沿用自动重试（减少偶发抖动致 FAULT）。
   let response;
   try {
     response = await once();
