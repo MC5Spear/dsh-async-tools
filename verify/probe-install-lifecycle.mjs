@@ -25,13 +25,15 @@
  * 装置边界（如实声明）：作业是宿主进程内工作，停实例即终止——「卸载后宿主
  * 完成通知照发（含原生读取工具引导句）」的 §7.2 形态在本装置不可达（需要卸
  * 载重启后仍有本包遗留作业在跑，作业随进程死），该形态由套件层「抑制失败与
- * 外来作业的宿主完成通知」用例按已知残留清点承担；本探针不重复该面。pnpm
+ * 外来作业的宿主完成通知」用例按已知残留清点承担；本探针不重复该部分。pnpm
  * remove 在运行中实例的 profile 上执行，Windows 文件锁若使 remove 失败，按
  * 环境形态记录（FAIL 判定注明原因），不视为产品缺陷。
  *
  * 时间判据与转录取证同既有探针（at 双形态、下标定位、墙钟回退）。每步超时
  * 或断言不成立同会话重试一次（模型偶发不执行单步指令不等于产品缺陷，重试
- * 留痕）。
+ * 留痕）；**重试承诺不适用于单次投递事件形态的步骤**——结算事件与完成消息
+ * 只发生一次，重试的窗口基线会切走已发生的事件而必不成立，此类步骤以
+ * maxAttempts:1 声明单尝试（当前仅 IL-2 主步）。
  *
  * ## 用法
  *
@@ -242,8 +244,9 @@ function completionSends(transcript, fromIndex = 0) {
 const settledEvents = (transcript, fromIndex = 0) => stepRecords(transcript, fromIndex)
   .filter((r) => r.event?.type === 'job/settled')
   .map((r) => ({ jobId: String(r.event.data?.jobId ?? ''), status: r.event.data?.status ?? '?' }));
-/** 本步窗口内的作业 id（job/registered 事件为主源＋工具返回文本回退，与
- *  jobKind 命名解耦）；结算断言按身份过滤。 */
+/** 本步窗口内的作业 id（job/registered 事件为主源——与 jobKind 命名解耦、
+ *  宿主注册时无条件发；工具返回文本回退仍锚定默认 async-command 前缀，仅作
+ *  补充）；结算断言按身份过滤。 */
 function stepJobIds(transcript, fromIndex) {
   const ids = new Set([...toolResultTexts(transcript, fromIndex).join('\n').matchAll(/async-command-[0-9a-f]+/g)].map((m) => m[0]));
   for (const r of stepRecords(transcript, fromIndex)) {
@@ -266,7 +269,8 @@ function judge(name, ok, detail = '') {
 async function driveStep(sessionId, step) {
   const record = { name: step.name, attempts: [] };
   evidence.steps.push(record);
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
+  const maxAttempts = step.maxAttempts ?? 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     let beforeCount = 0;
     let baselineDegraded = false;
     try { beforeCount = (await transcriptOf(sessionId)).records?.length ?? 0; }
@@ -298,7 +302,7 @@ async function driveStep(sessionId, step) {
         toolNames: toolCallNames(transcript, beforeCount),
         completions: completionSends(transcript, beforeCount),
         settled: settledEvents(transcript, beforeCount)
-          .filter((e) => e.jobId === '' || stepIds.has(e.jobId))
+          .filter((e) => stepIds.has(e.jobId))
           .map((e) => e.status),
         baselineDegraded
       };
@@ -319,16 +323,23 @@ async function driveStep(sessionId, step) {
       };
     }
     record.attempts.push({ attempt, ok: false, detail: lastDetail });
-    log(`步骤 ${step.name} 第 ${String(attempt)} 次未成立（${lastDetail}）${attempt === 1 ? '，重试一次' : ''}`);
+    log(`步骤 ${step.name} 第 ${String(attempt)} 次未成立（${lastDetail}）${attempt < maxAttempts ? '，重试一次' : ''}`);
   }
-  judge(step.name, false, `两次尝试未成立；最后状态：${String(evidence.steps.at(-1).attempts.at(-1).detail)}`);
+  judge(step.name, false, `${String(maxAttempts)} 次尝试未成立；最后状态：${String(evidence.steps.at(-1).attempts.at(-1).detail)}`);
   return false;
 }
 
 // ── IL-1 干净装载可用（新会话 dsh-async＋前台命令正文）──
 console.log(`\n── IL-1 干净装载可用（当前候选 ${head}${dirty}）──`);
-const s1 = await rpcOk('session/create', { request: { cwd: home, agentPreset: 'dsh-async' } });
-if (s1.agentPreset !== 'dsh-async') { killChild(); fail(`IL-1 前置失败：agentPreset 回落 ${String(s1.agentPreset)}`); }
+// 装载前置失败属 IL-1 的判据目标（产品缺陷方向），记判定 FAIL 并收尾退出 1，
+// 不归入探针自身故障（FAULT=2）。
+const created1 = await rpc('session/create', { request: { cwd: home, agentPreset: 'dsh-async' } });
+if (created1.ok !== true || created1.value?.agentPreset !== 'dsh-async') {
+  judge('IL-1 装载后前台命令正文到达', false,
+    `装载前置失败：${created1.ok ? `agentPreset 回落 ${String(created1.value?.agentPreset)}` : JSON.stringify(created1.error).slice(0, 160)}`);
+  await shutdownAndFinish();
+}
+const s1 = created1.value;
 evidence.sessions.main = s1.sessionId;
 log(`会话 A 已建（sessionId=${s1.sessionId}）`);
 await driveStep(s1.sessionId, {
@@ -350,13 +361,22 @@ await driveStep(s1.sessionId, {
   prompt: 'Run this single step and reply with exactly the token IL2_ARMED: call async_run with command "Start-Sleep -Seconds 75; Write-Output IL2-TOKEN-4b8", description "il2 long job", yield_ms 20000 — it goes to background. Then reply IL2_ARMED. No other tools, no questions.',
   judge: (ctx) => {
     const runUsed = ctx.toolNames.has('async_run');
+    // 注册锚：转后台返回文本含 async-command- id——作业真正启动的证据，模型
+    // 只回 token 而作业未启动时不得 PASS（否则主步 FAIL 会误归因为卸载取消）。
+    const registered = ctx.toolResults.some((t) => /async-command-[0-9a-f]+/.test(t));
     const receipt = ctx.modelTexts.some((t) => t.includes('IL2_ARMED'));
-    const ok = runUsed && receipt;
-    return { ok, detail: ok ? '长作业已转后台（async_run 在场＋模型回执武装）' : `async_run 在场 ${String(runUsed)}／回执 ${String(receipt)}` };
+    const ok = runUsed && registered && receipt;
+    return { ok, detail: ok ? '长作业已转后台（async_run 在场＋作业 id 注册锚＋模型回执武装）' : `async_run 在场 ${String(runUsed)}／作业 id 注册锚 ${String(registered)}／回执 ${String(receipt)}` };
   }
 });
-// 记录基线（remove 前的记录条数），remove 后在该基线上观察结算与投递。
-const baselineCount = (await transcriptOf(s1.sessionId)).records?.length ?? 0;
+// 步骤一未成立时（两次尝试），主步判据不可归因——remove 与主步照常执行以取
+// 证，但主步 FAIL 单独记录、不并入「卸载取消工作」结论。
+const armedStep = evidence.steps.find((s) => s.name === 'IL-2 长作业转后台');
+const armedOk = armedStep?.attempts.some((a) => a.ok === true) === true;
+// 记录基线（remove 前的记录条数），remove 后在该基线上观察结算与投递；拉取
+// 偶发失败降级记录 null（此值仅作证据，不作步骤窗口基线）。
+let baselineCount = null;
+try { baselineCount = (await transcriptOf(s1.sessionId)).records?.length ?? null; } catch { baselineCount = null; }
 evidence.phases.baselineBeforeRemove = baselineCount;
 const removeStart = Date.now();
 const removeRun = spawnSync('node', [cliBin, 'plugin', '--profile', 'web', 'remove', 'dsh-async-tools'], {
@@ -371,11 +391,16 @@ evidence.phases.pluginRemove = {
 log(`plugin remove 退出码 ${String(removeRun.status)}，耗时 ${String(Math.round((Date.now() - removeStart) / 1000))}s${removeRun.status !== 0 ? '（Windows 文件锁或 pnpm 环境形态，见证据）' : ''}`);
 if (removeRun.status !== 0) {
   judge('IL-2 运行中卸载不取消已启动工作', false, `plugin remove 退出 ${String(removeRun.status)}（环境形态：${String(removeRun.stderr).slice(-200) || String(removeRun.stdout).slice(-200)}）——B 组照常执行以取证重启后形态`);
+} else if (!armedOk) {
+  judge('IL-2 运行中卸载不取消已启动工作', false, '武装步未成立（作业可能未启动）——主步判据不可归因，不并入「卸载取消工作」结论');
 } else {
   // remove 成功：运行中实例里作业照常结算＋完成消息照投＋老会话继续可用。
   // 作业从启动到结算约 75s＋周转；此处等待结算事件与投递到达。
+  // 本步单尝试：结算与完成消息是单次投递事件，重试的窗口基线会切走已发生
+  // 的事件、必不成立（重试承诺不适用于单次投递形态，见头注）。
   await driveStep(s1.sessionId, {
     name: 'IL-2 运行中卸载不取消已启动工作',
+    maxAttempts: 1,
     prompt: 'The long job from before is still running in the background. Do NOT call any tool yet. When its completion message reaches you, call job_list once to confirm the roster is readable, then reply with exactly IL2_DONE and end your turn. No other tools, no questions.',
     timeoutMs: 420_000,
     judge: (ctx) => {
@@ -384,7 +409,7 @@ if (removeRun.status !== 0) {
       const roster = ctx.toolNames.has('job_list');
       const receipt = ctx.modelTexts.some((t) => t.includes('IL2_DONE'));
       const ok = settled && delivered && roster && receipt;
-      return { ok, detail: ok ? 'job/settled(completed) 在案＋完成消息含作业正文（保活链仍在）＋job_list 回执' : `结算 completed ${String(settled)}（${ctx.settled.join(',') || '无'}）／完成消息 ${String(delivered)}／job_list ${String(roster)}／回执 ${String(receipt)}` };
+      return { ok, detail: ok ? 'job/settled(completed) 在案＋完成消息含作业正文（保活链仍在）＋job_list 调用在场' : `结算 completed ${String(settled)}（${ctx.settled.join(',') || '无'}）／完成消息 ${String(delivered)}／job_list 调用在场 ${String(roster)}／回执 ${String(receipt)}` };
     }
   });
 }
@@ -409,7 +434,7 @@ if (createdDefault.ok !== true) {
 } else {
   const preset = String(createdDefault.value?.agentPreset ?? '?');
   evidence.phases.createDefault = { agentPreset: preset };
-  judge('IL-3b 无指定预设落在宿主可用默认', preset !== '' && preset !== 'dsh-async', `落点预设=${preset}（记录；不等于对本包的建议）`);
+  judge('IL-3b 无指定预设落在宿主可用默认', preset !== '' && preset !== 'dsh-async' && preset !== '?', `落点预设=${preset}（记录；'?'＝响应省略字段、落点未知；不等于对本包的建议）`);
 }
 const listing = await rpcOk('session/list', { _request: {} });
 const oldRow = listing.items.find((item) => item.sessionId === s1.sessionId);
@@ -445,18 +470,25 @@ if (oldRow !== undefined) {
 }
 
 // 7) 收尾：停实例→留证据→清理（--keep 时保留临时 home 供排查）。
-killChild();
-await new Promise((r) => { setTimeout(r, 1500); });
-if (keep) {
-  log(`--keep：保留临时 home 供排查：${home}`);
-} else {
-  try { rmSync(home, { recursive: true, force: true }); log(`已清理临时 home：${home}`); }
-  catch { console.error(`[probe] WARN: 临时目录清理失败，留存现场：${home}`); }
+// 抽成函数：装载前置失败等中途判定失败也走同一收尾（退出码 1＝存在 FAIL）。
+function finishRun() {
+  try { rmSync(tgzPath, { force: true }); } catch { /* 产物清理尽力而为 */ }
+  mkdirSync(join(repo, '.local'), { recursive: true });
+  writeFileSync(join(repo, '.local', 'probe-install-lifecycle.json'), JSON.stringify(evidence, null, 2));
+  const failures = verdicts.filter((v) => v.ok !== true).length;
+  console.log(failures === 0 ? `\n判定：全部通过（${String(verdicts.length)} 项）` : `\n判定：${String(failures)} 项 FAIL（共 ${String(verdicts.length)} 项）`);
+  process.exit(failures === 0 ? 0 : 1);
 }
-try { rmSync(tgzPath, { force: true }); } catch { /* 产物清理尽力而为 */ }
-mkdirSync(join(repo, '.local'), { recursive: true });
-writeFileSync(join(repo, '.local', 'probe-install-lifecycle.json'), JSON.stringify(evidence, null, 2));
-log(`证据落盘：${join('.local', 'probe-install-lifecycle.json')}（本机材料目录）`);
-const failures = verdicts.filter((v) => v.ok !== true).length;
-console.log(failures === 0 ? `\n判定：全部通过（${String(verdicts.length)} 项）` : `\n判定：${String(failures)} 项 FAIL（共 ${String(verdicts.length)} 项）`);
-process.exit(failures === 0 ? 0 : 1);
+async function shutdownAndFinish() {
+  killChild();
+  await new Promise((r) => { setTimeout(r, 1500); });
+  if (keep) {
+    log(`--keep：保留临时 home 供排查：${home}`);
+  } else {
+    try { rmSync(home, { recursive: true, force: true }); log(`已清理临时 home：${home}`); }
+    catch { console.error(`[probe] WARN: 临时目录清理失败，留存现场：${home}`); }
+  }
+  log(`证据落盘：${join('.local', 'probe-install-lifecycle.json')}（本机材料目录）`);
+  finishRun();
+}
+await shutdownAndFinish();
