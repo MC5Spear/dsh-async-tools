@@ -14,7 +14,8 @@
  *    「只卸载工具行不取消已启动工作」）：长作业（约 75s）转后台后执行
  *    pnpm remove（经官方 CLI plugin remove 转发）——运行中实例里该作业照常
  *    结算（job/settled(completed) 在案）、本包完成消息照投（保活链随内存中
- *    插件仍在；JOB_RESULT_SOURCE 含作业正文）、老会话继续可用（job_list 回执）；
+ *    插件仍在；JOB_RESULT_SOURCE 含作业正文）、老会话继续可用（job_list 调
+ *    用在场）；
  * 3. IL-3 重启后声明退役（设计 §7.1「预设声明移除即退出新会话花名册」）：
  *    停实例→重启（同 DSH_HOME）——新会话显式 agentPreset='dsh-async' 被拒
  *    （可读错误，不静默回落）；无指定预设的会话落在宿主默认（记录落点）；
@@ -369,8 +370,9 @@ await driveStep(s1.sessionId, {
     return { ok, detail: ok ? '长作业已转后台（async_run 在场＋作业 id 注册锚＋模型回执武装）' : `async_run 在场 ${String(runUsed)}／作业 id 注册锚 ${String(registered)}／回执 ${String(receipt)}` };
   }
 });
-// 步骤一未成立时（两次尝试），主步判据不可归因——remove 与主步照常执行以取
-// 证，但主步 FAIL 单独记录、不并入「卸载取消工作」结论。
+// 步骤一未成立时（两次尝试），主步判据不可归因——remove 照常执行以取证 B
+// 组；主步不执行（作业未启动时等待必超时），按归因受限单独记录、不并入
+// 「卸载取消工作」结论。
 const armedStep = evidence.steps.find((s) => s.name === 'IL-2 长作业转后台');
 const armedOk = armedStep?.attempts.some((a) => a.ok === true) === true;
 // 记录基线（remove 前的记录条数），remove 后在该基线上观察结算与投递；拉取
