@@ -103,18 +103,20 @@ function readRepoText(rel) {
   try { return readFileSync(join(repo, rel), 'utf8'); } catch { return null; }
 }
 const clientJs = readRepoText('client.js') ?? '';
+// 词典面（键值内容）＋渲染调用面（t("uninstallRisk") 在场——词典保留而
+// 渲染调用被删时不得 PASS；渲染与主题可读性本身仍属 GUI 面不装置）。
 const zhDictOk = (() => {
   const m = clientJs.match(/uninstallRisk: "卸载风险[^"]*"/);
-  return m !== null && m[0].includes('agent-preset/not-found') && m[0].includes('清空') && m[0].includes('可用预设') && m[0].includes('切换');
+  return clientJs.includes('t("uninstallRisk")') && m !== null && m[0].includes('agent-preset/not-found') && m[0].includes('清空') && m[0].includes('可用预设') && m[0].includes('切换');
 })();
 const enDictOk = (() => {
   const m = clientJs.match(/uninstallRisk: "Uninstall risk[^"]*"/);
-  return m !== null && m[0].includes('agent-preset/not-found') && m[0].toLowerCase().includes('clear') && m[0].includes('available preset') && m[0].toLowerCase().includes('switch');
+  return clientJs.includes('t("uninstallRisk")') && m !== null && m[0].includes('agent-preset/not-found') && m[0].toLowerCase().includes('clear') && m[0].includes('available preset') && m[0].toLowerCase().includes('switch');
 })();
 // 时机构词：首页用「停用或卸载前」、用户参考用「移除前」——三种动词形态都认
 // （需求 565 的语义是「卸载前切换」，本仓文档按受众用词）。
 const zhDoc = (t) => t !== null && t.includes('agent-preset/not-found') && t.includes('默认预设') && (t.includes('清空') || t.includes('重选')) && /(卸载|停用|移除)前/.test(t);
-const enDoc = (t) => t !== null && t.includes('agent-preset/not-found') && t.toLowerCase().includes('default preset') && t.toLowerCase().includes('before');
+const enDoc = (t) => t !== null && t.includes('agent-preset/not-found') && t.toLowerCase().includes('default preset') && t.toLowerCase().includes('before') && t.includes('available preset');
 judge('SD-0a 设置页词典键两语在场（含错误码与清选/重选动作）', zhDictOk && enDictOk,
   `中文 ${String(zhDictOk)}／英文 ${String(enDictOk)}（渲染与主题可读性属 GUI 面不装置）`);
 judge('SD-0b 中文使用说明指引在场（首页＋用户参考）', zhDoc(readRepoText('README.md')) && zhDoc(readRepoText(join('docs', 'user-reference.md'))), '');
@@ -297,7 +299,9 @@ evidence.phases.createDefaultAfterRemove = createdRisk.ok
   ? { ok: true, agentPreset: createdRisk.value?.agentPreset ?? '?' }
   : { ok: false, error: createdRisk.error };
 const riskRejected = createdRisk.ok !== true
-  && String(createdRisk.error?.code ?? '') === 'agent-preset/not-found';
+  && String(createdRisk.error?.code ?? '') === 'agent-preset/not-found'
+  // 自归因：错误数据里的 agentPreset 就是已撤预设名（不依赖 SD-1c 联合归因）。
+  && String(createdRisk.error?.details?.agentPreset ?? createdRisk.error?.data?.agentPreset ?? 'dsh-async') === 'dsh-async';
 judge('SD-1 默认指向已撤预设时新会话被拒（not-found 形态）', riskRejected,
   riskRejected ? `可读错误（不静默回落）：${JSON.stringify(createdRisk.error).slice(0, 160)}` : `形态未锚定：${createdRisk.ok ? `create 成功且预设=${String(createdRisk.value?.agentPreset)}` : JSON.stringify(createdRisk.error).slice(0, 160)}——宿主回退了默认或形态漂移`);
 // 宿主不自动清除该选择：describe 复核 selectedDefault 仍指向已撤预设。
@@ -308,6 +312,8 @@ judge('SD-1c 宿主不自动清除该选择（重启后 describe 复核）', kep
   kept ? 'selectedDefault=dsh-async 仍在（user 覆盖层在案）——清选/重选是用户动作' : `读回 ${JSON.stringify(nsAfter?.value?.selectedDefault ?? null)}`);
 
 // ── SD-2 重选路径（改写为宿主可用预设→默认会话恢复）──
+// standard＝rc.5 实测部署默认（宿主可用名单首位）；换部署默认不同的宿主树时
+// 此步按 FAIL 取证（假 FAIL 方向、形态记录在证据）。
 console.log('\n── SD-2 重选路径 ──');
 const updateReselect = await rpc('settings/update', { ns: PRESET_NS, patch: { selectedDefault: 'standard' } });
 if (updateReselect.ok !== true) {
@@ -317,6 +323,7 @@ if (updateReselect.ok !== true) {
   const reselectRead = nsReselect.value?.selectedDefault === 'standard';
   const createdReselect = await rpc('session/create', { request: { cwd: home } });
   const recovered = createdReselect.ok === true && createdReselect.value?.agentPreset === 'standard';
+  evidence.phases.reselect = { describe: nsReselect.value?.selectedDefault ?? null, create: createdReselect.ok ? { agentPreset: createdReselect.value?.agentPreset ?? '?' } : { error: createdReselect.error } };
   judge('SD-2 重选后默认会话恢复（落 standard）', reselectRead && recovered,
     `describe=${String(reselectRead)}／create=${createdReselect.ok ? `落 ${String(createdReselect.value?.agentPreset)}` : JSON.stringify(createdReselect.error).slice(0, 120)}`);
 }
