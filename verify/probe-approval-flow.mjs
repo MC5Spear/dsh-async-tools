@@ -278,7 +278,8 @@ async function rpcOk(endpoint, argsBody) {
 // 6) 转录取证提取器（含 log-only 审批审计对）。
 // transcriptOf 对 RPC 失败抛错（不升格 FAULT）——轮询环与基线拉取按
 // 瞬时故障容忍重试（姊妹 wait-semantics 同款通道形态）；fail() 保留给
-// 建链阶段（实例/token/会话创建自身的故障）。
+// 不可自动重试的调用（建链：实例/token/会话创建；步骤指令投递
+// session/prompt——非幂等，失败即 FAULT）。
 async function transcriptOf(sessionId) {
   const listing = await rpc('session/list', { _request: {} });
   if (listing.ok !== true) throw new Error(`session/list 失败：${JSON.stringify(listing.error).slice(0, 160)}`);
