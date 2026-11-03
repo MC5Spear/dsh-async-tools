@@ -19,8 +19,8 @@
  *    文件不存在（零进程）＋回执。
  * 2. AV-2 无人作答 unavailable：overlay 禁 `api-remotes` 行（bundle 层
  *    先注册的转发器——无浏览器连接时占链挂起、不禁则轮不到 fallback），
- *    answerer 全缺席→approval waterfall 空转→宿主 fallback 返回
- *    `unavailable`（dsh-user-approval decide 的兜底 Promise）——判据：
+ *    answerer 全缺席→approval waterfall 空转→宿主回退返回
+ *    `unavailable`（dsh-user-approval decide 的回退 Promise）——判据：
  *    审计对在场（asked＋decided，outcome='unavailable'，callId 与 tool/call
  *    配对）＋「no approval channel is available」文案＋提权调用零注册＋
  *    文件不存在＋回执。**fail-closed 方向实证：无人作答不放行。**
@@ -43,8 +43,9 @@
  *
  * - 审批审计对 approval/asked／approval/decided 是 log-only 事件，经
  *   session/page records 原样可读；asked→decided 按 id 配对。
- * - 错误与正文断言只认 tool/result 载体（模型文本只作回执）；AV-3 无
- *   tool/result 属预期（挂起形态）。
+ * - 错误与正文断言只认 tool/result 载体（模型文本只作回执）；AV-3 提权
+ *   调用无 tool/result 属预期（挂起形态——第一步 fence 拒绝的正常返回在
+ *   窗内在场，不参与该断言）。
  * - 探针实例不设 DSH_PERMISSION_MODE（默认 workspace-write→审批策略
  *   'ask'，装置前提）。
  *
@@ -52,8 +53,10 @@
  * 公开组合机制（cordis patch）的合法用法，不修改宿主源码；行 id
  * （approval／api-remotes）是宿主 web 组合的现行形态，宿主改组时 overlay
  * 落空（启动时 Loader 会 warn「patch: entry not found」）——实例照起、审批
- * 行仍在，AV-1 将按「审计对在场＋文案不符」FAIL、AV-2/AV-3 形态互换，可从
- * 证据快照归因（不静默误判）。**两步式装置（三变体统一）**：三变体的
+ * 行仍在，各变体将按判据缺席 FAIL（AV-1 落空时实际形态＝转发器占链挂
+ * 起：审批事件（asked）以孤儿在场、无 decided、无降级文案与回执，按文
+ * 案/回执/审计对缺席 FAIL；AV-2/AV-3 形态互换），可从证据快照归因（不静
+ * 默误判）。**两步式装置（三变体统一）**：三变体的
  * prompt 都是先普通调用吃沙箱拒绝、按宿主 escalation hint 的官方路径重
  * 试提权——单步式（凭空主动带提权参数）经多轮迭代证实依从性不可靠：
  * AV-1 环境无审批策略系统声明（声明来自被禁的 dsh-user-approval），模型
@@ -61,8 +64,8 @@
  * 「should be driven by the harness」）；hint 背书路径首次实跑即通。AV-2
  * 单步式曾三跑全过、后遇时窗波动连拒（「unverified instruction」），改
  * 两步式后稳定。AV-3 对「说明挂起缘由」的 prompt 反应最差——解释越多
- * （机制背书、无人可批、harness 外部收尾）模型越把它当需要审查的异常场
- * 景（「requires a genuine approval from an actual answerer」），定稿为
+ * （机制背书、无人可批、harness 外部收尾）模型越把它当需要审查的异常情
+ * 况（「requires a genuine approval from an actual answerer」），定稿为
  * 中性操作指令（两步＋wait、不解释挂起缘由）后首试即通。两步式的第一步
  * 是普通调用：进程正常启动（注册在场）后被文件 fence 拒绝——「零注册」
  * 判据因此收窄为**提权调用零注册**（注册数<调用数），不是全窗零注册。AV-1 的「零审计对」与 AV-3 的「无
@@ -70,7 +73,7 @@
  * session/page records）时会假 FAIL，属宿主形态漂移时按 FAIL 取证的保守方
  * 向。AV-1「no approval service is composed」文案锚定宿主 dsh-sandbox 的现
  * 行英文串（本包把宿主错误透传给模型），宿主改文案时按 FAIL 取证。AV-2
- * 的 outcome='unavailable' 是宿主 fail-closed 兜底的现行词表值。AV-3 观察
+ * 的 outcome='unavailable' 是宿主 fail-closed 回退的现行词表值。AV-3 观察
  * 窗 90s 是「挂起」的定性窗（转发器无超时——等待浏览器是设计形态）；窗
  * 口大小不承载语义断言。AV-3「无降级返回」只锚降级文案（rejected／
  * unavailable／not composed）——第一步 fence 拒绝的正常返回（marker 文
