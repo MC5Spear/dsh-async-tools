@@ -31,7 +31,10 @@
  * 冒称。SU-2 存在窗口竞态边界：武装步模型周转＋基线拉取＋remove（timeout
  * 300s）合计若超过子代理剩余运行时间，最终回答落在主步基线之前、主步必
  * FAIL——属装置形态（证据含 remove 耗时可事后归因），不是产品缺陷；子代
- * 理时长取 90s（含子代理自身模型周转）留出周转窗口。plugin remove 在运行
+ * 理时长取 90s（含子代理自身模型周转）留出周转窗口。反向缺口：基线拉取
+ * 失败（baselineDegraded，窗退化全转录）恰好与竞态输掉（回答在 remove 前
+ * 到达）叠加时，remove 前的回答会被计入——双低概率条件叠加，attempts 的
+ * baselineDegraded 留痕可事后识别。plugin remove 在运行
  * 中实例的 profile 上执行，Windows 文件锁若使 remove 失败按环境形态记录
  * （IL-2 同款）——remove 失败时 SU-3 照常执行，其 PASS 只证续派形态在场
  * （「卸载」未发生、不证卸载后可续派），事后按 pluginRemove.status 区分。
