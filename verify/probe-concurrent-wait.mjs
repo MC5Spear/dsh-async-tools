@@ -5,7 +5,7 @@
  *
  * ## 探针在证什么
  *
- * 套件层（wait-delivery 批次规则 744 用例）已锚定同批预算与延后规则；本
+ * 套件层（wait-delivery 等 744 用例）已锚定同批预算与延后规则；本
  * 探针在真实实例上以真实模型会话取证三个并发行为面，每条判据只认宿主侧
  * 载体（tool/result 文本、完成消息与注入消息、转录事件与时间戳），模型
  * 文本只作回执：
@@ -14,8 +14,13 @@
  *    （约 15s）与 B（约 50s）先后起跑、等待只指定 B——A 更早完成，其正文
  *    应与等待交回同批到达（设计 2.6：活等待让位——完成消息路径让位、内容
  *    随等待返回交付；主体忙碌时先注入完成消息也是合法同批形态），不是另
- *    开新批；等待保持到 B 的事件（A 完成不提前唤醒——waitSpan 下界锚，
- *    A/B 时距与下界间距按两起跑形态的算术最坏侧设定）；
+ *    开新批；等待保持到 B 的事件（A 完成不提前唤醒——waitSpan 下界锚）。
+ *    前提：探针起跑前把 minYieldMs 调至 1000（出厂默认 20000 会把 prompt
+ *    的 yield_ms 8000 夹紧为 20s，A（15s）前台直付、检验面被旁路——二轮
+ *    盲审实锤，lib/config.js resolveYield clamp）；生效后前台 8s 转后台：
+ *    并行起跑形态 wait 起点约在起跑后 4s（A 剩 11s、B 剩 46s），串行形态
+ *    约 19s（A 已完成经完成消息交付、B 剩 31s）；下界 25s 对正确路径都
+ *    通过、误把 A 当唤醒条件的并行形态（约 11s）被拦。
  * 2. CW-2 多目标任一满足（需求「多目标采用任一满足即返回」）：作业 A
  *    （约 60s）与 B（约 25s）都在目标列表——B 先完成即交回；主锚＝A 正文
  *    缺席（误等全部目标时 A 正文会进入等待返回，缺席断言拦住该形态）＋
@@ -45,10 +50,15 @@
  * 近似（同一模型输入边界宿主不可辨：P 经上批完成消息＋Q 经等待返回也过
  * 判据）。作业命令依赖 PowerShell（Start-Sleep）——非 PowerShell 宿主上
  * 作业失败会以正文缺席形态按 FAIL 取证（非 FAULT），Linux 侧由问题清单
- * 另项追踪。首跑 CW-3 出现 span≈121s（挂满 120s 预算才交回两正文）形态，
- * 成因未定：串行假设下复跑 3/3 未复现；并行调用配对失准的推演只能把
- * span 配小、到不了 121s，不排除实现侧就绪唤醒或周期复查通道的低概率
- * 缺口——判据保留「挂满预算按 FAIL 拦截」，复现即转入问题清单查实现。
+ * 另项追踪。**装置前提（设置）**：探针经公开设置接口把 minYieldMs 临时
+ * 调至 1000（出厂默认 20000 会把 prompt 的 yield_ms 8000 夹紧为 20s——
+ * lib/config.js resolveYield clamp、需求 622 明文；CW-1 的 A 15s 与 CW-3
+ * 的 P/Q 12s 将前台直付不转后台，核心检验面被旁路——该缺陷由二轮盲审
+ * 实锤，修复前的两轮实测数值按夹紧形态解读、不作为检验面通过的依据）。
+ * 首跑（设置前提修复前）CW-3 出现 span≈121s（挂满 120s 预算才交回两正文）
+ * 形态，成因未定：夹紧世界的复跑未复现只能弱排除（P/Q 前台直付、就绪
+ * 通道未被压到）；设置修复后挂起路径才真正受压，判据保留「挂满预算按
+ * FAIL 拦截」，复现即转入问题清单查实现。
  *
  * ## 用法
  *
@@ -58,12 +68,14 @@
  * `--service-root` 必填（或设 `DSAT_SERVICE_ROOT`）。探针以
  * `<serviceRoot>/patches/zai-glm.yml` 作为实例模型路由 patch——该文件由本机
  * 部署环境提供，缺失时实例在就绪等待处 FAULT（90s 超时＋stderr 尾部），请
- * 自备同位 patch 或改参。tgz 产物结束自清；证据 JSON 每次落盘保留在 `.local/`
+ * 自备同位 patch 或改用 --service-root 指向提供该 patch 的根。装置前提：
+ * 探针经公开设置接口把 minYieldMs 临时调至 1000（收尾恢复）——三步短窗
+ * 作业的转后台前提。tgz 产物结束自清；证据 JSON 每次落盘保留在 `.local/`
  * （FAULT 路径的 tgz 不清，重跑前可手动清理）。退出码：0＝全部判定通过；
  * 1＝存在 FAIL 判定；2＝探针自身故障（FAULT）。
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -200,6 +212,29 @@ const created = await rpcOk('session/create', { request: { cwd: home, agentPrese
 if (created.agentPreset !== 'dsh-async') { killChild(); fail(`agentPreset 回落：${String(created.agentPreset)}`); }
 const SESSION = created.sessionId;
 log(`会话已建（sessionId=${SESSION}）`);
+
+// 装置前提：短窗作业需要 minYieldMs 下限低于 prompt 的 yield_ms——出厂默认
+// 20000 会把 yield_ms 8000 夹紧为 20s（lib/config.js resolveYield clamp；需求
+// 622「显式短 yield_ms 按生效下限夹紧」），CW-1 的 A（15s）与 CW-3 的 P/Q
+// （12s）将在首次等待内前台直付、不转后台，「非目标同批」与「同拍同批」
+// 检验面被旁路。经公开设置接口临时调低（与套件层短窗用例同款手法），
+// 记录原用户覆盖、收尾恢复。
+const settingsNS = 'async-tools-host';
+const describedSettings = await rpcOk('settings/describe', {});
+const settingsRow = describedSettings.namespaces.find((n) => (n.ns ?? n.namespace ?? n.id) === settingsNS);
+if (settingsRow === undefined || typeof settingsRow.value?.settings !== 'object') {
+  killChild(); fail(`settings/describe 缺少 ${settingsNS} 行（宿主行没激活？）`);
+}
+const minYieldBefore = settingsRow.value.settings.minYieldMs;
+const minYieldHadUserOverride = settingsRow.user?.settings?.minYieldMs !== undefined;
+const minYieldUserBefore = settingsRow.user?.settings?.minYieldMs;
+await rpcOk('settings/update', { ns: settingsNS, patch: { settings: { minYieldMs: 1000 } } });
+const describedAfter = await rpcOk('settings/describe', {});
+const settingsRowAfter = describedAfter.namespaces.find((n) => (n.ns ?? n.namespace ?? n.id) === settingsNS);
+if (settingsRowAfter?.value?.settings?.minYieldMs !== 1000) {
+  killChild(); fail(`minYieldMs 调低未生效：${String(settingsRowAfter?.value?.settings?.minYieldMs)}`);
+}
+log(`minYieldMs=${String(minYieldBefore)}→1000（装置前提：短窗转后台；收尾恢复）`);
 async function prompt(text, mode = 'queue') {
   await rpcOk('session/prompt', {
     request: {
@@ -468,7 +503,17 @@ await driveStep({
   }
 });
 
-// 6) 收尾：停实例→等句柄释放→留证据→清理（--keep 时保留临时 home 供排查）。
+// 6) 收尾：恢复设置→停实例→等句柄释放→留证据→清理（--keep 时保留临时 home）。
+try {
+  // 恢复 minYieldMs：原状有用户覆盖则回写原值，否则 unset 回继承值（临时
+  // 实例生命周期即止，恢复是设置链规范动作而非必要善后）。
+  if (minYieldHadUserOverride) {
+    await rpcOk('settings/update', { ns: settingsNS, patch: { settings: { minYieldMs: minYieldUserBefore } } });
+  } else {
+    await rpcOk('settings/mutate', { ns: settingsNS, ops: [{ op: 'unset', path: ['settings', 'minYieldMs'] }] });
+  }
+  log(`minYieldMs 已恢复（原值 ${String(minYieldBefore)}）`);
+} catch (error) { log(`WARN: minYieldMs 恢复失败（临时实例生命周期即止）：${String(error?.message ?? error)}`); }
 killChild();
 await new Promise((r) => { setTimeout(r, 1500); });
 if (keep) {
