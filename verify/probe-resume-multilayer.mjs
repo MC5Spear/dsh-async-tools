@@ -251,7 +251,8 @@ function modelTexts(transcript, fromIndex = 0) {
     .filter((r) => r.event?.type === 'assistant/message' || r.event?.type === 'model/message')
     .map((r) => (r.event.data?.message?.content ?? r.event.data?.content ?? [])
       .map((c) => String(c.text ?? '')).join('\n'));
-}function toolResultTexts(transcript, fromIndex = 0) {
+}
+function toolResultTexts(transcript, fromIndex = 0) {
   return stepRecords(transcript, fromIndex)
     .filter((r) => r.event?.type === 'tool/result')
     .map((r) => (r.event.data?.message?.content ?? [])
