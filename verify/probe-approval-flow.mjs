@@ -62,8 +62,8 @@
  * 径，供手动清理；正常路径结尾自清）。
  *
  * 每步超时或断言不成立同会话重试一次（重试留痕；AP-1/AP-2 各自目标文件
- * 名含随机后缀，重试不残留歧义）。转录取证同既有探针（下标切窗、宿主侧
- * 载体）。
+ * 名含时间戳后缀（Date.now()）——跨步不歧义、跨运行不碰撞）。转录取证同
+ * 既有探针（下标切窗、宿主侧载体）。
  *
  * ## 用法
  *
@@ -276,13 +276,19 @@ async function rpcOk(endpoint, argsBody) {
 }
 
 // 6) 转录取证提取器（含 log-only 审批审计对）。
+// transcriptOf 对 RPC 失败抛错（不升格 FAULT）——轮询环与基线拉取按
+// 瞬时故障容忍重试（姊妹 wait-semantics 同款通道形态）；fail() 保留给
+// 建链阶段（实例/token/会话创建自身的故障）。
 async function transcriptOf(sessionId) {
-  const listing = await rpcOk('session/list', { _request: {} });
-  const row = listing.items.find((item) => item.sessionId === sessionId);
+  const listing = await rpc('session/list', { _request: {} });
+  if (listing.ok !== true) throw new Error(`session/list 失败：${JSON.stringify(listing.error).slice(0, 160)}`);
+  const row = listing.value.items.find((item) => item.sessionId === sessionId);
   if (row === undefined) throw new Error('session not found');
-  return rpcOk('session/page', {
+  const page = await rpc('session/page', {
     request: { address: { kind: 'session', sessionId }, throughSeq: row.projections.asOfSeq, maxMessages: 1200 }
   });
+  if (page.ok !== true) throw new Error(`session/page 失败：${JSON.stringify(page.error).slice(0, 160)}`);
+  return page.value;
 }
 function stepRecords(transcript, fromIndex) {
   return (transcript.records ?? []).slice(fromIndex);
@@ -317,12 +323,13 @@ function approvalPairs(transcript, fromIndex = 0) {
   }
   return { pairs, orphanAsked: [...asked.keys()].filter((id) => !decided.has(id)) };
 }
-/** 本窗内 async_run 的 tool/call id 集（审批 asked.callId 配对用）。 */
+/** 本窗内 async_run 的 tool/call id 集（审批 asked.callId 配对用；名字取
+ *  宿主线字段并带姊妹同款回退链——字段形态变化时向 FAIL 退化）。 */
 function asyncRunCallIds(transcript, fromIndex = 0) {
   const ids = new Set();
   for (const r of stepRecords(transcript, fromIndex)) {
     if (r.event?.type !== 'tool/call') continue;
-    const name = r.event.data?.name;
+    const name = r.event.data?.name ?? r.event.data?.toolName ?? r.event.data?.message?.name;
     if (name === 'async_run') ids.add(r.event.data?.callId);
   }
   return ids;
@@ -438,7 +445,7 @@ await driveStep(s1.sessionId, {
   timeoutMs: 300_000,
   judge: (ctx) => {
     const receipt = ctx.modelTexts.some((t) => t.includes('AP2_DONE'));
-    const denied = ctx.toolResults.some((t) => /the user rejected escalating|rejected escalating this command/.test(t));
+    const denied = ctx.toolResults.some((t) => /the user rejected escalating/.test(t));
     const pair = ctx.approvals.pairs.find(({ ask, decided }) =>
       ask.toolName === 'async_run' && ctx.runCallIds.has(ask.callId)
       && String(ask.reason ?? '').includes('PROBE:REJECT') && decided.outcome === 'rejected');
