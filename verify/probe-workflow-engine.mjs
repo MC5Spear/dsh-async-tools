@@ -5,7 +5,9 @@
  * 流程骨架与姊妹探针（probe-concurrent-wait／probe-wait-semantics）同款：npm pack
  * 受测 tgz→mkdtemp 独立 DSH_HOME→官方 CLI plugin add→随机端口隔离实例（模型
  * 路由 patch 取 `<serviceRoot>/patches/zai-glm.yml`）→RPC→单会话（agentPreset
- * ='dsh-async'）→三步单步指令（prompt 显式要求串行单工具调用）。
+ * ='dsh-async'）→三步单步指令（prompt 显式要求串行单工具调用）。装置前提：
+ * prompt 的 yield_ms 24000 本身落在出厂区间 [20000,600000] 内、不被夹紧——
+ * 与姊妹 concurrent-wait 的短窗调低前提不同，本探针无设置写入。
  *
  * 三步（对应需求 4 章 async_workflow 行为约定 232-257）：
  *
