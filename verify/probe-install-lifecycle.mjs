@@ -42,7 +42,8 @@
  * `<serviceRoot>/patches/zai-glm.yml` 作为实例模型路由 patch——该文件由本机
  * 部署环境提供，缺失时实例在就绪等待处 FAULT（90s 超时＋stderr 尾部），请
  * 自备同位 patch 或改参。tgz 产物结束自清；证据 JSON 每次落盘保留在 `.local/`
- * （FAULT 路径的 tgz 不清，重跑前可手动清理）。退出码：0＝全部判定通过；
+ * （FAULT 路径的 tgz 与临时 home 都不清——fail() 会打印 home 路径，重跑前可
+ * 手动清理）。退出码：0＝全部判定通过；
  * 1＝存在 FAIL 判定；2＝探针自身故障（FAULT）。
  */
 import { spawn, spawnSync } from 'node:child_process';
@@ -182,7 +183,7 @@ async function rpcOk(endpoint, argsBody) {
   if (r.ok !== true) fail(`${endpoint} 调用失败：${JSON.stringify(r.error).slice(0, 200)}`);
   return r.value;
 }
-// 重启后 ORIGIN 不变（同一 --port 0 会换端口——重启实例用新 URL 重做 cookie）。
+// 重启后 --port 0 会换端口：rebind 用新 URL 重做 token→cookie 并重绑三个变量。
 async function rebind(urlNext) {
   const m = urlNext.match(/^(https?:\/\/[^/?#]+)\/?\?token=(.+)$/);
   if (m === null) fail(`重启后 URL 形态不符：${urlNext.split('?')[0]}`);
@@ -238,9 +239,20 @@ function completionSends(transcript, fromIndex = 0) {
   }
   return out;
 }
-const settledStatuses = (transcript, fromIndex = 0) => stepRecords(transcript, fromIndex)
+const settledEvents = (transcript, fromIndex = 0) => stepRecords(transcript, fromIndex)
   .filter((r) => r.event?.type === 'job/settled')
-  .map((r) => r.event.data?.status ?? '?');
+  .map((r) => ({ jobId: String(r.event.data?.jobId ?? ''), status: r.event.data?.status ?? '?' }));
+/** 本步窗口内的作业 id（job/registered 事件为主源＋工具返回文本回退，与
+ *  jobKind 命名解耦）；结算断言按身份过滤。 */
+function stepJobIds(transcript, fromIndex) {
+  const ids = new Set([...toolResultTexts(transcript, fromIndex).join('\n').matchAll(/async-command-[0-9a-f]+/g)].map((m) => m[0]));
+  for (const r of stepRecords(transcript, fromIndex)) {
+    if (r.event?.type !== 'job/registered') continue;
+    const id = r.event.data?.jobId;
+    if (typeof id === 'string' && id !== '') ids.add(id);
+  }
+  return ids;
+}
 
 // 6) 步骤驱动（单步指令＋固定回执 token；首不成重试一次）。
 const STEP_TIMEOUT_MS = 420_000;
@@ -256,7 +268,9 @@ async function driveStep(sessionId, step) {
   evidence.steps.push(record);
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     let beforeCount = 0;
-    try { beforeCount = (await transcriptOf(sessionId)).records?.length ?? 0; } catch { /* 沿用 0 */ }
+    let baselineDegraded = false;
+    try { beforeCount = (await transcriptOf(sessionId)).records?.length ?? 0; }
+    catch { baselineDegraded = true; /* 基线拉取失败沿用 0，窗退化为全转录（打标入尝试留痕） */ }
     try {
       await rpcOk('session/prompt', {
         request: {
@@ -277,16 +291,20 @@ async function driveStep(sessionId, step) {
       if (child !== null && child.exitCode !== null) { killChild(); fail('实例在步骤中途退出'); }
       let transcript;
       try { transcript = await transcriptOf(sessionId); } catch { continue; }
+      const stepIds = stepJobIds(transcript, beforeCount);
       const ctx = {
         modelTexts: modelTexts(transcript, beforeCount),
         toolResults: toolResultTexts(transcript, beforeCount),
         toolNames: toolCallNames(transcript, beforeCount),
         completions: completionSends(transcript, beforeCount),
-        settled: settledStatuses(transcript, beforeCount)
+        settled: settledEvents(transcript, beforeCount)
+          .filter((e) => e.jobId === '' || stepIds.has(e.jobId))
+          .map((e) => e.status),
+        baselineDegraded
       };
       const outcome = step.judge(ctx);
       if (outcome.ok === true) {
-        record.attempts.push({ attempt, ok: true, detail: outcome.detail });
+        record.attempts.push({ attempt, ok: true, detail: outcome.detail, baselineDegraded });
         judge(step.name, true, outcome.detail);
         return true;
       }
@@ -296,7 +314,8 @@ async function driveStep(sessionId, step) {
         toolResults: ctx.toolResults.slice(-8).map((t) => t.slice(-400)),
         completions: ctx.completions.slice(-4).map((t) => t.slice(-250)),
         modelTail: ctx.modelTexts.slice(-4).map((t) => t.slice(-200)),
-        settled: ctx.settled
+        settled: ctx.settled,
+        baselineDegraded
       };
     }
     record.attempts.push({ attempt, ok: false, detail: lastDetail });
@@ -316,10 +335,11 @@ await driveStep(s1.sessionId, {
   name: 'IL-1 装载后前台命令正文到达',
   prompt: 'Run this single step and reply with exactly the token IL1_DONE: call async_run with command "Write-Output IL1-TOKEN-7d2", description "il1 check". Then reply IL1_DONE. No other tools, no questions.',
   judge: (ctx) => {
+    const runUsed = ctx.toolNames.has('async_run');
     const claimed = ctx.toolResults.some((t) => t.includes('IL1-TOKEN-7d2'));
     const receipt = ctx.modelTexts.some((t) => t.includes('IL1_DONE'));
-    const ok = claimed && receipt;
-    return { ok, detail: ok ? 'async_run 前台正文含固定 token 且模型回执' : `正文 ${String(claimed)}／回执 ${String(receipt)}` };
+    const ok = claimed && runUsed && receipt;
+    return { ok, detail: ok ? 'async_run 在场＋前台正文含固定 token 且模型回执' : `正文 ${String(claimed)}／async_run 在场 ${String(runUsed)}／回执 ${String(receipt)}` };
   }
 });
 
@@ -329,23 +349,26 @@ await driveStep(s1.sessionId, {
   name: 'IL-2 长作业转后台',
   prompt: 'Run this single step and reply with exactly the token IL2_ARMED: call async_run with command "Start-Sleep -Seconds 75; Write-Output IL2-TOKEN-4b8", description "il2 long job", yield_ms 20000 — it goes to background. Then reply IL2_ARMED. No other tools, no questions.',
   judge: (ctx) => {
+    const runUsed = ctx.toolNames.has('async_run');
     const receipt = ctx.modelTexts.some((t) => t.includes('IL2_ARMED'));
-    const ok = receipt;
-    return { ok, detail: ok ? '长作业已转后台（模型回执武装）' : `回执 ${String(receipt)}` };
+    const ok = runUsed && receipt;
+    return { ok, detail: ok ? '长作业已转后台（async_run 在场＋模型回执武装）' : `async_run 在场 ${String(runUsed)}／回执 ${String(receipt)}` };
   }
 });
 // 记录基线（remove 前的记录条数），remove 后在该基线上观察结算与投递。
 const baselineCount = (await transcriptOf(s1.sessionId)).records?.length ?? 0;
 evidence.phases.baselineBeforeRemove = baselineCount;
+const removeStart = Date.now();
 const removeRun = spawnSync('node', [cliBin, 'plugin', '--profile', 'web', 'remove', 'dsh-async-tools'], {
   cwd: serviceRoot, env: { ...process.env, DSH_HOME: home }, encoding: 'utf8', timeout: 300_000
 });
 evidence.phases.pluginRemove = {
   status: removeRun.status,
+  elapsedMs: Date.now() - removeStart,
   stdoutTail: String(removeRun.stdout).slice(-800),
   stderrTail: String(removeRun.stderr).slice(-800)
 };
-log(`plugin remove 退出码 ${String(removeRun.status)}${removeRun.status !== 0 ? '（Windows 文件锁或 pnpm 环境形态，见证据）' : ''}`);
+log(`plugin remove 退出码 ${String(removeRun.status)}，耗时 ${String(Math.round((Date.now() - removeStart) / 1000))}s${removeRun.status !== 0 ? '（Windows 文件锁或 pnpm 环境形态，见证据）' : ''}`);
 if (removeRun.status !== 0) {
   judge('IL-2 运行中卸载不取消已启动工作', false, `plugin remove 退出 ${String(removeRun.status)}（环境形态：${String(removeRun.stderr).slice(-200) || String(removeRun.stdout).slice(-200)}）——B 组照常执行以取证重启后形态`);
 } else {
@@ -374,9 +397,12 @@ const url2 = await startInstance();
 await rebind(url2);
 const createdRetired = await rpc('session/create', { request: { cwd: home, agentPreset: 'dsh-async' } });
 evidence.phases.createRetired = createdRetired.ok ? { ok: true, agentPreset: createdRetired.value?.agentPreset ?? '?' } : { ok: false, error: createdRetired.error };
-const retiredRejected = createdRetired.ok !== true;
-judge('IL-3a 新会话显式 dsh-async 被拒（声明退役）', retiredRejected,
-  retiredRejected ? `可读错误（不静默回落）：${JSON.stringify(createdRetired.error).slice(0, 160)}` : `create 成功且预设=${String(createdRetired.value?.agentPreset)}——声明未退出花名册`);
+// 锚定错误形态：agent-preset/not-found 表示声明已退出花名册（available 名单指
+// 引）；其他错误码（如 invalid＝声明在但损坏）语义不同，不算退役实证。
+const retiredRejected = createdRetired.ok !== true
+  && String(createdRetired.error?.code ?? '').includes('agent-preset/not-found');
+judge('IL-3a 新会话显式 dsh-async 被拒（声明退役，形态锚定 not-found）', retiredRejected,
+  retiredRejected ? `可读错误（不静默回落）：${JSON.stringify(createdRetired.error).slice(0, 160)}` : `错误形态未锚定 not-found：${createdRetired.ok ? `create 成功且预设=${String(createdRetired.value?.agentPreset)}` : JSON.stringify(createdRetired.error).slice(0, 160)}——声明未退出花名册或形态漂移`);
 const createdDefault = await rpc('session/create', { request: { cwd: home } });
 if (createdDefault.ok !== true) {
   judge('IL-3b 无指定预设落在宿主可用默认', false, `create 失败：${JSON.stringify(createdDefault.error).slice(0, 160)}`);
