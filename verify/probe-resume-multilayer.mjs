@@ -45,8 +45,14 @@
  * 态（如纯生成中插话）不在本装置。steer 的 spliced 事件仅作旁证——该宿
  * 主对上下文注入同样产生 agent/inbox/spliced，插话到达的主锚是唯一
  * token 回执。RM-5 时序不精确断言（只断「命令完成＋插话被履行」两宿主侧
- * 事实）。RM-6 依赖模型两跳依从（主→中间→孙），中间层失败时按 FAIL 取
- * 证（attempts 留痕区分模型未依从与投递丢失——快照含注入消息形态）。
+ * 事实）；RM-5 的正文断言只认工具返回载体（前台返回或 async_wait 返回），
+ * 完成消息载体不在本判据（prompt 引导两路径）。spliced 在 judge 中是保守
+ * 合取项——缺席按 FAIL 取证（本宿主近乎恒真，只可能假 FAIL）。RM-6 依赖
+ * 模型两跳依从（主→中间→孙），中间层失败时按 FAIL 取
+ * 证（attempts 留痕区分模型未依从与投递丢失——快照含注入消息形态）。基线
+ * 拉取失败（baselineDegraded）时窗退化全转录、前步/首试残留 token 可满足
+ * 判据（假 PASS 方向、低概率），attempts 的 baselineDegraded 留痕可事后
+ * 识别。
  * 每步超时或断言不成立同会话重试一次（模型偶发不执行单步指令不等于产品
  * 缺陷，重试留痕）；RM-1/RM-3/RM-6 的重试派新子代理、新投递事件落在新
  * 窗内、RM-5 重试跑新命令同形态——同 token 边界：首试子代理/命令迟到结
@@ -392,10 +398,14 @@ await rebind(url2);
 const listing2 = await rpcOk('session/list', { _request: {} });
 const oldRow = listing2.items.find((item) => item.sessionId === s1.sessionId);
 evidence.phases.oldSessionAfterRestart = oldRow === undefined ? null : { sessionId: s1.sessionId };
-// RM-2 独立驱动：resume 的拒绝形态发生在 session/prompt RPC 层（IL-3 实测
-// 同层）——用 rpc() 原样捕获错误体判 FAIL（不混入 FAULT），成功时轮询回执。
+// RM-2 独立驱动（单尝试——resume 形态一次定型；回执未达与 resume 被拒的
+// 区分靠错误体与 detail 归因）：resume 的拒绝形态发生在 session/prompt
+// RPC 层（IL-3 实测同层）——用 rpc() 原样捕获错误体判 FAIL（不混入
+// FAULT），成功时轮询回执。三分支任一 FAIL 即收尾——后续 RM-3 的
+// sendPrompt 走 rpcOk 会在同层被拒处 FAULT，先按 FAIL 判定收束退出码 1。
 if (oldRow === undefined) {
   judge('RM-2 恢复会话继续接受指令（resume 回执）', false, `老会话不在重启后名册（宿主形态如实记录——session/list 无 ${s1.sessionId.slice(0, 14)}…）`);
+  await shutdownAndFinish();
 } else {
   const resumePrompt = await rpc('session/prompt', {
     request: {
@@ -408,6 +418,7 @@ if (oldRow === undefined) {
   if (resumePrompt.ok !== true) {
     evidence.phases.resumePrompt = { ok: false, error: resumePrompt.error };
     judge('RM-2 恢复会话继续接受指令（resume 回执）', false, `resume 指令被宿主拒（错误体入证据——与 IL-3 卸载后 resume 被拒同层形态）：${JSON.stringify(resumePrompt.error).slice(0, 200)}`);
+    await shutdownAndFinish();
   } else {
     evidence.phases.resumePrompt = { ok: true };
     // 轮询回执；prompt 层拒绝已由上面 rpc() 捕获（IL-3 实测拒绝层），轮询
