@@ -28,10 +28,12 @@
  * 装置边界（如实声明）：「不抢默认预设、不替用户写默认选择」（需求 555）
  * 由装载期不改写 selectedDefault 佐证——SD-1 写入发生在装载复核之后、由
  * 探针显式发起，装载后首读（写入前）的 selectedDefault 不指向本包预设即
- * 在案证据。宿主 volatile 字段经设置接口写（GUI 同链）；写入与 unset 均在
- * 探针自建临时 home 上进行，结束整目录清理，无需回写原状。SD-1 的报错形态
- * 锚定 not-found 与 IL-3a 同源（显式预设与默认预设走同一 resolve）；其他
- * 错误码语义不同、不算复现。
+ * 在案证据；该佐证仅在「全新临时 home＋官方 CLI add＋web profile」一次装
+ * 载形态下取证，已有用户选择或升级装载下的条件性抢默认不装置。宿主
+ * volatile 字段经设置接口写（GUI 同链）；写入与 unset 均在探针自建临时
+ * home 上进行，结束整目录清理，无需回写原状。SD-1 的报错形态锚定
+ * not-found 与 IL-3a 同源（显式预设与默认预设走同一 resolve）；其他错误
+ * 码语义不同、不算复现（错误码按精确相等锚定）。
  *
  * 本探针无模型周转步骤（无 session/prompt），步骤驱动与重试机制不适用；
  * 各判据一次读数（设置读写与 create 的响应即证据，无窗口竞态）。退出码：
@@ -101,16 +103,18 @@ function readRepoText(rel) {
   try { return readFileSync(join(repo, rel), 'utf8'); } catch { return null; }
 }
 const clientJs = readRepoText('client.js') ?? '';
-const zhDictOk = clientJs.includes('uninstallRisk') && /uninstallRisk[\s\S]{0,80}卸载风险/.test(clientJs) && (() => {
+const zhDictOk = (() => {
   const m = clientJs.match(/uninstallRisk: "卸载风险[^"]*"/);
-  return m !== null && m[0].includes('agent-preset/not-found') && m[0].includes('清空') && m[0].includes('可用预设');
+  return m !== null && m[0].includes('agent-preset/not-found') && m[0].includes('清空') && m[0].includes('可用预设') && m[0].includes('切换');
 })();
 const enDictOk = (() => {
   const m = clientJs.match(/uninstallRisk: "Uninstall risk[^"]*"/);
-  return m !== null && m[0].includes('agent-preset/not-found') && m[0].toLowerCase().includes('clear') && m[0].includes('available preset');
+  return m !== null && m[0].includes('agent-preset/not-found') && m[0].toLowerCase().includes('clear') && m[0].includes('available preset') && m[0].toLowerCase().includes('switch');
 })();
-const zhDoc = (t) => t !== null && t.includes('agent-preset/not-found') && t.includes('默认预设') && (t.includes('清空') || t.includes('重选'));
-const enDoc = (t) => t !== null && t.includes('agent-preset/not-found') && t.toLowerCase().includes('default preset');
+// 时机构词：首页用「停用或卸载前」、用户参考用「移除前」——三种动词形态都认
+// （需求 565 的语义是「卸载前切换」，本仓文档按受众用词）。
+const zhDoc = (t) => t !== null && t.includes('agent-preset/not-found') && t.includes('默认预设') && (t.includes('清空') || t.includes('重选')) && /(卸载|停用|移除)前/.test(t);
+const enDoc = (t) => t !== null && t.includes('agent-preset/not-found') && t.toLowerCase().includes('default preset') && t.toLowerCase().includes('before');
 judge('SD-0a 设置页词典键两语在场（含错误码与清选/重选动作）', zhDictOk && enDictOk,
   `中文 ${String(zhDictOk)}／英文 ${String(enDictOk)}（渲染与主题可读性属 GUI 面不装置）`);
 judge('SD-0b 中文使用说明指引在场（首页＋用户参考）', zhDoc(readRepoText('README.md')) && zhDoc(readRepoText(join('docs', 'user-reference.md'))), '');
@@ -263,6 +267,7 @@ if (updateWrite.ok !== true) {
 }
 const nsWritten = await readPresetNs();
 const writtenOk = nsWritten.value?.selectedDefault === 'dsh-async';
+evidence.phases.selectedDefaultAfterWrite = { value: nsWritten.value?.selectedDefault ?? null, user: nsWritten.user ?? null, revision: nsWritten.revision };
 judge('SD-1b 设置接口写入生效（describe 复核）', writtenOk,
   writtenOk ? `selectedDefault=dsh-async（user 层覆盖在案）` : `describe 读回 ${JSON.stringify(nsWritten.value?.selectedDefault ?? null)}`);
 if (!writtenOk) await shutdownAndFinish();
@@ -292,12 +297,13 @@ evidence.phases.createDefaultAfterRemove = createdRisk.ok
   ? { ok: true, agentPreset: createdRisk.value?.agentPreset ?? '?' }
   : { ok: false, error: createdRisk.error };
 const riskRejected = createdRisk.ok !== true
-  && String(createdRisk.error?.code ?? '').includes('agent-preset/not-found');
+  && String(createdRisk.error?.code ?? '') === 'agent-preset/not-found';
 judge('SD-1 默认指向已撤预设时新会话被拒（not-found 形态）', riskRejected,
   riskRejected ? `可读错误（不静默回落）：${JSON.stringify(createdRisk.error).slice(0, 160)}` : `形态未锚定：${createdRisk.ok ? `create 成功且预设=${String(createdRisk.value?.agentPreset)}` : JSON.stringify(createdRisk.error).slice(0, 160)}——宿主回退了默认或形态漂移`);
 // 宿主不自动清除该选择：describe 复核 selectedDefault 仍指向已撤预设。
 const nsAfter = await readPresetNs();
 const kept = nsAfter?.value?.selectedDefault === 'dsh-async';
+evidence.phases.selectedDefaultAfterRestart = { value: nsAfter?.value?.selectedDefault ?? null, user: nsAfter?.user ?? null, revision: nsAfter?.revision };
 judge('SD-1c 宿主不自动清除该选择（重启后 describe 复核）', kept,
   kept ? 'selectedDefault=dsh-async 仍在（user 覆盖层在案）——清选/重选是用户动作' : `读回 ${JSON.stringify(nsAfter?.value?.selectedDefault ?? null)}`);
 
