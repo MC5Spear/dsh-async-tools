@@ -5,12 +5,12 @@
  * ## 探针在证什么
  *
  * 套件层（wait-delivery 等 744 用例）已锚定各出口逻辑；本探针在真实实例上
- * 以真实模型会话取证五个可脚本化判据，每条判据只认宿主侧载体（tool/result
+ * 以真实模型会话取证六个可脚本化判据，每条判据只认宿主侧载体（tool/result
  * 文本、转录事件与时间戳），模型文本只作回执：
  *
  * 1. WS-1 查无目标可读拒绝：async_wait 指向不存在的作业 id，返回错误文案
  *    （error.unknownJob：未知作业＋job_list 指引），不静默、不当作已结束；
- *    紧接 wait_ms=0 无目标立即检查（不挂起、无假挂起报错）；
+ *    紧接 wait_ms=0 无目标立即检查（不挂起、无假挂起报错，两次调用都在场）；
  * 2. WS-2 目标终态提前交回：后台作业（约 30s）＋async_wait 指定该目标、
  *    预算 180s——等待在作业完成时刻附近交回（时间戳判据），不等满预算；
  * 3. WS-3 非目标不误报：作业 A（约 20s）与 B（约 65s）先后转后台，等待只指定
@@ -21,16 +21,18 @@
  * 4. WS-4 用户插话打断等待：后台长作业＋等待挂起后经 steer 通道注入用户
  *    消息——等待以被打断形态交回（返回时刻远早于作业完成与预算），插话
  *    消息进入模型上下文（agent/inbox/spliced 在案），后台作业不被终止；
- * 5. WS-5 排队消息不唤醒等待：另一长作业＋等待挂起后经 queue 通道注入消息
- *    （设计语义：排队消息只在回合边界送达，不结束等待）——等待挂满预算
- *    返回（预算到期出口），作业正文不在等待返回中（尚未完成），作业不被
- *    终止、无 killed 结算；
+ * 5. WS-5 排队消息不唤醒等待：长作业（约 150s，恒晚于预算到期）＋预算 60s，
+ *    等待挂起后经 queue 通道注入消息（设计语义：排队消息只在回合边界送达，
+ *    不结束等待）——等待挂满 60s 预算经到期出口返回（返回注明目标仍在
+ *    运行），作业正文不在等待返回中（尚未结算、无 job/settled），作业不被
+ *    终止；
  * 6. WS-6 协作续接：后台子代理完成、回答到达后，主代理经 send_message 继续
  *    驱动同一子代理，续接回答经宿主侧载体到达。
  *
- * 时间判据全部取转录时间戳（tool/call 与其后 tool/result 的 at 差），容差
- * 覆盖模型周转（每步指令后模型需 10–60s 完成工具调用）。每步超时或断言不
- * 成立同会话重试一次（模型偶发不执行单步指令不等于产品缺陷，重试留痕）。
+ * 时间判据优先取转录时间戳（tool/call 与其后 tool/result 的 at 差；at 可能是
+ * ISO 字符串或 epoch 毫秒数字，两种形态都解析；seq 缺席时按数组下标定位），
+ * 时间戳缺席时以轮询墙钟回退（±一个轮询间隔）。每步超时或断言不成立同会话
+ * 重试一次（模型偶发不执行单步指令不等于产品缺陷，重试留痕）。
  *
  * ## 用法
  *
@@ -52,16 +54,29 @@ const argOf = (name) => {
   return i >= 0 && i + 1 < args.length ? args[i + 1] : undefined;
 };
 const keep = args.includes('--keep');
+// repo 先于 fail 解析（fail 的落盘路径要用它，避免早期故障时 TDZ）。
+const repo = resolve(argOf('repo') ?? process.cwd());
 let home = null;
+// 证据容器前置声明：FAULT 路径也要尽力落盘已收集的部分证据（let 避免 TDZ）。
+let evidence = null;
 const fail = (msg) => {
   console.error(`[probe] FAULT: ${msg}\n[probe] 临时目录：${home ?? '（尚未创建）'}${keep ? '（--keep 保留）' : '（探针故障路径，请手动清理）'}`);
+  try {
+    if (evidence !== null) {
+      mkdirSync(join(repo, '.local'), { recursive: true });
+      writeFileSync(join(repo, '.local', 'probe-wait-semantics.json'), JSON.stringify({ ...evidence, fault: String(msg) }, null, 2));
+      console.error('[probe] 已尽力落盘部分证据（本机材料目录）');
+    }
+  } catch { /* 故障路径的落盘失败不再掩盖原故障 */ }
   process.exit(2);
 };
+// 退出码契约（0/1/2）：任何未捕获异常/拒绝都归入 FAULT=2，不以裸异常退出。
+process.on('uncaughtException', (error) => { fail(`未捕获异常：${String(error?.stack ?? error)}`); });
+process.on('unhandledRejection', (reason) => { fail(`未处理的 Promise 拒绝：${String(reason)}`); });
 const serviceRootArg = argOf('service-root') ?? process.env.DSAT_SERVICE_ROOT;
 if (serviceRootArg === undefined || serviceRootArg.trim() === '') fail('缺少 --service-root（或环境变量 DSAT_SERVICE_ROOT）：指向装有各宿主树的根目录');
 const serviceRoot = resolve(serviceRootArg);
 const hostSubdir = argOf('host-subdir') ?? 'dsh-0.2.1-rc.5';
-const repo = resolve(argOf('repo') ?? process.cwd());
 const hostRoot = join(serviceRoot, hostSubdir);
 let hostVersion;
 try {
@@ -179,30 +194,46 @@ function atOf(record) {
   const t = Date.parse(raw);
   return Number.isFinite(t) ? t : null;
 }
-function modelTexts(transcript) {
-  return (transcript.records ?? [])
+/** 载体提取器统一带 fromIndex：转录 append-only、seq 可能缺席，按数组下标
+ *  切出「本步新增」窗口——跨步陈旧记录不进断言（早先尝试的误调用不污染
+ *  后续步骤的 notKilled 等判定）。 */
+function stepRecords(transcript, fromIndex) {
+  return (transcript.records ?? []).slice(fromIndex);
+}
+function modelTexts(transcript, fromIndex = 0) {
+  return stepRecords(transcript, fromIndex)
     .filter((r) => r.event?.type === 'assistant/message' || r.event?.type === 'model/message')
     .map((r) => (r.event.data?.message?.content ?? r.event.data?.content ?? [])
       .map((c) => String(c.text ?? '')).join('\n'));
 }
-function toolResultTexts(transcript) {
-  return (transcript.records ?? [])
+function toolResultTexts(transcript, fromIndex = 0) {
+  return stepRecords(transcript, fromIndex)
     .filter((r) => r.event?.type === 'tool/result')
     .map((r) => (r.event.data?.message?.content ?? [])
       .filter((c) => c.type === 'text').map((c) => String(c.text ?? '')).join('\n'));
 }
-function toolCallNames(transcript) {
+function toolCallNames(transcript, fromIndex = 0) {
   const names = new Set();
-  for (const r of transcript.records ?? []) {
+  for (const r of stepRecords(transcript, fromIndex)) {
     if (r.event?.type !== 'tool/call') continue;
     const name = r.event.data?.name ?? r.event.data?.toolName ?? r.event.data?.message?.name;
     if (typeof name === 'string') names.add(name);
   }
   return names;
 }
-function completionSends(transcript) {
+/** 本步窗口内各工具的调用次数（如 WS-1 断言两次 async_wait 调用都在场）。 */
+function toolCallCounts(transcript, fromIndex = 0) {
+  const counts = new Map();
+  for (const r of stepRecords(transcript, fromIndex)) {
+    if (r.event?.type !== 'tool/call') continue;
+    const name = r.event.data?.name ?? r.event.data?.toolName ?? r.event.data?.message?.name;
+    if (typeof name === 'string') counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return counts;
+}
+function completionSends(transcript, fromIndex = 0) {
   const out = [];
-  for (const r of transcript.records ?? []) {
+  for (const r of stepRecords(transcript, fromIndex)) {
     if (r.event?.type !== 'user/message') continue;
     const message = r.event.data?.message ?? r.event.data;
     if (message?.source?.kind !== 'async-tools-job-result') continue;
@@ -210,9 +241,9 @@ function completionSends(transcript) {
   }
   return out;
 }
-function injectedTexts(transcript) {
+function injectedTexts(transcript, fromIndex = 0) {
   const out = [];
-  for (const r of transcript.records ?? []) {
+  for (const r of stepRecords(transcript, fromIndex)) {
     if (r.event?.type !== 'user/message') continue;
     const message = r.event.data?.message ?? r.event.data;
     const source = message?.source?.kind ?? '';
@@ -224,7 +255,7 @@ function injectedTexts(transcript) {
 /** async_wait 挂起时长：records 的 seq 在本宿主线上可能缺席，统一以数组下标
  *  （转录 append-only，下标稳定）取「fromIndex 之后」的最后一个
  *  tool/call(name=async_wait) 与其后第一个 tool/result；优先转录 at 时间戳，
- *  缺席时由调用侧用轮询墙钟兜底（±一个轮询间隔）。 */
+ *  缺席时由调用侧用轮询墙钟回退（±一个轮询间隔）。 */
 function waitSpanSince(transcript, fromIndex) {
   const records = (transcript.records ?? []).slice(fromIndex);
   const callIdx = [];
@@ -245,13 +276,13 @@ function waitSpanSince(transcript, fromIndex) {
   }
   return { callSeen: true, resultSeen: false, spanMs: null };
 }
-const eventHas = (transcript, type) => (transcript.records ?? []).some((r) => r.event?.type === type);
+const eventHas = (transcript, type, fromIndex = 0) => stepRecords(transcript, fromIndex).some((r) => r.event?.type === type);
 
 // 5) 步骤驱动（每步单条明确指令＋固定回执 token；首不成重试一次）。
-const STEP_TIMEOUT_MS = 300_000;
+const STEP_TIMEOUT_MS = 420_000;
 const POLL_MS = 4000;
 const verdicts = [];
-const evidence = { head, dirty: dirty !== '', hostVersion, sessionId: SESSION, steps: [], verdicts };
+evidence = { head, dirty: dirty !== '', hostVersion, sessionId: SESSION, steps: [], verdicts };
 function judge(name, ok, detail = '') {
   verdicts.push({ name, ok: ok === true, detail: String(detail).slice(0, 400) });
   console.log(`${ok === true ? 'PASS ' : 'FAIL '} ${name}${detail === '' ? '' : `  —— ${String(detail).slice(0, 240)}`}`);
@@ -261,10 +292,13 @@ async function driveStep(step) {
   const record = { name: step.name, attempts: [] };
   evidence.steps.push(record);
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    // 步骤基线：当前记录条数（seq 可能缺席，append-only 下标即坐标）。
+    // 步骤基线：当前记录条数（seq 可能缺席，append-only 下标即坐标）；拉取
+    // 失败时沿用上一成功基线（首步按 0——回执 token 步内唯一，主要代价是
+    // 多扫旧记录而非误判）。
     let beforeCount = 0;
-    try { beforeCount = (await transcriptOf()).records?.length ?? 0; } catch { /* 基线缺席按 0 */ }
-    // 墙钟兜底：首次观察到本步 async_wait 调用与其结果的时刻（±轮询间隔）。
+    try { beforeCount = (await transcriptOf()).records?.length ?? 0; evidence.lastBaseline = beforeCount; }
+    catch { beforeCount = evidence.lastBaseline ?? 0; }
+    // 墙钟回退：首次观察到本步 async_wait 调用与其结果的时刻（±轮询间隔）。
     let wallCallAt = null;
     let wallResultAt = null;
     try {
@@ -273,7 +307,7 @@ async function driveStep(step) {
       killChild();
       fail(`session/prompt 调用失败：${String(error?.message ?? error)}`);
     }
-    // 步骤专属动作：等待挂起后注入插话（WS-4）。
+    // 步骤专属动作：等待挂起后注入插话（WS-4／WS-5）。
     let acted = false;
     const deadline = Date.now() + STEP_TIMEOUT_MS;
     let lastDetail = '（无判定输出）';
@@ -292,12 +326,14 @@ async function driveStep(step) {
       }
       const wallSpan = wallCallAt !== null && wallResultAt !== null ? wallResultAt - wallCallAt : null;
       const ctx = {
-        modelTexts: modelTexts(transcript),
-        toolResults: toolResultTexts(transcript),
-        toolNames: toolCallNames(transcript),
-        completions: completionSends(transcript),
-        injected: injectedTexts(transcript),
-        spliced: eventHas(transcript, 'agent/inbox/spliced'),
+        modelTexts: modelTexts(transcript, beforeCount),
+        toolResults: toolResultTexts(transcript, beforeCount),
+        toolNames: toolCallNames(transcript, beforeCount),
+        toolCallCounts: toolCallCounts(transcript, beforeCount),
+        completions: completionSends(transcript, beforeCount),
+        injected: injectedTexts(transcript, beforeCount),
+        spliced: eventHas(transcript, 'agent/inbox/spliced', beforeCount),
+        settled: stepRecords(transcript, beforeCount).filter((r) => r.event?.type === 'job/settled').map((r) => r.event.data?.status ?? '?'),
         waitSpan: spanInfo.spanMs ?? wallSpan
       };
       const outcome = step.judge(ctx);
@@ -307,16 +343,16 @@ async function driveStep(step) {
         return true;
       }
       lastDetail = outcome.detail ?? lastDetail;
-      if (record.snapshot === undefined) {
-        record.snapshot = {
-          toolNames: [...ctx.toolNames],
-          toolResults: ctx.toolResults.slice(-10).map((t) => t.slice(-500)),
-          completions: ctx.completions.slice(-5).map((t) => t.slice(-300)),
-          injected: ctx.injected.slice(-5).map((e) => ({ source: e.source, text: e.text.slice(-300) })),
-          modelTail: ctx.modelTexts.slice(-5).map((t) => t.slice(-250)),
-          waitSpan: ctx.waitSpan
-        };
-      }
+      // 快照持续更新为最新轮询末态（首败时刻的形态在 attempts.lastDetail 与
+      // 下轮快照对比中仍可辨）。
+      record.snapshot = {
+        toolNames: [...ctx.toolNames],
+        toolResults: ctx.toolResults.slice(-10).map((t) => t.slice(-500)),
+        completions: ctx.completions.slice(-5).map((t) => t.slice(-300)),
+        injected: ctx.injected.slice(-5).map((e) => ({ source: e.source, text: e.text.slice(-300) })),
+        modelTail: ctx.modelTexts.slice(-5).map((t) => t.slice(-250)),
+        waitSpan: ctx.waitSpan
+      };
     }
     record.attempts.push({ attempt, ok: false, detail: lastDetail });
     log(`步骤 ${step.name} 第 ${String(attempt)} 次未成立（${lastDetail}）${attempt === 1 ? '，重试一次' : ''}`);
@@ -331,9 +367,11 @@ await driveStep({
   prompt: 'Run this single step and reply with exactly the token WS1_DONE: (1) call async_wait with targets [{kind:"job", id:"no-such-job-7f3a"}] and wait_ms 0 — it must return an error mentioning an unknown job and suggesting job_list, this is expected; do not retry it. (2) then call async_wait with wait_ms 0 only (no targets) — it must return immediately with a ready-list summary, no hang. (3) reply WS1_DONE. No other tools, no questions.',
   judge: (ctx) => {
     const unknownRejected = ctx.toolResults.some((t) => /unknown job|未知作业/.test(t) && /job_list/.test(t));
+    // 两次 async_wait 调用都在场——模型跳过步骤 (2) 只回执不得通过。
+    const bothCalled = (ctx.toolCallCounts.get('async_wait') ?? 0) >= 2;
     const receipt = ctx.modelTexts.some((t) => t.includes('WS1_DONE'));
-    const ok = unknownRejected && receipt;
-    return { ok, detail: ok ? '未知作业可读拒绝（含 job_list 指引）＋零等待返回＋回执' : `未知作业拒绝命中 ${String(unknownRejected)}／回执 ${String(receipt)}` };
+    const ok = unknownRejected && bothCalled && receipt;
+    return { ok, detail: ok ? '未知作业可读拒绝（含 job_list 指引）＋两次调用在场＋零等待返回＋回执' : `未知作业拒绝命中 ${String(unknownRejected)}／两次调用在场 ${String(bothCalled)}（${String(ctx.toolCallCounts.get('async_wait') ?? 0)} 次）／回执 ${String(receipt)}` };
   }
 });
 
@@ -390,24 +428,31 @@ await driveStep({
   }
 });
 
-console.log('\n── WS-5 排队消息不唤醒等待（queue 通道注入，期望挂满预算）──');
+console.log('\n── WS-5 排队消息不唤醒等待（queue 通道注入，期望挂满 60s 预算经到期出口返回）──');
 await driveStep({
-  name: 'WS-5 排队消息不唤醒等待',
-  prompt: 'Run this single step: (1) call async_run with command "Start-Sleep -Seconds 100; Write-Output WS5-TOKEN-3f8", description "ws5 long job", yield_ms 20000 — it goes to background, note its job_id; (2) immediately call async_wait with targets [{kind:"job", id:<that job_id>}] and wait_ms 90000, waiting inline until the budget expires; (3) after the wait returns with the budget expired, reply with exactly WS5_DONE and end your turn — do NOT kill or wait for the job again. No other tools, no questions.',
+  name: 'WS-5 排队消息不唤醒等待（预算到期出口）',
+  // 作业 150s 恒晚于预算到期（wait 起点约 20s+τ、到期约 80-90s、结算约 152s）——
+  // 等待只能经预算到期出口返回，目标终态出口在算术上不可达。
+  prompt: 'Run this single step: (1) call async_run with command "Start-Sleep -Seconds 150; Write-Output WS5-TOKEN-3f8", description "ws5 long job", yield_ms 20000 — it goes to background, note its job_id; (2) immediately call async_wait with targets [{kind:"job", id:<that job_id>}] and wait_ms 60000, waiting inline until the budget expires and the wait returns; (3) after the wait returns, reply with exactly WS5_DONE and end your turn — do NOT kill or wait for the job again. No other tools, no questions.',
   afterWaitSuspended: async () => {
     // 等待挂起后 6s 经 queue 通道注入消息——排队消息只在回合边界送达，设计语义
-    // 明确不结束等待（text.js「queue 不唤醒」）；期望等待挂满 90s 预算返回。
+    // 明确不结束等待（text.js「queue 不唤醒」）；期望等待挂满 60s 预算返回。
     await new Promise((r) => { setTimeout(r, 6000); });
     await prompt('Queued message: this must NOT interrupt your wait. Keep waiting until the budget expires.', 'queue');
   },
   judge: (ctx) => {
     const span = ctx.waitSpan;
-    // 期望挂满预算（90s±容差）——排队消息不唤醒；作业正文尚未完成、不在返回中。
-    const heldFull = span !== null && span >= 80_000;
+    // 期望挂满预算（60s±周转容差）——排队消息不唤醒。
+    const heldFull = span !== null && span >= 50_000 && span < 90_000;
+    // 到期出口形态：返回注明预算到期／目标仍在运行；作业尚未结算（无本步
+    // job/settled），token 不在等待返回中。
+    const expiryNote = ctx.toolResults.some((t) => /预算到期|仍未?在?运行|still running|预算已到|到期/.test(t));
+    const tokenAbsent = !ctx.toolResults.some((t) => t.includes('WS5-TOKEN-3f8'));
+    const notSettled = ctx.settled.length === 0;
     const receipt = ctx.modelTexts.some((t) => t.includes('WS5_DONE'));
     const notKilled = !ctx.toolNames.has('job_kill');
-    const ok = heldFull && receipt && notKilled;
-    return { ok, detail: ok ? `挂起 ${String(Math.round(span / 1000))}s 挂满 90s 预算（排队消息未唤醒、未杀作业）＋回执` : `挂满 ${String(heldFull)}（挂起 ${span === null ? '未取得' : `${String(Math.round(span / 1000))}s`}）／回执 ${String(receipt)}／未杀作业 ${String(notKilled)}` };
+    const ok = heldFull && expiryNote && tokenAbsent && notSettled && receipt && notKilled;
+    return { ok, detail: ok ? `挂起 ${String(Math.round(span / 1000))}s 挂满 60s 预算经到期出口返回（排队消息未唤醒、作业未结算未杀、token 不在返回中）＋回执` : `挂满 ${String(heldFull)}（挂起 ${span === null ? '未取得' : `${String(Math.round(span / 1000))}s`}）／到期注记 ${String(expiryNote)}／token 缺席 ${String(tokenAbsent)}／未结算 ${String(notSettled)}／回执 ${String(receipt)}／未杀作业 ${String(notKilled)}` };
   }
 });
 
@@ -428,11 +473,15 @@ await driveStep({
   }
 });
 
-// 6) 收尾：停实例→等句柄释放→留证据→清理。
+// 6) 收尾：停实例→等句柄释放→留证据→清理（--keep 时保留临时 home 供排查）。
 killChild();
 await new Promise((r) => { setTimeout(r, 1500); });
-try { rmSync(home, { recursive: true, force: true }); log(`已清理临时 home：${home}`); }
-catch { console.error(`[probe] WARN: 临时目录清理失败，留存现场：${home}`); }
+if (keep) {
+  log(`--keep：保留临时 home 供排查：${home}`);
+} else {
+  try { rmSync(home, { recursive: true, force: true }); log(`已清理临时 home：${home}`); }
+  catch { console.error(`[probe] WARN: 临时目录清理失败，留存现场：${home}`); }
+}
 try { rmSync(tgzPath, { force: true }); } catch { /* 产物清理尽力而为 */ }
 mkdirSync(join(repo, '.local'), { recursive: true });
 writeFileSync(join(repo, '.local', 'probe-wait-semantics.json'), JSON.stringify(evidence, null, 2));
