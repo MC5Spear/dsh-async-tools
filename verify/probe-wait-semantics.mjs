@@ -39,9 +39,12 @@
  *   node verify/probe-wait-semantics.mjs --service-root <宿主服务根> \
  *     --host-subdir <宿主树目录名，如 dsh-0.2.1-rc.5> [--repo <本仓路径>] [--keep]
  *
- * `--service-root` 必填（或设 `DSAT_SERVICE_ROOT`）。产物落 `.local/`，结束
- * 自清；`--keep` 保留临时 home。退出码：0＝全部判定通过；1＝存在 FAIL 判定；
- * 2＝探针自身故障（FAULT）。
+ * `--service-root` 必填（或设 `DSAT_SERVICE_ROOT`）。探针以
+ * `<serviceRoot>/patches/zai-glm.yml` 作为实例模型路由 patch——该文件由本机
+ * 部署环境提供，缺失时实例在就绪等待处 FAULT（90s 超时＋stderr 尾部），请
+ * 自备同位 patch 或改参。tgz 产物结束自清；证据 JSON 每次落盘保留在 `.local/`
+ * （FAULT 路径的 tgz 不清，重跑前可手动清理）。退出码：0＝全部判定通过；
+ * 1＝存在 FAIL 判定；2＝探针自身故障（FAULT）。
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
@@ -252,10 +255,12 @@ function injectedTexts(transcript, fromIndex = 0) {
   }
   return out;
 }
-/** async_wait 挂起时长：records 的 seq 在本宿主线上可能缺席，统一以数组下标
- *  （转录 append-only，下标稳定）取「fromIndex 之后」的最后一个
- *  tool/call(name=async_wait) 与其后第一个 tool/result；优先转录 at 时间戳，
- *  缺席时由调用侧用轮询墙钟回退（±一个轮询间隔）。 */
+/** async_wait 挂起时长与其返回文本：records 的 seq 在本宿主线上可能缺席，
+ *  统一以数组下标（转录 append-only 且总记录量不超过拉取上限，下标稳定）取
+ *  「fromIndex 之后」的最后一个 tool/call(name=async_wait) 与其后第一个
+ *  tool/result——**装置假设模型按指令串行单工具调用**（各步指令均要求），
+ *  违规并行时配对可能失准，误差方向是假 FAIL（重试自愈）而非假 PASS。
+ *  优先转录 at 时间戳，缺席时由调用侧用轮询墙钟回退（±一个轮询间隔）。 */
 function waitSpanSince(transcript, fromIndex) {
   const records = (transcript.records ?? []).slice(fromIndex);
   const callIdx = [];
@@ -264,17 +269,19 @@ function waitSpanSince(transcript, fromIndex) {
     const name = r.event.data?.name ?? r.event.data?.toolName ?? r.event.data?.message?.name;
     if (name === 'async_wait') callIdx.push(i);
   });
-  if (callIdx.length === 0) return { callSeen: false, resultSeen: false, spanMs: null };
+  if (callIdx.length === 0) return { callSeen: false, resultSeen: false, spanMs: null, resultText: '' };
   const i = callIdx.at(-1);
   for (let j = i + 1; j < records.length; j += 1) {
     if (records[j].event?.type === 'tool/result') {
       const callAt = atOf(records[i]);
       const at = atOf(records[j]);
       const diff = callAt !== null && at !== null ? at - callAt : null;
-      return { callSeen: true, resultSeen: true, spanMs: diff !== null && Number.isFinite(diff) ? diff : null };
+      const content = records[j].event.data?.message?.content ?? [];
+      const resultText = content.filter((c) => c.type === 'text').map((c) => String(c.text ?? '')).join('\n');
+      return { callSeen: true, resultSeen: true, spanMs: diff !== null && Number.isFinite(diff) ? diff : null, resultText };
     }
   }
-  return { callSeen: true, resultSeen: false, spanMs: null };
+  return { callSeen: true, resultSeen: false, spanMs: null, resultText: '' };
 }
 const eventHas = (transcript, type, fromIndex = 0) => stepRecords(transcript, fromIndex).some((r) => r.event?.type === type);
 
@@ -288,16 +295,19 @@ function judge(name, ok, detail = '') {
   console.log(`${ok === true ? 'PASS ' : 'FAIL '} ${name}${detail === '' ? '' : `  —— ${String(detail).slice(0, 240)}`}`);
 }
 /** 驱动一步：发指令（可附带挂起后注入函数）→轮询至判定成立或超时；重试一次。 */
+const lastBaselineShared = { value: 0 };
 async function driveStep(step) {
   const record = { name: step.name, attempts: [] };
   evidence.steps.push(record);
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     // 步骤基线：当前记录条数（seq 可能缺席，append-only 下标即坐标）；拉取
     // 失败时沿用上一成功基线（首步按 0——回执 token 步内唯一，主要代价是
-    // 多扫旧记录而非误判）。
-    let beforeCount = 0;
-    try { beforeCount = (await transcriptOf()).records?.length ?? 0; evidence.lastBaseline = beforeCount; }
-    catch { beforeCount = evidence.lastBaseline ?? 0; }
+    // 多扫旧记录而非误判）。基线是跨步内部状态，不入证据 JSON。
+    let beforeCount = lastBaselineShared.value;
+    try {
+      beforeCount = (await transcriptOf()).records?.length ?? 0;
+      lastBaselineShared.value = beforeCount;
+    } catch { /* 沿用上一成功基线 */ }
     // 墙钟回退：首次观察到本步 async_wait 调用与其结果的时刻（±轮询间隔）。
     let wallCallAt = null;
     let wallResultAt = null;
@@ -325,6 +335,15 @@ async function driveStep(step) {
         log(`步骤 ${step.name}：等待已挂起，注入动作完成。`);
       }
       const wallSpan = wallCallAt !== null && wallResultAt !== null ? wallResultAt - wallCallAt : null;
+      // 本步窗口内出现的作业 id（async_run 返回与 wait 目标状态都带 id）——
+      // 结算断言按身份过滤，跨步残留作业（如 WS-4 有意不杀的长作业）的结算
+      // 不误伤本步判定。
+      const stepText = toolResultTexts(transcript, beforeCount).join('\n');
+      const stepJobIds = new Set([...stepText.matchAll(/async-command-[0-9a-f]+/g)].map((m) => m[0]));
+      const settledEvents = stepRecords(transcript, beforeCount)
+        .filter((r) => r.event?.type === 'job/settled')
+        .map((r) => ({ jobId: String(r.event.data?.jobId ?? ''), status: r.event.data?.status ?? '?' }))
+        .filter((e) => e.jobId === '' || stepJobIds.has(e.jobId));
       const ctx = {
         modelTexts: modelTexts(transcript, beforeCount),
         toolResults: toolResultTexts(transcript, beforeCount),
@@ -333,8 +352,10 @@ async function driveStep(step) {
         completions: completionSends(transcript, beforeCount),
         injected: injectedTexts(transcript, beforeCount),
         spliced: eventHas(transcript, 'agent/inbox/spliced', beforeCount),
-        settled: stepRecords(transcript, beforeCount).filter((r) => r.event?.type === 'job/settled').map((r) => r.event.data?.status ?? '?'),
-        waitSpan: spanInfo.spanMs ?? wallSpan
+        settled: settledEvents.map((e) => e.status),
+        settledEvents,
+        waitSpan: spanInfo.spanMs ?? wallSpan,
+        waitResultText: spanInfo.resultText
       };
       const outcome = step.judge(ctx);
       if (outcome.ok === true) {
@@ -369,9 +390,11 @@ await driveStep({
     const unknownRejected = ctx.toolResults.some((t) => /unknown job|未知作业/.test(t) && /job_list/.test(t));
     // 两次 async_wait 调用都在场——模型跳过步骤 (2) 只回执不得通过。
     const bothCalled = (ctx.toolCallCounts.get('async_wait') ?? 0) >= 2;
+    // 零等待立即性：最后一次调用（即 wait_ms=0）从调用到返回 <10s，不挂起。
+    const zeroWaitQuick = ctx.waitSpan !== null && ctx.waitSpan < 10_000;
     const receipt = ctx.modelTexts.some((t) => t.includes('WS1_DONE'));
-    const ok = unknownRejected && bothCalled && receipt;
-    return { ok, detail: ok ? '未知作业可读拒绝（含 job_list 指引）＋两次调用在场＋零等待返回＋回执' : `未知作业拒绝命中 ${String(unknownRejected)}／两次调用在场 ${String(bothCalled)}（${String(ctx.toolCallCounts.get('async_wait') ?? 0)} 次）／回执 ${String(receipt)}` };
+    const ok = unknownRejected && bothCalled && zeroWaitQuick && receipt;
+    return { ok, detail: ok ? `未知作业可读拒绝（含 job_list 指引）＋两次调用在场＋零等待 ${String(Math.round(ctx.waitSpan / 1000))}s 立即返回＋回执` : `未知作业拒绝命中 ${String(unknownRejected)}／两次调用在场 ${String(bothCalled)}（${String(ctx.toolCallCounts.get('async_wait') ?? 0)} 次）／零等待立即 ${String(zeroWaitQuick)}（${ctx.waitSpan === null ? '未取得' : `${String(Math.round(ctx.waitSpan / 1000))}s`}）／回执 ${String(receipt)}` };
   }
 });
 
@@ -384,8 +407,8 @@ await driveStep({
     const span = ctx.waitSpan;
     // span 是「wait 调用起的剩余等待」——async_run 先前台等满首等下限，转后台
     // 后模型才调 wait，span 只剩作业余量＋周转；作业已就绪时立即交付（span≈0，
-    // 需求「在下限前结束的作业立即交付」）也合法。提前交回的判别在上限侧：
-    // 远小于 180s 预算；正文到达是主判据。
+    // 需求 8.2 目标判断行「已就绪内容……及时交回」）也合法。提前交回的判别在
+    // 上限侧：远小于 180s 预算；正文到达是主判据。
     const early = span !== null && span < 150_000;
     const ok = claimed && early && ctx.modelTexts.some((t) => t.includes('WS2_DONE'));
     return { ok, detail: ok ? `正文到达＋等待挂起 ${String(Math.round(span / 1000))}s 交回（远小于 180s 预算）` : `正文 ${String(claimed)}／挂起时长 ${span === null ? '未取得' : `${String(Math.round(span / 1000))}s`}／回执 ${String(ctx.modelTexts.some((t) => t.includes('WS2_DONE')))}` };
@@ -422,9 +445,11 @@ await driveStep({
     const interrupted = span !== null && span < 90_000;
     const spliced = ctx.spliced;
     const receipt = ctx.modelTexts.some((t) => t.includes('WS4_DONE'));
-    const notKilled = !(ctx.toolNames.has('job_kill'));
+    // 不终止的宿主侧证据：模型未调 job_kill，且本步作业无 killed 结算事件
+    // （隐式连带终止也会在结算流留下 killed）。
+    const notKilled = !ctx.toolNames.has('job_kill') && !ctx.settledEvents.some((e) => e.status === 'killed');
     const ok = interrupted && spliced && receipt && notKilled;
-    return { ok, detail: ok ? `挂起 ${String(Math.round(span / 1000))}s 被插话交回（agent/inbox/spliced 在案、未杀作业）＋回执` : `早交回 ${String(interrupted)}（挂起 ${span === null ? '未取得' : `${String(Math.round(span / 1000))}s`}）／spliced ${String(spliced)}／回执 ${String(receipt)}／未杀作业 ${String(notKilled)}` };
+    return { ok, detail: ok ? `挂起 ${String(Math.round(span / 1000))}s 被插话交回（agent/inbox/spliced 在案、无 killed 结算）＋回执` : `早交回 ${String(interrupted)}（挂起 ${span === null ? '未取得' : `${String(Math.round(span / 1000))}s`}）／spliced ${String(spliced)}／回执 ${String(receipt)}／无 killed ${String(notKilled)}` };
   }
 });
 
@@ -444,15 +469,16 @@ await driveStep({
     const span = ctx.waitSpan;
     // 期望挂满预算（60s±周转容差）——排队消息不唤醒。
     const heldFull = span !== null && span >= 50_000 && span < 90_000;
-    // 到期出口形态：返回注明预算到期／目标仍在运行；作业尚未结算（无本步
-    // job/settled），token 不在等待返回中。
-    const expiryNote = ctx.toolResults.some((t) => /预算到期|仍未?在?运行|still running|预算已到|到期/.test(t));
+    // 到期出口形态：只认 async_wait 自身返回（waitResultText——call→result
+    // 配对所得）的到期专属文案；不扫全窗口（转后台返回也含「仍在运行」，
+    // 会架空断言）。token 缺席与未结算（按本步作业身份过滤）同判。
+    const expiryNote = /预算到期|budget expired/.test(ctx.waitResultText);
     const tokenAbsent = !ctx.toolResults.some((t) => t.includes('WS5-TOKEN-3f8'));
-    const notSettled = ctx.settled.length === 0;
+    const notSettled = ctx.settledEvents.length === 0;
     const receipt = ctx.modelTexts.some((t) => t.includes('WS5_DONE'));
     const notKilled = !ctx.toolNames.has('job_kill');
     const ok = heldFull && expiryNote && tokenAbsent && notSettled && receipt && notKilled;
-    return { ok, detail: ok ? `挂起 ${String(Math.round(span / 1000))}s 挂满 60s 预算经到期出口返回（排队消息未唤醒、作业未结算未杀、token 不在返回中）＋回执` : `挂满 ${String(heldFull)}（挂起 ${span === null ? '未取得' : `${String(Math.round(span / 1000))}s`}）／到期注记 ${String(expiryNote)}／token 缺席 ${String(tokenAbsent)}／未结算 ${String(notSettled)}／回执 ${String(receipt)}／未杀作业 ${String(notKilled)}` };
+    return { ok, detail: ok ? `挂起 ${String(Math.round(span / 1000))}s 挂满 60s 预算经到期出口返回（wait 返回注明预算到期、本步作业未结算未杀、token 不在返回中）＋回执` : `挂满 ${String(heldFull)}（挂起 ${span === null ? '未取得' : `${String(Math.round(span / 1000))}s`}）／到期注记 ${String(expiryNote)}／token 缺席 ${String(tokenAbsent)}／未结算 ${String(notSettled)}／回执 ${String(receipt)}／未杀作业 ${String(notKilled)}` };
   }
 });
 
