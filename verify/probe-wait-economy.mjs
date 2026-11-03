@@ -13,10 +13,13 @@
  *    预算挂起 → 作业完成正文经等待返回 → 回执；
  * 2. EC-B 轮询式：async_run（约 45s 作业，token B）转后台 → 按指令反复
  *    async_wait wait_ms=0（零等待立即检查）直至正文到达 → 回执；
+ *    （两会话同实例同模型路由、作业时长相同——平行分组对照；先后推进，
+ *    对照口径是模型轮次与用量而非墙钟）
  * 3. EC-C 对照判定：B 的模型轮次（assistant/message 事件数——每轮一次模型
  *    请求恰产出一条；两会话自创建起 fromIndex=0 对称累计，公平对照；步骤重
  *    试会抬高各自轮次——A 侧抬高走保守方向可假 FAIL，B 侧抬高与差值判据同
- *    向、由「async_wait ≥2 次」的次数锚约束）显著多于 A（差值 ≥2 且 A ≤3）；
+ *    向，次数锚保证成功尝试确为轮询形态、失败尝试的抬高幅度可由 attempts
+ *    留痕离线区分）显著多于 A（差值 ≥2 且 A ≤3）；
  *    session/list 两行的 usage 聚合（projections.values.tokenUsage）与
  *    pressureTokens/projectedTokens（projections.values.contextPressure）落
  *    证据作旁证——usage 由供应商报告决定在场与否，缺席不构成 FAIL，按「可
