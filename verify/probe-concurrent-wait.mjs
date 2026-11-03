@@ -188,7 +188,9 @@ async function rpc(endpoint, argsBody) {
     method: endpoint, payload: { args: argsBody }
   });
   // 非幂等端点（session/create、session/prompt）不走自动重试——重复投递会
-  // 建双会话或重复指令；幂等端点（list/page）失败重试一次。两分支统一解析。
+  // 建双会话或重复指令；其余端点（list/page，及本探针的 settings/update、
+  // settings/mutate——固定值写与固定路径 unset，等值重发收敛无害）失败重试
+  // 一次。两分支统一解析。
   const parse = async (response) => {
     const parsed = JSON.parse(await response.text());
     if (parsed?.result?.ok !== true) return { ok: false, error: parsed?.result?.error ?? null };
@@ -222,7 +224,8 @@ log(`会话已建（sessionId=${SESSION}）`);
 // 20000 会把 yield_ms 8000 夹紧为 20s（lib/config.js resolveYield clamp；需求
 // 622「显式短 yield_ms 按生效下限夹紧」），CW-1 的 A（15s）与 CW-3 的 P/Q
 // （12s）将在首次等待内前台直付、不转后台，「非目标同批」与「同拍同批」
-// 检验面被旁路。经公开设置接口临时调低（与套件层短窗用例同款手法），
+// 检验面被旁路。经公开设置接口临时调低（与套件层短窗用例同款手法——
+// test/wait-delivery.test.mjs 装置段「不吃出厂下限 20000 的夹紧」），
 // 记录原用户覆盖、收尾恢复。
 const settingsNS = 'async-tools-host';
 const describedSettings = await rpcOk('settings/describe', {});
@@ -511,13 +514,14 @@ await driveStep({
 // 6) 收尾：恢复设置→停实例→等句柄释放→留证据→清理（--keep 时保留临时 home）。
 try {
   // 恢复 minYieldMs：原状有用户覆盖则回写原值，否则 unset 回继承值（临时
-  // 实例生命周期即止，恢复是设置链规范动作而非必要善后）。
-  if (minYieldHadUserOverride) {
-    await rpcOk('settings/update', { ns: settingsNS, patch: { settings: { minYieldMs: minYieldUserBefore } } });
-  } else {
-    await rpcOk('settings/mutate', { ns: settingsNS, ops: [{ op: 'unset', path: ['settings', 'minYieldMs'] }] });
-  }
-  log(`minYieldMs 已恢复（原值 ${String(minYieldBefore)}）`);
+  // 实例生命周期即止，恢复是设置链规范动作而非必要善后）。恢复走 rpc 手工
+  // 检查（不用 rpcOk）：应用层失败只 WARN，不把可能已全过的判定运行改写
+  // 为 FAULT 退出码——与「非必要善后」的降级意图一致（0/1/2 契约不混同）。
+  const restore = minYieldHadUserOverride
+    ? await rpc('settings/update', { ns: settingsNS, patch: { settings: { minYieldMs: minYieldUserBefore } } })
+    : await rpc('settings/mutate', { ns: settingsNS, ops: [{ op: 'unset', path: ['settings', 'minYieldMs'] }] });
+  if (restore.ok === true) log(`minYieldMs 已恢复（原值 ${String(minYieldBefore)}）`);
+  else log(`WARN: minYieldMs 恢复被设置链拒绝（临时实例生命周期即止）：${JSON.stringify(restore.error).slice(0, 160)}`);
 } catch (error) { log(`WARN: minYieldMs 恢复失败（临时实例生命周期即止）：${String(error?.message ?? error)}`); }
 killChild();
 await new Promise((r) => { setTimeout(r, 1500); });
