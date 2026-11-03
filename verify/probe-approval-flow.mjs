@@ -48,9 +48,13 @@
  * 追踪；「取消」（cancelled）变体不单独装置（与 rejected 同链，仅
  * outcome/文案不同）。AP-2「文件不存在」作为零进程直接证据依赖两个前提：
  * 模型如实转写命令文本（指令给出精确路径）、写操作本身不因环境原因失败
- * （目标目录为本机开发树、普通用户可写）——两前提破坏需模型改路径与插件
- * 无视拒绝两个错误叠加，装置不另行区分。审批链依赖模型依从单步指令带齐
- * 提权参数（sandbox_permissions＋justification 成对）；指令给出精确参数名
+ * （目标目录为本机开发树、普通用户可写）；要让文件缺席把已启动的进程误
+ * 判为零进程，需要审批被无视（进程实际启动）与改写路径或环境写失败两个
+ * 错误同时发生，装置不另行区分。「获批模式只作用本次」的正面证据是 AP-1
+ * 本次生效本身；「不外溢后续调用」未单独装置，但 AP-3 对许可外溢有隐性
+ * 检出力（若 AP-1 的许可外溢成会话模式，AP-3 的 workspace-write 将成更窄
+ * 请求、走 escalationNotWider 文案，四段正则不匹配即 FAIL）。审批链依赖
+ * 模型依从单步指令带齐提权参数（sandbox_permissions＋justification 成对）；指令给出精确参数名
  * 与值，依从性由审计对与错误文案双向锚定（模型不带参数则 asked 缺席、断
  * 言 FAIL——保守方向）。同级预检（AP-3）由插件在委托宿主之前完成（宿主
  * 对同级免审批放行，与本包口径不同——lib/jobs.js 预检注释），故无审计事
@@ -157,7 +161,7 @@ writeFileSync(join(answererDir, 'lib', 'index.js'), [
   ' * 探针 answerer：监听 agent-scoped 审批 waterfall（dsh-user-approval 的',
   " * 'approval/request'），按请求 reason 中的 justification 标记作答。",
   ' *',
-  " * { prepend: true } 是硬前提：宿主 api-remotes 在 bundle 层先注册且转发时",
+  " * { prepend: true } 是先决条件：宿主 api-remotes 在 bundle 层先注册且转发时",
   ' * 不调 next()（无浏览器连接时把请求挂进 gateway pending、无人作答），后注册',
   ' * 的监听器收不到——prepend 抢到链头才能作答。',
   ' */',
