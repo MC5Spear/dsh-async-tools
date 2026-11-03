@@ -20,12 +20,14 @@
  *    plugin remove→重启实例→无指定预设的 session/create 被拒且错误形态
  *    锚定 agent-preset/not-found（不静默回落）；describe 复核 selectedDefault
  *    仍指向已撤预设（宿主不自动清除该选择）。
- * 3. SD-2 重选路径：selectedDefault 改写为宿主可用预设 standard→无指定预
- *    设的会话创建成功且落 standard（「切换到可用预设」指引的正面路径）。
+ * 3. SD-2 重选路径：selectedDefault 改写为宿主可用预设 standard（部署默认
+ *    不经设置面暴露——describe 的 value 投影只含 volatile 用户字段；rc.5
+ *    实测部署默认硬编码、换树按 FAIL 取证）→无指定预设的会话创建成功且
+ *    落 standard（真比对）。
  * 4. SD-3 清选路径：settings/mutate unset selectedDefault（回继承层；该 ns
  *    schema 是直根字段——mutate 的 path 不带 settings 前缀，与 async-tools-
- *    host 的嵌套 schema 不同）→无指定预设的会话创建成功且落部署默认（「清空
- *    该选择」指引的正面路径；落点按实测记录——unset 后 resolve 走部署 default）。
+ *    host 的嵌套 schema 不同）→无指定预设的会话创建成功且落部署默认（落点
+ *    与 rc.5 实测部署默认精确比对——漂移即 FAIL，不按宽松形态标注）。
  *
  * 装置边界（如实声明）：「不抢默认预设、不替用户写默认选择」（需求 555）
  * 由装载期不改写 selectedDefault 佐证——SD-1 写入发生在装载复核之后、由
