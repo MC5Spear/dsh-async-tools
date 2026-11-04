@@ -283,11 +283,45 @@ export async function waitFor(page, expression, predicate, timeoutMs = 8000) {
  * `Page.captureScreenshot` 返回 base64；`captureBeyondViewport: true` 让它连
  * 视口外的内容一起截，配合 `Emulation.setDeviceMetricsOverride` 设一个足够的视口高度。
  *
+ * ## 视口变更后必须等布局/过渡收敛（待答面板四轮视觉复审定论）
+ *
+ * `setDeviceMetricsOverride` 后立即 capture 会拍到**中间态**：视口宽度切换触发
+ * 停靠面板重排（曾把 sidebar 面板拍成 22px 竖条——同配置下一帧全宽）、宿主
+ * chrome 过渡（侧栏标签层半亮度）、React 重挂载（草稿被清、断言读的却是换前
+ * 节点——「断言绿、画面空」）。本函数在视口尺寸**变更**时先等「稳定签名」
+ * （滚动尺寸＋元素总数＋左侧栏文本层计算样式）连续两读一致再截；尺寸未变
+ * 则零额外等待。探针要在截图前改草稿/状态时，用 `setViewport()` 预置视口，
+ * 让 capture 时尺寸不变（不触发重挂载）。
+ *
  * @param {object} page - `openPage()` 返回的会话。
  * @param {string} path - 输出 png 路径。
  * @param {{width?: number, height?: number, fullPage?: boolean}} [options] - 视口选项。
  * @returns {Promise<{path: string, bytes: number, width: number, height: number}>}
  */
+const lastMetrics = new WeakMap();
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+/** 稳定签名：滚动尺寸（布局）＋元素总数（挂载）＋左栏文本层 color/opacity（过渡）。 */
+const SETTLE_SIG = `(() => {
+  const leftText = [...document.querySelectorAll('body *')]
+    .filter((n) => n.children.length === 0 && (n.textContent ?? '').trim() !== '')
+    .filter((n) => { const r = n.getBoundingClientRect(); return r.width > 0 && r.right <= 340; })
+    .slice(0, 30)
+    .map((n) => { const s = getComputedStyle(n); return s.color + '|' + s.opacity; })
+    .join('~');
+  const de = document.documentElement;
+  return de.scrollWidth + 'x' + de.scrollHeight + ':' + document.querySelectorAll('*').length + ':' + leftText;
+})()`;
+async function settleAfterViewportChange(page) {
+  await sleep(400);
+  let prev = await evaluate(page, SETTLE_SIG);
+  const deadline = Date.now() + 6000;
+  while (Date.now() < deadline) {
+    await sleep(300);
+    const sig = await evaluate(page, SETTLE_SIG);
+    if (sig === prev) return;
+    prev = sig;
+  }
+}
 export async function screenshot(page, path, options = {}) {
   const width = options.width ?? 1600;
   let height = options.height ?? 1000;
@@ -300,12 +334,20 @@ export async function screenshot(page, path, options = {}) {
       + 'document.documentElement.offsetHeight, document.body.offsetHeight)');
     if (typeof metrics === 'number' && metrics > height) height = Math.ceil(metrics);
   }
-  await page.send('Emulation.setDeviceMetricsOverride', {
-    width,
-    height,
-    deviceScaleFactor: 1,
-    mobile: false
-  });
+  const prev = lastMetrics.get(page);
+  // 同尺寸不重发 override（待答面板第 5 轮收口）：同值重发疑似再次触发面板
+  // 重建、清掉草稿——「断言绿、画面空、同一秒」的最后一个可疑环节。尺寸未变
+  // 时 override 已在生效，跳过是安全的；变更时下发并等稳定签名。
+  if (prev === undefined || prev.width !== width || prev.height !== height) {
+    await page.send('Emulation.setDeviceMetricsOverride', {
+      width,
+      height,
+      deviceScaleFactor: 1,
+      mobile: false
+    });
+    lastMetrics.set(page, { width, height });
+    await settleAfterViewportChange(page);
+  }
   const result = await page.send('Page.captureScreenshot', {
     format: 'png',
     captureBeyondViewport: options.fullPage !== false
@@ -314,6 +356,24 @@ export async function screenshot(page, path, options = {}) {
   const { writeFileSync } = await import('node:fs');
   writeFileSync(path, buffer);
   return { path, bytes: buffer.length, width, height };
+}
+
+/**
+ * 预置视口并等收敛（截图前要改页面状态/草稿时用——让随后的 `screenshot()`
+ * 视口尺寸不变、不触发重排/重挂载，状态才能活着进入画面）。
+ * @param {object} page - `openPage()` 返回的会话。
+ * @param {number} width - 视口宽。
+ * @param {number} height - 视口高。
+ */
+export async function setViewport(page, width, height) {
+  const prev = lastMetrics.get(page);
+  await page.send('Emulation.setDeviceMetricsOverride', {
+    width, height, deviceScaleFactor: 1, mobile: false
+  });
+  lastMetrics.set(page, { width, height });
+  if (prev === undefined || prev.width !== width || prev.height !== height) {
+    await settleAfterViewportChange(page);
+  }
 }
 
 // 允许直接跑：node cdp.mjs <url> <表达式> [等待毫秒]
