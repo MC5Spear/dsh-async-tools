@@ -234,48 +234,14 @@ const readQ = (text) => evaluate(page, `(() => {
     submit: (() => { const s = q.querySelector('.ats-ask-submit'); return s === null ? null : { disabled: s.disabled === true }; })()
   };
 })()`);
-/** 自定义草稿键入（React 受控——原生 setter＋input 事件）。 */
+/** 自定义草稿键入（React 受控——原生 setter＋input 事件）。multiline 近景的
+ * 落稿闸门另见第 6 轮收口的「自身可见 textarea＋像素差分」双闸门（防隐藏
+ * 测量克隆——克隆通常 visibility hidden 或 zero-size，qExpr 首命中的未必是
+ * 被画的那个节点）。 */
 const setAskDraft = (text, value) => evaluate(page, `(() => {
   const q = ${qExpr(text)};
   const input = q?.querySelector('textarea.ats-ask-input');
   if (input === null) return 'no-input';
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
-  setter.call(input, ${JSON.stringify(value)});
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  return 'set';
-})()`);
-/** **当前可见**的题目输入框（第 5 轮收口判据）：qExpr 按文本找题，可能命中
- * 隐藏或重挂载换前的节点——读写同一错节点会「断言绿、画面空」。这里以题目卡
- * 上三个采样点的 elementFromPoint 验证该卡真实可见（命中点落在卡内），返回其
- * textarea；全部不可见返回 null。 */
-const VISIBLE_Q_INPUT_JS = (text) => `(() => {
-  const qs = [...document.querySelectorAll('.ats-ask-q')]
-    .filter((n) => (n.querySelector('.ats-ask-text')?.textContent ?? '').includes(${JSON.stringify(text)}));
-  for (const q of qs) {
-    const r = q.getBoundingClientRect();
-    if (r.width <= 0 || r.height <= 0) continue;
-    const pts = [
-      [r.left + r.width / 2, r.top + Math.min(r.height / 2, 120)],
-      [r.left + r.width / 2, Math.max(r.top + 8, r.bottom - Math.min(r.height, 120))],
-      [r.left + 12, r.top + Math.min(r.height, 60)]
-    ];
-    for (const [x, y] of pts) {
-      if (y < 0 || y >= innerHeight || x < 0 || x >= innerWidth) continue;
-      const el = document.elementFromPoint(x, y);
-      if (el !== null && (el === q || q.contains(el))) {
-        return q.querySelector('textarea.ats-ask-input') ?? null;
-      }
-    }
-  }
-  return null;
-})()`;
-const readDraftVisible = (text) => evaluate(page, `(() => {
-  const input = ${VISIBLE_Q_INPUT_JS(text)};
-  return input === null ? null : input.value;
-})()`);
-const setAskDraftVisible = (text, value) => evaluate(page, `(() => {
-  const input = ${VISIBLE_Q_INPUT_JS(text)};
-  if (input === null) return 'no-visible-input';
   const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
   setter.call(input, ${JSON.stringify(value)});
   input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -512,12 +478,15 @@ try {
       return { found: false, top: -1 };
     })()`);
     if (topReset.found === true && topReset.top !== 0) log(`警告：${cfg.seat}/${cfg.theme} 全景拍前面板滚动复位未达（scrollTop=${String(topReset.top)}——normal 可能非顶部视图）`);
+    // 终版盲测材料瑕疵②：窄屏 normal 帧与其余帧 1px 竖直偏移（复位写完即
+    // 拍、重排未收敛）——复位后双 rAF＋120ms 再拍。
+    await sleep(120);
     await shotOf(`ask-${cfg.seat}-${cfg.theme}-${cfg.w <= 500 ? 'narrow' : 'wide'}-normal.png`, { width: cfg.w, height: cfg.h, fullPage: false });
-    // 窄屏两题面板高于视口（审阅首轮：全景图底边裁掉第二题自定义项）——补拍
-    // 底部锚定图，与全景顶锚合成完整证据。复审材料问题 1：window.scrollBy 无效
-    // （面板滚动发生在面板自身滚动容器、非窗口）——改为找第二题的可滚祖先滚到底，
-    // 拍前实证 scrollTop>0（未真滚即告警，不再产出与 normal 同帧的假底部图）。
-    if (cfg.w <= 500) {
+    // 底部锚定图（**所有配置**——盲测发现宽屏缺对照：面板定高内部滚动在宽屏
+    // 同样截断内容，两题可达需顶/底成对证据）。复审材料问题 1：window.scrollBy
+    // 无效（面板滚动发生在面板自身滚动容器）——找第二题的可滚祖先滚到底，拍前
+    // 实证 scrollTop>0（未真滚即告警，不产出与 normal 同帧的假底部图）。
+    {
       const scrolled = await evaluate(page, `(() => {
         const qs = [...document.querySelectorAll('.ats-ask-panel .ats-ask-q')];
         const last = qs[qs.length - 1] ?? null;
@@ -535,7 +504,7 @@ try {
       await sleep(400);
       if (scrolled.scrolled !== true) log(`警告：${cfg.seat}/${cfg.theme} 底部图未真滚（无可滚祖先——底部帧可能与全景同）`);
       else log(`底部图已滚：${cfg.seat}/${cfg.theme} scrollTop=${String(scrolled.top)}/${String(scrolled.max)}`);
-      await shotOf(`ask-${cfg.seat}-${cfg.theme}-narrow-normal-bottom.png`, { width: cfg.w, height: cfg.h, fullPage: false });
+      await shotOf(`ask-${cfg.seat}-${cfg.theme}-${cfg.w <= 500 ? 'narrow' : 'wide'}-normal-bottom.png`, { width: cfg.w, height: cfg.h, fullPage: false });
     }
   }
 
@@ -687,6 +656,12 @@ try {
   // ── AV-6 选中以底纹为主（两主题：选预设/选自定义 vs 未选中的计算底色） ──
   for (const scheme of ['dark', 'light']) {
     await applyTheme(scheme);
+    // 终版盲测材料瑕疵①：预设选中帧带聚焦环＋光标（前步焦点跨场景携带，
+    // 同悬停污染一类）——拍前 blur。
+    await evaluate(page, `(() => {
+      if (document.activeElement !== null && document.activeElement !== document.body) document.activeElement.blur();
+      return true;
+    })()`);
     await scrollToPanelStable();
     const sel = await evaluate(page, `(() => {
       const q = ${qExpr(Q1_TEXT)};
@@ -714,13 +689,19 @@ try {
       sel === true && colors.redBg !== colors.blueBg && colors.redSelected === 'true'
         && colors.markPresent === true && colors.redBorder !== colors.blueBorder,
       `红=${colors.redBg} 蓝=${colors.blueBg} 边框=${colors.redBorder}/${colors.blueBorder}`);
-    await shotOf(`ask-overlay-${scheme}-wide-selected.png`, { width: 1500, height: 1000, fullPage: false });
+    await shotOf(`ask-overlay-${scheme}-wide-selected-preset.png`, { width: 1500, height: 1000, fullPage: false });
   }
 
-  // ── 交互态近景矩阵：两座位×3 配置×4 态（普通已在全景；悬停/选中/键盘焦点） ──
+  // ── 交互态近景矩阵：两座位×4 配置（宽/窄×深/浅）×3 态（悬停/选中/键盘焦点）──
   // 审阅首轮教训（状态串场）：AV-3/5/6 步留下的选中与草稿泄入矩阵——hover 图
   // 拍到的是已选中态。每个配置拍前先清题面状态（预设/自定义全取消＋草稿清空）。
+  // 盲测发现（焦点泄漏）：程序 .click() 不移动焦点，上一配置焦点步把焦点留在
+  // textarea 上跨配置携带——悬停帧 5/6 拍成聚焦态；清场步先 blur 活动元素。
   const clearQ1 = async () => {
+    await evaluate(page, `(() => {
+      if (document.activeElement !== null && document.activeElement !== document.body) document.activeElement.blur();
+      return true;
+    })()`);
     // 单选语义（client.js:1977-1993 实读）：预设再点＝幂等替换（不清除）、
     // customOn 互斥清预设、customOff 只关自定义。同步双点会读到同一渲染闭包
     // （双发 customOn 卡在选中）——改为按状态读数分步点，每步等状态落定。
@@ -742,7 +723,9 @@ try {
   };
   for (const seat of ['overlay', 'sidebar']) {
     await ensurePanel(seat);
-    for (const [themeName, w, h, tag] of [['dark', 1500, 1000, 'wide-dark'], ['light', 1500, 1000, 'wide-light'], ['light', 390, 844, 'narrow-light']]) {
+    // 命名统一 ask-{座位}-{主题}-{宽度}-{场景}（盲测发现两套语序混用致歧义）；
+    // 窄屏补深色（盲测发现窄屏近景只有浅色）。
+    for (const [themeName, w, h, tag] of [['dark', 1500, 1000, 'dark-wide'], ['light', 1500, 1000, 'light-wide'], ['light', 390, 844, 'light-narrow'], ['dark', 390, 844, 'dark-narrow']]) {
       await applyTheme(themeName);
       await scrollToPanelStable();
       let cleaned = await clearQ1();
@@ -829,35 +812,126 @@ try {
     identPrev = ident;
   }
   const ML_TEXT = '多选题自定义内容第一行\n第二行\n第三行——用于多行长文近景与自动换行审阅';
-  // 第 5 轮收口做法②：灌稿与断言都绑**当前可见**的 textarea（qExpr 可能命中
-  // 隐藏/换前节点，读写一致却与画面脱节）。
-  let mlLanded = false;
-  for (let i = 0; i < 3 && !mlLanded; i += 1) {
-    await setAskDraftVisible(Q2_TEXT, ML_TEXT);
-    await sleep(700);
-    mlLanded = (await readDraftVisible(Q2_TEXT))?.includes('第三行') === true;
-  }
-  const mlBefore = await readDraftVisible(Q2_TEXT);
-  await shotOf('ask-overlay-dark-wide-multiline.png', { width: 1500, height: 1000, fullPage: false });
-  // 第 5 轮收口做法③：**截图后回读**——截前截后两次非空才算过；截后丢失给
-  // 一次重灌重拍机会，仍不落如实 FAIL（green 断言必须覆盖成品帧）。
-  let mlAfter = await readDraftVisible(Q2_TEXT);
-  if (mlAfter?.includes('第三行') !== true) {
-    log('警告：multiline 截图后草稿丢失，重灌并重拍一次');
-    await setAskDraftVisible(Q2_TEXT, ML_TEXT);
-    await sleep(700);
-    if ((await readDraftVisible(Q2_TEXT))?.includes('第三行') === true) {
-      await shotOf('ask-overlay-dark-wide-multiline.png', { width: 1500, height: 1000, fullPage: false });
-      mlAfter = await readDraftVisible(Q2_TEXT);
-      // 重拍后清单去重（shots 是目录清单，重拍同名只计一次）。
-      const f = shots.indexOf('ask-overlay-dark-wide-multiline.png');
-      const l = shots.lastIndexOf('ask-overlay-dark-wide-multiline.png');
-      if (f !== l) shots.splice(l, 1);
+  // 第 6 轮收口（首次跑出 decisive 诊断「卡内 textarea 数=[1] 且自身中心点不可
+  // 见」＝无克隆，Q2 输入框在**画面外**——面板定高内部滚动，此前六轮整拍只拍
+  // 到顶部 Q1 的空框，DOM 读写的一直是画面外的真节点，像素里是 Q1 占位符）：
+  // ①拍前把 Q2 输入框滚进面板内部视口（scrollIntoView block:center）；
+  // ②写入与断言绑 **textarea 自身中心点可见**的节点（elementFromPoint 命中其
+  //   自身或子节点＋computed visibility/opacity/尺寸——防真有隐藏克隆的形态）；
+  // ③闸门＝ **像素差分**——同一输入框区域「有草稿」与「清空占位符」两次裁剪
+  //   截图逐字节比对：相同＝画面根本没画字（绿勾无效），不同＝草稿真在帧上；
+  // ④写后等两帧 rAF＋150ms 再拍。
+  const ML_Q_FILTER = `[...document.querySelectorAll('.ats-ask-q')]
+      .filter((n) => (n.querySelector('.ats-ask-text')?.textContent ?? '').includes(${JSON.stringify(Q2_TEXT)}))`;
+  await evaluate(page, `(() => {
+    const qs = ${ML_Q_FILTER};
+    const ta = qs[0]?.querySelector('textarea.ats-ask-input') ?? null;
+    ta?.scrollIntoView({ block: 'center' });
+    return true;
+  })()`);
+  await sleep(300);
+  const ML_TA_JS = `(() => {
+    const qs = ${ML_Q_FILTER};
+    const diag = [];
+    for (const q of qs) {
+      const tas = [...q.querySelectorAll('textarea.ats-ask-input')];
+      for (const ta of tas) {
+        const st = getComputedStyle(ta);
+        const r = ta.getBoundingClientRect();
+        const x = r.left + r.width / 2;
+        const y = r.top + Math.min(r.height / 2, 60);
+        const hit = (y >= 0 && y < innerHeight && x >= 0 && x < innerWidth)
+          ? document.elementFromPoint(x, y) : null;
+        diag.push({ rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)],
+          vis: st.visibility, op: st.opacity, hit: hit === null ? 'off' : (hit === ta ? 'self' : (ta.contains(hit) ? 'child' : hit.tagName + '.' + String(hit.className).slice(0, 30))) });
+        if (st.visibility === 'hidden' || Number(st.opacity) === 0 || r.width < 10 || r.height < 10) continue;
+        if (y < 0 || y >= innerHeight || x < 0 || x >= innerWidth) continue;
+        if (hit === ta || (hit !== null && ta.contains(hit))) return { ta };
+      }
     }
+    return { ta: null, diag };
+  })()`;
+  const setMlDraft = async (value) => {
+    const r = await evaluate(page, `(() => {
+      const found = ${ML_TA_JS};
+      if (found.ta === null || found.ta === undefined) return { set: false, diag: found.diag ?? [] };
+      const ta = found.ta;
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+      setter.call(ta, ${JSON.stringify(value)});
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      ta.setAttribute('data-ml-probe', '1');
+      const rect = ta.getBoundingClientRect();
+      return { set: true, value: ta.value, rect: { x: Math.round(rect.left), y: Math.round(rect.top), w: Math.round(rect.width), h: Math.round(rect.height) } };
+    })()`);
+    await evaluate(page, 'new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(() => res(true))))');
+    await sleep(150);
+    return r;
+  };
+  const clipShot = async (rect) => Buffer.from((await page.send('Page.captureScreenshot', {
+    format: 'png', clip: { x: rect.x, y: rect.y, width: rect.w, height: rect.h, scale: 1 }
+  })).data, 'base64');
+  // 差分基线＝**天然占位符**（上一跑读数：草稿在「设置→截前裁剪」时真渲染
+  // ［截前像素差=true］、只在「清空→重灌」折腾后丢失——放弃清空-重灌循环，
+  // 不给受控值两次抖动）。流程：定位可见框→占位符裁剪→设稿→截前裁剪→整拍
+  // →拍后裁剪；闸门＝拍后≠占位符（草稿活在成品帧里）＋截前≠占位符（渲染过）
+  // ＋标记节点值非空。拍后丢失给一次重灌重拍。
+  const locateMl = () => evaluate(page, `(() => {
+    const found = ${ML_TA_JS};
+    if (found.ta === null || found.ta === undefined) return { ok: false, diag: found.diag ?? [] };
+    const rect = found.ta.getBoundingClientRect();
+    return { ok: true, value: found.ta.value, rect: { x: Math.round(rect.left), y: Math.round(rect.top), w: Math.round(rect.width), h: Math.round(rect.height) } };
+  })()`);
+  const mlNodeCensus = () => evaluate(page, `(() => {
+    const qs = ${ML_Q_FILTER};
+    return qs.map((q) => [...q.querySelectorAll('textarea.ats-ask-input')].map((ta) => {
+      const r = ta.getBoundingClientRect();
+      const x = r.left + r.width / 2; const y = r.top + Math.min(r.height / 2, 60);
+      const hit = (y >= 0 && y < innerHeight) ? document.elementFromPoint(x, y) : null;
+      return { rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)],
+        marker: ta.getAttribute('data-ml-probe') === '1', value: String(ta.value).slice(0, 12),
+        hit: hit === ta ? 'self' : (ta.contains(hit) ? 'child' : String(hit?.tagName ?? 'off')) };
+    }));
+  })()`);
+  const loc0 = await locateMl();
+  if (loc0.ok !== true) {
+    check('AV-multiline 近景落稿（像素差分＋可见节点双闸门）', false,
+      `未找到自身可见的 textarea（候选诊断=${JSON.stringify(loc0.diag ?? [])}）`);
+  } else {
+    if (loc0.value !== '') await setMlDraft('');
+    const bufPh = await clipShot(loc0.rect);
+    const setFull = await setMlDraft(ML_TEXT);
+    const mlBefore = setFull.set === true ? setFull.value : null;
+    const bufPre = await clipShot(setFull.set === true ? setFull.rect : loc0.rect);
+    const preDiff = bufPre.equals(bufPh) === false;
+    await shotOf('ask-overlay-dark-wide-multiline.png', { width: 1500, height: 1000, fullPage: false });
+    let bufPost = await clipShot(setFull.set === true ? setFull.rect : loc0.rect);
+    let postDiff = bufPost.equals(bufPh) === false;
+    let retried = false;
+    if (postDiff !== true) {
+      log('警告：multiline 拍后像素回到占位符，重灌等收敛后重拍一次');
+      const setAgain = await setMlDraft(ML_TEXT);
+      if (setAgain.set === true) {
+        await shotOf('ask-overlay-dark-wide-multiline.png', { width: 1500, height: 1000, fullPage: false });
+        bufPost = await clipShot(setAgain.rect);
+        postDiff = bufPost.equals(bufPh) === false;
+        retried = true;
+        const f = shots.indexOf('ask-overlay-dark-wide-multiline.png');
+        const l = shots.lastIndexOf('ask-overlay-dark-wide-multiline.png');
+        if (f !== l) shots.splice(l, 1);
+      }
+    }
+    const mlAfter = await evaluate(page, `(() => {
+      const ta = document.querySelector('textarea[data-ml-probe="1"]');
+      return ta === null ? null : ta.value;
+    })()`);
+    const census = await mlNodeCensus();
+    await evaluate(page, `document.querySelector('textarea[data-ml-probe="1"]')?.removeAttribute('data-ml-probe')`);
+    check('AV-multiline 多行草稿整页帧（Q2 滚入视口；像素差分＋可见节点双闸门）',
+      preDiff === true && postDiff === true && mlAfter?.includes('第三行') === true,
+      `截前像素差=${String(preDiff)} 截后像素差=${String(postDiff)}（重拍=${String(retried)}） `
+        + `截前值=${JSON.stringify(mlBefore ?? null).slice(0, 36)} 截后值=${JSON.stringify(mlAfter ?? null).slice(0, 36)} `
+        + `节点普查=${JSON.stringify(census)}`);
   }
-  check('AV-multiline 近景落稿（可见 textarea 截图前后两次含三行草稿）',
-    mlBefore?.includes('第三行') === true && mlAfter?.includes('第三行') === true,
-    `截前=${JSON.stringify(mlBefore ?? null).slice(0, 60)} 截后=${JSON.stringify(mlAfter ?? null).slice(0, 60)}`);
   await patchSettings({ askUiSeat: 'sidebar' });
   await waitFor(page, 'document.querySelectorAll(".ats-ask-badge").length', (n) => Number(n) >= 1, 10_000).catch(() => {});
   // 徽标近景＝「面板收起」形态（审阅首轮：座位切换后面板仍展开，图与场景不符
@@ -1060,8 +1134,28 @@ cleanup();
 
 let head = '';
 try { head = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: repo, encoding: 'utf8' }).stdout.trim(); } catch { /* 无 git 环境 */ }
+// 场景映射（盲测发现「日志只列文件名、名字判不出场景」）：随证据落盘，审阅
+// 者不必反推拍摄口径。
+const SCENE_NOTES = {
+  'normal-bottom': '全景底锚：面板内部滚动容器滚到底（与顶锚成对证明两题可达）',
+  'selected-preset': '预设选中近景（AV-6 底纹判据的图证；与 selected＝自定义选中区分）',
+  normal: '全景顶锚：面板内部滚动复位到顶后的整页帧',
+  hover: '悬停近景：指针移到第一题首个选项、未点击、无选中无草稿无聚焦',
+  selected: '选中近景：自定义项选中＋两行中文草稿（预设被单选语义互斥清除）',
+  focus: '焦点近景：输入框程序聚焦、空框未选中，仅聚焦环',
+  multiline: '多行草稿整页帧：Q2 输入框滚入面板视口、三行中文草稿',
+  wrap: '自动换行近景：无换行符长中文在输入框折行',
+  badge: 'sidebar 席位面板收起态的徽标近景（侧栏本身展开）'
+};
+const sceneOf = (name) => {
+  for (const key of Object.keys(SCENE_NOTES)) {
+    if (name.includes(`-${key}`) === true || name.endsWith(`${key}.png`) === true) return SCENE_NOTES[key];
+  }
+  return '';
+};
 writeFileSync(join(LOGS, 'ask-visual.json'), JSON.stringify({
-  at: new Date().toISOString(), repo, head, hostVersion, failed, results, shots
+  at: new Date().toISOString(), repo, head, hostVersion, failed, results,
+  shots, sceneNotes: Object.fromEntries(shots.map((n) => [n, sceneOf(n)]))
 }, null, 2));
 log(`证据落盘：${join(LOGS, 'ask-visual.json')}（截图 ${String(shots.length)} 张在 shots/）`);
 console.log(`\n判定：${failed === 0 ? '全部通过' : `存在 FAIL（${String(failed)} 项）`}`);
