@@ -543,7 +543,7 @@ try {
   check('IME-1b 组合期提交限制：提交钮 disabled＋就近原因＝组合中文案＋data-composing=true＋「不答」可用',
     submitDuringComp !== null && submitDuringComp.disabled === true
       && submitDuringComp.composing === 'true'
-      && submitDuringComp.reason.includes('组词中') === true
+      && submitDuringComp.reason.includes(COMP_ZH) === true
       && submitDuringComp.skipDisabled === false,
     `disabled=${String(submitDuringComp?.disabled)} data-composing=${String(submitDuringComp?.composing)} 原因=${JSON.stringify(submitDuringComp?.reason)}（期望含 ${JSON.stringify(COMP_ZH)}）不答禁用=${String(submitDuringComp?.skipDisabled)}`);
   // IME-2：提交面。**环境语义（二跑事件链实证）**：无真 IME 时 Enter(13/229)

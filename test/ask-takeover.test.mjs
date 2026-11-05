@@ -2827,9 +2827,9 @@ test('J50：新题温和提醒——首查合并计数、增量、乱序/旧代�
 
   // J3 乱序：同代较旧回执后到→闸门丢弃，不产生播报、不把旧键漏进已播集合。
   await intervals[0].fn();
-  await flush(); // pending[3]（seq 较新）在途
+  await flush(); // pending[3]（seq 较旧）在途
   await intervals[0].fn();
-  await flush(); // pending[4]（seq 更旧，后发先回前先兑现较新）
+  await flush(); // pending[4]（seq 较新）发出——后发先回，先兑现较新回执
   pending[4]({ ok: true, value: { serverNow: 12_000, items: [it('b1', 'q1'), it('b2', 'q4'), it('b2', 'q5')] } });
   await flush();
   const beforeStale = model.store.getSnapshot().announce;
