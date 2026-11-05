@@ -13,7 +13,7 @@
  */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
@@ -963,24 +963,28 @@ hostTest('R58-d：首次等待直付后不再被动双投——armed 链按已�
       '已直付的最终结果不得再以完成消息投递（同一直付路径的被动双投是缺陷形态）');
     assert.equal(rig.injections.length, 0, 'inject 通道同样不得收到重复结果');
     // R58-i：已交付作业再次作为目标等待——返回必须**说明**已交付
-    //（note 键），不得让空 output 被误读成「完成且无输出」。RESULT-RECOVERY-01
-    // 之后首次等待直付不登记恢复副本（设计 §3.2 载体表：副本登记点＝collectBatch
-    // 装配与完成消息接受点；首等直付的正文在 noteFirstWaitEnded 时点已不可取）
-    //——显式零等待点名按恢复第 3 档交回：如实说明副本不可用，正文同样不重发。
+    //（note 键），不得让空 output 被误读成「完成且无输出」。IMPL-M1 返修后
+    // 首等直付与等待返回同列载体登记恢复副本（设计 §3.2 判据表第一行）——
+    // 先经回合收尾事件确认（真实生产里本回合全部 tool/result 提交后发出），
+    // 此后显式零等待点名严格按第 2 档交回：已交付说明＋空正文（恢复第 1 档
+    // 的重发形态由 RC 系列与 T-MIX-1 锚定，不在此放宽）。
+    const { ledger: dbgLedger } = await import('../lib/delivery.js');
+    dbgLedger.attachClaimedListener(rig.ctx);
+    rig.ctx.emit('agent/turn-stopping', { agent: { id: rig.parent.id } });
     const settledView = rig.ctx.jobs.list(rig.parent.id)
       .find((j) => j.status === 'completed' && j.kind === 'async-workflow');
     assert.notEqual(settledView, undefined, '前置：注册表里有已结算的编排作业');
     const again = await rig.waiter.execute(
       { wait_ms: 0, targets: [{ kind: 'job', id: settledView.id }] }, rig.exec()
     );
-    const { ledger: dbgLedger } = await import('../lib/delivery.js');
     const dbgEntry = dbgLedger.jobs.get(settledView.id);
     assert.ok(dbgEntry !== undefined, '前置：账本登记在册');
+    assert.ok(dbgEntry.confirmedAt !== null, '回合收尾已确认首等直付副本');
     assert.equal(again.status, 'completed', '再次等待按终态返回');
     assert.ok(typeof again.note === 'string' && again.note.length > 0,
       '已交付事实以 note 说明');
-    assert.ok(/already finished|先前已交付|已交付|recovery copy has expired|副本/.test(again.note),
-      `note 说明结果已在先前载体交付或副本不可用；实得 ${JSON.stringify(again.note)}`);
+    assert.ok(/already finished|先前已交付/.test(again.note),
+      `note 严格按已交付口径说明（不含副本措辞）；实得 ${JSON.stringify(again.note)}`);
     assert.equal(again.output, '', '正文不重复出现（恰一次）');
   } finally {
     await rig.dispose();
@@ -4113,7 +4117,7 @@ hostTest('FD-C：外来 running→completed 静默翻转——无目标正等待
 });
 
 hostTest('FD-G：清单查询失败＋在册本包运行作业——按未确认交回，不因账本挂起（修前红）', async () => {
-  // 修前形态：jobs.list 抛错后账本资格段兜底「有工作」→ 挂起到预算。修后
+  // 修前形态：jobs.list 抛错后账本资格段改判「有工作」→ 挂起到预算。修后
   // waitWorthyWork 不再用账本判资格（清单抛错＝条件未确认，如实交回）。
   // 注意 jobsList 覆盖走 buildRig 的对象展开会丢原型方法（workflow 需要
   // jobs.start）——本用例直接补丁真注册表的 list，编排与等待共用同一实例。
@@ -4132,7 +4136,7 @@ hostTest('FD-G：清单查询失败＋在册本包运行作业——按未确认
     const outcome = await rig.waiter.execute({ wait_ms: 400 }, rig.exec());
     const wall = Date.now() - started;
     assert.equal(outcome.status, 'unconfirmed',
-      '清单失败＝条件未确认（修前：账本兜底挂起＝budget＝红）');
+      '清单失败＝条件未确认（修前：账本段改判有工作、挂起到 budget＝红）');
     assert.ok(wall < 350, `未确认及时交回（实耗 ${String(wall)} ms）`);
     assert.ok(outcome.note.includes(t('en', 'wait.unconfirmedWork')),
       'note 用入口 unconfirmedWork 键（如实报条件未确认）');
@@ -4773,5 +4777,433 @@ tzwGate('T-ZW-1 实测：真栈 listChildren 热/冷路径采样＋混合五目�
   } finally {
     try { if (root !== undefined) await root.dispose(); } catch { /* 采样后清理不放大 */ }
     await rm(tmp, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+// ── 返修轮（IMPL-M1＋minor ①②⑤）：首等直付副本、恢复回滚隔离、恰一次失败形态、
+// 出口中止登记现查 ───────────────────────────────────────────────────────
+
+hostTest('RC-I：首等直付登记恢复副本——改写取消后可恢复（IMPL-M1 修前红）', async () => {
+  // 修前形态（ab5fa02）：noteFirstWaitEnded('delivered') 不调用 #registerRecovery
+  //——直付被宿主改写取消后 deliveredFact 已置位、阻断完成消息与批次重投，显式
+  // 零等待只能得到第 3 档「副本已过期」。修后按设计 §3.2 判据表第一行登记
+  //（首等直付与等待返回同列载体），本用例三断言全红于修前。
+  const rig = await buildRig('rc-i');
+  ledger.attachClaimedListener(rig.ctx);
+  try {
+    const controller = new AbortController();
+    const pending = rig.workflow.execute(WF_ARGS, { agent: rig.parent, signal: controller.signal });
+    rig.finisher();
+    const direct = await pending;
+    assert.equal(direct.status, 'completed', '前置：首等内直接交付');
+    const jobId = rig.ctx.jobs.list(rig.parent.id)
+      .find((j) => j.status === 'completed' && j.kind === 'async-workflow').id;
+    const subject = ledger.subjects.get(rig.parent.id);
+    const copy = subject.recoveries.get(jobId);
+    assert.ok(copy !== undefined, '首等直付登记恢复副本（修前：无副本＝红）');
+    assert.equal(copy.via, 'firstwait', '副本载体＝判据表第一行（firstwait）');
+    assert.ok(copy.text.includes('AT_FINAL_PAYLOAD'), '副本记本次直付文本');
+    // 改写取消窗口：装配后、回合收尾前中止——退回不确认（M1 豁免）。
+    controller.abort();
+    rig.ctx.emit('agent/turn-stopping', { agent: { id: rig.parent.id } });
+    const returnedCopy = subject.recoveries.get(jobId);
+    assert.ok(returnedCopy !== undefined, '退回副本保持未确认（修前：无副本可退＝红）');
+    assert.equal(returnedCopy.returned, true, '中止复检置 returned（不确认）');
+    // 恢复出口：显式零等待点名 → 第 1 档（标记行＋副本正文重发）。
+    const recovered = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: jobId }] }, rig.exec()
+    );
+    assert.equal(recovered.status, 'completed', '恢复点名按终态返回');
+    assert.ok(String(recovered.output ?? '').includes('AT_FINAL_PAYLOAD'),
+      '副本正文随恢复重发（修前：第 3 档空正文＝红）');
+    assert.match(String(recovered.output ?? ''), /recovery copy|恢复副本/,
+      '重发带恢复标记行（与首次交付可区分）');
+    assert.equal(rig.followups.length, 0, '恢复不产生完成消息');
+    assert.equal(rig.injections.length, 0, '恢复不产生注入');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('RC-J：出口中止的登记现查——装配时信号已中止即置 returned（minor ⑤，修前红）', async () => {
+  // 残余窗口（评审 minor ⑤）：装配后、回合收尾前中止＋同回合续段再装配——无
+  // 登记现查时新装配不带标记，R2 守卫漏保护该份额。修后 #registerRecovery 在
+  // 登记时现查 signal.aborted，中止窗口内的装配直接带 returned 落册。
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  try {
+    const owner = `rc-j-owner-${Math.random().toString(36).slice(2, 8)}`;
+    ledger.noteJobStarted(ctx, { maxResultChars: 500, agentLang: 'en' }, 'rc-j-job', owner);
+    const entry = ledger.jobs.get('rc-j-job');
+    entry.terminal = { status: 'completed', exitCode: 0 };
+    entry.buffer = `HEAD-${'a'.repeat(350)}TAIL-${'b'.repeat(350)}`;
+    const controller = new AbortController();
+    // 首次装配（信号未中止）：副本不带标记。
+    ledger.collectBatch(owner, { lang: 'en', carrierSignal: controller.signal });
+    const subject = ledger.subjects.get(owner);
+    const firstCopy = subject.recoveries.get('rc-j-job');
+    assert.ok(firstCopy !== undefined && firstCopy.returned === false, '前置：首装副本未标记');
+    subject.batch = null;
+    // 中止发生在两次装配之间：第二次装配在改写取消窗口内——登记现查必须置
+    // returned（修前：copy2.returned === false＝红）。
+    controller.abort();
+    entry.buffer = `CONT-${'c'.repeat(300)}`;
+    ledger.collectBatch(owner, { lang: 'en', carrierSignal: controller.signal });
+    const secondCopy = subject.recoveries.get('rc-j-job');
+    assert.equal(secondCopy?.returned, true,
+      '中止窗口内的装配直接带 returned 落册（登记现查）');
+    // M1：回合收尾不确认带标记副本。
+    ctx.emit('agent/turn-stopping', { agent: { id: owner } });
+    assert.equal(ledger.subjects.get(owner).recoveries.get('rc-j-job')?.returned, true,
+      '带标记副本对确认信号免疫（仍可恢复）');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+hostTest('RC-K：恢复条目不参与回滚链——undoClaim 跳过 recovery 条目（minor ①，修前红）', async () => {
+  // 修前形态：出口异常把恢复条目（标记行＋副本正文）当普通条目回滚——original
+  // 回写 buffer、deliveredFact 清位，后续批次把标记行再当作业正文投一次。修后
+  // undoClaim 对 recovery 条目整条跳过：恢复交付无可还原状态。
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  try {
+    const owner = `rc-k-owner-${Math.random().toString(36).slice(2, 8)}`;
+    ledger.noteJobStarted(ctx, { maxResultChars: 4000, agentLang: 'en' }, 'rc-k-job', owner);
+    const entry = ledger.jobs.get('rc-k-job');
+    entry.terminal = { status: 'completed', exitCode: 0 };
+    entry.buffer = 'RC-K-BODY-唯一正文';
+    ledger.collectBatch(owner, { lang: 'en' }); // 首装：deliveredFact 置位＋副本登记
+    assert.notEqual(entry.deliveredFact, null, '前置：已交付事实在册');
+    const subject = ledger.subjects.get(owner);
+    subject.batch = null;
+    // 恢复出口装配（第 1 档）：stagedRecovery → collectBatch 产出 recovery 条目。
+    assert.equal(ledger.stageRecovery('rc-k-job', owner)?.tier, 1, '前置：第 1 档可恢复');
+    const { delivered } = ledger.collectBatch(owner, { lang: 'en' });
+    const recoveryItem = delivered.find((item) => item.recovery === true);
+    assert.ok(recoveryItem !== undefined, '前置：恢复条目在批');
+    assert.match(recoveryItem.text, /recovery copy|恢复副本/, '恢复条目带标记行');
+    // 出口异常路径的回滚凭据携带恢复条目——跳过，不破坏任何账面状态。
+    ledger.undoClaim(owner, delivered);
+    assert.notEqual(ledger.jobs.get('rc-k-job').deliveredFact, null,
+      '恢复回滚不清已交付事实（修前：清位＝红）');
+    assert.equal(ledger.jobs.get('rc-k-job').buffer, '',
+      '标记行不回写 buffer（修前：original 回写＝红）');
+    assert.ok(subject.recoveries.get('rc-k-job') !== undefined,
+      '副本本体不受回滚影响（仍可再次恢复）');
+    subject.batch = null;
+    const next = ledger.collectBatch(owner, { lang: 'en' });
+    assert.equal(next.delivered.filter((item) => item.job_id === 'rc-k-job').length, 0,
+      '后续批次不再投该作业（修前：标记行当正文再投＝红）');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+hostTest('ZW-E：零等待清单失败形态同样恰一次——入口失败后出口对账不再补查（minor ②，修前红）', async () => {
+  // 修前形态：入口 jobs.list 抛错后 sharedRows 留空，batchOutcome 把 undefined
+  // 当「未提供」传给对账发现再次现查——失败形态恰两次。修后空集哨兵关闭补查。
+  const rig = await buildRig('zw-e', []);
+  try {
+    let listCalls = 0;
+    rig.ctx.jobs.list = () => {
+      listCalls += 1;
+      throw new Error('zw-e: listing unavailable');
+    };
+    const outcome = await rig.waiter.execute({ wait_ms: 0 }, rig.exec());
+    assert.equal(outcome.status, 'budget', '无目标零等待主出口形态');
+    assert.equal(listCalls, 1,
+      `清单失败形态恰一次 jobs.list（修前：出口对账补查＝2 次；实得 ${String(listCalls)}）`);
+  } finally {
+    await rig.dispose();
+  }
+});
+
+// ── 返修轮 minor ③：设计 §5.2 真实装置系列（T-FD-1／T-RC-1／T-MIX-1）───────
+
+hostTest('T-FD-1 真实注册表：外来作业静默结算→发现交付，一次性 result 只消费一次（设计 §5.2）', async () => {
+  const rig = await buildRig('t-fd-1', [], { pollIntervalMs: 100 });
+  try {
+    // 真注册表注册外来作业（非本包工具创建；owner＝本主体会话 id，注册表与清单
+    // 全真——FD-C 的受控 jobsList/jobsRead 替身在此不用）。生产者持有 done，
+    // 静默结算＝resolve 完成 outcome，不经任何本包通知路径。
+    let settleForeign;
+    const done = new Promise((resolve) => { settleForeign = resolve; });
+    const foreignId = rig.ctx.jobs.start({
+      kind: 'external-tool',
+      label: 'T-FD-1 foreign',
+      owner: rig.parent.id,
+      run: (job) => {
+        job.append('T-FD-1-STDOUT');
+        return {
+          cancel() { settleForeign({ status: 'killed' }); },
+          done
+        };
+      }
+    });
+    // 定向零等待观察：存在证据入账（terminal 空）。
+    const observe = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: foreignId }] }, rig.exec()
+    );
+    assert.equal(observe.status, 'running', '前置：外来作业运行中');
+    const observedOut = (observe.outputs ?? []).find((item) => item.job_id === foreignId);
+    assert.ok(String(observedOut?.text ?? '').includes('T-FD-1-STDOUT'),
+      '前置：ring 增量经运行中观察交付（消费式游标推进，恰一次）');
+    // 静默结算（一次性 result 在注册表侧就位）。
+    settleForeign({ status: 'completed', result: 'T-FD-1-FINAL' });
+    await sleep(30);
+    // 无目标正等待：入口/周期复查无工作 → 对账发现 → 正文随批交付。
+    const outcome = await rig.waiter.execute({ wait_ms: 900 }, rig.exec());
+    const row = (outcome.delivered ?? []).find((item) => item.job_id === foreignId);
+    assert.ok(row !== undefined, '对账发现交付外来终态条目');
+    const out = outcome.outputs.find((item) => item.job_id === foreignId);
+    assert.ok(String(out?.text ?? '').includes('T-FD-1-FINAL'),
+      '一次性 result 并入正文（ring 增量已在观察时消费，不重复）');
+    assert.ok(!String(out?.text ?? '').includes('T-FD-1-STDOUT'),
+      '已消费的 ring 增量不重复出现（消费式游标恰一次）');
+    // 一次性通道只消费一次：注册表裸读不再有 result。
+    const rawNext = rig.ctx.jobs.read(foreignId, rig.parent.id);
+    assert.equal(rawNext.result, undefined, '一次性 result 已被对账读取消费');
+    assert.equal(rig.followups.length, 0, '本包活等待在场：无完成消息');
+    assert.equal(rig.injections.length, 0, 'inject 通道同样为零');
+    assert.notEqual(ledger.jobs.get(foreignId)?.deliveredFact, null, '已交付事实在册');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+// T-RC-1（真 agent-loop 装置，设计 §5.2）：真 AgentLoop 插件装载（注册真 inbox
+// 投影）＋真会话栈；ReactLoopInbox 类本身在 rc.2–rc.5 均未导出（已核两树
+// export 列表），驱动入口按源码同形调用复刻——持久 splice 事件与
+// rc.2 dsh-agent-loop lib/index.js L196-206（mutate：append＋逐条 emit）与
+// L103-111（claim：纯删除 splice＋逐条 emit）逐字同形；事件载荷按
+// dsh-agent runtime-types.d.ts L277-291/L387-391 的类型契约（claimed＝
+// {agent, message, turn}、discarded＝{agent, message}、turn-stopping＝
+// {agent, turn, signal}——agent 由宿主 scope-dispatch 层注入）。
+const trcGate = await hostTestFor(
+  '@deepseek-ai/dsh-session',
+  '@deepseek-ai/dsh-session-persistence-jsonl',
+  '@deepseek-ai/dsh-session-projection',
+  '@deepseek-ai/dsh-agent-loop',
+  '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-jobs-local',
+  '../lib/wait.js'
+);
+const agentLoopMod = await loadOfflineSafe('@deepseek-ai/dsh-agent-loop');
+
+trcGate('T-RC-1 真 agent-loop 装置：真投影折叠＋真实事件时序驱动确认与退回（设计 §5.2）', async () => {
+  const AgentLoop = agentLoopMod?.default ?? agentLoopMod?.AgentLoop;
+  const SessionStore = sessionMod?.default ?? sessionMod?.SessionStore;
+  const jsonlPlugin = sessionJsonlMod?.default ?? sessionJsonlMod;
+  const SessionProjectionRegistry = sessionProjMod?.default ?? sessionProjMod?.SessionProjectionRegistry;
+  const tmp = await mkdtemp(join(tmpdir(), 'trc1-'));
+  let root;
+  try {
+    // ① 组合：sessionStore → jsonl → 投影注册表 → 真 AgentLoop（其声明的注入
+    // llm/tools/systemPrompt/agents 以最小占位满足装载——本装置只消费它注册
+    // 的 inbox/turnBoundary 真投影与事件契约，不跑回合）。
+    root = new Context();
+    root.provide('workingDirectory', { ensure: async () => tmp });
+    await root.plugin(SessionStore);
+    await root.plugin(jsonlPlugin, { root: tmp, compression: 'none' });
+    await root.plugin(SessionProjectionRegistry);
+    root.provide('llm', {});
+    root.provide('tools', {});
+    root.provide('systemPrompt', { variable: () => () => {} });
+    root.provide('agents', { setFactory() {}, get() { return undefined; } });
+    await root.plugin(AgentLoop, { agents: [], maxParallelToolCalls: 1 });
+    const session = root.sessions.create('trc1-hot', { seed: [], meta: { cwd: tmp } });
+    // 真 inbox 投影由真插件注册（非测试自带替身）；初始空态。
+    assert.deepEqual(root.sessionProjections.stateOf(session, 'inbox'),
+      { 'next-turn': [], 'next-step': [] }, '真 inbox 投影在场');
+    assert.ok(root.sessionProjections.stateOf(session, 'turnBoundary') !== undefined,
+      '真 turnBoundary 投影在场');
+
+    // ② 真折叠：与 ReactLoopInbox.mutate 同形的持久 splice（insert）。
+    const notice = { id: 'trc1-m1', kind: 'notice', source: { kind: 'async-tools-job-result' } };
+    session.append('agent/inbox/spliced', { target: 'next-step', start: 0, inserted: [notice] });
+    assert.equal(root.sessionProjections.stateOf(session, 'inbox')['next-step'].length, 1,
+      '插入经真投影折叠可见');
+    // 真折叠校验：重复 MessageId 被拒（真折叠的重复 id 守卫，非替身模拟）——
+    // 在独立会话上验证，污染不波及主会话流（投影拒绝可发生在 append 折叠或
+    // stateOf 重放，两处都在本断言的执行块内）。
+    const dupSession = root.sessions.create('trc1-dup', { seed: [], meta: { cwd: tmp } });
+    root.sessionProjections.stateOf(dupSession, 'inbox');
+    dupSession.append('agent/inbox/spliced',
+      { target: 'next-step', start: 0, inserted: [{ id: 'trc1-dup-m1', kind: 'notice' }] });
+    assert.throws(() => {
+      dupSession.append('agent/inbox/spliced',
+        { target: 'next-step', start: 1, inserted: [{ id: 'trc1-dup-m1', kind: 'notice' }] });
+      root.sessionProjections.stateOf(dupSession, 'inbox');
+    }, /invalid persisted inbox splice|already pending/, '重复 MessageId 由真投影拒绝');
+
+    // ③ 账本接线：三个编排 run——run0＝等待载体副本（真 wait 流程装配），
+    // run1＝消息载体副本（接受点登记→领取确认），run2＝消息载体副本（退回）。
+    resetDeliveryLedger();
+    const rig = await buildRig('t-rc-1');
+    ledger.attachClaimedListener(root); // 账本监听挂到真树：真事件直接驱动确认
+    try {
+      rig.parent.id = 'trc1-hot'; // 主体＝真会话（事件载荷 agent.id 与账本主体同 id）
+      const wfArgs = (n) => ({ ...WF_ARGS, meta: { ...WF_ARGS.meta, name: `trc1-wf-${n}` } });
+      const handles = [];
+      for (let n = 0; n < 3; n += 1) {
+        handles.push(await rig.workflow.execute(wfArgs(n), rig.exec()));
+        assert.equal(handles[n].status, 'running', `前置：编排 ${n} 让出`);
+      }
+      const hold = ledger.claimWait('trc1-hot'); // 压住完成消息路径：正文留给等待载体
+      rig.finisher(0);
+      await sleep(150); // armed 链节拍消费 result 入缓冲（活等待在场，不投消息）
+      const controller = new AbortController();
+      const waitOut = await rig.waiter.execute(
+        { wait_ms: 0 }, { agent: rig.parent, signal: controller.signal }
+      );
+      assert.ok((waitOut.delivered ?? []).length === 1, '前置：等待载体装配条目');
+      const wfJobId = waitOut.delivered[0].job_id;
+
+      // ④ turn-stopping 时序断言：tool/result 持久提交**先于**回合收尾信号——
+      // 真会话日志在事件发射前已含 tool/result（生产顺序＝先 append 后 emit，
+      // rc.2 dsh-agent-loop lib/index.js L970/L984 与 L1000-1005 的程序序）。
+      //（真实回执带 surfaceOp 标记——rc.2 dsh-agent-loop lib/index.js L984-986 同款
+      // 第三参，dsh-session 对 surface-eligible 事件强制要求）。
+      session.append('tool/result', { callId: 'trc1-call', output: 'trc1-ok' },
+        { surfaceOp: 'append' });
+      assert.ok(session.snapshotEvents().some((event) => event.type === 'tool/result'),
+        '前置：tool/result 已持久提交（真会话日志在场）');
+      root.emit('agent/turn-stopping',
+        { agent: { id: 'trc1-hot' }, turn: 1, signal: new AbortController().signal });
+      assert.equal(ledger.subjects.get('trc1-hot').recoveries.get(wfJobId), undefined,
+        '回合收尾确认等待载体副本（真事件时序：tool/result 先在册）');
+      assert.ok(ledger.jobs.get(wfJobId)?.confirmedAt !== null, '条目已确认');
+
+      // ⑤ 完成消息载体（领取确认）：无活等待后 run1 结算 → inject 接受＝副本
+      // 登记 → 完成消息插入真收件箱（append 同形）→ claim（纯删除 splice＋逐条
+      // claimed emit，源码 L103-111 同形）→ 副本确认即清。
+      await ledger.releaseWait(hold, 'trc1-hot');
+      rig.finisher(1);
+      await sleep(150);
+      assert.equal(rig.injections.length, 1, '前置：完成消息经 inject 接受（宿主接受点）');
+      const msgCopies = () => [...ledger.subjects.get('trc1-hot').recoveries.entries()]
+        .filter(([, copy]) => copy.via === 'message');
+      assert.equal(msgCopies().length, 1, '前置：消息载体副本在接受点登记');
+      const msgJobId = msgCopies()[0][0];
+      session.append('agent/inbox/spliced', {
+        target: 'next-step', start: 0, inserted: [{ id: 'trc1-msg', kind: 'notice' }]
+      });
+      session.append('agent/inbox/spliced',
+        { target: 'next-step', start: 0, removedCount: 1, inserted: [] });
+      root.emit('agent/inbox/claimed',
+        { agent: { id: 'trc1-hot' }, message: { id: 'trc1-msg' }, turn: 2 });
+      assert.ok(ledger.jobs.get(msgJobId)?.confirmedAt !== null,
+        '领取事件确认消息载体副本（真实领取时序）');
+      assert.equal(ledger.subjects.get('trc1-hot').recoveries.get(msgJobId), undefined,
+        '确认即清副本');
+
+      // ⑥ 退回（取消待处理输入）：run2 结算 → 第二条完成消息（副本 #2）→
+      // remove 语义＝outcome:'canceled' 的持久 splice＋逐条 discarded emit
+      //（源码 L195-205 同形）→ 副本置 returned、保持未确认。
+      rig.finisher(2);
+      await sleep(150);
+      assert.equal(rig.injections.length, 2, '前置：第二条完成消息接受');
+      assert.equal(msgCopies().length, 1, '前置：第二份消息副本在册');
+      const dropJobId = msgCopies()[0][0];
+      session.append('agent/inbox/spliced', {
+        target: 'next-step', start: 0, inserted: [{ id: 'trc1-drop', kind: 'notice' }]
+      });
+      session.append('agent/inbox/spliced',
+        { target: 'next-step', start: 0, removedCount: 1, inserted: [], outcome: 'canceled' });
+      root.emit('agent/inbox/discarded',
+        { agent: { id: 'trc1-hot' }, message: { id: 'trc1-drop' } });
+      assert.equal(ledger.subjects.get('trc1-hot').recoveries.get(dropJobId)?.returned, true,
+        '取消待处理输入＝副本退回（保持未确认，可恢复）');
+    } finally {
+      await rig.dispose();
+    }
+
+    // ⑦ rc.3/rc.4 事件在场静态核对（设计 §3.2：缺席某事件时确认信号降级——
+    // 本断言锚「三事件在 rc.3/rc.4 源码在场」这一静态事实；树缺席时显式跳过
+    // 并注明，不冒称已核对）。
+    for (const rc of ['rc.3', 'rc.4']) {
+      const src = await readFile(
+        `D:/P/dsh-service/dsh-0.2.1-${rc}/node_modules/@deepseek-ai/dsh-agent-loop/lib/index.js`,
+        'utf8'
+      ).catch(() => undefined);
+      if (src === undefined) {
+        console.log(`[T-RC-1] rc=${rc} dsh-agent-loop 源码缺席：静态核对跳过（不冒称已核对）`);
+        continue;
+      }
+      for (const name of ['agent/inbox/claimed', 'agent/inbox/discarded', 'agent/turn-stopping']) {
+        assert.ok(src.includes(`"${name}"`), `rc=${rc} 事件 ${name} 在场（静态核对）`);
+      }
+    }
+  } finally {
+    try { if (root !== undefined) await root.dispose(); } catch { /* 装置清理不放大 */ }
+    await rm(tmp, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+hostTest('T-MIX-1 三项组合：外来静默完成＋等待返回被改写取消＋恢复——同一装置端到端互不干扰（设计 §5.2）', async () => {
+  const rig = await buildRig('t-mix-1', [], { pollIntervalMs: 100 });
+  ledger.attachClaimedListener(rig.ctx);
+  try {
+    // 项三（RA-FOREIGN-DISCOVERY）：外来作业在真注册表静默完成。
+    let settleForeign;
+    const done = new Promise((resolve) => { settleForeign = resolve; });
+    const foreignId = rig.ctx.jobs.start({
+      kind: 'external-tool',
+      label: 'T-MIX-1 foreign',
+      owner: rig.parent.id,
+      run: (job) => {
+        job.append('TMIX-F-STDOUT');
+        return { cancel() { settleForeign({ status: 'killed' }); }, done };
+      }
+    });
+    // 项一（RESULT-RECOVERY-01 素材）：本包编排作业让出后结算（持有活等待压住
+    // 完成消息路径，正文留给等待载体）。
+    const pending = rig.workflow.execute(WF_ARGS, rig.exec());
+    const handle = await pending;
+    assert.equal(handle.status, 'running', '前置：编排让出');
+    const hold = ledger.claimWait(rig.parent.id);
+    rig.finisher();
+    settleForeign({ status: 'completed', result: 'TMIX-F-FINAL' });
+    await sleep(150); // armed 链节拍消费编排 result 入缓冲；外来静默终态就位
+    // 项一＋项二（DOC-ZERO-01 共享同一出口）：无目标等待入口汇集就绪内容并
+    // 对账发现外来终态——两作业同批交付；载体信号受控（改写取消窗口素材）。
+    const controller = new AbortController();
+    const outcome = await rig.waiter.execute(
+      { wait_ms: 400 }, { agent: rig.parent, signal: controller.signal }
+    );
+    const deliveredIds = (outcome.delivered ?? []).map((item) => item.job_id);
+    assert.ok(deliveredIds.includes(handle.job_id), '编排正文随等待载体交付');
+    assert.ok(deliveredIds.includes(foreignId), '外来终态经对账发现同批交付');
+    const subject = ledger.subjects.get(rig.parent.id);
+    assert.ok(subject.recoveries.get(handle.job_id)?.via === 'wait', '编排副本（等待载体）');
+    assert.ok(subject.recoveries.get(foreignId)?.via === 'wait', '外来副本（等待载体）');
+    // 改写取消：装配后、回合收尾前中止——两副本一并退回（M1 豁免）。
+    controller.abort();
+    rig.ctx.emit('agent/turn-stopping', { agent: { id: rig.parent.id } });
+    assert.equal(subject.recoveries.get(handle.job_id)?.returned, true, '编排副本退回');
+    assert.equal(subject.recoveries.get(foreignId)?.returned, true, '外来副本退回');
+    // 恢复：两作业各自显式零等待点名——第 1 档重发，互不干扰。
+    rig.ctx.emit('agent/inbox/claimed', { agent: { id: rig.parent.id } }); // 关批（生产里隔一次领取）
+    const recWf = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: handle.job_id }] }, rig.exec()
+    );
+    const recForeign = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: foreignId }] }, rig.exec()
+    );
+    assert.ok(String(recWf.output ?? '').includes('AT_FINAL_PAYLOAD'),
+      '编排副本正文随恢复重发（带标记行）');
+    assert.match(String(recWf.output ?? ''), /recovery copy|恢复副本/, '编排恢复带标记');
+    assert.ok(String(recForeign.output ?? '').includes('TMIX-F-FINAL'),
+      '外来副本正文随恢复重发（带标记行）');
+    assert.match(String(recForeign.output ?? ''), /recovery copy|恢复副本/, '外来恢复带标记');
+    // 全程零消息载体（活等待在场压住完成消息；恢复不自动投递）。
+    assert.equal(rig.followups.length, 0, 'followup 零增量');
+    assert.equal(rig.injections.length, 0, 'inject 零增量');
+    await ledger.releaseWait(hold, rig.parent.id);
+    await sleep(50);
+    assert.equal(rig.followups.length, 0, '让位终局复查无残留可投');
+  } finally {
+    await rig.dispose();
   }
 });
