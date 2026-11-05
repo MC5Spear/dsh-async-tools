@@ -12,11 +12,14 @@ var module = { exports: {} }; var exports = module.exports;
 //   页脚唯一的保存按钮及其启用条件、卸载丢弃草稿），暂存/差集/保存全部由
 //   `SettingsFormModel` 承担——本包不自绘草稿、差集与写后回读。primitives 在
 //   冻结平台模块表里，直接 `require` 即可，`dsh.client.external` 一条都不用加。
-// - 字段壳统一自绘（设计 §5.5）：19 个普通字段共用 `FieldShell`——官方
-//   `SettingsValueField` 的帮助图标固定带圈 i、标签行没有注入开口（需求 5.6 要
-//   带圈问号），所以值字段也转入统一壳；第 20 个字段 `boundPresets`（预设功能
-//   绑定，需求 9.4）不用壳——它是复选框块 `PresetBindingBlock`，渲染在表单末尾、
-//   走同一模型与保存链。官方件继续在场：`SettingsForm`／`SettingsFormModel`／
+// - 字段壳统一自绘（设计 §5.5）：19 个普通字段共用 `FieldShell`。官方
+//   `SettingsValueField` 有每字段 `help` prop（自定义可访问名＋任意 JSX 展开
+//   正文，官方子代理设置页在用），但帮助图标硬编码 `IconInfoOutlineRegular`
+//   （带圈 i、size 12），无图标／样式配置，改不成需求 5.6 的带圈问号；枚举／
+//   布尔字段官方没有字段壳，毫秒双段读数也放不进官方单段纯文本 `hint`——值
+//   字段一并转入统一壳；第 20 个字段 `boundPresets`（预设功能绑定，需求 9.4）
+//   不用壳——它是复选框块 `PresetBindingBlock`，渲染在表单末尾、走同一模型与
+//   保存链。官方件继续在场：`SettingsForm`／`SettingsFormModel`／
 //   `settingsNumberField`／`settingsTextField`（模型 spec）、
 //   `P.Switch`／`P.Tag`／`P.IconQuestionOutlineRegular`（控件本体与图标）。
 // - 模型的 scope = `ctx.configForms.get(ENTRY)` 的控制器（控制器就是官方
