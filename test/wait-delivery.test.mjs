@@ -150,6 +150,7 @@ async function buildRig(label, childRows = [], options = {}) {
     minWaitMs: 1,
     ...(options.maxResultChars === undefined ? {} : { maxResultChars: options.maxResultChars }),
     ...(options.workflowProgressLog === undefined ? {} : { workflowProgressLog: options.workflowProgressLog }),
+    ...(options.fullCommandEcho === undefined ? {} : { fullCommandEcho: options.fullCommandEcho }),
     ...(options.pollIntervalMs === undefined ? {} : { pollIntervalMs: options.pollIntervalMs })
   });
   const workflow = checkedTool(createWorkflowTool(adapter, config));
@@ -265,6 +266,143 @@ hostTest('R57 真实注册表③：无 result 的普通命令作业——增量�
 
     const second = await rig.waiter.execute(waitArgs(jobId), rig.exec());
     assert.equal(second.output, '', '消费式游标：第二次读取无新增量');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+// ── ECHO-E 系列（ECHO-WORKFLOW-01，设计 §8；真实工具行）──────────────────────
+//
+// 三载体判据的真实接线核对：等待返回载体（wait 的 outputs 投影与 render——
+// 修复前该载体在装配层扣预算、置一次性状态后于投影层丢弃原文字段，本系列
+// E2/E4/E13/E5 必红）、完成消息载体（22ad447 已修）与同窗合计。装置＝buildRig
+// 真注册表＋真 async_workflow／async_wait 工具（脚本原文经 args.script 真实
+// 入账）；关闭态（E13）用默认配置（fullCommandEcho 缺省 false）。
+const ECHO_WF_ARGS = (tag, marker) => ({
+  script: `return {proof:"${tag}"} // ${marker}`,
+  meta: { name: `echo-${tag}`, description: 'ECHO-WORKFLOW-01 echo carrier test' },
+  yield_ms: 20
+});
+const waitZeroArgs = (jobId) => ({ wait_ms: 0, targets: [{ kind: 'job', id: jobId }] });
+/** 消息／返回里的 marker 出现次数（同窗合计恰一次判据的计数器）。 */
+const countMarker = (text, marker) => (text.match(new RegExp(marker, 'g')) ?? []).length;
+/** 模型可见文本（工具 render；checkedTool 只包 execute——render 在 output 下）。 */
+const visibleText = (tool, value) => tool.output.render(undefined, value).map((part) => part.text).join('\n');
+
+hostTest('ECHO-E2：等待返回载体——结算落在等待窗口内 → outputs 条目附脚本原文（echo/echo_kind），render 含标签行；完成消息让位不重复', async () => {
+  const rig = await buildRig('e2', [], { fullCommandEcho: true });
+  try {
+    const first = await rig.workflow.execute(ECHO_WF_ARGS('E2', 'E2-SCRIPT-MARKER'), rig.exec());
+    assert.equal(first.status, 'running', '前置：让出 → 句柄');
+    const pending = rig.waiter.execute(waitArgs(first.job_id), rig.exec());
+    rig.finisher();
+    const recovered = await pending;
+    assert.equal(recovered.status, 'completed');
+    const entry = (recovered.outputs ?? []).find((item) => item.job_id === first.job_id);
+    assert.ok(entry !== undefined, '触发目标条目在 outputs（状态行随批可见，正文走 output）');
+    assert.equal(entry.echo, ECHO_WF_ARGS('E2', 'E2-SCRIPT-MARKER').script,
+      'outputs 条目 echo＝脚本全文（等待载体投递——修复前该字段被出口投影丢弃，本断言必红）');
+    assert.equal(entry.echo_kind, 'script', 'echo_kind 供 render 取标签行');
+    assert.equal('echo_truncated' in entry, false, '未截断不携带 echo_truncated');
+    const visible = visibleText(rig.waiter, recovered);
+    assert.ok(visible.includes('Script:'), '模型可见文本含脚本标签行（render 拼 echo 块——修复前缺）');
+    assert.ok(visible.includes('E2-SCRIPT-MARKER'), '模型可见文本含脚本原文');
+    // 让位去重：等待返回已交付，完成消息不再携带该原文（claimedBy 仲裁＋交付事实）。
+    const sends = [...rig.followups, ...rig.injections].map((m) => m.content.map((p) => p.text).join('')).join('');
+    assert.equal(countMarker(sends, 'E2-SCRIPT-MARKER'), 0, '完成消息让位：原文不经第二载体重复');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('ECHO-E3：完成消息载体——结算落在无活等待窗口 → 消息含「Script:」标签与脚本全文恰一次', async () => {
+  const rig = await buildRig('e3', [], { fullCommandEcho: true });
+  try {
+    const first = await rig.workflow.execute(ECHO_WF_ARGS('E3', 'E3-SCRIPT-MARKER'), rig.exec());
+    assert.equal(first.status, 'running');
+    rig.finisher();
+    const deadline = Date.now() + 2000;
+    let sends = '';
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => { setTimeout(resolve, 5); });
+      sends = [...rig.followups, ...rig.injections].map((m) => m.content.map((p) => p.text).join('')).join('');
+      if (sends.includes('E3-SCRIPT-MARKER')) break;
+    }
+    assert.ok(sends.includes('Script:'), '完成消息含脚本标签行');
+    assert.equal(countMarker(sends, 'E3-SCRIPT-MARKER'), 1, '脚本原文恰一次（完成消息载体）');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('ECHO-E4：零等待运行中增量条目——首个携带内容的条目附脚本原文（含 running 形态）', async () => {
+  const rig = await buildRig('e4', [], { fullCommandEcho: true });
+  try {
+    const first = await rig.workflow.execute(ECHO_WF_ARGS('E4', 'E4-SCRIPT-MARKER'), rig.exec());
+    assert.equal(first.status, 'running', '前置：引擎悬置（未结算）');
+    // 引擎替身无输出来源：按 R58-n 先例手填运行中增量（账面形态与真增量同构）。
+    const inc = ledger.jobs.get(first.job_id);
+    inc.terminal = null;
+    inc.buffer = 'E4-INC-BODY';
+    const zero = await rig.waiter.execute(waitZeroArgs(first.job_id), rig.exec());
+    assert.equal(zero.status, 'running', '零等待读运行中目标 → 运行中增量条目');
+    const entry = (zero.outputs ?? []).find((item) => item.job_id === first.job_id);
+    assert.ok(entry !== undefined, '运行中条目在 outputs');
+    assert.equal(entry.echo, ECHO_WF_ARGS('E4', 'E4-SCRIPT-MARKER').script,
+      '运行中条目同样附脚本原文（修复前等待载体丢弃 echo，本断言必红）');
+    assert.equal(entry.echo_kind, 'script');
+    assert.ok(visibleText(rig.waiter, zero).includes('Script:'), '模型可见文本含标签行（render 拼 echo 块——修复前缺）');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('ECHO-E5：同窗多载体合计恰一次——wait 返回（作业 A）＋完成消息（作业 B）各附各的原文、互不重复', async () => {
+  const rig = await buildRig('e5', [], { fullCommandEcho: true });
+  try {
+    const a = await rig.workflow.execute(ECHO_WF_ARGS('E5A', 'E5-SCRIPT-A'), rig.exec());
+    const b = await rig.workflow.execute(ECHO_WF_ARGS('E5B', 'E5-SCRIPT-B'), rig.exec());
+    assert.equal(a.status, 'running');
+    assert.equal(b.status, 'running');
+    const pending = rig.waiter.execute(waitArgs(a.job_id), rig.exec());
+    rig.finisher(0);
+    const recovered = await pending;
+    assert.equal(recovered.status, 'completed');
+    rig.finisher(1);
+    const deadline = Date.now() + 2000;
+    let sends = '';
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => { setTimeout(resolve, 5); });
+      sends = [...rig.followups, ...rig.injections].map((m) => m.content.map((p) => p.text).join('')).join('');
+      if (sends.includes('E5-SCRIPT-B')) break;
+    }
+    const window_ = `${visibleText(rig.waiter, recovered)}\n${sends}`;
+    assert.equal(countMarker(window_, 'E5-SCRIPT-A'), 1,
+      'A 的原文全窗恰一次（等待载体装配后，完成消息让位——合计断言；R2 变异「同窗双附」下必红）');
+    assert.equal(countMarker(window_, 'E5-SCRIPT-B'), 1, 'B 的原文全窗恰一次（完成消息载体）');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('ECHO-E13：默认关闭（fullCommandEcho 缺省 false）——等待载体 outputs 条目无 echo 键、可见文本无标签行与原文（R5 变异必红）', async () => {
+  const rig = await buildRig('e13');
+  try {
+    const first = await rig.workflow.execute(ECHO_WF_ARGS('E13', 'E13-SCRIPT-MARKER'), rig.exec());
+    assert.equal(first.status, 'running');
+    const pending = rig.waiter.execute(waitArgs(first.job_id), rig.exec());
+    rig.finisher();
+    const recovered = await pending;
+    assert.equal(recovered.status, 'completed');
+    const entry = (recovered.outputs ?? []).find((item) => item.job_id === first.job_id);
+    assert.ok(entry !== undefined, '前置：条目在场（关闭态照常交付状态行与正文）');
+    assert.equal('echo' in entry, false, '关闭态条目不附原文（修复前等待载体本就丢 echo——本例修复后须保持无键）');
+    assert.equal('echo_kind' in entry, false);
+    const visible = visibleText(rig.waiter, recovered);
+    assert.ok(!visible.includes('Script:'), '可见文本无脚本标签行');
+    assert.ok(!visible.includes('E13-SCRIPT-MARKER'), '可见文本无脚本原文（R5：若关闭仍装配原文，本断言必红）');
+    const sends = [...rig.followups, ...rig.injections].map((m) => m.content.map((p) => p.text).join('')).join('');
+    assert.ok(!sends.includes('E13-SCRIPT-MARKER'), '完成消息同样不附（关闭态两载体一致）');
   } finally {
     await rig.dispose();
   }
@@ -3003,6 +3141,233 @@ hostTest('ECHO-M3：正文恰好耗尽预算与空正文＋零剩余——原文
   assert.equal(ledger.jobs.get('job-echo-m3b').echoAttached, false, '未置一次性状态');
   assert.equal(ledger.subjects.get(rig.OWNER).batch.remaining, 0,
     '注记形态零扣减（批剩余保持 0）');
+});
+
+// ═══ ECHO-E 账本级系列（ECHO-WORKFLOW-01，设计 §8 E1/E6/E7/E12/E14-E19 与
+// R2-R6 反例映射；E2-E5/E13 在文件头部真实工具行区）═══
+//
+// 载体以完成消息为主（sRig 忙通道逐条 inject）；E15/E16 用「同主体先后两个
+// config」构造设置翻转（echoOn 在开批时点读 config 定值——机制与「设置保存后
+// 下一批生效」同源）。反例如 R1 先例（jobs.test 开启向 label 断言）以「变异
+// → 指定断言必红」的判据结构落地；R2 另做受控重演（清一次性状态后重装配，
+// 证明「恰一次」合计判据在双附形态下必红——判据活性证明，T7 先例）。
+
+hostTest('ECHO-E1：完成消息载体（命令 kind）——含「Command:」标签与命令全文恰一次', async () => {
+  const rig = sRig({ fullCommandEcho: true });
+  await rig.readyJob('job-e1', 'E1-BODY', undefined, undefined,
+    { echoText: 'ECHO-E1-COMMAND-ORIGINAL', echoKind: 'command' });
+  assert.equal(rig.calls.inject.length, 1, '完成消息恰一条');
+  const text = textOf(rig.calls.inject[0]);
+  assert.ok(text.includes('E1-BODY'), '正文在场');
+  assert.ok(text.includes('Command:'), '命令标签行在场（en 档）');
+  assert.equal(countMarker(text, 'ECHO-E1-COMMAND-ORIGINAL'), 1, '命令原文恰一次（全量附上）');
+  const entry = ledger.jobs.get('job-e1');
+  assert.equal(entry.echoAttached, true, '一次性状态置位');
+  assert.deepEqual(entry.deliveredFact, { via: 'message' });
+});
+
+hostTest('ECHO-E6＋R2 活性：partial 续段批次附原文恰一次（截断批不附不注记）；清一次性状态重演双附 → 合计判据必红', async () => {
+  const body = `HEAD6${'x'.repeat(140)}TAIL6`; // 150 字符
+  const echoText = 'E6-ECHO-MARKzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'; // 42 字符
+  const rig = sRig({ fullCommandEcho: true, budget: 100 });
+  const token = ledger.claimWait(rig.OWNER);
+  await rig.readyJob('job-e6', body, undefined, undefined, { echoText, echoKind: 'command' });
+  await ledger.releaseWait(token, rig.OWNER);
+  // 第一批：正文 150 > 100 → 截断（省略中段留缓冲）→ 原文本批不附也不注记
+  //（设计 §4.1 推论：随续段下一批分配）。
+  assert.equal(rig.calls.inject.length, 1, '第一批恰一条');
+  const first = textOf(rig.calls.inject[0]);
+  assert.ok(!first.includes('E6-ECHO-MARK'), '截断批不附原文');
+  assert.ok(!/original text not attached/.test(first), '截断批不注记（与 M3 两形态区分）');
+  const entry = ledger.jobs.get('job-e6');
+  assert.equal(entry.deliveredFact.partial, true, 'partial 事实');
+  assert.equal(entry.echoAttached, false, '原文未置一次性状态');
+  // 第二批（关批恢复全额预算）：续段 50 字符完整交付，原文 42 ≤ 剩余 50 → 附上。
+  ledger.closeBatchIfIdle(rig.OWNER);
+  const token2 = ledger.claimWait(rig.OWNER);
+  await ledger.releaseWait(token2, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 2, '续段批恰一条');
+  const second = textOf(rig.calls.inject[1]);
+  assert.ok(second.includes('E6-ECHO-MARK'), '续段批附上原文');
+  assert.equal([...rig.calls.inject.map(textOf)].filter((t) => t.includes('E6-ECHO-MARK')).length, 1,
+    '原文全窗恰一次（跨批一次性——E6 判据主体）');
+  assert.equal(entry.echoAttached, true);
+  // R2 受控重演（判据活性，T7 先例）：清一次性状态与交付事实（模拟「实现丢失
+  // echoAttached 去重」的变异形态）后由下一载体再装配 → 原文第二次进入装配产物。
+  // 断言第二次携带原文：证明上方「恰一次」合计判据在同窗双附变异下必红。
+  entry.echoAttached = false;
+  entry.deliveredFact = null;
+  entry.claimedBy = null;
+  entry.buffer = 'E6-RETRY-BODY';
+  entry.readyAt = ledger.now();
+  ledger.closeBatchIfIdle(rig.OWNER);
+  const { delivered } = ledger.collectBatch(rig.OWNER, {});
+  assert.equal(delivered.length, 1, '变异形态下条目可再装配（重演双附窗口）');
+  assert.ok(String(delivered[0].echo).includes('E6-ECHO-MARK'),
+    'R2 变异形态（无一次性去重）下原文再次装配——恰一次判据必红（活性证明）');
+});
+
+hostTest('ECHO-E7（R4 映射）：正文优先、原文用剩余——6:4 首尾裁剪、附上部分＋省略量＝原文长（裁剪量准确判据）', async () => {
+  const body = `E7-BODY-${'b'.repeat(142)}`; // 8＋142＝150 字符
+  const echoText = 'H'.repeat(60) + 'MID7' + 'T'.repeat(236); // 300 字符
+  const rig = sRig({ fullCommandEcho: true, budget: 200 });
+  const token = ledger.claimWait(rig.OWNER);
+  await rig.readyJob('job-e7', body, undefined, undefined, { echoText, echoKind: 'command' });
+  await ledger.releaseWait(token, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 1);
+  const text = textOf(rig.calls.inject[0]);
+  // R4 映射：正文份额先于原文分配——原文若优先挤占，150 字符正文会被裁，
+  // 「全文在场」断言必红。
+  assert.ok(text.includes(body), '正文全文在场（正文优先——R4 变异必红）');
+  // 剩余 R＝200−150＝50 < E＝300 → 6:4 截断：头 30、尾 20、省略 250。
+  assert.ok(text.includes('H'.repeat(30)), '原文头部 30 字符（6:4 首）');
+  assert.ok(text.includes('T'.repeat(20)), '原文尾部 20 字符（6:4 尾）');
+  assert.ok(!text.includes('MID7'), '省略中段不在场');
+  assert.ok(text.includes('[original text truncated: 250 chars omitted]'),
+    '标注行写明省略量 E−R＝250（附上 50＋省略 250＝E 300——裁剪量准确判据）');
+  assert.equal(ledger.subjects.get(rig.OWNER).batch.remaining, 0, '批预算恰好用尽');
+  assert.equal(ledger.jobs.get('job-e7').echoAttached, true);
+});
+
+hostTest('ECHO-E12（R3 映射）：批次扣减合计＝Σ正文＋Σ原文 ≤ maxResultChars——echo 与正文同批计量', async () => {
+  const rig = sRig({ fullCommandEcho: true, budget: 100 });
+  const token = ledger.claimWait(rig.OWNER);
+  await rig.readyJob('job-e12a', 'A'.repeat(40), undefined, undefined,
+    { echoText: 'E'.repeat(30), echoKind: 'command' });
+  await rig.readyJob('job-e12b', 'B'.repeat(30));
+  await ledger.releaseWait(token, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 2, '两条都投');
+  assert.ok(textOf(rig.calls.inject[0]).includes('E'.repeat(30)), 'A 的原文附上（40＋30）');
+  assert.ok(textOf(rig.calls.inject[1]).includes('B'.repeat(30)), 'B 的正文在场（30）');
+  // R3 映射：若原文不计预算（额外白送），批剩余将是 30 而非 0——本断言必红。
+  assert.equal(ledger.subjects.get(rig.OWNER).batch.remaining, 0,
+    '合计恰耗尽：40＋30＋30＝100 ≤ maxResultChars（R3 变异必红）');
+});
+
+hostTest('ECHO-E14：显式 fullCommandEcho=false——完成消息不附原文、无标签、无注记（关闭态账本面）', async () => {
+  const rig = sRig({ fullCommandEcho: false });
+  await rig.readyJob('job-e14', 'E14-BODY', undefined, undefined,
+    { echoText: 'ECHO-E14-SILENT-ORIGINAL', echoKind: 'command' });
+  assert.equal(rig.calls.inject.length, 1);
+  const text = textOf(rig.calls.inject[0]);
+  assert.ok(text.includes('E14-BODY'), '正文照常交付');
+  assert.ok(!text.includes('ECHO-E14-SILENT-ORIGINAL'), '不附原文（R5：关闭仍装配必红）');
+  assert.ok(!text.includes('Command:'), '无标签行');
+  assert.ok(!/original text not attached/.test(text), '无未附注记（无预期即无注记）');
+  assert.equal(ledger.jobs.get('job-e14').echoAttached, false);
+});
+
+hostTest('ECHO-E15：后续生效——off 批交付无原文，翻转后新批交付附原文（同主体两 config）', async () => {
+  const rig = sRig({ fullCommandEcho: false });
+  await rig.readyJob('job-e15a', 'E15-A-BODY', undefined, undefined,
+    { echoText: 'E15-OLD-OFF', echoKind: 'command' });
+  assert.equal(rig.calls.inject.length, 1);
+  assert.ok(!textOf(rig.calls.inject[0]).includes('E15-OLD-OFF'), 'off 批：原文未附');
+  // 关批（off 批开出的批对象仍持有旧定值——翻转后下一批生效，机制同 E16 反向）。
+  ledger.closeBatchIfIdle(rig.OWNER);
+  // 翻转＝设置保存后下一批按新值（机制：echoOn 开批时现读 config）。
+  const configOn = { maxResultChars: 4000, agentLang: 'en', fullCommandEcho: true };
+  rig.reads.set('job-e15b', { chunks: [{ channel: 'stdout', text: 'E15-B-BODY' }] });
+  ledger.noteJobStarted(rig.ctx, configOn, 'job-e15b', rig.OWNER,
+    { echoText: 'E15-NEW-ON', echoKind: 'command' });
+  await ledger.readSettled('job-e15b');
+  assert.equal(rig.calls.inject.length, 2);
+  const second = textOf(rig.calls.inject[1]);
+  assert.ok(second.includes('E15-NEW-ON'), '新批：原文附上');
+  assert.ok(second.includes('Command:'), '标签行在场');
+  assert.ok(!textOf(rig.calls.inject[0]).includes('E15-NEW-ON'), '旧批不受影响');
+});
+
+hostTest('ECHO-E16：进行中批次不变更——批绑定值贯穿同批后续装配，关批后下一批按新值', async () => {
+  const rig = sRig({ fullCommandEcho: true });
+  // 批开启（A 的完成消息路径开批，echoOn=true 绑定批对象）。
+  await rig.readyJob('job-e16a', 'E16-A-BODY', undefined, undefined,
+    { echoText: 'E16-A-ECHO', echoKind: 'command' });
+  assert.ok(textOf(rig.calls.inject[0]).includes('E16-A-ECHO'), 'A 附原文（批 echoOn=true）');
+  // 同批后续条目（config 已翻转 off——批未关，echoOn 仍按开批值）。
+  const configOff = { maxResultChars: 4000, agentLang: 'en', fullCommandEcho: false };
+  rig.reads.set('job-e16b', { chunks: [{ channel: 'stdout', text: 'E16-B-BODY' }] });
+  ledger.noteJobStarted(rig.ctx, configOff, 'job-e16b', rig.OWNER,
+    { echoText: 'E16-B-ECHO', echoKind: 'command' });
+  await ledger.readSettled('job-e16b');
+  assert.ok(textOf(rig.calls.inject[1]).includes('E16-B-ECHO'),
+    '同批后续装配仍按旧值附原文（进行中批次不变更）');
+  // 关批 → 下一批重取 config（off）→ 不附。
+  ledger.closeBatchIfIdle(rig.OWNER);
+  rig.reads.set('job-e16c', { chunks: [{ channel: 'stdout', text: 'E16-C-BODY' }] });
+  ledger.noteJobStarted(rig.ctx, configOff, 'job-e16c', rig.OWNER,
+    { echoText: 'E16-C-ECHO', echoKind: 'command' });
+  await ledger.readSettled('job-e16c');
+  const third = textOf(rig.calls.inject[2]);
+  assert.ok(third.includes('E16-C-BODY'), 'C 正文照常交付');
+  assert.ok(!third.includes('E16-C-ECHO'), '新批按新值：原文不附');
+});
+
+hostTest('ECHO-E17：已构造内容不重算——已投交付文本不受后续设置翻转影响', async () => {
+  const rig = sRig({ fullCommandEcho: true });
+  await rig.readyJob('job-e17a', 'E17-A-BODY', undefined, undefined,
+    { echoText: 'E17-A-ECHO', echoKind: 'command' });
+  const firstText = textOf(rig.calls.inject[0]);
+  assert.ok(firstText.includes('E17-A-ECHO'), '前置：已投消息含原文（render 闭包捕获装配值）');
+  // 翻转＋关批＋新交付：已投文本不可变（pendingSends 的 render 闭包在装配时捕获
+  // 原文与标注；「登记→冲刷」窗口在 releaseWait 循环内同步完成，测试不可插入
+  // 翻转点——可观察面＝已投文本不变＋新批按新值，机制注释见 #takeEchoShare）。
+  ledger.closeBatchIfIdle(rig.OWNER);
+  const configOff = { maxResultChars: 4000, agentLang: 'en', fullCommandEcho: false };
+  rig.reads.set('job-e17b', { chunks: [{ channel: 'stdout', text: 'E17-B-BODY' }] });
+  ledger.noteJobStarted(rig.ctx, configOff, 'job-e17b', rig.OWNER,
+    { echoText: 'E17-B-ECHO', echoKind: 'command' });
+  await ledger.readSettled('job-e17b');
+  assert.equal(textOf(rig.calls.inject[0]), firstText, '已投消息文本不被重算（逐字不变）');
+  assert.ok(!textOf(rig.calls.inject[1]).includes('E17-B-ECHO'), '新批按新值（off 不附）');
+});
+
+hostTest('ECHO-E18（R6 映射）：小预算下必要结局行全数在场——退出码标记、诊断首行、lossy／留存行不被原文挤占', async () => {
+  const body = `E18-BODY-${'b'.repeat(31)}`; // 40 字符
+  const echoText = 'E18-ECHO-HEAD-' + 'q'.repeat(31); // 45 字符
+  const rig = sRig({ fullCommandEcho: true, budget: 60 });
+  await rig.readyJob('job-e18', body,
+    { exitCode: 3, detail: 'E18-DIAG-FIRST\nE18-DIAG-SECOND' },
+    // lossy／留存走读取回执（lossy 顶层、spillPaths 在 job.output——spillPathsOf 契约）。
+    { lossy: true, job: { output: { spillPaths: ['e18-spill-path.txt'] } } },
+    { echoText, echoKind: 'command' });
+  assert.equal(rig.calls.inject.length, 1);
+  const text = textOf(rig.calls.inject[0]);
+  // R6 映射：若原文分配挤占必要结局行，以下断言必红（必要结局不入降级序列）。
+  assert.ok(text.includes('E18-BODY-'), '正文在场（40 ≤ 预算 60）');
+  assert.ok(text.includes('[exit code: 3]'), '非零退出码标记行在场');
+  assert.ok(text.includes('E18-DIAG-FIRST'), '诊断首行在场');
+  assert.ok(text.includes('e18-spill-path.txt'), 'lossy 留存行在场');
+  // 剩余 R＝20 < E＝45 → 截断附上（头 12＋尾 8、省略 25）——原文不白送也不吞结局。
+  assert.ok(text.includes(echoText.slice(0, 12)), '原文头部在场（12 字符）');
+  assert.ok(text.includes(echoText.slice(-8)), '原文尾部在场（8 字符）');
+  assert.ok(text.includes('[original text truncated: 25 chars omitted]'), '省略量标注在场');
+});
+
+hostTest('ECHO-E19：读取失败注记不附原文；重试成功后正文与原文齐备（E19/E19b）', async () => {
+  const rig = sRig({ fullCommandEcho: true });
+  ledger.noteJobStarted(rig.ctx, rig.config, 'job-e19', rig.OWNER,
+    { echoText: 'E19-ECHO-ORIGINAL', echoKind: 'command' });
+  const entry = ledger.jobs.get('job-e19');
+  entry.terminal = { status: 'completed' };
+  const realRead = rig.ctx.jobs.read;
+  rig.ctx.jobs.read = async () => { throw new Error('registry read exploded'); };
+  await ledger.readSettled('job-e19');
+  assert.equal(rig.calls.inject.length, 1, '读取失败注记恰一条');
+  const notice = textOf(rig.calls.inject[0]);
+  assert.match(notice, /\[read failed\]/, '读取失败标记在场');
+  assert.ok(!notice.includes('E19-ECHO-ORIGINAL'), '注记不附原文（随重试成功的正文交付）');
+  assert.ok(!notice.includes('Command:'), '注记无标签行');
+  assert.equal(entry.echoAttached, false, '未置一次性状态（重试成功后仍可首次附上）');
+  // 重试成功：正文＋原文齐备（E19 后半）。
+  rig.reads.set('job-e19', { chunks: [{ channel: 'stdout', text: 'E19-RECOVERED-BODY' }] });
+  rig.ctx.jobs.read = realRead;
+  await ledger.readSettled('job-e19');
+  assert.equal(rig.calls.inject.length, 2);
+  const recovered = textOf(rig.calls.inject[1]);
+  assert.ok(recovered.includes('E19-RECOVERED-BODY'), '重试正文在场');
+  assert.ok(recovered.includes('E19-ECHO-ORIGINAL'), '原文随正文齐备附上');
+  assert.ok(recovered.includes('Command:'), '标签行在场');
 });
 
 hostTest('RN-D：读取失败超限共用配额——20 个 readFailed 候选：10 注记条目＋3 逐条＋1 聚合（计数 7）；超限不认领、不清占位', async () => {

@@ -1199,6 +1199,51 @@ hostTest('async_run（R32/R33·开启向）：fullCommandEcho=true → label 仍
   settle({ exitCode: 0 });
 });
 
+// ── ECHO-E8/E11（ECHO-WORKFLOW-01，设计 §8）───────────────────────────────
+
+hostTest('ECHO-E8：首次等待直付超限——输出截断但不附命令原文（直付与调用参数同输入）', async () => {
+  const f = fakeCtx();
+  const { proc } = fakeProc({ text: 'x'.repeat(50000) });
+  f.installShellExecute(() => Promise.resolve(proc));
+
+  const result = await createRunTool(f.ctx, resolveConfig({
+    toolName: 'async_run', maxResultChars: 100, fullCommandEcho: true
+  })).execute({ command: 'E8-DIRECT-PAY-COMMAND-ORIGINAL', description: 'e8 direct pay' }, exec);
+  assert.equal(result.status, 'completed', '前置：预算内结算（直付分支）');
+  assert.equal(result.truncated, true, '前置：直付正文被裁');
+  assert.ok(!result.output.includes('E8-DIRECT-PAY-COMMAND-ORIGINAL'),
+    '直付不附原文（同一次模型输入已含调用参数 command——设计 §2.2 载体排除）');
+  assert.ok(!('echo' in result), '完成分支无 echo 键（直付路径不经批次装配）');
+});
+
+hostTest('ECHO-E11：触顶存活清单不含命令原文——label 恒为 description，开启态也不经清单复制原文', async () => {
+  const f = fakeCtx();
+  const { proc, settle } = fakeProc({ text: '', status: 'running', autoResolve: false });
+  f.installShellExecute(() => Promise.resolve(proc));
+  f.ctx.jobs.start = () => {
+    throw new Error('background job limit reached for this owner (limit: 10); use job_kill to stop an unneeded job, wait for it to finish, then retry');
+  };
+  // 清单行 label＝注册名（现读 description）；命令原文若进 label，会随此清单整行进入模型。
+  f.ctx.jobs.list = () => [
+    { id: 'async-command-e11', status: 'running', label: 'E11 live desc' }
+  ];
+
+  let raised;
+  try {
+    await createRunTool(f.ctx, resolveConfig({
+      toolName: 'async_run', defaultYieldMs: 1, minYieldMs: 1, fullCommandEcho: true
+    })).execute({ command: 'E11-SECRET-COMMAND-ORIGINAL', description: 'E11 live desc' }, exec);
+  } catch (error) {
+    raised = error;
+  }
+  settle();
+
+  assert.ok(raised !== undefined);
+  assert.match(raised.message, /async-command-e11/, '存活清单在场（重试出路完整）');
+  assert.ok(!raised.message.includes('E11-SECRET-COMMAND-ORIGINAL'),
+    '清单行不含命令原文（label 恒为 description——开启态原文不经 job_list 复制）');
+});
+
 hostTest('async_run（R32-c·abort）：GUI 停止 → 句柄形状返回（宿主改写、模型不可见）、作业存活、结算通知可恢复', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
