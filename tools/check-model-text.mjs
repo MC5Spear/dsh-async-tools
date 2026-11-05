@@ -314,7 +314,7 @@ const PROSE_ALLOWLIST = {
     { needle: 'async-tools: tool:jobs prompt shadow', why: 'cordis effect 卸载标签（提示遮蔽段处置句柄的登记名，进 Fiber 树与宿主日志，不进模型上下文——与 async-tools: job_output hide、host.js 的 host snapshot source 同类）' }
   ],
   'delivery.js': [
-    { needle: 'claimed listener attach failed', why: '操作者一侧 stderr 诊断（log() 通道——attachClaimedListener 的防御路径，不进模型上下文）' },
+    { needle: 'listener attach failed', why: '操作者一侧 stderr 诊断（log() 通道——attachClaimedListener 三监听（claimed/discarded/turn-stopping）各自挂接失败的防御路径，事件名与错误文本来自变量插值，不进模型上下文）' },
     { needle: 'keep-alive beat', why: '同上（预注册心跳被注册表拒绝的 warn 行；jobId 与错误文本来自变量插值）' },
     { needle: 'settled read', why: '同上（结算读取失败的 warn 行）' },
     { needle: 'incremental read', why: '同上（增量读取失败的 warn 行）' },
