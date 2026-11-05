@@ -847,13 +847,14 @@ try {
     `blur 后 composing=${String(ime4Blur.composing)} disabled=${String(ime4Blur.disabled)}（无自动提交题数 ${String(ime4Blur.qCount)}）；合成 end 后 disabled=${String(ime4End.disabled)}；显式提交后该题离场=${String(ime4Gone)} 转录含组合文=${String(ime4TranscriptHit)} 终值=${JSON.stringify(ime4Blur.value.slice(0, 16))}`);
 
   // IME-5（隔离）：题 A 组合中——A 的「不答」可用且提交禁用；题 B 有效选中不受 A 组合影响。
+  // 选中读数不在本块同步取：click() 后 React 批处理尚未落 DOM，同刻读
+  // data-selected 只见旧值（装置时序，非产品面）——移到 500ms 后的 ime5Mid 读。
   const ime5Setup = await evaluate(page, `(() => {
     const b = ${qExpr(Q2_TEXT)};
     b?.querySelectorAll('button.ats-ask-opt')[0]?.click();
     const a = ${qExpr(SHAPE_TEXT)};
     a?.querySelector('textarea.ats-ask-input')?.focus();
-    return { bSelected: b?.querySelector('button.ats-ask-opt')?.getAttribute('data-selected') ?? '',
-      aFocused: document.activeElement === a?.querySelector('textarea.ats-ask-input') };
+    return { aFocused: document.activeElement === a?.querySelector('textarea.ats-ask-input') };
   })()`);
   if (ime5Setup.aFocused !== true) fail('IME-5 步骤：Pick a shape 的 textarea 程序聚焦不可得');
   await page.send('Input.imeSetComposition', { text: '隔离组合', selectionStart: 4, selectionEnd: 4 });
@@ -861,7 +862,8 @@ try {
   const ime5Mid = await evaluate(page, `(() => {
     const a = ${qExpr(SHAPE_TEXT)};
     const b = ${qExpr(Q2_TEXT)};
-    return { aComposing: a?.getAttribute('data-composing') ?? '', aSubmit: a?.querySelector('.ats-ask-submit')?.disabled === true,
+    return { bSelected: b?.querySelector('button.ats-ask-opt')?.getAttribute('data-selected') ?? '',
+      aComposing: a?.getAttribute('data-composing') ?? '', aSubmit: a?.querySelector('.ats-ask-submit')?.disabled === true,
       aSkipDisabled: a?.querySelector('.ats-ask-skip')?.disabled === true,
       bSubmit: b?.querySelector('.ats-ask-submit')?.disabled === true };
   })()`);
@@ -872,9 +874,9 @@ try {
     ime5Skipped = (await evaluate(page, `${qExpr(SHAPE_TEXT)} === null`)) === true;
   }
   check('IME-5 多题隔离：组合中「不答」可用（该题出列）；他题有效提交不受本题组合影响',
-    ime5Setup.bSelected === 'true' && ime5Mid.aComposing === 'true' && ime5Mid.aSubmit === true
+    ime5Mid.bSelected === 'true' && ime5Mid.aComposing === 'true' && ime5Mid.aSubmit === true
       && ime5Mid.aSkipDisabled === false && ime5Mid.bSubmit === false && ime5Skipped === true,
-    `题 B 选中=${String(ime5Setup.bSelected)}；题 A 组合中：data-composing=${String(ime5Mid.aComposing)} 提交禁用=${String(ime5Mid.aSubmit)} 不答禁用=${String(ime5Mid.aSkipDisabled)}；题 B 提交可用=${String(ime5Mid.bSubmit === false)}；组合中不答后 A 离场=${String(ime5Skipped)}`);
+    `题 B 选中=${String(ime5Mid.bSelected)}；题 A 组合中：data-composing=${String(ime5Mid.aComposing)} 提交禁用=${String(ime5Mid.aSubmit)} 不答禁用=${String(ime5Mid.aSkipDisabled)}；题 B 提交可用=${String(ime5Mid.bSubmit === false)}；组合中不答后 A 离场=${String(ime5Skipped)}`);
 } catch (error) {
   cleanup();
   fail(`未预期异常：${String(error?.stack ?? error)}`);

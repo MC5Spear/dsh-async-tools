@@ -309,19 +309,21 @@ try {
       { width: 1500, height: 1000, fullPage: false });
     console.log(`  截图 ${scheme}-bottom：${String(shotBottom.bytes)} B`);
 
-    // 整页图的可判性：页签 + 末字段标签 + 保存按钮都在 innerText 里。
+    // 整页图的可判性：导航上下文 + 末字段标签 + 保存按钮都在 innerText 里。
+    // 页面形态（0.2.1-rc.2 插件详情页，2026-11-06 视觉判读核实）：无「插件配置/
+    // 插件列表」页签——导航是顶部返回链接「‹ 插件」＋插件标题行（含包名与版本）。
     // 末字段是 boundPresets 绑定块，标签必须抄**真实标签全文**（「适用预设」；
     // 拿键名缩写当断言子串会恒假红）。
     const view = await evaluate(page, `(() => {
       const text = document.body.innerText;
       return {
-        hasTabs: text.includes('插件配置') || text.includes('插件列表'),
+        hasNav: text.includes('插件') && text.includes('dsh-async-tools'),
         hasLastField: text.includes('适用预设') || text.includes('Applicable presets'),
         hasSave: text.includes('保存') || text.includes('Save')
       };
     })()`);
-    check(`${scheme} 视图可判（页签=${String(view.hasTabs)} 末字段=${String(view.hasLastField)} 保存=${String(view.hasSave)}）`,
-      view.hasTabs && view.hasLastField && view.hasSave, JSON.stringify(view));
+    check(`${scheme} 视图可判（导航=${String(view.hasNav)} 末字段=${String(view.hasLastField)} 保存=${String(view.hasSave)}）`,
+      view.hasNav && view.hasLastField && view.hasSave, JSON.stringify(view));
   }
   // 枚举展开态（浅色）：点开一个 select 截图后收起。原生下拉若不被 CDP 截图
   // 捕获（OS 合成层），此图只证控件本体形态——判读时按图上实见下结论。
