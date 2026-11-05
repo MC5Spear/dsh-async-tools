@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
 import { resolveConfig } from '../lib/config.js';
 import { LATE_ANSWER_EVENT } from '../lib/interrupts.js';
@@ -5237,10 +5237,13 @@ trcGate('T-RC-1 真 agent-loop 装置：真投影折叠＋真实事件时序驱�
 
     // ⑦ rc.3/rc.4 事件在场静态核对（设计 §3.2：缺席某事件时确认信号降级——
     // 本断言锚「三事件在 rc.3/rc.4 源码在场」这一静态事实；树缺席时显式跳过
-    // 并注明，不冒称已核对）。
+    // 并注明，不冒称已核对。宿主树根从当前锚派生（判据 12：机器路径不落字面量）。
+    const anchorRoot = process.env.DSAT_HOST_MODULES ?? '';
+    const serviceRoot = anchorRoot === '' ? '' : join(dirname(anchorRoot), '..');
     for (const rc of ['rc.3', 'rc.4']) {
-      const src = await readFile(
-        `D:/P/dsh-service/dsh-0.2.1-${rc}/node_modules/@deepseek-ai/dsh-agent-loop/lib/index.js`,
+      const src = serviceRoot === '' ? undefined : await readFile(
+        join(serviceRoot, `dsh-0.2.1-${rc}`, 'node_modules',
+          '@deepseek-ai', 'dsh-agent-loop', 'lib', 'index.js'),
         'utf8'
       ).catch(() => undefined);
       if (src === undefined) {
