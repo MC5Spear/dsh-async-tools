@@ -4149,6 +4149,46 @@ hostTest('FD-C：外来 running→completed 静默翻转——无目标正等待
   }
 });
 
+hostTest('FD-C2：外来翻转发生在挂起后——周期复查路径经对账发现交付正文（入口快照不可见）', async () => {
+  // FD-C 锚定入口对账（翻转在第二次调用前、入口快照直接看到终态）；本变体把
+  // 翻转移到等待挂起之后——入口快照只见 running，终态发现只能出自周期复查的
+  // jobs.list 重取与对账（§1.2.3 复查路径——issues 完成条件「入口及周期检查」
+  // 的后半）。修前形态（复查不重取清单／复查对账缺席）＝挂起到预算＝红。
+  let rows = [{ id: 'ext-fdc2', status: 'running' }];
+  const rig = await buildRig('fd-c2', [], {
+    pollIntervalMs: 100,
+    jobsList: () => rows,
+    jobsRead: async () => ({ chunks: [{ channel: 'stdout', text: 'FD-C2-BODY-唯一正文' }] })
+  });
+  try {
+    // 显式零等待观察外来运行作业：入口校验的存在证据入账（terminal 空）。
+    const observe = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: 'ext-fdc2' }] }, rig.exec()
+    );
+    assert.equal(observe.status, 'running', '前置：外来作业运行中');
+    const started = Date.now();
+    let settledEarly = false;
+    const pending = rig.waiter.execute({ wait_ms: 4000 }, rig.exec())
+      .then((r) => { settledEarly = true; return r; });
+    await sleep(300); // 入口快照已取（仍 running）＋至少一个复查周期在旧状态下走过
+    assert.equal(settledEarly, false,
+      '前置：入口对账只见 running——不交付、不交回（本用例与 FD-C 的判别点）');
+    rows = [{ id: 'ext-fdc2', status: 'completed', exitCode: 0 }];
+    const outcome = await pending;
+    const wall = Date.now() - started;
+    assert.ok(['message', 'no-work'].includes(outcome.status),
+      '周期复查交回（不耗尽预算）');
+    const row = (outcome.delivered ?? []).find((item) => item.job_id === 'ext-fdc2');
+    assert.ok(row !== undefined,
+      '复查对账发现并交付外来终态条目（复查不重取清单＝挂起＝红）');
+    const out = outcome.outputs.find((item) => item.job_id === 'ext-fdc2');
+    assert.equal(out?.text, 'FD-C2-BODY-唯一正文', '正文完整');
+    assert.ok(wall < 2000, `复查周期内交回（实耗 ${String(wall)} ms；挂起形态 ≈4000 ms 必红）`);
+  } finally {
+    await rig.dispose();
+  }
+});
+
 hostTest('FD-G：清单查询失败＋在册本包运行作业——按未确认交回，不因账本挂起（修前红）', async () => {
   // 修前形态：jobs.list 抛错后账本资格段改判「有工作」→ 挂起到预算。修后
   // waitWorthyWork 不再用账本判资格（清单抛错＝条件未确认，如实交回）。
@@ -4684,6 +4724,49 @@ hostTest('RC-H：returned 标记的副本不被未标记的新装配覆盖（R2 
   }
 });
 
+hostTest('RC-L：恢复条目批满/预算尽整条延后——挂起保持、随 deferred 清单可见、下一批恢复', async () => {
+  // collectBatch 恢复装配的延后分支（批条目满或剩余预算为零且正文非空）：恢复
+  // 请求不清挂起、不消费副本——stagedRecovery 保持，本次出口不带标记行；批
+  // 关闭后的下一次装配（此处直达账本重开批，生产由领取关批）正常第 1 档恢复
+  //（§3.3「批满/预算尽整条延后，保持挂起，下一批恢复」）。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  try {
+    const owner = `rc-l-owner-${Math.random().toString(36).slice(2, 8)}`;
+    ledger.noteJobStarted(ctx, { maxResultChars: 400, agentLang: 'en' }, 'rc-l-job', owner);
+    const entry = ledger.jobs.get('rc-l-job');
+    entry.terminal = { status: 'completed', exitCode: 0 };
+    entry.buffer = `HEAD-${'a'.repeat(600)}`; // 首装即耗尽批预算（截断至 400）
+    const first = ledger.collectBatch(owner, { lang: 'en' });
+    assert.ok(first.delivered.length === 1 && first.delivered[0].truncated === true,
+      '前置：首装耗尽批预算（剩余 0）');
+    const subject = ledger.subjects.get(owner);
+    assert.ok(subject.recoveries.get('rc-l-job') !== undefined, '前置：副本在册（未确认）');
+    assert.equal(ledger.stageRecovery('rc-l-job', owner)?.tier, 1, '前置：第 1 档可恢复');
+    // 同批再装配：恢复条目撞预算尽 → 整条延后（直达账本形态下批不自动关闭）。
+    const second = ledger.collectBatch(owner, { lang: 'en' });
+    assert.ok(second.delivered.every((item) => item.recovery !== true),
+      '恢复条目延后：本次出口无标记行副本（立即恢复形态必红）');
+    assert.ok(second.deferred.includes('rc-l-job'), '延后随 deferred 清单可见');
+    assert.equal(subject.stagedRecovery?.jobId, 'rc-l-job', '挂起保持（不清）');
+    assert.ok(subject.recoveries.get('rc-l-job') !== undefined, '副本未被消费');
+    // 批关闭（生产＝领取关批；此处直达账本置空重开）→ 下一批第 1 档恢复。
+    subject.batch = null;
+    const third = ledger.collectBatch(owner, { lang: 'en' });
+    const recoveryItem = third.delivered.find((item) => item.recovery === true);
+    assert.ok(recoveryItem !== undefined, '下一批恢复交付（标记行＋副本正文）');
+    assert.ok(recoveryItem.text.includes(t('en', 'delivery.recoveryMarker', { jobId: 'rc-l-job' })),
+      '标记行在场（400 预算下恢复体头段完整容纳标记行）');
+    assert.ok(recoveryItem.text.includes('HEAD-'),
+      '副本正文在场（首装份额头段；探针实证 100 预算下标记行会被 6:4 裁剪切中段，故用 400）');
+    assert.ok(recoveryItem.text.endsWith('a'.repeat(40)), '副本份额尾段在场');
+    assert.equal(subject.stagedRecovery, null, '恢复后挂起清空');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
 // ── T-ZW-1 实测（真 sessionQuery/sessionStore/persistence/subagent 栈）────
 // 设计 §2.1 要求检查窗口 1000 ms 按支持宿主实测确定——本组用真栈量化：
 // ① listChildren 热路径（活会话目录投影）与冷路径（落盘日志读取＋投影）单次
@@ -5199,8 +5282,10 @@ hostTest('T-MIX-1 三项组合：外来静默完成＋等待返回被改写取�
     rig.finisher();
     settleForeign({ status: 'completed', result: 'TMIX-F-FINAL' });
     await sleep(150); // armed 链节拍消费编排 result 入缓冲；外来静默终态就位
-    // 项一＋项二（DOC-ZERO-01 共享同一出口）：无目标等待入口汇集就绪内容并
-    // 对账发现外来终态——两作业同批交付；载体信号受控（改写取消窗口素材）。
+    // 项一（RESULT-RECOVERY-01 素材）：等待载体登记副本；项二（RA-FOREIGN-
+    // DISCOVERY）：入口对账发现外来终态。就绪汇集与对账共用入口一次 jobs.list
+    // 快照——「恰一次」是 DOC-ZERO-01 的零等待专属口径，此处仅复用同一快照，
+    // 不引入第二次查询。两作业同批交付；载体信号受控（改写取消窗口素材）。
     const controller = new AbortController();
     const outcome = await rig.waiter.execute(
       { wait_ms: 400 }, { agent: rig.parent, signal: controller.signal }
