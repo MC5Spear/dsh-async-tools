@@ -465,8 +465,11 @@ try {
     for (const [type, tag] of [['compositionstart', 'start'], ['compositionupdate', 'update'], ['compositionend', 'end'], ['input', 'input'], ['keydown', 'key']]) {
       input.addEventListener(type, (e) => {
         // 盲测：单标志位有歧义（isComposing 与 isTrusted 分不清）——双标志
-        // 并记；CDP 合成链里 compositionstart/update 事件 isComposing=false
-        // 属已知近似形态（真 IME 下为 true），判据只认前缀不受影响。
+        // 并记。图例（读数各 detail 同此）：ic＝isComposing、it＝isTrusted；
+        // CDP 合成链已知形态＝composition* 事件 ic 恒 0（真 IME 下为 1，事件
+        // 类型分界而非组合态分界）、input/keydown ic=1、闭合 compositionend
+        // 由 insertText 脚本侧触发故 it=0——均为近似边界内形态，判据只认
+        // tag 前缀与值，不依赖标志位。
         window.__imeLog.push([tag, e.type, e.isComposing === true ? 'ic1' : 'ic0', e.isTrusted === true ? 'it1' : 'it0',
           e.key ?? '', e.keyCode ?? -1, String(e.data ?? '').slice(0, 10),
           String(input.value).slice(0, 16),
@@ -497,10 +500,13 @@ try {
     return { value: String(q?.querySelector('textarea.ats-ask-input')?.value ?? ''), qCount: document.querySelectorAll('.ats-ask-panel .ats-ask-q').length };
   })()`);
   const hadUpdate = midState.log.some((l) => l.startsWith('update:')) || midState.log.some((l) => /^input:input:ic1/.test(l));
+  // 图例入 detail（定向复核：外部无法独立解释 ic/it——补定义；链尾第 9 位＝
+  // 当时 data-selected 值）。
+  const LOG_LEGEND = '图例：ic＝isComposing、it＝isTrusted、链尾位＝data-selected；合成链 composition* 恒 ic0、闭合 end 为脚本触发 it0（已知近似形态，判据不依赖标志位）';
   check('IME-1 组合进行中：composition 事件链在场、值随组合更新、组合中 Enter（229）不误提交（题目仍在）',
     hadUpdate === true && midState.value.includes('拼音组合中') === true
       && q1ValueAfterEnter.qCount >= 2 && q1ValueAfterEnter.value.includes('拼音组合中') === true,
-    `组合中值=${JSON.stringify(midState.value.slice(0, 20))} 选中=${midState.selected} Enter(229)后题数=${String(q1ValueAfterEnter.qCount)} 值保留=${String(q1ValueAfterEnter.value.includes('拼音组合中'))} 事件链=${JSON.stringify(midState.log.slice(0, 8))}`);
+    `组合中值=${JSON.stringify(midState.value.slice(0, 20))} 选中=${midState.selected} Enter(229)后题数=${String(q1ValueAfterEnter.qCount)} 值保留=${String(q1ValueAfterEnter.value.includes('拼音组合中'))} ${LOG_LEGEND} 事件链=${JSON.stringify(midState.log.slice(0, 8))}`);
   await shotOf('a11y-ime-composing.png', { width: 1500, height: 1000, fullPage: false });
   // 盲测观察（实义断言化）：组合进行中（自定义已选中、框内有组合文）提交钮
   // 状态量测留痕（本跑实测**随选中启用**——组合文计入有效作答，与「输入即
