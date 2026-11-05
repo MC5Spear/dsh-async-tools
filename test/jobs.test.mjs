@@ -1244,6 +1244,49 @@ hostTest('ECHO-E11：触顶存活清单不含命令原文——label 恒为 desc
     '清单行不含命令原文（label 恒为 description——开启态原文不经 job_list 复制）');
 });
 
+hostTest('ECHO-E21：让出返回载体（async_run）——同主体他作业就绪条目随批携带：echo 三键、标签行、同批计量截断与一次性状态', async () => {
+  const f = fakeCtx();
+  const { proc, settle } = fakeProc({ text: '', status: 'running', autoResolve: false });
+  f.installShellExecute(() => Promise.resolve(proc));
+  const config = resolveConfig({
+    toolName: 'async_run', defaultYieldMs: 1, minYieldMs: 1, maxResultChars: 40, fullCommandEcho: true
+  });
+  // 同主体他作业就绪（账面定论，R58-n 形态——让出出口 collectBatch 读账面收
+  // 就绪条目）：正文 30＋原文 30，批预算 40 → 剩余 10 → 原文 6:4 截断。
+  const echoB = `${'H'.repeat(12)}MIDY${'T'.repeat(14)}`; // 30 字符
+  ledger.noteJobStarted(f.ctx, config, 'job-ey-b', exec.agent.id, { echoText: echoB, echoKind: 'command' });
+  const readyB = ledger.jobs.get('job-ey-b');
+  readyB.terminal = { status: 'completed' };
+  readyB.buffer = 'B'.repeat(30);
+  readyB.readyAt = ledger.now();
+
+  const tool = checkedTool(createRunTool(f.ctx, config));
+  const result = await tool.execute({ command: 'EY-C-COMMAND', description: 'ey yield c', yield_ms: 1 }, exec);
+  settle();
+
+  assert.equal(result.status, 'running', '前置：让出（句柄返回）');
+  const outputs = result.outputs ?? [];
+  const entryB = outputs.find((item) => item.job_id === 'job-ey-b');
+  assert.ok(entryB !== undefined, '他作业就绪条目随让出返回携带（§2.6 同一领取窗口）');
+  assert.ok(!outputs.some((item) => item.job_id === result.job_id), '让出者自身（running）不入批');
+  // 正文优先（30 ≤ 40 全量）→ 剩余 10 → 原文 30 截断：头 6＋尾 4、省略 20。
+  assert.equal(entryB.text, 'B'.repeat(30), '正文全量在场（正文优先——R4 判据在让出载体复跑）');
+  assert.equal(entryB.echo_kind, 'command', 'echo_kind 供 render 取标签行');
+  assert.equal(entryB.echo_truncated, true, '截断携带 echo_truncated');
+  assert.ok(entryB.echo.includes('H'.repeat(6)) && entryB.echo.includes('T'.repeat(4)),
+    '原文 6:4 首尾在场（附上 10＋省略 20＝原文 30——裁剪量准确）');
+  assert.ok(!entryB.echo.includes('MIDY'), '省略中段不在');
+  assert.ok(entryB.echo.includes('[original text truncated: 20 chars omitted]'),
+    '省略量标注内嵌（原文与正文同批计量的让出载体判据——投影丢 echo 键则本组断言红）');
+  const visible = tool.output.render(undefined, result).map((part) => part.text).join('\n');
+  assert.ok(visible.includes('Command:'), '模型可见文本含命令标签行（让出 render 拼 echo 块）');
+  assert.ok(visible.includes('H'.repeat(6)), '原文头部进可见文本');
+  // 一次性与认领：同窗后续载体不再重复附上（echoAttached 置位、让出载体认领）。
+  const b = ledger.jobs.get('job-ey-b');
+  assert.equal(b.echoAttached, true, '一次性状态置位');
+  assert.equal(b.deliveredFact?.via, 'wait', '让出载体认领（完成消息让位不重复）');
+});
+
 hostTest('async_run（R32-c·abort）：GUI 停止 → 句柄形状返回（宿主改写、模型不可见）、作业存活、结算通知可恢复', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);

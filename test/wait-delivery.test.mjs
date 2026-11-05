@@ -408,6 +408,39 @@ hostTest('ECHO-E13：默认关闭（fullCommandEcho 缺省 false）——等待�
   }
 });
 
+hostTest('ECHO-E22：让出返回载体（async_workflow）——同主体他作业就绪条目随批携带：echo＝script 全文、echo_kind、标签行；让出者自身不入批', async () => {
+  const rig = await buildRig('e22', [], { fullCommandEcho: true });
+  try {
+    const a = await rig.workflow.execute(ECHO_WF_ARGS('E22A', 'E22-SCRIPT-A'), rig.exec());
+    assert.equal(a.status, 'running', '前置：A 让出（在册运行）');
+    // A 账面定论就绪（R58-n 形态：批候选读账面，不走结算链——B 的让出出口
+    // collectBatch 收就绪条目，§2.6 同一领取窗口）。
+    const ready = ledger.jobs.get(a.job_id);
+    ready.terminal = { status: 'completed' };
+    ready.buffer = 'E22-BODY-A';
+    ready.readyAt = ledger.now();
+    const b = await rig.workflow.execute(ECHO_WF_ARGS('E22B', 'E22-SCRIPT-B'), rig.exec());
+    assert.equal(b.status, 'running', '前置：B 让出');
+    const entryA = (b.outputs ?? []).find((item) => item.job_id === a.job_id);
+    assert.ok(entryA !== undefined, 'A 的就绪条目随 B 的让出返回携带（让出载体）');
+    assert.equal(entryA.echo, ECHO_WF_ARGS('E22A', 'E22-SCRIPT-A').script,
+      'echo＝A 的脚本全文（projectBatchEntry 让出投影——投影丢 echo 键则本断言红）');
+    assert.equal(entryA.echo_kind, 'script', 'echo_kind 供 render 取标签行');
+    assert.equal('echo_truncated' in entryA, false, '预算充足未截断不携带');
+    assert.equal(entryA.text, 'E22-BODY-A', 'A 的正文随条目');
+    assert.ok(!((b.outputs ?? []).some((item) => item.job_id === b.job_id)),
+      '让出者 B 自身（running）不入批');
+    const visible = rig.workflow.output.render(undefined, b).map((p) => p.text).join('\n');
+    assert.ok(visible.includes('Script:'), '模型可见文本含脚本标签行（让出 render 拼 echo 块）');
+    assert.ok(visible.includes('E22-SCRIPT-A'), '脚本原文进可见文本');
+    const entry = ledger.jobs.get(a.job_id);
+    assert.equal(entry.echoAttached, true, '一次性状态置位（同窗后续载体不再附上）');
+    assert.equal(entry.deliveredFact?.via, 'wait', '让出载体认领（完成消息让位不重复）');
+  } finally {
+    await rig.dispose();
+  }
+});
+
 // ── 入口检查（R55 判据族在统一等待上的工具级回归；inbox 由 rig.parent 直接控制）──────
 //
 // 旧 wait-job/wait-agent 两份测试退役时，入口检查的工具级用例（先到消息的分流与
