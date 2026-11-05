@@ -69,8 +69,9 @@ const MUTATIONS = [
   {
     id: '①',
     what: '值字段绕开自绘壳（裸 input：无 label 绑定、无说明行/读数、无徽标）',
-    // 现行架构（设计 §5.5）：17 个字段统一走自绘 FieldShell（label 绑定/说明行/徽标
-    // 都在壳上），不再使用官方 SettingsValueField——旧变异打在已死的调用上恒绿。
+    // 现行架构（设计 §5.5）：19 个字段统一走自绘 FieldShell（label 绑定/说明行/徽标
+    // 都在壳上），第 20 个字段 boundPresets 是绑定块、不用壳——旧变异打在已死的
+    // 官方 SettingsValueField 调用上恒绿。
     // 等价的缺陷回潮＝值字段分支提前 return 裸 input，壳的三件套全部丢失。
     apply: (text) => text.replace(
       '    control = React.createElement("input", {\n      id: props.id,\n      className: "ats-value-input",',

@@ -136,7 +136,7 @@ export function runRegistration(text) {
  *
  * @param {{ pageKind?: string, sectionPresent?: boolean, fieldCount?: number, rowsAfterSection?: boolean, rowConfigureControls?: number }} dom
  *   页面读数（探针从 DOM 读）。
- * @param {string[]} [expectedKeys] 代码侧的字段键（`lib/config.js` 的 `BUDGET_FIELD_KEYS`）。
+ * @param {string[]} [expectedKeys] 代码侧的字段键（`lib/config.js` 的 `SETTING_FIELD_KEYS`）。
  * @returns {{ ok: boolean, detail: string }} 判据结论与读数。
  */
 export function judgePlacement(dom, expectedKeys) {
@@ -167,7 +167,7 @@ export function judgePlacement(dom, expectedKeys) {
  * @param {{ count?: number, readouts?: string[], readoutFields?: string[], keys?: string[], writable?: boolean[], failed?: boolean }} form
  *   页面读数（`keys`/`writable`/`readoutFields` 由探针从 DOM 的 `id`/`disabled` 与说明行读出；
  *   `failed` = 页脚出现失败文案）。
- * @param {string[]} [expectedKeys] 代码侧的字段键（`lib/config.js` 的 `BUDGET_FIELD_KEYS`）。
+ * @param {string[]} [expectedKeys] 代码侧的字段键（`lib/config.js` 的 `SETTING_FIELD_KEYS`）。
  * @param {string[]} [msKeys] 代码侧的毫秒字段键（`lib/config.js` 的 `MS_FIELD_KEYS`）。
  * @returns {{ ok: boolean, detail: string }} 判据结论与读数。
  */
@@ -234,7 +234,9 @@ export function judgeReadoutFollows(before, after, expected) {
 }
 
 /**
- * 字段帮助按钮的**静态判据**（需求 §5.5/§5.6·设计 §5.5：17 个字段各有带圈问号按钮）。
+ * 字段帮助按钮的**静态判据**（需求 §5.5/§5.6·设计 §5.5：全部字段各有带圈问号按钮——
+ * 值控件、布尔与 boundPresets 绑定块的行都有该按钮，期望集合按 `SETTING_FIELD_KEYS`
+ * 全量核对）。
  *
  * 逐项按身份核对（不只数个数——少一个按钮照数不减）：
  * ① 每个期望字段键都有一个 `aria-controls="plugin-config-<键>-help"` 的按钮；
@@ -244,7 +246,7 @@ export function judgeReadoutFollows(before, after, expected) {
  *
  * @param {{ helpButtons?: Array<{controls: string, type: string, expanded: boolean, label: string}> }} dom
  *   页面读数（探针从 DOM 读按钮的 aria-controls 去前缀身份、type、aria-expanded、aria-label）。
- * @param {string[]} [expectedKeys] 代码侧的字段键（四组并集）。
+ * @param {string[]} [expectedKeys] 代码侧的字段键（`SETTING_FIELD_KEYS` 六组全量）。
  * @returns {{ ok: boolean, detail: string }} 判据结论与读数。
  */
 export function judgeHelpButtons(dom, expectedKeys) {

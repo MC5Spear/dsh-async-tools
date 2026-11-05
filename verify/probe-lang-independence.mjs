@@ -22,7 +22,7 @@ import { rpc, transcriptOf, localConfig } from './_rpc.mjs';
 import { instanceCredentials } from '../tools/_local-config.mjs';
 import { judgeLangIndependence, judgeLangRestored } from './lang-judgements.mjs';
 import { readNs, patchNs } from './_r28-helpers.mjs';
-import { BUDGET_FIELD_KEYS, LANG_FIELD_KEYS, FLAG_FIELD_KEYS, ASK_FIELD_KEYS } from '../lib/config.js';
+import { SETTING_FIELD_KEYS } from '../lib/config.js';
 
 const { base: BASE, token } = instanceCredentials(localConfig);
 const SHOTS = join(localConfig.evidenceDir, 'shots');
@@ -128,15 +128,19 @@ try {
     await clickBy(`[...document.querySelectorAll('*')].find((n) => (n.getAttribute('aria-label') || '') === '查看 dsh-async-tools')`, '查看 dsh-async-tools');
     await sleep(2500);
   };
-  /** 读设置表单的可见标签、字段身份，以及下拉的**当前显示值**（控件身份 = id 去前缀，设计 §5.5）。 */
+  /** 读设置表单的可见标签、字段行身份，以及下拉的**当前显示值**（行身份 = 帮助锚
+   *  aria-controls 去前缀——值控件、布尔与 boundPresets 绑定块都有该按钮，20 行
+   *  全覆盖；设计 §5.5。控件 id 前缀选会误捞绑定块复选框，不用那条通道）。 */
   const readForm = () => evaluate(page, `(() => {
     const section = document.querySelector('[data-plugin-config]');
     if (section === null) return { labels: [], names: [], selectValues: [] };
-    // 只收控件本体（input/select）——按 id 前缀选会连说明行 p（*-message）一起捞进来。
-    const controls = [...section.querySelectorAll('input[id^="plugin-config-"], select[id^="plugin-config-"]')];
+    const keyOfHelp = (n) => (n.getAttribute('aria-controls') || '').replace('plugin-config-', '').replace(/-help$/, '');
     return {
-      labels: [...section.querySelectorAll('label[for^="plugin-config-"]')].map((n) => n.textContent.trim()),
-      names: controls.map((n) => n.id.slice('plugin-config-'.length)),
+      // 字段行标签（.ats-enum-head 内的 .ats-enum-label，含布尔行与绑定块——
+      // 不用 label[for^] 前缀选，那会连绑定块的预设条目 label 一起捞进来）。
+      labels: [...section.querySelectorAll('.ats-enum-field .ats-enum-head .ats-enum-label')]
+        .map((n) => n.textContent.trim()),
+      names: [...section.querySelectorAll('.ats-help-button')].map(keyOfHelp),
       selectValues: [...section.querySelectorAll('select[id^="plugin-config-"]')]
         .map((n) => [n.id.slice('plugin-config-'.length), n.value])
     };
@@ -194,10 +198,9 @@ try {
   await screenshot(page, join(SHOTS, 'lang-03-uilang-en.png'));
 
   console.log('· 4/4 判据 + 复原');
-  // 四组全取：这条判据要证的正是"换语言**不动**字段集合"，
-  // 只数两组（12 个）的话，开关与提问接管四个字段的在场/缺席它根本看不见。
-  const expectedFields = BUDGET_FIELD_KEYS.length + LANG_FIELD_KEYS.length
-    + FLAG_FIELD_KEYS.length + ASK_FIELD_KEYS.length;
+  // **全量键集**（`SETTING_FIELD_KEYS` 六组拼接，20 行）：这条判据要证的正是
+  // "换语言**不动**字段集合"，少看一组，那组字段的在场/缺席它就看不见。
+  const expectedFields = SETTING_FIELD_KEYS.length;
   const verdict = judgeLangIndependence({
     labels0: form0.labels, labels1: form1.labels, labels2: form2.labels,
     names0: form0.names, names2: form2.names,

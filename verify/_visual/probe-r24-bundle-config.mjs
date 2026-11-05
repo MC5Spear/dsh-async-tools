@@ -5,11 +5,14 @@
  * 不进任何组件行子页——设置区落点是 `plugins.bundle.config`，宿主把该槽渲染在
  * 插件页的**描述与组件行之间**（`dsh-client-ui-plugin-manager/lib/client.js:2522`）。
  *
- * 判据段（设计 §5.3 口径；控件身份 = `id`，读数 = 说明行两段）：
+ * 判据段（设计 §5.3 口径；行身份 = 帮助锚 aria-controls，控件身份 = `id`，读数 = 说明行两段）：
  * ① **放置**：页面是插件页（`[data-plugin-detail="dsh-async-tools"]`）、设置区在插件页内、
  *    排在组件行**之前**，且组件行里**没有** configure 控件；
- * ② 设置区渲染出四组全部字段（值字段 `[id^="plugin-config-"]`；布尔官方 Switch 按行内
- *    帮助锚的 aria-controls 身份读——设计 §5.5：Switch 无障碍名走 label 属性），逐项核对；
+ * ② 设置区渲染出六组全部字段（`lib/config.js` 的 `SETTING_FIELD_KEYS` 全量；值字段
+ *    input/select 按 `id` 前缀取并**排除绑定块复选框**——复选框 id 形如
+ *    `plugin-config-boundPresets-<预设id>`；布尔官方 Switch 与 boundPresets 绑定块
+ *    按行内帮助锚的 aria-controls 身份读——设计 §5.5：Switch 无障碍名走 label 属性），
+ *    逐项核对；绑定块另有专项判据（②b：说明行 `-message` 段与「刷新」按钮在场）；
  * ③ 毫秒字段的说明行带秒数读数段（两段口径：生效段恒在；只数个数抓不到"读数挂错字段"）；
  * ④-0 **输入读数实时**：不保存、只在输入框键入 → 输入段当场变（含亚 10 ms 形状）；
  * ④ 改一个字段 → 保存 → 等待态 = 保存按钮从「保存中…」恢复且重新可点；成功判据 =
@@ -17,8 +20,9 @@
  *    新值的换算（这条同时证明卡片订阅了控制器：不订阅就永远不会用新快照重渲染）；
  * ⑤ 复原（清空该字段再保存）→ 落盘覆盖消失、字段与两段读数回到默认值、清空时输入段
  *    换成 — 占位（不给秒数）；
- * ⑥ 字段帮助（需求 §5.5/§5.6·设计 §5.5）：17 个字段各有带圈问号按钮（type=button、
- *    aria-controls=<id>-help、aria-expanded=false、可访问名走 help.a11yName 模板）；
+ * ⑥ 字段帮助（需求 §5.5/§5.6·设计 §5.5）：每个字段各有带圈问号按钮（期望集合＝
+ *    全量 `SETTING_FIELD_KEYS`；按钮 type=button、aria-controls=<id>-help、
+ *    aria-expanded=false、可访问名走 help.a11yName 模板）；
  *    点击 defaultYieldMs 的按钮 → 展开区（role=region、\n\n 分段 ≥ 2、首段=技术标识行）、
  *    控件 aria-describedby 并入帮助区 id、保存启用状态不变（无副作用）；再点收起。
  *
@@ -29,7 +33,7 @@ import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { launch, openPage, evaluate, findBrowser, waitFor, screenshot } from './cdp.mjs';
 import { judgeConfigForm, judgeHelpButtons, judgeHelpInteraction, judgePlacement, judgeReadoutFollows, judgeRoundTrip } from '../r24-judgements.mjs';
-import { BUDGET_FIELD_KEYS, LANG_FIELD_KEYS, FLAG_FIELD_KEYS, ASK_FIELD_KEYS, MS_FIELD_KEYS } from '../../lib/config.js';
+import { SETTING_FIELD_KEYS, MS_FIELD_KEYS } from '../../lib/config.js';
 import { instanceCredentials, loadLocalPlaneOrSkip } from '../../tools/_local-config.mjs';
 
 const localConfig = await loadLocalPlaneOrSkip('verify/_visual/probe-r24-bundle-config.mjs');
@@ -86,22 +90,33 @@ try {
   const reading = await evaluate(page, `(() => {
     const bundleRoot = document.querySelector('[data-plugin-detail="dsh-async-tools"]');
     const section = document.querySelector('[data-plugin-config]');
-    // 只收控件本体——按 id 前缀选会连说明行 p（*-message）一起捞进来，身份就多了一倍。
-    // 值字段（input/select）按 id 前缀；布尔字段是官方 P.Switch（设计 §5.5：Switch 不吃
-    // id prop，无障碍名走 label 属性），其身份按**同字段容器**里帮助按钮的
-    // aria-controls（plugin-config-<key>-help）读出——行归属即身份。
+    // 只收控件本体（input/select）并**排除绑定块复选框**——复选框 id 形如
+    // plugin-config-boundPresets-<预设id>，按 id 前缀选会误捞进来（说明行 p
+    // （*-message）同理不收）。
+    // 值字段（input/select）按 id 前缀；布尔字段是官方 P.Switch（设计 §5.5：Switch
+    // 不吃 id prop，无障碍名走 label 属性）与 boundPresets 绑定块（无单一控件本体），
+    // 其身份按**同字段容器**里帮助按钮的 aria-controls（plugin-config-<key>-help）
+    // 读出——行归属即身份。
     const controls = section === null
       ? []
-      : [...section.querySelectorAll('input[id^="plugin-config-"], select[id^="plugin-config-"]')];
-    const flagKeys = [];
-    const flagWritable = [];
+      : [...section.querySelectorAll('input[id^="plugin-config-"]:not([type="checkbox"]), select[id^="plugin-config-"]')];
+    const anchorKeys = [];
+    const anchorWritable = [];
     if (section !== null) {
       for (const hb of section.querySelectorAll('.ats-help-button')) {
         const container = hb.closest('.ats-enum-field');
+        const key = (hb.getAttribute('aria-controls') || '').replace('plugin-config-', '').replace(/-help$/, '');
         const sw = container === null ? null : container.querySelector('button[role="switch"]');
         if (sw !== null) {
-          flagKeys.push((hb.getAttribute('aria-controls') || '').replace('plugin-config-', '').replace(/-help$/, ''));
-          flagWritable.push(sw.disabled !== true);
+          anchorKeys.push(key);
+          anchorWritable.push(sw.disabled !== true);
+        } else if (!controls.some((c) => c.id === 'plugin-config-' + key)) {
+          // 绑定块行（boundPresets）：可写读恒在的「刷新」按钮（loading 态短暂
+          // disabled，装载稳定后取数；error 态另有「重试」）。
+          const refresh = container === null ? null
+            : [...container.querySelectorAll('button')].find((b) => /^(刷新|Refresh)$/.test(b.textContent.trim()));
+          anchorKeys.push(key);
+          anchorWritable.push(refresh !== undefined && refresh !== null && refresh.disabled !== true);
         }
       }
     }
@@ -132,20 +147,25 @@ try {
     return {
       pageKind: bundleRoot !== null ? 'bundle' : (section !== null ? 'row' : 'unknown'),
       sectionPresent: section !== null,
-      count: controls.length + flagKeys.length,
-      fieldCount: controls.length + flagKeys.length,
+      count: controls.length + anchorKeys.length,
+      fieldCount: controls.length + anchorKeys.length,
       rowsAfterSection: order,
       rowConfigureControls: rowControls.length,
-      keys: [...controls.map((n) => n.id.slice('plugin-config-'.length)), ...flagKeys],
-      writable: [...controls.map((n) => n.disabled !== true && n.readOnly !== true), ...flagWritable],
+      keys: [...controls.map((n) => n.id.slice('plugin-config-'.length)), ...anchorKeys],
+      writable: [...controls.map((n) => n.disabled !== true && n.readOnly !== true), ...anchorWritable],
       readouts: seconds,
       readoutFields: readoutKeys,
-      labels: section === null ? [] : [...section.querySelectorAll('label[for^="plugin-config-"]')]
+      // 字段行标签（.ats-enum-head 内的 .ats-enum-label）——含布尔行；label[for^]
+      // 前缀选会连绑定块的预设条目 label 一起捞进来，不用于判据、只作日志。
+      labels: section === null ? [] : [...section.querySelectorAll('.ats-enum-field .ats-enum-head .ats-enum-label')]
         .map((n) => n.textContent.trim()),
+      // 绑定块（boundPresets）专项读数（②b 判据）。
+      bindingMessage: document.getElementById('plugin-config-boundPresets-message') !== null,
+      bindingRefresh: section !== null && [...section.querySelectorAll('button')].some((b) => /^(刷新|Refresh)$/.test(b.textContent.trim())),
       failed: document.querySelector('[data-plugin-config] .failed') !== null
     };
   })()`);
-  // —— ⑥ 字段帮助·静态判据：17 个按钮逐项按 aria-controls 身份核对（不只数个数）——
+  // —— ⑥ 字段帮助·静态判据：全量按钮逐项按 aria-controls 身份核对（不只数个数）——
   const helpReading = await evaluate(page, `(() => {
     const section = document.querySelector('[data-plugin-config]');
     const buttons = section === null ? [] : [...section.querySelectorAll('.ats-help-button')];
@@ -160,15 +180,18 @@ try {
   })()`);
   // 判据本体在 `verify/r24-judgements.mjs` 的纯函数里（取数在这里、判据在那里），
   // 这样 `verify/mutate-r24-ui.mjs` 能用变异证明这些判据可被改坏打成红。
-  // 四组**全要**（键集的单一来源是 `lib/config.js`）。判据少看几个字段
-  // 不会报错，只会安静地少测。
-  const EXPECTED_KEYS = [...BUDGET_FIELD_KEYS, ...LANG_FIELD_KEYS, ...FLAG_FIELD_KEYS, ...ASK_FIELD_KEYS];
+  // **全量**：键集的单一来源是 `lib/config.js` 的 `SETTING_FIELD_KEYS`（六组拼接）。
+  // 判据少看几个字段不会报错，只会安静地少测。
+  const EXPECTED_KEYS = [...SETTING_FIELD_KEYS];
   const placementVerdict = judgePlacement(reading, EXPECTED_KEYS);
   check('① 设置区在插件页上、排在组件行之前、组件行里没有 configure 控件',
     placementVerdict.ok, placementVerdict.detail);
   const formVerdict = judgeConfigForm(reading, EXPECTED_KEYS, MS_FIELD_KEYS);
-  check(`②③ 设置区逐项在场且可写（${String(EXPECTED_KEYS.length)} 个字段，四组全取，id 身份与代码一致）+ 秒数读数长在 ${String(MS_FIELD_KEYS.length)} 个毫秒字段上（两段口径）`,
+  check(`②③ 设置区逐项在场且可写（${String(EXPECTED_KEYS.length)} 个字段，六组全取，行身份与代码一致）+ 秒数读数长在 ${String(MS_FIELD_KEYS.length)} 个毫秒字段上（两段口径）`,
     formVerdict.ok, `${formVerdict.detail}；标签=${reading.labels.join(', ').slice(0, 130)}`);
+  check('②b 绑定块专项：boundPresets 说明行（-message 段）与「刷新」按钮在场',
+    reading.bindingMessage === true && reading.bindingRefresh === true,
+    `message=${String(reading.bindingMessage)} 刷新=${String(reading.bindingRefresh)}`);
   const helpVerdict = judgeHelpButtons(helpReading, EXPECTED_KEYS);
   check(`⑥-a 字段帮助按钮逐项在场（${String(EXPECTED_KEYS.length)} 个，aria-controls 身份核对；需求 §5.5/§5.6）`,
     helpVerdict.ok, helpVerdict.detail);

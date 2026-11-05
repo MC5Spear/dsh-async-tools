@@ -1,17 +1,22 @@
 /**
- * 视觉探针：**本包设置表单与官方设置表单的形态一致性**（设计 §5.3 浏览器入口与官方表单）。
+ * 视觉探针：**本包设置表单的形态回归**（设计 §5.3 浏览器入口）。
  *
  * ## 判据分三层
  *
- * 1. **computed style 并排对比**（可失败、可复现）：把本包插件页上的字段（官方
- *    `SettingsValueField` + 自绘枚举 select）与**官方设置页自己的**字段逐项比——
- *    度量（高度/圆角/字号/内边距/边框）、颜色（底色/文字色对主题变量的解析）。
- *    值字段控件已同源（官方组件），这条的余量主要落在**自绘的枚举 select**上；
- *    允许的差异只有两项：官方没有的枚举控件、官方没有的秒数读数（生效 + 输入两段）。
- * 2. **结构判据**（设计 §5.3 的真机环境）：四组全部字段（`lib/config.js` 现读，现为 17 个）
- *    各 = label 行（for 绑定）+
+ * 1. **控件度量对照官方声明值参考表**（可失败、可复现）：本卡值字段/枚举控件本体
+ *    是自绘原生 input/select（client.js 统一字段壳）；官方件在场＝`SettingsForm`
+ *    框架、`SettingsFormModel`＋spec、布尔控件的官方 `P.Switch` 与图标——官方
+ *    `SettingsValueField` 未用于值字段（枚举/布尔官方没有字段壳，其 help 图标
+ *    硬编码带圈 i、不可配置）。度量逐项对照官方 `fields.module.css` 的声明值
+ *    常量（34/12/13/12/.5px，写死参考表）；颜色断言走主题变量解析，不写死档位。
+ *    **不做官方设置页运行时并排取样**：官方设置对话框控件是另一组件族（灰底药丸
+ *    36px），拿它并排只会制造假红——官方同族证据见第 ② 段的主题令牌实证。
+ * 2. **结构判据**（设计 §5.3 的真机环境）：六组全部字段（`lib/config.js` 的
+ *    `SETTING_FIELD_KEYS` 现读，六组全量 20；末行是 boundPresets 绑定块，身份
+ *    同样经行内帮助锚读出）各 = label 行（for 绑定）+
  *    整行控件 + 说明行（aria-describedby 指向）；相邻字段之间 0.5px 分隔线（读计算样式）；
- *    页脚只有「保存」一个动作按钮。
+ *    页脚只有「保存」一个动作按钮；字段区合法的其余按钮只有枚举的「恢复默认」
+ *    与绑定块的「刷新」（error 态另有「重试」）。
  * 3. **截图**（给人看 + 给有视觉功能的子代理审）：每主题两张视口图——顶部一张＋
  *    内层容器滚到底一张（卡片在内层滚动容器里，`captureBeyondViewport` 对"只有
  *    内层容器滚"的页面无效，页脚与末尾字段必须真滚到位再拍）＋浅色枚举展开图
@@ -31,16 +36,16 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { launch, openPage, evaluate, findBrowser, waitFor, screenshot } from './cdp.mjs';
-import { BUDGET_FIELD_KEYS, LANG_FIELD_KEYS, FLAG_FIELD_KEYS, ASK_FIELD_KEYS, MS_FIELD_KEYS } from '../../lib/config.js';
+import { SETTING_FIELD_KEYS, MS_FIELD_KEYS } from '../../lib/config.js';
 import { instanceCredentials, loadLocalPlaneOrSkip } from '../../tools/_local-config.mjs';
 
 const localConfig = await loadLocalPlaneOrSkip('verify/_visual/probe-card-visual.mjs');
 const { base: BASE, token } = instanceCredentials(localConfig);
 const SHOTS = join(localConfig.evidenceDir, 'shots');
 const LOGS = join(localConfig.evidenceDir, 'logs');
-// 四组**全要**。判据少看几个字段不会报错，只会安静地少测；
-// 名单的单一来源是 `lib/config.js` 的四组键集合。
-const EXPECTED_KEYS = [...BUDGET_FIELD_KEYS, ...LANG_FIELD_KEYS, ...FLAG_FIELD_KEYS, ...ASK_FIELD_KEYS];
+// **全量**：`lib/config.js` 的 `SETTING_FIELD_KEYS`（六组拼接）是键集的单一来源，
+// 加组时探针自动跟随。判据少看几个字段不会报错，只会安静地少测。
+const EXPECTED_KEYS = [...SETTING_FIELD_KEYS];
 
 const results = [];
 /**
@@ -106,15 +111,19 @@ try {
     const pick = ${PICK};
     const section = document.querySelector('[data-plugin-config]');
     if (section === null) return { found: false };
-    // 只收控件本体（input/select）——按 id 前缀选会连说明行 p（*-message）一起捞进来。
-    const controls = [...section.querySelectorAll('input[id^="plugin-config-"], select[id^="plugin-config-"]')];
-    // 字段行锚 = 帮助按钮（.ats-help-button）所在的 .ats-enum-field 容器——值字段与
-    // 布尔字段（官方 P.Switch，不吃 id prop——设计 §5.5）都有；17 个容器即 17 行。
+    // 只收控件本体（input/select），并排除绑定块复选框——复选框 id 形如
+    // plugin-config-boundPresets-<预设id>，按 id 前缀选会误捞进控件读数
+    // （说明行 p（*-message）同理不收）。
+    const controls = [...section.querySelectorAll('input[id^="plugin-config-"]:not([type="checkbox"]), select[id^="plugin-config-"]')];
+    // 字段行锚 = 帮助按钮（.ats-help-button）所在的 .ats-enum-field 容器——值字段、
+    // 布尔字段（官方 P.Switch，不吃 id prop——设计 §5.5）与 boundPresets 绑定块
+    // 都有；20 个容器即 20 行（19 个 FieldShell 字段＋绑定块）。
     // 布尔字段判定 = 行内有 button[role="switch"]（与 probe-r24 的口径一致）。
     const helpButtons = [...section.querySelectorAll('.ats-help-button')];
     const keyOfHelp = (n) => (n.getAttribute('aria-controls') || '').replace('plugin-config-', '').replace(/-help$/, '');
     const fieldRows = helpButtons.map((hb) => hb.closest('.ats-enum-field'));
     const booleanRows = fieldRows.filter((row) => row !== null && row.querySelector('button[role="switch"]') !== null);
+    const booleanKeys = booleanRows.map((row) => keyOfHelp(row.querySelector('.ats-help-button')));
     const messageOf = (ctl) => {
       const described = ctl.getAttribute('aria-describedby') || '';
       const node = described === '' ? null : document.getElementById(described);
@@ -129,12 +138,14 @@ try {
       // 布尔字段的可见标签是 .ats-enum-label 文本（P.Switch 不接 label[for]，两种
       // 写法渲染相同；这里只证明「有可见标签文本」，不要求绑定形态）。
       booleanLabels: booleanRows.map((row) => (row.querySelector('.ats-enum-label')?.textContent ?? '').trim()),
+      booleanKeys,
       // 布尔行的说明行按 id 全局在场核对（官方 Switch 未接 aria-describedby，
       // 不能用值字段那条 describedby 通道——那是结构审查登记项，不是视觉判据）。
-      booleanMessages: booleanRows.map((row) => {
-        const key = (row.querySelector('.ats-help-button')?.getAttribute('aria-controls') || '').replace('plugin-config-', '').replace(/-help$/, '');
-        return key !== '' && document.getElementById('plugin-config-' + key + '-message') !== null;
-      }),
+      booleanMessages: booleanKeys.map((key) => key !== '' && document.getElementById('plugin-config-' + key + '-message') !== null),
+      // 绑定块（boundPresets）专项：说明行 -message 段与恒在的「刷新」按钮在场
+      //（error 态另渲染「重试」，合法性由判据 5 的允许清单覆盖）。
+      bindingMessage: document.getElementById('plugin-config-boundPresets-message') !== null,
+      bindingRefresh: [...section.querySelectorAll('button')].some((b) => /^(刷新|Refresh)$/.test(b.textContent.trim())),
       messages: controls.map(messageOf),
       readoutSpans: section.querySelectorAll('span.ats-sec-effective').length,
       valueInputs: controls.filter((n) => n.tagName === 'INPUT').map(pick),
@@ -144,7 +155,7 @@ try {
         .filter((b) => /^(保存|Save)$/.test(b.textContent.trim())).map(pick),
       otherButtons: [...section.querySelectorAll('button')]
         .filter((b) => !/^(保存|Save)$/.test(b.textContent.trim()))
-        .map((b) => b.textContent.trim()).slice(0, 8),
+        .map((b) => b.textContent.trim()).slice(0, 12),
       themeVars: (() => {
         const s = getComputedStyle(document.body);
         return {
@@ -160,19 +171,24 @@ try {
   } else {
     check('能定位到本包设置区（[data-plugin-config]）', true, `字段 ${String(ours.keys.length)} 个`);
     // 结构判据：身份、label 绑定、说明行、分隔线。
-    // 身份按**集合**比（不比 DOM 顺序——四组键的拼装顺序与渲染顺序本就不必一致）。
-    check(`判据1：${String(EXPECTED_KEYS.length)} 个字段的 id 身份与代码逐项一致（集合等价）`,
+    // 身份按**集合**比（不比 DOM 顺序——六组键的拼装顺序与渲染顺序本就不必一致）。
+    check(`判据1：${String(EXPECTED_KEYS.length)} 个字段行的帮助锚身份与代码逐项一致（集合等价）`,
       ours.keys.length === EXPECTED_KEYS.length
         && JSON.stringify([...new Set(ours.keys)].sort()) === JSON.stringify([...EXPECTED_KEYS].sort()),
       ours.keys.join(','));
-    check('判据1：值字段有 label[for] 绑定、布尔字段有可见标签文本',
-      ours.labelFor.length === EXPECTED_KEYS.length - ours.booleanLabels.length
-        && ours.labelFor.every((f) => EXPECTED_KEYS.includes(f.slice('plugin-config-'.length)))
+    // label 通道按集合过滤比：label[for^] 前缀选会连绑定块的预设条目 label
+    //（plugin-config-boundPresets-<预设id>）一起捞进来——过滤到期望键集后，
+    // 非布尔字段（值控件 15＋绑定块 1）必须各有 label[for]，布尔字段走可见标签文本。
+    const labelKeys = [...new Set(ours.labelFor.map((f) => f.slice('plugin-config-'.length)))]
+      .filter((k) => EXPECTED_KEYS.includes(k));
+    const expectedLabelKeys = EXPECTED_KEYS.filter((k) => !ours.booleanKeys.includes(k));
+    check('判据1：非布尔字段有 label[for] 绑定、布尔字段有可见标签文本',
+      JSON.stringify(labelKeys.sort()) === JSON.stringify([...expectedLabelKeys].sort())
         && ours.booleanLabels.every((t) => t !== ''),
-      `label ${String(ours.labelFor.length)} 个；布尔标签 ${String(ours.booleanLabels.filter((t) => t !== '').length)}/${String(ours.booleanLabels.length)}`);
-    check('判据2：每个字段有说明行（值字段 aria-describedby 指向在场；布尔行内 -message 段在场）',
-      ours.messages.every((m) => m.present && m.id !== '') && ours.booleanMessages.every(Boolean),
-      `说明行 ${String(ours.messages.filter((m) => m.present).length + ours.booleanMessages.filter(Boolean).length)}/${String(EXPECTED_KEYS.length)}`);
+      `label 字段 ${String(labelKeys.length)}/${String(expectedLabelKeys.length)}（label[for] 原始 ${String(ours.labelFor.length)} 个，多出的是预设条目）；布尔标签 ${String(ours.booleanLabels.filter((t) => t !== '').length)}/${String(ours.booleanLabels.length)}`);
+    check('判据2：每个字段有说明行（值字段 aria-describedby 指向在场；布尔行内 -message 段在场；绑定块 -message 段在场）',
+      ours.messages.every((m) => m.present && m.id !== '') && ours.booleanMessages.every(Boolean) && ours.bindingMessage === true,
+      `说明行 ${String(ours.messages.filter((m) => m.present).length + ours.booleanMessages.filter(Boolean).length + (ours.bindingMessage === true ? 1 : 0))}/${String(EXPECTED_KEYS.length)}`);
     check('判据2：相邻字段之间有分隔线（官方 0.5px；本机 DPR 下计算样式取整为 1px）',
       ours.separators.length === EXPECTED_KEYS.length - 1
         && ours.separators.every((w) => { const v = Number.parseFloat(w); return v > 0 && v <= 1; }),
@@ -180,9 +196,10 @@ try {
     check(`判据10：读数长在 ${String(MS_FIELD_KEYS.length)} 个毫秒字段的说明行里（换行 + 两段 span，值只写秒文本）`,
       ours.readoutSpans === MS_FIELD_KEYS.length,
       `生效段 span=${String(ours.readoutSpans)} 期望=${String(MS_FIELD_KEYS.length)}`);
-    check('判据5：页脚只有「保存」一个动作按钮（枚举的「恢复默认」除外）',
-      ours.saveButtons.length === 1 && ours.otherButtons.every((t) => t === '' || /恢复默认|Reset/.test(t)),
-      `save=${String(ours.saveButtons.length)} 其他=${ours.otherButtons.join('|')}`);
+    check('判据5：页脚只有「保存」一个动作按钮；字段区其余按钮仅枚举「恢复默认」与绑定块「刷新／重试」',
+      ours.saveButtons.length === 1 && ours.bindingRefresh === true
+        && ours.otherButtons.every((t) => t === '' || /恢复默认|Reset|刷新|Refresh|重试|Retry/.test(t)),
+      `save=${String(ours.saveButtons.length)} 绑定块刷新=${String(ours.bindingRefresh)} 其他=${ours.otherButtons.join('|')}`);
 
     // 度量参考表（官方 fields.module.css 的声明值；颜色走主题变量解析）。
     // 值字段圆角 = --dsw-radius-md（12px，fields.module.css .input 用它）；
@@ -222,7 +239,7 @@ try {
   // 本卡输入件的圆角与宿主 --dsw-radius-md 运行时解析值一致（.input 消费该 token）。
   const official = await evaluate(page, `(() => {
     const s = getComputedStyle(document.body);
-    const input = document.querySelector('[data-plugin-config] input[id^="plugin-config-"]');
+    const input = document.querySelector('[data-plugin-config] input[id^="plugin-config-"]:not([type="checkbox"])');
     return {
       radiusMd: s.getPropertyValue('--dsw-radius-md').trim(),
       radiusSm: s.getPropertyValue('--dsw-radius-sm').trim(),
@@ -268,7 +285,7 @@ try {
 
     // 控件底色跟主题走的实证：直接读本卡字段在当前主题下的计算值。
     const bg = await evaluate(page, `(() => {
-      const ctl = document.querySelector('[data-plugin-config] input[id^="plugin-config-"], [data-plugin-config] select[id^="plugin-config-"]');
+      const ctl = document.querySelector('[data-plugin-config] input[id^="plugin-config-"]:not([type="checkbox"]), [data-plugin-config] select[id^="plugin-config-"]');
       return ctl === null ? '' : getComputedStyle(ctl).backgroundColor;
     })()`);
     console.log(`  ${scheme} 主题下字段底色：${bg}`);
@@ -277,7 +294,7 @@ try {
     const shot = await screenshot(page, join(SHOTS, `card-${scheme}-top.png`),
       { width: 1500, height: 1000, fullPage: true });
     console.log(`  截图 ${scheme}-top：${String(shot.bytes)} B`);
-    // 内层滚动容器滚到底再拍一张：页脚「保存」与末尾字段（askExtendMs/askUiSeat）
+    // 内层滚动容器滚到底再拍一张：页脚「保存」与末尾的 boundPresets 绑定块
     // 只在这张里入镜——fullPage 截图对"内层容器滚"的页面截不到视口外内容。
     await evaluate(page, `(() => {
       const scrollers = [...document.querySelectorAll('*')].filter((n) => {
@@ -293,13 +310,13 @@ try {
     console.log(`  截图 ${scheme}-bottom：${String(shotBottom.bytes)} B`);
 
     // 整页图的可判性：页签 + 末字段标签 + 保存按钮都在 innerText 里。
-    // 末字段标签必须抄**真实标签全文**（「子代理创建后端」；拿缩写当断言子串
-    // 会恒假红）；布尔标签「命令静默失败提示」一并作证。
+    // 末字段是 boundPresets 绑定块，标签必须抄**真实标签全文**（「适用预设」；
+    // 拿键名缩写当断言子串会恒假红）。
     const view = await evaluate(page, `(() => {
       const text = document.body.innerText;
       return {
         hasTabs: text.includes('插件配置') || text.includes('插件列表'),
-        hasLastField: text.includes('子代理创建后端') || text.includes('待答问题显示方式'),
+        hasLastField: text.includes('适用预设') || text.includes('Applicable presets'),
         hasSave: text.includes('保存') || text.includes('Save')
       };
     })()`);
