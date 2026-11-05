@@ -22,6 +22,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { HOST_SKIP_REASON, loadOfflineSafe } from './_host-gate.mjs';
 
 /** `lib/` 目录的绝对路径。 */
@@ -510,6 +511,106 @@ test('T19：job_output 隐藏——agent/created 挂 agent 作用域 restrict，
     });
     assert.equal(lateCalls.length, 0, '行卸载后不再对新 Agent 挂隐藏（可逆性）');
   }
+});
+
+test('T20：tool:jobs 提示遮蔽——隐藏 job_output 的同一 Agent ctx 注册同名 scoped 段，指路改 async_wait（RA-HIDDEN-READER-PROMPT）', async (t) => {
+  const host = await loadHost();
+  if (host === undefined || Context === undefined) {
+    t.skip(HOST_SKIP_REASON);
+    return;
+  }
+  // 宿主 tool-jobs 行的 `tool:jobs` 系统提示段固定指路 job_output 收集结果；
+  // 本包隐藏该工具后指路即矛盾。修复＝在隐藏生效的同一 Agent ctx 上注册
+  // **同名** `tool:jobs` 段（dsh-system-prompt ScopedLayers 的 scoped 遮蔽
+  // 语义）——文案保留追踪/通知/job_kill 纪律，收集动作改指 async_wait 零等待。
+  const deliveryRows = ['async_run', 'async_wait', 'async_agent', 'async_workflow'];
+  for (const toolName of [...deliveryRows, 'async_list_subagent_models']) {
+    const { ctx } = makeContext(Context);
+    const fork = ctx.plugin(
+      { name: host.name, inject: host.inject, Config: host.Config, apply: host.apply },
+      { toolName }
+    );
+    await activate(fork);
+    const sectionCalls = [];
+    const effects = [];
+    const fakeAgent = {
+      id: `agent-shadow-${toolName}`,
+      ctx: {
+        tools: { restrict() { return () => {}; } },
+        effect(fn) { effects.push(fn); },
+        systemPrompt: {
+          section(spec) { sectionCalls.push(spec); return () => {}; },
+          getSectionOrder(name) { return name === 'TOOL_JOBS' ? 777 : NaN; }
+        }
+      }
+    };
+    ctx.emit('agent/created', { agent: fakeAgent });
+    if (deliveryRows.includes(toolName)) {
+      assert.equal(sectionCalls.length, 1, `${toolName}：恰注册一个遮蔽段`);
+      const spec = sectionCalls[0];
+      assert.equal(spec.name, 'tool:jobs', '同名段才构成 scoped 遮蔽（宿主 shadow 语义）');
+      assert.equal(spec.order, 777, '段序取宿主 TOOL_JOBS 档值（落位不变）');
+      assert.ok(spec.text.includes('async_wait'), '收集动作改指 async_wait 零等待领取');
+      assert.ok(spec.text.includes('job_kill'), '终止纪律逐字保留');
+      assert.ok(!spec.text.includes('job_output'), '遮蔽段不得再指路被隐藏的工具（RA-HIDDEN-READER-PROMPT 本体）');
+      assert.equal(effects.length, 2, 'restrict 与遮蔽段的处置句柄都挂 agent.ctx.effect（同生存期，随 Agent 回收）');
+      ctx.emit('agent/created', { agent: fakeAgent });
+      assert.equal(sectionCalls.length, 1, '同一 Agent 重复 created 不重复注册（与隐藏共用去重）');
+      // 降级①：agent.ctx 无 systemPrompt——监听器不外抛，隐藏不受影响。
+      const barePrompt = { id: 'agent-no-prompt', ctx: { tools: { restrict() { return () => {}; } }, effect() {} } };
+      ctx.emit('agent/created', { agent: barePrompt });
+      // 降级②：section 抛错——独立降级只记 warn，隐藏不被连坐（restrict 照挂）。
+      const restrictProbe = [];
+      ctx.emit('agent/created', {
+        agent: {
+          id: 'agent-prompt-throw',
+          ctx: {
+            tools: { restrict(p) { restrictProbe.push(p); return () => {}; } },
+            effect() {},
+            systemPrompt: { section() { throw new Error('layer conflict'); }, getSectionOrder() { return 1; } }
+          }
+        }
+      });
+      assert.equal(restrictProbe.length, 1, '提示遮蔽失败不连坐隐藏（两件事独立降级）');
+    } else {
+      assert.equal(sectionCalls.length, 0, '查询行不挂遮蔽段（与隐藏同口径，9.3.5 末条）');
+    }
+    await fork.dispose();
+  }
+});
+
+test('T20b：遮蔽段与宿主 tool:jobs 原文同步——除收集句外逐段逐字在场（宿主改版必红）', async (t) => {
+  const host = await loadHost();
+  if (host === undefined) {
+    t.skip(HOST_SKIP_REASON);
+    return;
+  }
+  // 宿主 dsh-tool-jobs 的全局 tool:jobs 段源文（守卫式读取：离线形态自跳过——
+  // 独立盲审风险点③的落地：遮蔽段静态复制宿主文案，宿主改版不会自动跟进）。
+  let hostSource;
+  try {
+    const require = createRequire(import.meta.url);
+    hostSource = readFileSync(require.resolve('@deepseek-ai/dsh-tool-jobs'), 'utf8');
+  } catch (error) {
+    if (['ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND', 'ENOENT'].includes(error?.code)) {
+      t.skip('宿主 dsh-tool-jobs 源不在本环境（离线形态）');
+      return;
+    }
+    throw error;
+  }
+  const shadow = host.JOBS_SHADOW_PROMPT_TEXT;
+  const includes = (fragment) =>
+    hostSource.includes(fragment) || hostSource.includes(fragment.replaceAll("'", "\\'"));
+  // 遮蔽段里**不属于收集句**的三个纪律段必须在宿主源码逐字在场（宿主改措辞
+  // 即红，人工同步遮蔽段后再绿——遮蔽段与宿主原文的差异被限定在收集指路）。
+  assert.ok(includes('Track every background job id you start.'), '追踪纪律句逐字同源');
+  assert.ok(includes("You are notified in-session when a job finishes — do not busy-poll or sleep on one; keep working on independent steps and do not duplicate a running job's work."), '通知与不重复纪律句逐字同源');
+  assert.ok(includes('and job_kill jobs that stopped mattering'), 'job_kill 终止尾段逐字同源');
+  // 收集句的宿主原形（job_output 指路）仍在场——替换锚未失效；宿主改写收集
+  // 句时不适用本遮蔽形态，必须重审（本断言与上面三段共同构成漂移报警）。
+  assert.ok(/collect every still-relevant job with job_output/.test(hostSource), '宿主收集句原形在场（job_output 指路）——锚失效即重审遮蔽段');
+  // 遮蔽段自身只改收集指路：除收集句外不引入 job_output 指路（T20 本体断言的补充）。
+  assert.ok(!shadow.includes('job_output'), '遮蔽段不指路被隐藏工具');
 });
 
 test('T3c：快照在场时行级委托键不丢——agent_preset 照常暴露（§2.3.1，P1 回归锁）', async (t) => {

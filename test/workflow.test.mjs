@@ -22,10 +22,14 @@ import { checkedTool, fakeAgent, fakeCtx, freezeTimers, inboxPayload } from './_
 
 // 宿主链动态守卫（lib/workflow.js、lib/wait.js → dsh-tools/descriptions）：
 // 离线形态锚缺席时本文件仍可加载，全部用例自跳过并打印理由（ci.yml offline 作业的契约）。
+// lib/delivery.js 同属宿主链（静态依赖 @deepseek-ai/dsh-llm）——账本经同一
+// 动态守卫装载（判据 C：测试文件不得静态闭包触达宿主链）。
 const workflowModule = await loadOfflineSafe('../lib/workflow.js');
 const waitModule = await loadOfflineSafe('../lib/wait.js');
+const deliveryModule = await loadOfflineSafe('../lib/delivery.js');
 const { createWorkflowTool: buildWorkflowTool } = workflowModule ?? {};
 const { createWaitTool: buildWaitTool } = waitModule ?? {};
+const { ledger } = deliveryModule ?? {};
 const hostTest = await hostTestFor('../lib/workflow.js', '../lib/wait.js');
 
 const createWorkflowTool = (ctx, config) => checkedTool(buildWorkflowTool(ctx, config));
@@ -182,6 +186,24 @@ hostTest('async_workflow（R34-b/R8）：宿主注册表拒绝 → 可读的启�
   );
   assert.equal(engine.calls.length, 0, '引擎不得启动（没有可取消的 run）');
   assert.equal(f.jobsFake.registeredSpecs.length, 0);
+});
+
+hostTest('async_workflow（RA-FIRSTWAIT-LEAK）：终态分支结算构造失败也注销等待登记', async () => {
+  // stopReason:'error' → 结局 failed → directSettle 的 settleNow 抛错原样重抛
+  //（与宿主前台 stopReasonError 同向）——该抛错出口必须同时注销 claimWait
+  // 的登记（验收 RA-FIRSTWAIT-LEAK 的 workflow 侧；与 async_run 同款缺陷形态）。
+  const { f, runs, agent, tool } = rig();
+  const exec = { agent, signal: new AbortController().signal };
+  const pending = tool.execute(BASE_ARGS, exec);
+  runs[0]._resolve({ stopReason: 'error', error: 'engine exploded', agentsStarted: 0, value: null });
+  await assert.rejects(
+    () => pending,
+    (error) => error.message === 'engine exploded',
+    'failed 结局按原错重抛（不包装）'
+  );
+  const subject = ledger.subjects.get(agent.id);
+  assert.ok(subject === undefined || subject.activeWaits.size === 0,
+    '结算构造失败出口必须注销等待登记（RA-FIRSTWAIT-LEAK）');
 });
 
 hostTest('async_workflow（R34-a）：无 agent 语境 → 拒绝且零注册零引擎', async () => {

@@ -23,7 +23,7 @@ import { checkedTool, inboxPayload } from './_helpers.mjs';
 // delivery.js 静态依赖 @deepseek-ai/dsh-llm（宿主链）——离线守卫禁止测试文件
 // 静态闭包触达宿主链，与 workflow/wait 同走 loadOfflineSafe 动态装载。
 const deliveryModule = await loadOfflineSafe('../lib/delivery.js');
-const { ledger, resetDeliveryLedger } = deliveryModule ?? {};
+const { ledger, resetDeliveryLedger, projectBatchEntry, terminalFacts } = deliveryModule ?? {};
 
 // 宿主链动态守卫：lib/workflow.js、lib/wait.js（→ dsh-tools）与真注册表依赖
 // （@deepseek-ai/cordis、@deepseek-ai/dsh-jobs-local——后者是宿主树内层包，不在本包
@@ -3164,8 +3164,10 @@ hostTest('T5 等待返回结构化字段：已知才有、未知则无键；stat
     jobsRead: async (jobId) => ({ chunks: [{ channel: 'stdout', text: `BODY-${String(jobId)}` }] })
   });
   try {
-    // 零退出条目先行：单独零等待 ext-t5b（两目标同一领取窗口会先触发 killed 目标、
-    // 另一目标不保证入批——分两次各自触发，断言面各自完整）。
+    // 一次零等待触发零退出目标 ext-t5b：批次除触发目标外，还按 RA-FOREIGN-
+    // DISCOVERY 捎带账本外已终态的 ext-t5（同一领取窗口的可用结果随批交付，
+    // 需求 9.3.2「内容随等待返回交付」）——两个条目的断言面在同一次返回上
+    // 各自完整（旧版分两次触发的前提是账本不发现外来终态，已不成立）。
     const okOutcome = await rig.waiter.execute(
       { wait_ms: 0, targets: [{ kind: 'job', id: 'ext-t5b' }] }, rig.exec()
     );
@@ -3178,23 +3180,121 @@ hostTest('T5 等待返回结构化字段：已知才有、未知则无键；stat
     assert.ok(okOut.status_line !== undefined && !okOut.status_line.includes('\n'),
       '零退出条目 status_line 仍单行（无追加行）');
 
+    // 捎带的 killed 条目（RA-FOREIGN-DISCOVERY＋RA-YIELD-FACTS 同批断言）：
+    const ride = okOutcome.delivered.find((row) => row.job_id === 'ext-t5');
+    assert.ok(ride !== undefined, '账本外终态作业随批捎带（9.3.2，不再要求显式点名）');
+    assert.equal(ride.exit_code, 143, 'killed 条目 exit_code 已知非零→携带');
+    assert.equal(ride.signal, 'SIGTERM', 'killed 条目 signal 已知→携带');
+    assert.ok(ride.detail.includes('T5-DIAG-A'), 'detail 首行在场');
+    assert.ok(ride.detail.includes('2 more diagnostic lines'), '多行 detail 尾接省略计数');
+    const rideOut = okOutcome.outputs.find((row) => row.job_id === 'ext-t5');
+    assert.ok(rideOut.status_line.includes('[killed by signal: SIGTERM]'), 'status_line 追加标记行（与完成消息同词）');
+    assert.ok(rideOut.status_line.includes('T5-DIAG-A'), 'status_line 追加诊断首行');
+    assert.equal(rideOut.exit_code, 143, 'outputs 条目同带结构化字段');
+
+    // 再以 ext-t5 为目标：正文已在前一批交付，同一最终结果不再重复入批
+    //（9.3.2「同一最终结果在正常交付中只出现一次」）；触发目标仍按终态
+    // 返回 killed 状态。
     const outcome = await rig.waiter.execute(
       { wait_ms: 0, targets: [{ kind: 'job', id: 'ext-t5' }] }, rig.exec()
     );
-    // 等待出口状态＝触发目标的终态（这里触发目标 ext-t5 是 killed）。
     assert.equal(outcome.status, 'killed', '前置：killed 目标已终态，零等待即完成');
-    const killed = outcome.delivered.find((row) => row.job_id === 'ext-t5');
-    assert.equal(killed.exit_code, 143, 'killed 条目 exit_code 已知非零→携带');
-    assert.equal(killed.signal, 'SIGTERM', 'killed 条目 signal 已知→携带');
-    assert.ok(killed.detail.includes('T5-DIAG-A'), 'detail 首行在场');
-    assert.ok(killed.detail.includes('2 more diagnostic lines'), '多行 detail 尾接省略计数');
-    const killedOut = outcome.outputs.find((row) => row.job_id === 'ext-t5');
-    assert.ok(killedOut.status_line.includes('[killed by signal: SIGTERM]'), 'status_line 追加标记行（与完成消息同词）');
-    assert.ok(killedOut.status_line.includes('T5-DIAG-A'), 'status_line 追加诊断首行');
-    assert.equal(killedOut.exit_code, 143, 'outputs 条目同带结构化字段');
+    assert.ok(!outcome.delivered.some((row) => row.job_id === 'ext-t5'),
+      '已交付正文不重复入批');
+    assert.ok(!outcome.outputs.some((row) => row.job_id === 'ext-t5'),
+      '已交付正文不重复渲染');
   } finally {
     await rig.dispose();
   }
+});
+
+hostTest('RA-FOREIGN-DISCOVERY：账本外终态作业读取失败 → 状态行＋readFailed 注记随批交回（可重试，不冒充空结果）', async () => {
+  // 发现路径的失败形态：入账成功、jobs.read 抛错——readSettled 按读取失败
+  // 定论（不写成空结果），条目以状态行＋结构化结局＋readFailed 注记（重试
+  // 出路）随批交付；等待出口本身不因发现失败而抛错。
+  const rig = await buildRig('fd1', [], {
+    jobsList: () => [
+      { id: 'ext-fd', status: 'failed', exitCode: 2, signal: null, detail: 'FD-DIAG-唯一诊断' }
+    ],
+    jobsRead: async () => { throw new Error('registry read exploded'); }
+  });
+  try {
+    const outcome = await rig.waiter.execute({ wait_ms: 0 }, rig.exec());
+    assert.equal(outcome.status, 'budget', '零等待无目标主出口照常（发现失败不放大成调用错误）');
+    const row = outcome.delivered.find((item) => item.job_id === 'ext-fd');
+    assert.ok(row !== undefined, '外来终态作业入批（发现路径）');
+    assert.equal(row.status, 'failed', '真实结局如实');
+    assert.equal(row.exit_code, 2, '已知非零退出码随行');
+    const out = outcome.outputs.find((item) => item.job_id === 'ext-fd');
+    assert.ok(out !== undefined, 'outputs 条目在场');
+    assert.ok(out.status_line.includes('FD-DIAG-唯一诊断'), '诊断首行进 status_line（必要结局不因读取失败丢失）');
+    assert.ok(String(out.note).includes('ext-fd'), 'readFailed 注记点名作业（重试出路）');
+    assert.equal(out.text, '', '读取失败不写成空结果——无正文即无 text 内容');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('RA-YIELD-FACTS：projectBatchEntry 投影——结局线索三载体逐字一致（单元锁）', async () => {
+  // 共享投影（delivery.projectBatchEntry/terminalFacts）是让出出口与统一
+  // 等待/完成消息的对齐基准：必要结局（标记行＋诊断首行＋结构化字段）已知
+  // 才有；note 读取失败优先于 lossy；零退出成功不添噪声键。
+  // ① 失败结局：非零退出码＋信号＋多行诊断。
+  const failed = projectBatchEntry({
+    jobId: 'job-yf-1',
+    terminal: { status: 'failed', exitCode: 5, signal: 'SIGTERM', detail: 'YF-DIAG-A\nYF-DIAG-B' },
+    chars: 12,
+    truncated: false,
+    text: 'YF-BODY'
+  }, 'zh');
+  assert.equal(failed.job_id, 'job-yf-1');
+  assert.equal(failed.exit_code, 5, '非零退出码已知才有');
+  assert.equal(failed.signal, 'SIGTERM', '信号已知才有');
+  assert.ok(failed.detail.includes('YF-DIAG-A'), 'detail 取诊断首行');
+  assert.ok(failed.detail.includes(t('zh', 'delivery.detailOverflow', { count: 1 })),
+    '多行诊断尾接省略计数');
+  assert.ok(failed.status_line.includes('YF-DIAG-A'), 'status_line 追加诊断首行');
+  assert.ok(failed.status_line.includes('SIGTERM'), 'status_line 追加标记行（与完成消息同词）');
+  assert.equal(failed.note, undefined, '非 lossy 非读取失败无 note');
+  assert.equal(failed.text, 'YF-BODY');
+  // ② 零退出成功：无标记行、无结构化字段、单行 status_line。
+  const ok = projectBatchEntry({
+    jobId: 'job-yf-2',
+    terminal: { status: 'completed', exitCode: 0 },
+    chars: 3,
+    truncated: false,
+    text: 'OK!'
+  }, 'zh');
+  assert.ok(!('exit_code' in ok) && !('signal' in ok) && !('detail' in ok), '零退出不添键');
+  assert.ok(!ok.status_line.includes('\n'), '零退出 status_line 单行');
+  // ③ 读取失败优先于 lossy（读取失败条目无正文，注记即重试出路）。
+  const readFailed = projectBatchEntry({
+    jobId: 'job-yf-3',
+    terminal: { status: 'failed', exitCode: 1 },
+    chars: 0,
+    truncated: false,
+    text: '',
+    lossy: true,
+    readFailed: true
+  }, 'zh');
+  assert.ok(String(readFailed.note).includes('job-yf-3'), 'readFailed 注记点名作业');
+  // ④ lossy 两态：有落盘副本给位置、无副本如实说明（落点用无盘符路径——
+  // R29-f 判据 12：交付范围代码与测试正文不写盘符字面量）。
+  const lossyKept = projectBatchEntry({
+    jobId: 'job-yf-4', terminal: { status: 'completed' }, chars: 5, truncated: false,
+    text: 'PART', lossy: true, spillPaths: ['spill/34/yf-part.txt']
+  }, 'zh');
+  assert.ok(String(lossyKept.note).includes('spill/34/yf-part.txt'), 'lossy 带落点');
+  const lossyGone = projectBatchEntry({
+    jobId: 'job-yf-5', terminal: { status: 'completed' }, chars: 5, truncated: false,
+    text: 'PART', lossy: true
+  }, 'zh');
+  assert.ok(!String(lossyGone.note).includes('spill/34/'), 'lossy 无落点不伪造位置');
+  // ⑤ terminalFacts 与投影内字段同源（三载体一致性锚）。
+  assert.deepEqual(
+    { ...terminalFacts({ status: 'failed', exitCode: 5, signal: 'SIGTERM', detail: 'YF-DIAG-A\nYF-DIAG-B' }, 'zh') },
+    { exit_code: failed.exit_code, signal: failed.signal, detail: failed.detail }
+  );
 });
 
 hostTest('T6 上界推导三层：单条目必要 ≤460、单批必要 ≤4600（10 条目）、可降级单条目渲染内 ≤2000', async () => {

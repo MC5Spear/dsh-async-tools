@@ -7,20 +7,26 @@
  * ## 探针在证什么
  *
  * `check-host-compat` 只核对**给定宿主树**的解析来源，不覆盖已安装插件在真实
- * runtime 实际取得的 peer 路径；此前「插件入口裸解析九项 DSH peer 缺席」也不
- * 证明运行装载失败——实测（2026-11-03）宿主装载器把插件的 `@deepseek-ai/*`
- * 依赖解析**重定向到宿主树**（profile 内明明装有 schemastery 副本，实际解析落
- * 在宿主树），标准 Node 解析口径的「裸解析」不反映装载行为。本探针在宿主进程
- * 内以 `module.registerHooks` 的 resolve 钩子观测，并做两层取证：
- * - observed：装载期插件文件实际发起的解析（实测只有配置模块——config.js 与
- *   agent-policy.js——被装载器读取，工具模块为懒装载）；
- * - follow：以插件文件为 parent 上下文主动解析全部目标包——走完整装载器解析
- *   链（含重定向），结果即插件模块装载时将取得的路径，把九项 DSH peer 的取得
- *   补齐为直接证据。
- * - 九项 DSH peer：结果必须落在宿主树 `node_modules` 内且版本与宿主 rc 相同；
+ * runtime 实际取得的 peer 路径；标准 Node 口径的「裸解析」也不反映宿主装载行为
+ * （装载器对九项 DSH peer 走专门路由）。本探针用三种手段、各司其职：
+ * - **装载期动态观测**（宿主进程内 `module.registerHooks` 的 resolve 钩子）：
+ *   观测插件文件实际发起的解析（实测只有配置模块——config.js 与
+ *   agent-policy.js——被装载器读取，工具模块为懒装载）；直接依赖
+ *   （schemastery／zod）就近取 profile 本地副本、版本与宿主一致的实测结论来自
+ *   这一层。
+ * - **运行装载决议复算（判据主锚）**：插件工具模块在宿主 Worker 线程装载，
+ *   外部进程的 resolve 钩子观测不到 Worker 内解析；装载映射的权威来源是宿主
+ *   自身公开导出的运行时决议表（`@deepseek-ai/dsh-app-boot` 的
+ *   `createRuntimeResolution`）——用同一函数、同一输入复算决议，逐条核对：
+ *   九项 DSH peer（profile 无本地候选、必走装载路由——决议复算即其装载映射的
+ *   直接来源）必须全部指向宿主树且版本与宿主 rc 相同；对直接依赖，决议表条目
+ *   只在其本地副本缺席时作为回退，正常安装不触发（ZOD-NESTED-01 的观察点）。
+ * - **主动裸解析（follow，辅助诊断，不作判据）**：以插件文件为 parent 走标准
+ *   Node 解析——结果不代表装载行为（直接依赖实际就近取副本、peer 走装载路
+ *   由，两者都不是裸解析结果），仅用于定位路径上有哪些副本。
  * - 配套 peer（cordis／cordis-plugin-timer）：需求「使用宿主提供的同名包」
  *   ——落在宿主树为 PASS，落在 profile 副本记 FACT 待裁定（版本一致否一并报告）；
- * - 直接依赖（schemastery／zod）：允许 profile 本地副本，实际版本必须与宿主
+ *   直接依赖（schemastery／zod）：允许 profile 本地副本，实际版本必须与宿主
  *   同名包一致。
  * 未被插件 import 的包没有运行时解析记录（宿主注入的 ctx 不经插件模块解析），
  * 如实分列「装载准入由 check-host-compat 的 peer 校验覆盖」，不臆断其来源。

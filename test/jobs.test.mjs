@@ -25,8 +25,12 @@ import { resolveConfig } from '../lib/config.js';
 
 // 宿主链动态守卫（lib/jobs.js → dsh-tools/ask-takeover）：离线形态锚缺席时
 // 本文件仍可加载，全部用例自跳过并打印理由（ci.yml offline 作业的契约）。
+// lib/delivery.js 同属宿主链（静态依赖 @deepseek-ai/dsh-llm）——账本经同一
+// 动态守卫装载（判据 C：测试文件不得静态闭包触达宿主链）。
 const jobsModule = await loadOfflineSafe('../lib/jobs.js');
 const { createRunTool: buildRunTool } = jobsModule ?? {};
+const deliveryModule = await loadOfflineSafe('../lib/delivery.js');
+const { ledger } = deliveryModule ?? {};
 const hostTest = await hostTestFor('../lib/jobs.js');
 
 /**
@@ -1262,6 +1266,47 @@ hostTest('async_run（prep 窗口）：prep 失败——execute 异步拒绝（�
   assert.equal(views.length, 1, '执行即注册：prep 失败也留下作业记录');
   assert.equal(views[0].status, 'failed', '作业按 failed 结算（宿主 done→结算契约，通知侧同 killed 路）');
   assert.match(views[0].detail, /spawn EPERM/);
+});
+
+hostTest('async_run（RA-FIRSTWAIT-LEAK）：终态分支结算构造失败也注销等待登记——残留活等待会压住后续完成消息', async () => {
+  // 缺陷形态（验收 RA-FIRSTWAIT-LEAK）：directWithTail 抛错路径原样重抛，
+  // 但 claimWait 的登记未注销——#deliverIfNoWait 永远视为主体仍有等待，
+  // 同主体后续作业的完成消息全部被压住（四宿主受控反例）。
+  const f = fakeCtx();
+  immediateTimers(f.ctx);
+  f.installShellExecute(() => Promise.reject(new Error('spawn EPERM at process creation')));
+  const tool = createRunTool(f.ctx, config);
+
+  await assert.rejects(
+    () => tool.execute({ command: 'leak-probe', description: 'settle fail', yield_ms: 600000 }, exec)
+  );
+
+  // 直接状态断言：失败出口后该主体不得残留活等待（subject 已整体回收亦合格）。
+  const subject = ledger.subjects.get(exec.agent.id);
+  assert.ok(subject === undefined || subject.activeWaits.size === 0,
+    '结算构造失败出口必须注销等待登记（RA-FIRSTWAIT-LEAK）');
+
+  // 行为断言：同主体随后就绪的条目走完成消息路径——直接经账本定论（noteJobStarted
+  // ＋readSettled：注册表读不到该 id → readFailed 定论 → #settleReady →
+  // #deliverIfNoWait → 冲刷），不依赖 fake 注册表没有的事件通道与 60s 保活窗。
+  // 该路径的「注册表缺席」诊断走模块级 console.warn（delivery.js 的 log()），
+  // 在此临时捕获：修复前被残留活等待短路（#deliverIfNoWait 提前返回，零诊断、
+  // 正文滞留）；修复后「agent registry miss」必现（与 wait-delivery 各用例的
+  // 控制台痕迹同款观测）。
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args.map(String).join(' ')); };
+  try {
+    ledger.noteJobStarted(f.ctx, config, 'leak-followup', exec.agent.id);
+    await ledger.readSettled('leak-followup', { status: 'completed', exitCode: 0 });
+    await new Promise((r) => { setTimeout(r, 10); });
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.ok(
+    warnings.some((text) => text.includes('agent registry miss')),
+    '完成消息路径实际执行（未被残留活等待压住）'
+  );
 });
 
 // ---------------------------------------------------------------------------

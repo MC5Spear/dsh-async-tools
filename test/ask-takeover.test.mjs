@@ -1574,10 +1574,18 @@ test('J19：座位渲染门——关/计数 0/座位不匹配三态渲染 null�
   assert.equal(renderComp(() => product.AskOverlaySeat(seatProps)), null, 'sidebar 态下 overlay 座位 → null');
   const badgeNode = renderComp(() => product.AskSidebarSeat(seatProps));
   assert.ok(badgeNode !== null, 'sidebar 匹配态渲染本体（徽标）');
-  // 徽标文案走词典（ask.title），不是硬编码英文。
+  // 徽标＝紧凑图标＋计数（VIS-BADGE-01：底栏窄图标槽不再放文字标签）；完整
+  // 名称走 aria-label（无障碍树恒可得，不依赖悬停），可见全名在面板标题行。
   const badgeButton = badgeNode.children.find((child) => child !== null && typeof child === 'object');
-  assert.ok(String(badgeButton.children[0]).includes(product.DICTIONARIES.en['ask.title']),
-    '徽标文本 = 词典标题（auto 档回退 en）');
+  assert.ok(String(badgeButton.props['aria-label']).includes(product.DICTIONARIES.en['ask.title']),
+    '徽标 aria-label = 词典标题（auto 档回退 en）');
+  const badgeIcon = badgeButton.children.find((child) => child?.type === 'svg');
+  assert.ok(badgeIcon !== undefined && badgeIcon.props['aria-hidden'] === 'true',
+    '紧凑图标在场且对辅助技术隐藏（名称由 aria-label 承载）');
+  const badgeCount = badgeButton.children.find((child) => child?.props?.className === 'ats-ask-count');
+  assert.ok(badgeCount !== undefined && String(badgeCount.children).includes('1'),
+    '紧凑计数在场（1 条未处理）');
+  assert.equal(badgeButton.props['aria-expanded'], 'false', '开合态经 aria-expanded 同步');
   // 徽标 auto 档跟宿主语言：locale 服务在场（宿主 zh）时徽标读 zh 词典——侧栏座位
   // 的翻译器必须传 ask.locale（与面板标题、重渲染取值两处同款；漏传会恒英文）。
   const zhLocale = { getSnapshot: () => ({ active: 'zh', revision: 1 }), getLocale: () => ({ active: 'zh', revision: 1 }), subscribe(fn) { return () => {}; } };
@@ -1591,7 +1599,7 @@ test('J19：座位渲染门——关/计数 0/座位不匹配三态渲染 null�
   zhModel.store.getSnapshot().items = [{ batchId: 'b2', sessionId: 's2', questionId: 'q2', question: 'q', options: [], multiSelect: false, receivedAt: 0, expiresAt: 1, phase: 'open' }];
   const zhBadge = renderComp(() => product.AskSidebarSeat({ ask: zhModel, ctx: zhCtx }));
   const zhBadgeButton = zhBadge.children.find((child) => child !== null && typeof child === 'object');
-  assert.ok(String(zhBadgeButton.children[0]).includes(product.DICTIONARIES.zh['ask.title']),
+  assert.ok(String(zhBadgeButton.props['aria-label']).includes(product.DICTIONARIES.zh['ask.title']),
     '徽标 auto + 宿主 zh → zh 词典（侧栏座位翻译器传 ask.locale）');
 
   // ⑤  渲染条件：条目全部出列、只剩未消除的 lostAnswers → 两座位**仍渲染**
