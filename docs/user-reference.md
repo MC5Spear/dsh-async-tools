@@ -85,7 +85,7 @@ async_wait(targets=[{kind:"job", id:"<返回的job_id>"}], wait_ms=30000)
 | `agentLang` | enum | `en` | en / zh | — | 描述、结果和执行纪律的语言 |
 | `silentFailureGuard` | boolean | `false` | true / false | — | 名单内会话的命令诊断与提示 |
 | `workflowProgressLog` | boolean | `false` | true / false | — | 编排结果是否保留各阶段进度行 |
-| `fullCommandEcho` | boolean | `false` | true / false | — | 命令作业列表回显完整命令原文 |
+| `fullCommandEcho` | boolean | `false` | true / false | — | 后台结果交付时附上完整命令与工作流脚本原文 |
 | `askTakeover` | boolean | `false` | true / false | — | 每次普通提问请求 |
 | `askTimeoutMs` | number | `60000` | 10000..600000，可小数 | ms | 新接管批次的初始期限 |
 | `askExtendMs` | number | `60000` | 1..2147483647，可小数 | ms | 每次延长动作，在原期限上追加 |

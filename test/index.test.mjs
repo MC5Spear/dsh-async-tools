@@ -522,7 +522,9 @@ test('T20：tool:jobs 提示遮蔽——隐藏 job_output 的同一 Agent ctx �
   // 宿主 tool-jobs 行的 `tool:jobs` 系统提示段固定指路 job_output 收集结果；
   // 本包隐藏该工具后指路即矛盾。修复＝在隐藏生效的同一 Agent ctx 上注册
   // **同名** `tool:jobs` 段（dsh-system-prompt ScopedLayers 的 scoped 遮蔽
-  // 语义）——文案保留追踪/通知/job_kill 纪律，收集动作改指 async_wait 零等待。
+  // 语义）——宿主前缀逐字保留（恒英文），收集句改指 async_wait 且随
+  // agentLang 换语言：text 注册为**函数文本**，宿主每次组稿现求值、经行
+  // 配置视图现读生效语言（AGENT-LANG-01）。
   const deliveryRows = ['async_run', 'async_wait', 'async_agent', 'async_workflow'];
   for (const toolName of [...deliveryRows, 'async_list_subagent_models']) {
     const { ctx } = makeContext(Context);
@@ -550,9 +552,11 @@ test('T20：tool:jobs 提示遮蔽——隐藏 job_output 的同一 Agent ctx �
       const spec = sectionCalls[0];
       assert.equal(spec.name, 'tool:jobs', '同名段才构成 scoped 遮蔽（宿主 shadow 语义）');
       assert.equal(spec.order, 777, '段序取宿主 TOOL_JOBS 档值（落位不变）');
-      assert.ok(spec.text.includes('async_wait'), '收集动作改指 async_wait 零等待领取');
-      assert.ok(spec.text.includes('job_kill'), '终止纪律逐字保留');
-      assert.ok(!spec.text.includes('job_output'), '遮蔽段不得再指路被隐藏的工具（RA-HIDDEN-READER-PROMPT 本体）');
+      assert.equal(typeof spec.text, 'function', '段文注册为函数文本（每次组稿现求值、现读 agentLang；静态串会把语言固化在登记时刻）');
+      const text = spec.text();
+      assert.ok(text.includes('async_wait'), '收集动作改指 async_wait 零等待领取');
+      assert.ok(text.includes('job_kill'), '终止纪律逐字保留');
+      assert.ok(!text.includes('job_output'), '遮蔽段不得再指路被隐藏的工具（RA-HIDDEN-READER-PROMPT 本体）');
       assert.equal(effects.length, 2, 'restrict 与遮蔽段的处置句柄都挂 agent.ctx.effect（同生存期，随 Agent 回收）');
       ctx.emit('agent/created', { agent: fakeAgent });
       assert.equal(sectionCalls.length, 1, '同一 Agent 重复 created 不重复注册（与隐藏共用去重）');
@@ -577,16 +581,83 @@ test('T20：tool:jobs 提示遮蔽——隐藏 job_output 的同一 Agent ctx �
     }
     await fork.dispose();
   }
+
+  // zh 行配置档（settings.agentLang='zh'；快照缺席→行默认值）：收集句随
+  // agentLang 换语言——该行 spec.text() 含 CJK 且与 en 档不同。混合段形态
+  //（英文前缀＋中文收集句）与「zh 档含 F1 英文前缀锚」的判据归 T20b。
+  const { jobsShadowText } = await import('../lib/jobs-shadow.js');
+  const CJK_RE = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+  const { ctx: zhCtx } = makeContext(Context);
+  const zhFork = zhCtx.plugin(
+    { name: host.name, inject: host.inject, Config: host.Config, apply: host.apply },
+    { toolName: 'async_run', settings: { agentLang: 'zh' } }
+  );
+  await activate(zhFork);
+  const zhSections = [];
+  zhCtx.emit('agent/created', {
+    agent: {
+      id: 'agent-shadow-zh',
+      ctx: {
+        tools: { restrict() { return () => {}; } },
+        effect() {},
+        systemPrompt: {
+          section(spec) { zhSections.push(spec); return () => {}; },
+          getSectionOrder() { return 777; }
+        }
+      }
+    }
+  });
+  assert.equal(zhSections.length, 1, 'zh 行档照常注册遮蔽段');
+  const zhText = zhSections[0].text();
+  assert.ok(CJK_RE.test(zhText), 'zh 行档的组稿文本含中文收集句');
+  assert.notEqual(zhText, jobsShadowText('en'), 'zh 行档与 en 档组稿文本不同（语言开关真的换到收集句）');
+  await zhFork.dispose();
+
+  // 活读断言（「已有会话后续组稿刷新」的单元级判据，沿用 T3c 的 settings
+  // 助手形态）：对已登记的 spec，快照挂载 zh 档后再求值得 zh、清除快照回退
+  // 行默认 en——语言取自每次求值时的生效配置，不是登记时刻的快照。
+  const { attachSnapshotSource, clearSnapshot } = await import('../lib/settings.js');
+  clearSnapshot();
+  const { ctx: liveCtx } = makeContext(Context);
+  const liveFork = liveCtx.plugin(
+    { name: host.name, inject: host.inject, Config: host.Config, apply: host.apply },
+    { toolName: 'async_wait' }
+  );
+  await activate(liveFork);
+  const liveSections = [];
+  liveCtx.emit('agent/created', {
+    agent: {
+      id: 'agent-shadow-live',
+      ctx: {
+        tools: { restrict() { return () => {}; } },
+        effect() {},
+        systemPrompt: {
+          section(spec) { liveSections.push(spec); return () => {}; },
+          getSectionOrder() { return 777; }
+        }
+      }
+    }
+  });
+  const liveSpec = liveSections[0];
+  const beforeAttach = liveSpec.text();
+  assert.ok(!CJK_RE.test(beforeAttach), '前置：快照缺席时按行默认 en 档组稿');
+  const wiring = attachSnapshotSource({ on: () => () => {}, logger: { warn() {} } }, { agentLang: 'zh' });
+  try {
+    assert.ok(CJK_RE.test(liveSpec.text()), '快照挂 zh 档后同一 spec 的下一次求值即 zh（组稿活读）');
+    assert.notEqual(liveSpec.text(), beforeAttach, '快照挂载前后组稿文本不同');
+  } finally {
+    wiring.dispose();
+    clearSnapshot();
+  }
+  assert.equal(liveSpec.text(), beforeAttach, '快照清除后回退行默认 en 档');
+  await liveFork.dispose();
 });
 
-test('T20b：遮蔽段与宿主 tool:jobs 原文同步——除收集句外逐段逐字在场（宿主改版必红）', async (t) => {
-  const host = await loadHost();
-  if (host === undefined) {
-    t.skip(HOST_SKIP_REASON);
-    return;
-  }
+test('T20b：遮蔽段与宿主 tool:jobs 原文同步——前缀逐字互锚＋收集句收窄判据（宿主改版必红）', async (t) => {
   // 宿主 dsh-tool-jobs 的全局 tool:jobs 段源文（守卫式读取：离线形态自跳过——
   // 独立盲审风险点③的落地：遮蔽段静态复制宿主文案，宿主改版不会自动跟进）。
+  // 取材直接从 lib/jobs-shadow.js 导入（不 loadHost 整个入口模块——那会拖入
+  // 五工具与宿主半边的依赖图）。
   let hostSource;
   try {
     const require = createRequire(import.meta.url);
@@ -598,19 +669,43 @@ test('T20b：遮蔽段与宿主 tool:jobs 原文同步——除收集句外逐�
     }
     throw error;
   }
-  const shadow = host.JOBS_SHADOW_PROMPT_TEXT;
+  const { JOBS_SHADOW_HOST_PREFIX, jobsShadowText } = await import('../lib/jobs-shadow.js');
+  const F1 = 'Track every background job id you start.';
+  const F2 = "You are notified in-session when a job finishes — do not busy-poll or sleep on one; keep working on independent steps and do not duplicate a running job's work.";
+  const TAIL = 'and job_kill jobs that stopped mattering';
   const includes = (fragment) =>
     hostSource.includes(fragment) || hostSource.includes(fragment.replaceAll("'", "\\'"));
-  // 遮蔽段里**不属于收集句**的三个纪律段必须在宿主源码逐字在场（宿主改措辞
-  // 即红，人工同步遮蔽段后再绿——遮蔽段与宿主原文的差异被限定在收集指路）。
-  assert.ok(includes('Track every background job id you start.'), '追踪纪律句逐字同源');
-  assert.ok(includes("You are notified in-session when a job finishes — do not busy-poll or sleep on one; keep working on independent steps and do not duplicate a running job's work."), '通知与不重复纪律句逐字同源');
-  assert.ok(includes('and job_kill jobs that stopped mattering'), 'job_kill 终止尾段逐字同源');
+
+  // ① 宿主源判据（全部保留）：前缀两句与收集句尾段在宿主源码逐字在场（宿主
+  // 改措辞即红，人工同步前缀常量与词典 en 档收集句后再绿——遮蔽段与宿主
+  // 原文的差异被限定在收集指路）。
+  assert.ok(includes(F1), '追踪纪律句逐字同源');
+  assert.ok(includes(F2), '通知与不重复纪律句逐字同源');
+  assert.ok(includes(TAIL), 'job_kill 终止尾段逐字同源');
   // 收集句的宿主原形（job_output 指路）仍在场——替换锚未失效；宿主改写收集
   // 句时不适用本遮蔽形态，必须重审（本断言与上面三段共同构成漂移报警）。
   assert.ok(/collect every still-relevant job with job_output/.test(hostSource), '宿主收集句原形在场（job_output 指路）——锚失效即重审遮蔽段');
-  // 遮蔽段自身只改收集指路：除收集句外不引入 job_output 指路（T20 本体断言的补充）。
-  assert.ok(!shadow.includes('job_output'), '遮蔽段不指路被隐藏工具');
+
+  // ② 组稿文本判据（新增）：两档实际组装结果。前缀保真——en/zh 都以前缀
+  // 常量开头且含 F1/F2 逐字子串（zh 档含 F1 英文前缀锚：前缀不随 agentLang
+  // 翻译，zh 侧译掉或组装丢段即红）；en 尾段锚在场；两档都不指路 job_output；
+  // 换语言真的发生（zh 含 CJK、en 零 CJK、两档不同）。
+  const en = jobsShadowText('en');
+  const zh = jobsShadowText('zh');
+  const CJK_RE = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+  assert.ok(en.startsWith(JOBS_SHADOW_HOST_PREFIX) && zh.startsWith(JOBS_SHADOW_HOST_PREFIX), '两档组稿都以宿主前缀常量开头（组装不丢段、zh 不译前缀）');
+  assert.ok(en.includes(F1) && zh.includes(F1), 'zh 档含 F1 英文前缀锚（前缀恒宿主语言）');
+  assert.ok(en.includes(F2) && zh.includes(F2), '两档前缀第二句逐字子串在场');
+  assert.ok(en.includes(TAIL), 'en 档收集句内嵌的宿主尾段锚逐字在场');
+  assert.ok(!en.includes('job_output') && !zh.includes('job_output'), '两档遮蔽段都不指路被隐藏工具');
+  assert.ok(CJK_RE.test(zh) && !CJK_RE.test(en), '换语言真的发生（zh 含 CJK、en 零 CJK）');
+  assert.notEqual(zh, en, '两档组稿文本不同');
+
+  // ③ 收窄反锚：被批准决定移除的过宽措辞不回潮（负向锚只钉这一短语）；zh 档
+  // 收窄事实正向锚（只领取尚未交付的内容、已交付不必再领）——内容审查承接
+  // 其余措辞，不做更多关键词冻结。
+  assert.ok(!en.includes('every still-relevant job'), 'en 档不再引导「领取每个仍相关作业」（收窄语义，回潮即红）');
+  assert.ok(zh.includes('尚未交付') && zh.includes('不必再次领取'), 'zh 档收窄事实在场');
 });
 
 test('T3c：快照在场时行级委托键不丢——agent_preset 照常暴露（§2.3.1，P1 回归锁）', async (t) => {

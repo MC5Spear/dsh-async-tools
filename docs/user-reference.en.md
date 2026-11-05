@@ -85,7 +85,7 @@ The Range column describes values that can be saved. If a call's budget falls ou
 | `agentLang` | enum | `en` | en / zh | — | Language for tool descriptions, results, and instructions |
 | `silentFailureGuard` | boolean | `false` | true / false | — | Command diagnostics and warnings for sessions under the bound-presets list |
 | `workflowProgressLog` | boolean | `false` | true / false | — | Whether orchestration results keep per-phase progress lines |
-| `fullCommandEcho` | boolean | `false` | true / false | — | Whether command job listings echo the full command text |
+| `fullCommandEcho` | boolean | `false` | true / false | — | Attach the full command or workflow script text when background results are delivered |
 | `askTakeover` | boolean | `false` | true / false | — | Each ordinary question request |
 | `askTimeoutMs` | number | `60000` | 10000..600000; fractions allowed | ms | Initial deadline for a new intercepted batch |
 | `askExtendMs` | number | `60000` | 1..2147483647; fractions allowed | ms | Each extension, added to the existing deadline |

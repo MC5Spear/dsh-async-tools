@@ -1938,7 +1938,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     uiLang: '插件界面语言', agentLang: 'Agent 文案语言',
     silentFailureGuard: '命令静默失败提示',
     workflowProgressLog: '向 Agent 提供工作流进度日志',
-    fullCommandEcho: '向 Agent 回显完整命令',
+    fullCommandEcho: '向 Agent 回显完整命令与工作流脚本',
     askTakeover: '在待答面板处理提问',
     askTimeoutMs: '首次提问等待时长', askExtendMs: '每次增加的等待时长',
     askUiSeat: '待答问题显示方式',
@@ -2046,13 +2046,16 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
       ['Agent 看到', 'Agent 看到的', '向 Agent', '给 Agent'],
       ['原始记录不受影响', '原始记录不受本开关影响']
     ],
+    // ECHO-WORKFLOW-01：事实组按新 hint 改写（脚本覆盖、交付时附上、同批合计
+    // 预算、裁剪形态两分、默认关、界面原始记录不受控）。
     fullCommandEcho: [
-      ['作业列表'],
-      ['进度说明'],
-      ['完整命令原文', '命令原文'],
+      ['命令或工作流脚本', '工作流脚本', '命令与工作流脚本'],
+      ['交付附上', '附上所执行的', '结果交付时附上'],
+      ['合计字符上限', '与同一批结果合计', '共用字符额度'],
+      ['保留首尾', '保留开头与结尾'],
+      ['标明省略量', '注明省略量'],
       ['默认关', '默认关闭', '默认不开启'],
-      ['Agent 看到', 'Agent 看到的', '向 Agent', '给 Agent'],
-      ['原始记录不受影响', '原始记录不受本开关影响']
+      ['原始记录不受本开关影响', '原始记录不受影响', '原始记录不受']
     ],
     askTakeover: [
       ['普通提问', '一般性提问'],
@@ -2177,12 +2180,15 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
       ['the Agent sees', 'the Agent receives', 'the agent receives'],
       ['unaffected', 'are unaffected']
     ],
+    // ECHO-WORKFLOW-01（与 zh 组同事实）：scripts covered, attached at delivery,
+    // same per-batch budget, truncation form, off by default, raw records.
     fullCommandEcho: [
-      ['job lists', 'job list'],
-      ['progress description'],
-      ['full command text', 'full command'],
+      ['workflow script', 'command or workflow script'],
+      ['attach the executed', 'deliveries of background results attach'],
+      ['character limit', 'per-batch character limit', 'shared character allowance'],
+      ['keeps head and tail', 'head and tail are kept'],
+      ['omitted size', 'omitted amount'],
       ['off by default', 'Off by default', 'disabled by default'],
-      ['the Agent sees', 'the Agent receives', 'the agent receives'],
       ['unaffected', 'are unaffected']
     ],
     askTakeover: [
@@ -2238,7 +2244,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     agentLang: '决定模型侧文案（含工具描述与执行纪律、错误与提示）的语言。',
     silentFailureGuard: '所谓静默失败，就是命令可能没有执行却看不到报错。开启后这类情况会给出诊断提示和检查建议；生效范围由「适用预设」名单决定，默认关闭。',
     workflowProgressLog: '编排作业默认关——各阶段进度行滤除、只留结论，Agent 看到的结果更短；打开后保留进度行，结果正文随之变长，界面与日志的原始记录不受影响。',
-    fullCommandEcho: '命令作业在作业列表里默认关——Agent 看到进度说明；打开后回显完整命令原文，界面与日志的原始记录不受影响。',
+    fullCommandEcho: '默认关闭时用作业编号、名称或简短描述识别任务；打开后，后台结果交付时附上所执行的命令与工作流脚本原文，原文与同批结果共用字符额度，超长时保留开头与结尾、注明省略量；界面与日志的原始记录不受影响。',
     askTakeover: '开启后，预设名单内根代理的一般性提问在待答面板作答；关掉则走宿主默认流程。到期后 Agent 继续工作，用户仍可之后再回答。',
     askTimeoutMs: '自收到一批提问时开始计时，同批多题共用一个期限。到期时已作的回答保留，Agent 继续工作，用户仍可之后再回答；改值只影响之后的批次。',
     askExtendMs: '待答面板的「增加等待时间」按钮每按一下，就给该会话此刻等待中的批次各加这段时间。',
@@ -2261,7 +2267,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     agentLang: 'Sets the language of model-visible copy: tool descriptions, parameter notes, notices, execution discipline, and errors.',
     silentFailureGuard: '"Silent failure" is when a command may not have executed with no visible error. When on, such cases get a diagnostic reminder and checking advice; the applicable presets list decides where it applies, and it is disabled by default.',
     workflowProgressLog: 'When this is off by default, orchestration results keep conclusions only and the result bodies the Agent receives are shorter; turning it on keeps the progress lines, producing longer results; raw records in the interface and logs are unaffected.',
-    fullCommandEcho: 'Command jobs show the progress description in job lists while this is off by default, and the Agent sees it; turning it on echoes the full command text; raw records in the interface and logs are unaffected.',
+    fullCommandEcho: 'While off by default, jobs are told apart by id, name, or short description; when on, background result deliveries attach the executed command or workflow script, and the text draws on the same shared character allowance as the batch — over-long text keeps head and tail and the omitted size is marked; raw records in the interface and logs are unaffected.',
     askTakeover: 'When on, the pending panel answers plain questions from the root agents under the applicable presets list; when off, the host\'s native flow handles them. After expiry the Agent continues working and the user can still answer later.',
     askTimeoutMs: 'Timed from receiving a batch of questions; the batch\'s questions share one deadline. On expiry the answers given so far are kept, the Agent continues working, the user can still answer later; a new setting applies to subsequent batches.',
     askExtendMs: 'Each "Extend wait" click in the pending panel adds this much time to every batch of that session not yet expired at that moment.',
@@ -2305,7 +2311,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     jobKind: ['空串'], subagentProvider: ['provider 与 model', '可读拒绝'],
     uiLang: ['跟随宿主语言', '独立'], agentLang: ['工具描述', '互不影响'],
     silentFailureGuard: ['诊断提醒', '返回提示'],
-    workflowProgressLog: ['滤除', '内容预算'], fullCommandEcho: ['作业列表', '标签'],
+    workflowProgressLog: ['滤除', '内容预算'], fullCommandEcho: ['工作流脚本', '不重复附上', '标明省略量'],
     askTakeover: ['迟到', '不会送达'],
     askTimeoutMs: ['共享', '仍接受作答'], askExtendMs: ['原截止点', '初始期限'], askUiSeat: ['消隐', '不改提问'],
     // PRESET-BIND-01：名单语义三锚（开关正交／空数组解除／刷新重读）。
@@ -2320,7 +2326,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     jobKind: ['empty value is invalid'], subagentProvider: ['provider and model', 'rejected readably'],
     uiLang: ['follows the host language', 'independent'], agentLang: ['tool descriptions', 'do not affect each other'],
     silentFailureGuard: ['diagnostic reminders', 'return notes'],
-    workflowProgressLog: ['filter out', 'content budget'], fullCommandEcho: ['job-list label', 'full command text'],
+    workflowProgressLog: ['filter out', 'content budget'], fullCommandEcho: ['workflow script', 'not attached twice', 'omitted size'],
     askTakeover: ['Late answers', 'will not arrive'],
     askTimeoutMs: ['share the deadline', 'keeps accepting answers'], askExtendMs: ['stacked on the original deadline', 'own initial deadlines'],
     askUiSeat: ['hides once everything is handled', 'does not change questioning'],

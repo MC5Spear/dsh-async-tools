@@ -2156,7 +2156,7 @@ hostTest('L9 装载中途抛错：行注销恒执行、已就位处置器执行�
  * 受控 jobs 读取。`injectFailsAt`＝第 N 次 inject 抛错（0＝永不）；
  * `followupThrows`＝followup 抛错；`agentsGet` 可整替（注册表缺失形）。
  */
-function sRig({ injectFailsAt = 0, followupThrows = false, agentsGet, budget = 4000, lang = 'en', status = 'running' } = {}) {
+function sRig({ injectFailsAt = 0, followupThrows = false, agentsGet, budget = 4000, lang = 'en', status = 'running', fullCommandEcho = false } = {}) {
   resetDeliveryLedger();
   const calls = { inject: [], followup: [] };
   const OWNER = 'at-s-owner';
@@ -2175,7 +2175,7 @@ function sRig({ injectFailsAt = 0, followupThrows = false, agentsGet, budget = 4
     }
   };
   const reads = new Map();
-  const config = Object.freeze({ maxResultChars: budget, agentLang: lang });
+  const config = Object.freeze({ maxResultChars: budget, agentLang: lang, fullCommandEcho });
   // claimed 监听登记（RN 系列关批锚点）：registerRow 会挂 agent/inbox/claimed
   //（两处关批点之一）；假 ctx 无 on 时监听挂不上——提供最小 on 形状，测试经
   // listeners 直接触发关批（不改既有用例行为：无人触发即惰性）。
@@ -2203,11 +2203,12 @@ function sRig({ injectFailsAt = 0, followupThrows = false, agentsGet, budget = 4
   // 产品接线里 claimed 监听由装载行 apply 挂（lib/index.js）；假 ctx 环境显式
   // 挂同一入口（RN 系列的关批锚点①），惰性——无人经 listeners 触发即不生效。
   ledger.attachClaimedListener(ctx);
-  /** 登记一个已就绪（终态＋增量已读）的作业；facts 并入注册表行，readExtras 并入读取回执。 */
-  const readyJob = async (jobId, text, facts, readExtras) => {
+  /** 登记一个已就绪（终态＋增量已读）的作业；facts 并入注册表行，readExtras 并入读取回执，
+   * echo（`{ echoText, echoKind }`）经 noteJobStarted 的注册时参数入账（ECHO-WORKFLOW-01）。 */
+  const readyJob = async (jobId, text, facts, readExtras, echo) => {
     reads.set(jobId, { chunks: [{ channel: 'stdout', text }], ...(readExtras ?? {}) });
     if (facts !== undefined) rowFacts.set(jobId, facts);
-    ledger.noteJobStarted(ctx, config, jobId, OWNER);
+    ledger.noteJobStarted(ctx, config, jobId, OWNER, echo);
     await ledger.readSettled(jobId);
   };
   return { agent, calls, OWNER, config, ctx, reads, listeners, readyJob };
@@ -2959,6 +2960,43 @@ hostTest('RN-C：非空正文超限两形态——预算 1 只容 1 条（1＋3�
     assert.equal(delivered.length, 10, '零等待批装配交付 10 条延后正文');
     assert.equal(delivered[0].text, 'Z', '延后正文完整恢复（全额批预算）');
   }
+});
+
+// ═══ ECHO-WORKFLOW-01 定案 M3：预期附原文而因预算未附的两形态一律注记 ═══
+//
+// 形态①＝非空正文恰好整份耗尽剩余（want === remaining、未截断）：条目随即
+// 完全交付、不再进批，echoSkipped 注记是该次不附唯一的模型可见说明；形态②
+// ＝空正文条目进入分配时剩余已为零（状态行照常交付＋注记）。正文被裁剪的
+// 条目不在此列——其原文随续段在下一批分配，不附也不注记（E 系列覆盖）。
+hostTest('ECHO-M3：正文恰好耗尽预算与空正文＋零剩余——原文未附、echoSkipped 注记在场、零扣减', async () => {
+  const rig = sRig({ budget: 10, fullCommandEcho: true });
+  const token = ledger.claimWait(rig.OWNER);
+  // 形态①：正文 10 字符恰好整份耗尽批预算（未截断、完全交付）。
+  await rig.readyJob('job-echo-m3a', '0123456789', undefined, undefined,
+    { echoText: 'echo original a', echoKind: 'command' });
+  await ledger.releaseWait(token, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 1, '形态①：一条完成消息');
+  const first = textOf(rig.calls.inject[0]);
+  assert.ok(first.includes('0123456789'), '正文整份交付（10 字符未截断）');
+  assert.ok(first.includes('(10 chars)'), '状态行按实际交付计量（chars 只计正文份额）');
+  assert.ok(!first.includes('echo original a'), '原文未附（正文恰好耗尽剩余）');
+  assert.match(first, /original text not attached: batch result budget exhausted/,
+    'echoSkipped 注记在场（en 档）');
+  assert.deepEqual(ledger.jobs.get('job-echo-m3a').deliveredFact, { via: 'message' },
+    '条目完全交付（非 partial，不再进批——注记是永久性不附的唯一说明）');
+  assert.equal(ledger.jobs.get('job-echo-m3a').echoAttached, false, '未置一次性状态');
+  // 形态②：同批剩余已为零的空正文条目——状态行照常交付＋注记。
+  await rig.readyJob('job-echo-m3b', '', undefined, undefined,
+    { echoText: 'echo original b', echoKind: 'script' });
+  assert.equal(rig.calls.inject.length, 2, '形态②：空正文条目照常投递（不因预算延后）');
+  const second = textOf(rig.calls.inject[1]);
+  assert.ok(second.includes('job-echo-m3b'), '状态行在场');
+  assert.ok(!second.includes('echo original b'), '原文未附（剩余为零）');
+  assert.match(second, /original text not attached: batch result budget exhausted/,
+    'echoSkipped 注记在场（空正文形态）');
+  assert.equal(ledger.jobs.get('job-echo-m3b').echoAttached, false, '未置一次性状态');
+  assert.equal(ledger.subjects.get(rig.OWNER).batch.remaining, 0,
+    '注记形态零扣减（批剩余保持 0）');
 });
 
 hostTest('RN-D：读取失败超限共用配额——20 个 readFailed 候选：10 注记条目＋3 逐条＋1 聚合（计数 7）；超限不认领、不清占位', async () => {

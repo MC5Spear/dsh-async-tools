@@ -234,6 +234,15 @@ const OPERATOR_MARKERS = ['LOG_PREFIX', 'logger.', 'logger?.', 'diag(', 'process
  * **宿主逐字同形副本**：宿主源码里逐字存在的
  * 串，逐行互锚检查（有限锚集）要求被锚住的串与宿主逐字同形——双语化即破坏锚、即与宿主
  * 行为漂移。判定特征统一为"宿主侧同串同现 + 互锚检查锚定于宿主源"。
+ *
+ * 操作者诊断一类的**effect 标签子类**：cordis effect 卸载标签（处置句柄的登记
+ * 名，进 Fiber 树与宿主日志，不进模型上下文）逐条 needle＋why 登记、不设
+ * 「标签形」语法白名单——标签是自由短语，形态上与短句不可分，语法放行会同时
+ * 放行将来混入的同形真文案（锚精确：改字即失去豁免、重新命中）。
+ *
+ * 宿主逐字同形副本类收录 `lib/jobs-shadow.js` 的遮蔽段宿主前缀（dsh-tool-jobs
+ * 全局 `tool:jobs` 段前两句）：T20b 宿主源互锚＋组稿文本断言双锚锁定，双语化
+ * 即破坏逐字保留。
  */
 const PROSE_ALLOWLIST = {
   'jobs.js': [
@@ -301,7 +310,8 @@ const PROSE_ALLOWLIST = {
     { needle: 'agent.ctx.tools.restrict unavailable', why: '操作者一侧诊断（同上降级路径 throw 的 Error 消息——只在进程内被 catch 转 warn，不进模型上下文）' },
     { needle: 'agent.ctx.tools.register unavailable', why: '操作者一侧诊断（会话遮蔽注册降级的 warn 前缀——PRESET-ISOLATION-02 防御路径，不进模型上下文）' },
     { needle: 'shared description stays session-neutral', why: '同上（遮蔽注册失败降级行的说明尾段——共享定义回落基础文本的操作者侧交代）' },
-    { needle: 'async-tools: job_output hide', why: 'cordis effect 卸载标签（行卸载时摘限制句柄的登记名，宿主日志一侧，不进模型上下文）' }
+    { needle: 'async-tools: job_output hide', why: 'cordis effect 卸载标签（行卸载时摘限制句柄的登记名，宿主日志一侧，不进模型上下文）' },
+    { needle: 'async-tools: tool:jobs prompt shadow', why: 'cordis effect 卸载标签（提示遮蔽段处置句柄的登记名，进 Fiber 树与宿主日志，不进模型上下文——与 async-tools: job_output hide、host.js 的 host snapshot source 同类）' }
   ],
   'delivery.js': [
     { needle: 'claimed listener attach failed', why: '操作者一侧 stderr 诊断（log() 通道——attachClaimedListener 的防御路径，不进模型上下文）' },
@@ -320,6 +330,12 @@ const PROSE_ALLOWLIST = {
     { needle: 'subagent model selection requires non-empty provider and model ids', why: '同上（宿主 assertAllowedModelRoutes 的第二条校验串）' },
     { needle: 'subagent model selection repeats route', why: '同上（重复路由 throw 的模板串；needle 取插值前的稳定前缀）' },
     { needle: 'requires at least one route', why: '宿主逐字同形副本（fold 空名单 throw ↔ 宿主投影定义同串；「≥1 条」分列在此处与 settings current() 等三处校验，不在 assertRoutes）' }
+  ],
+  // 遮蔽段宿主前缀（宿主副本豁免类，同 agent-policy.js 一组）：单一字面量持前缀
+  // 全文，一句 needle 即覆盖（豁免匹配是字面量级 includes——needle 是被抽出
+  // 字面量的子串才豁免；改一字即失去豁免、重新命中，M12b 看守）。
+  'jobs-shadow.js': [
+    { needle: 'Track every background job id you start.', why: '宿主逐字同形副本（dsh-tool-jobs 全局 tool:jobs 段前两句；需求 5.3 未改宿主原句保留宿主语言。T20b 宿主源互锚＋组稿文本断言双重锁定，双语化即破坏逐字保留）' }
   ],
   'silent-failure.js': [
     { needle: 'failed to run', why: '签名 2 的 EN 拒绝锚对之一（判定常量，匹配命令输出；文案在 text.js）' },
@@ -427,6 +443,7 @@ async function collectSamples(agentLang) {
   const { createAgentTool } = await import('../lib/agent.js');
   const output = await import('../lib/output.js');
   const { t } = await import('../lib/text.js');
+  const { jobsShadowText } = await import('../lib/jobs-shadow.js');
 
   const config = resolveConfig({ agentLang });
   const ctx = { shell: { sandboxMode: 'workspace-write' } };
@@ -476,6 +493,13 @@ async function collectSamples(agentLang) {
     ['t(wait.settleNoticeArrived)', t(agentLang, 'wait.settleNoticeArrived')],
     ['t(wait.settleNoticePending)', t(agentLang, 'wait.settleNoticePending', { ids: 'sa-1' })],
     ['t(via.settleNoticeSeen)', t(agentLang, 'via.settleNoticeSeen')]
+  );
+  // tool:jobs 遮蔽段（AGENT-LANG-01）：组装函数端到端取样（宿主前缀＋收集句；
+  // zh 档是「英文前缀＋中文收集句」的混合段，判据照常＝含 CJK 且与 en 同位串
+  // 不同）＋新词典键直接取样（与上面四键同一形态）。
+  samples.push(
+    ['jobsShadowText', jobsShadowText(agentLang)],
+    ['t(discipline.jobsCollect)', t(agentLang, 'discipline.jobsCollect')]
   );
   // 编排完成渲染（端到端；render.workflowCompleted + detail.workflowAgents）。
   samples.push(['render(workflow completed)', await collectWorkflowCompletedRender(agentLang)]);

@@ -5,7 +5,8 @@
  * - **执行即注册**：注册先于进程启动，短命令也注册——预算内结算的
  *   等待是活 waiter（awaited），宿主不补发完成通知；
  * - **首次等待＝五信号竞速**：结算/插话/abort/迟到作答/预算，任何
- *   信号只结束等待不终止命令；呈现层 label=命令原文、progress=描述。
+ *   信号只结束等待不终止命令；呈现层 label 恒为 description（ECHO-WORKFLOW-01
+ *   与回显开关解耦）、progress=描述。
  *
  * 后半部分是缺陷防御用例。
  *
@@ -90,7 +91,7 @@ hostTest('async_run：超出首次等待 → 返回作业编号，命令不被�
   assert.equal(f.startedSpecs.length, 1, '不得重复执行进程');
 });
 
-hostTest('async_run（R32/R33）：注册字段——label=命令原文、progress=描述、owner=SessionId、准入先于进程、execute 带作业私有 signal', async () => {
+hostTest('async_run（R32/R33）：注册字段——label=description（恒定，与回显开关解耦）、progress=描述、owner=SessionId、准入先于进程、execute 带作业私有 signal', async () => {
   const f = fakeCtx();
   immediateTimers(f.ctx);
   const order = [];
@@ -115,9 +116,10 @@ hostTest('async_run（R32/R33）：注册字段——label=命令原文、progre
 
   const spec = f.jobsFake.registeredSpecs[0];
   assert.equal(spec.kind, config.jobKind);
-  // label（需求 9.3.4 fullCommandEcho 默认关）：默认以 description 作标签——
-  // 作业列表读的是人读描述，命令原文默认不进列表；开关打开才回显命令原文。
-  assert.equal(spec.label, 'long build', 'fullCommandEcho 默认关：label 取 description');
+  // label（需求 9.3.4 fullCommandEcho 默认关；ECHO-WORKFLOW-01 解耦）：label
+  // 恒为 description——注册名称与回显开关两态解耦，命令原文只经批次类交付
+  // 载体附上，不经任务列表复制；progress 行同写 description。
+  assert.equal(spec.label, 'long build', 'label 恒取 description（与回显开关解耦）');
   // [0.2.1-rc.2]：owner 是 SessionId（agent.id）。
   assert.equal(spec.owner, exec.agent.id, '作业归属发起 agent 的 SessionId');
   // 通知截断口径：outputLimitBytes 必须还在（字节量纲）。
@@ -1032,7 +1034,7 @@ hostTest('R29-c（判据 5·守卫触顶）：readOutput 永不排空 → 10000 
   assert.match(JSON.stringify(result), /was dropped/, '守卫触顶必须置 drainLossy 并给模型可见标记');
 });
 
-hostTest('R29-f（判据 11·让出日志单行化）：label=命令原文（R33-a）带 CRLF/TAB → 必须转义，日志一行', async () => {
+hostTest('R29-f（判据 11·让出日志单行化）：命令原文带 CRLF/TAB → 必须转义，日志一行', async () => {
   const f = fakeCtx();
   immediateTimers(f.ctx);
   const { proc } = fakeProc({ text: 'bg', status: 'running', autoResolve: false });
@@ -1044,10 +1046,10 @@ hostTest('R29-f（判据 11·让出日志单行化）：label=命令原文（R33
   const line = f.logs
     .filter(([level]) => level === 'info')
     .map(([, message]) => message)
-    .find((message) => message.includes('label='));
+    .find((message) => message.includes('command='));
   assert.ok(line !== undefined, '让出必须记操作者日志');
   assert.doesNotMatch(line, /[\r\n]/, 'escapeLogValue 必须把 CR/LF 转成字面 \\r\\n——日志注入收成单行');
-  assert.match(line, /label=line1\\r\\nline2\\tend/, 'label= 现在是命令原文（R33-a），转义后的字面序列要在');
+  assert.match(line, /command=line1\\r\\nline2\\tend/, '命令原文（label 解耦后的操作者侧出口）转义后的字面序列要在');
 });
 
 hostTest('R29-f（判据 11·注册失败单行化）：宿主原文多行超长 → 模型侧单行 + 500 截断 + 操作者日志留全文', async () => {
@@ -1176,7 +1178,7 @@ hostTest('async_run（R32-b·非目标通知）：等待中 notice 到达不提�
   assert.ok(!/some other job/i.test(result.result ?? ''), '通知摘要不进返回（正文留收件箱按宿主节奏领取）');
 });
 
-hostTest('async_run（R32/R33·开启向）：fullCommandEcho=true → label=命令原文', async () => {
+hostTest('async_run（R32/R33·开启向）：fullCommandEcho=true → label 仍为 description（ECHO-WORKFLOW-01 解耦）', async () => {
   const f = fakeCtx();
   immediateTimers(f.ctx);
   const { proc, settle } = fakeProc({ text: 'x', status: 'running', autoResolve: false });
@@ -1188,8 +1190,11 @@ hostTest('async_run（R32/R33·开启向）：fullCommandEcho=true → label=命
   await new Promise((r) => { setTimeout(r, 0); });
   await pending;
   const spec = f.jobsFake.registeredSpecs[0];
-  assert.equal(spec.label, 'deploy --env prod',
-    '开启向：注册名称取命令原文（需求 2.2.4/9.3.4——任务列表经注册名称回显命令）');
+  // ECHO-WORKFLOW-01（需求 2.2.4/9.3.4）：注册名称与回显开关解耦——开启后
+  // 原文也不进 label（label 经宿主 job_list 无界复制、无法计量裁剪去重），
+  // 改经批次类交付载体附上；关闭态同一取值（上文默认向用例）。
+  assert.equal(spec.label, 'deployment step',
+    '开启向：注册名称仍取 description（原文经批次交付载体附上，不进任务列表）');
   assert.equal(f.jobsFake.views()[0].progress, 'deployment step', 'progress 行仍取 description（活动期说明）');
   settle({ exitCode: 0 });
 });
