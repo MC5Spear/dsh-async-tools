@@ -9,13 +9,21 @@
  *   CDP Accessibility.getFullAXTree 的面板子树（角色／名称／状态与 DOM 断言
  *   一致性）、全部交互节点 AX 名称非空、真实 Tab 键事件的焦点序＝DOM 序且
  *   无陷阱（全部**可聚焦**交互可达；disabled 提交钮被浏览器合规跳过）。
+ *   ASK-ANNOUNCE-01 扩展：AX-3 升 FAIL 判据——新题温和提醒的视觉隐藏
+ *   live region（role=status＋polite＋atomic）唯一在场；AX-4 两座位×收起态
+ *   新题播报＋焦点保持；AX-5 重复轮询/倒计时去重；AX-6 播报语言随 uiLang
+ *   冻结。**分层注明**：合并多题计数由单元层（test/ask-takeover.test.mjs
+ *   J50）在替身模型上覆盖，浏览器侧用单题批次装置「新到达→播报」主链。
  *   **边界如实**：这是浏览器无障碍树面（读屏软件的数据源），不等于
  *   NVDA/JAWS 实机朗读——真实读屏仍留环境边界。
  * - IME 系列（组合输入**事件链**——CDP Input.imeSetComposition/insertText）：
  *   组合输入进行中（compositionupdate、input isComposing=true）与提交后
  *   （insertText）两态——值不丢、组合事件链在场、组合中 Enter（keyCode 229
- *   Process 形态）不触发提交（经典 IME 误提交危害）；组合期提交钮状态量测
- *   留痕。**边界如实**：真实 OS 输入法（微软拼音等）端到端仍留环境边界。
+ *   Process 形态）不触发提交（经典 IME 误提交危害）。ASK-IME-SUBMIT-01
+ *   扩展：IME-1b 升 FAIL 判据——组合期提交钮禁用＋就近原因＋data-composing；
+ *   IME-3 组合期点击被拒；IME-4 失焦结束组合不补发、按有效性恢复、显式再
+ *   提交成行；IME-5 多题隔离（组合中「不答」可用、他题提交不受影响）。
+ *   **边界如实**：真实 OS 输入法（微软拼音等）端到端仍留环境边界。
  * - SK 系列（软键盘**契约面**——属性＋视口收缩模拟）：textarea 的
  *   inputmode/enterkeyhint（多行框 Enter＝换行、不应带任何键盘动作暗示）、
  *   字号 ≥16px（iOS 聚焦自动放大预防——按观察项留痕量测）、键盘遮屏近似
@@ -417,26 +425,35 @@ try {
     expectedIdx.length > 0 && expectedIdx.every((i) => seenIdx.includes(i)) && firstVisitAscending === true,
     `可聚焦=${String(expectedIdx.length)} Tab 到达=${String(seenIdx.length)} 跳过（disabled）=${String(skippedIdx.length)} 步数=${String(walk.length)} 首访序递增=${String(firstVisitAscending)} 首访序=${JSON.stringify(firstVisitOrder)} 序列=${JSON.stringify(panelWalk.map((f) => f.desc).slice(0, 16))}`);
 
-  // AX-3：面板容器公告语义（aria-live/role=dialog 等）——在场性记录（缺席为
-  // 观察项，不判 FAIL）。盲测：留痕行 detail 若是空对象等于没留——缺席时逐
-  // 项点名，给观察项以实义内容。
-  const announce = await evaluate(page, `(() => {
-    const p = document.querySelector('.ats-ask-panel');
-    if (p === null) return null;
-    const holder = p.closest('[aria-live], [role="dialog"]');
-    const attrs = {};
-    for (const a of ['role', 'aria-live', 'aria-atomic', 'aria-label', 'aria-modal']) {
-      const v = p.getAttribute(a) ?? holder?.getAttribute(a);
-      if (v !== null && v !== undefined) attrs[a] = v;
-    }
-    return attrs;
+  // AX-3（ASK-ANNOUNCE-01 升 FAIL 判据）：新题温和提醒的视觉隐藏 live region
+  // 在场且唯一——role=status＋显式 polite/atomic（给探针一个确定断言面）、视觉
+  // 隐藏类在身、**在面板外**（不随面板渲染门槛——侧栏收起形态仍可提醒）。面板
+  // 容器本身不带 aria-live 是设计口径（区域是全界面唯一 live region，避免整面板
+  // 变化被整段播报），一并留痕。
+  const regionProbe = await evaluate(page, `(() => {
+    const regions = [...document.querySelectorAll('[role="status"]')];
+    const sr = [...document.querySelectorAll('.ats-ask-sr')];
+    const panel = document.querySelector('.ats-ask-panel');
+    return {
+      statusCount: regions.length,
+      srCount: sr.length,
+      first: sr[0] === undefined ? null : {
+        inPanel: panel !== null && panel.contains(sr[0]),
+        role: sr[0].getAttribute('role'), live: sr[0].getAttribute('aria-live'),
+        atomic: sr[0].getAttribute('aria-atomic'), className: String(sr[0].className),
+        textLen: sr[0].textContent.length
+      },
+      panelLive: panel === null ? null : panel.getAttribute('aria-live'),
+      assertiveCount: document.querySelectorAll('[aria-live="assertive"]').length
+    };
   })()`);
-  const announceDetail = announce === null ? '面板缺席'
-    : Object.keys(announce).length === 0
-      ? '面板容器与祖先均无 role/aria-live/aria-atomic/aria-label/aria-modal——题目到达无自动播报语义（读屏用户依赖手动导航，观察项归 VIS-OBS-01）'
-      : JSON.stringify(announce);
-  check('AX-3 面板容器公告语义在场性（aria-live／dialog——缺席按观察项留痕）', null,
-    announceDetail);
+  const srOk = regionProbe.statusCount === 1 && regionProbe.srCount === 1
+    && regionProbe.first !== null && regionProbe.first.inPanel === false
+    && regionProbe.first.role === 'status' && regionProbe.first.live === 'polite'
+    && regionProbe.first.atomic === 'true' && regionProbe.first.className.includes('ats-ask-sr');
+  check('AX-3 新题温和提醒 live region：role=status＋polite＋atomic＋视觉隐藏类，全页唯一且在面板外（面板容器无 aria-live 为设计口径）',
+    srOk === true,
+    `role=status 共 ${String(regionProbe.statusCount)}、.ats-ask-sr 共 ${String(regionProbe.srCount)}、区域=${JSON.stringify(regionProbe.first)}、面板 aria-live=${String(regionProbe.panelLive)}、assertive 计数=${String(regionProbe.assertiveCount)}`);
   // 盲测：首跑 A 帧滚在底部（Tab 走查把面板滚了下去）缺头部与 Q1 标题——拍
   // 前把面板内部滚动复位到顶＋blur 走查残留焦点，帧回归「全景顶锚」语义。
   await evaluate(page, `(() => {
@@ -508,17 +525,27 @@ try {
       && q1ValueAfterEnter.qCount >= 2 && q1ValueAfterEnter.value.includes('拼音组合中') === true,
     `组合中值=${JSON.stringify(midState.value.slice(0, 20))} 选中=${midState.selected} Enter(229)后题数=${String(q1ValueAfterEnter.qCount)} 值保留=${String(q1ValueAfterEnter.value.includes('拼音组合中'))} ${LOG_LEGEND} 事件链=${JSON.stringify(midState.log.slice(0, 8))}`);
   await shotOf('a11y-ime-composing.png', { width: 1500, height: 1000, fullPage: false });
-  // 盲测观察（实义断言化）：组合进行中（自定义已选中、框内有组合文）提交钮
-  // 状态量测留痕（本跑实测**随选中启用**——组合文计入有效作答，与「输入即
-  // 选中」语义一致；真输入法端到端是否应拦组合期提交属产品语义待定，需求
-  // 未规定组合期行为，按观察项留痕不判 FAIL）。
+  // IME-1b（ASK-IME-SUBMIT-01 升 FAIL 判据）：组合进行中（自定义已选中、框内
+  // 有组合文）——提交钮禁用（平台层拦截）、就近原因行=组合中文案、根节点
+  // data-composing 探针锚点；「不答」不受组合位置禁用（隔离口径，IME-5 展开）。
   const submitDuringComp = await evaluate(page, `(() => {
     const q = ${qExpr(Q1_TEXT)};
     const s = q?.querySelector('.ats-ask-submit');
-    return s === null || s === undefined ? null : { disabled: s.disabled === true, text: s.textContent.trim() };
+    const k = q?.querySelector('.ats-ask-skip');
+    return s === null || s === undefined ? null : {
+      disabled: s.disabled === true, text: s.textContent.trim(),
+      skipDisabled: k === null || k === undefined ? null : k.disabled === true,
+      composing: q.getAttribute('data-composing'),
+      reason: q.querySelector('.ats-ask-reason')?.textContent ?? ''
+    };
   })()`);
-  check('IME-1b 组合期提交钮状态量测（实测随选中启用——组合文计入有效作答；是否应拦组合期提交属产品语义，观察项）', null,
-    `disabled=${String(submitDuringComp?.disabled)}（自定义已选中＋框内组合文在场时）`);
+  const COMP_ZH = '输入法组词中：完成输入后再提交';
+  check('IME-1b 组合期提交限制：提交钮 disabled＋就近原因＝组合中文案＋data-composing=true＋「不答」可用',
+    submitDuringComp !== null && submitDuringComp.disabled === true
+      && submitDuringComp.composing === 'true'
+      && submitDuringComp.reason.includes('组词中') === true
+      && submitDuringComp.skipDisabled === false,
+    `disabled=${String(submitDuringComp?.disabled)} data-composing=${String(submitDuringComp?.composing)} 原因=${JSON.stringify(submitDuringComp?.reason)}（期望含 ${JSON.stringify(COMP_ZH)}）不答禁用=${String(submitDuringComp?.skipDisabled)}`);
   // IME-2：提交面。**环境语义（二跑事件链实证）**：无真 IME 时 Enter(13/229)
   // 都不提交组合（真 IME 的提交由输入法软件先行拦截，浏览器收不到裸键）；
   // CDP `insertText` 在组合活动时＝「替换式提交」（compositionupdate→
@@ -638,6 +665,216 @@ try {
   // 复位视口。
   await setViewport(page, 1500, 1000);
   await sleep(300);
+
+  // ════════ AX-4/5/6：新题温和提醒主链（ASK-ANNOUNCE-01）════════
+  // 分层注明：合并多题计数（同批多题合成一条）由单元层 J50 在替身模型上覆盖；
+  // 浏览器侧用单题批次装置「新到达→播报→去重→语言」的真实链路。
+  const regionRead = () => evaluate(page, `(() => {
+    const r = document.querySelector('.ats-ask-sr[role="status"]');
+    return r === null ? null : { raw: r.textContent, text: r.textContent.replace(/\\u200B/g, '') };
+  })()`);
+  const ANN_ZH = '待答问题新增 1 题';
+  const ANN_EN = 'Pending questions: 1 new';
+  /** 触发一个单题新批次（新会话，重试一轮）：state RPC 权威等待其进入列表。 */
+  async function triggerSingleBatch(questionText) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const created = await rpc('session/create', { request: { cwd: home, agentPreset: 'dsh-async' } });
+      const sid = created.sessionId;
+      await rpc('session/prompt', {
+        request: {
+          requestId: `req-${Math.random().toString(36).slice(2, 10)}`,
+          sessionId: sid, mode: 'queue',
+          content: [{ type: 'text', text: `Call the ask_user_question tool with exactly ONE question in ONE call: question text "${questionText}", options "yes" and "no", no multiSelect. Do not answer it yourself; call the tool once and wait for the user.` }],
+          clientTimeZone: 'Asia/Hong_Kong'
+        }
+      });
+      for (let i = 0; i < 40; i += 1) {
+        const st = await rpc('async-tools-ask/state', {}).catch(() => null);
+        if ((st?.items ?? []).some((it) => (it.question ?? '').includes(questionText) === true)) return sid;
+        await sleep(3000);
+      }
+    }
+    return null;
+  }
+  const waitForRegion = async (pred) => {
+    for (let i = 0; i < 12; i += 1) {
+      const r = await regionRead();
+      if (r !== null && pred(r) === true) return r;
+      await sleep(1000);
+    }
+    return null;
+  };
+
+  // AX-4①：sidebar 座位、面板收起（不点徽标）——新题到达仍播报、徽标计数＋1、
+  // 焦点不动。锚点＝徽标按钮本身（用户正读侧栏的现实形态；React 原位更新该
+  // 节点，身份跨重渲保持）。
+  await patchSettings({ askUiSeat: 'sidebar' });
+  await sleep(1800);
+  const ax4PanelHidden = Number(await evaluate(page, 'document.querySelectorAll(".ats-ask-panel").length')) === 0;
+  const badgeAnchor = await evaluate(page, `(() => {
+    const b = document.querySelector('.ats-ask-badge');
+    b?.focus();
+    return b === null || b === undefined ? null : { focused: document.activeElement === b, count: b.querySelector('.ats-ask-count')?.textContent ?? '' };
+  })()`);
+  const ax4aBefore = await regionRead();
+  const sidSize = await triggerSingleBatch('Pick a size');
+  if (sidSize === null) fail('AX-4：单题批次两轮触发均未进 state（模型未调 ask_user_question）');
+  const ax4a = await waitForRegion((r) => r.text === ANN_ZH);
+  const ax4aBadge = await evaluate(page, `(() => {
+    const b = document.querySelector('.ats-ask-badge');
+    return b === null ? null : { stillFocused: document.activeElement === b, count: b.querySelector('.ats-ask-count')?.textContent ?? '' };
+  })()`);
+  check('AX-4① sidebar 收起态新题播报：区域文本→zh 数量句、徽标计数＋1、焦点保持、面板保持收起（区域常驻不受座位/收起门槛）',
+    ax4a !== null && ax4PanelHidden === true && badgeAnchor !== null
+      && ax4aBadge !== null && ax4aBadge.stillFocused === true
+      && Number(ax4aBadge.count) === Number(badgeAnchor.count) + 1
+      && Number(await evaluate(page, 'document.querySelectorAll(".ats-ask-panel").length')) === 0,
+    `区域=${JSON.stringify(ax4a)}（前值=${JSON.stringify(ax4aBefore)}）徽标计数 ${String(badgeAnchor?.count)}→${String(ax4aBadge?.count)} 焦点保持=${String(ax4aBadge?.stillFocused)} 面板收起=${String(ax4PanelHidden)}`);
+
+  // AX-5（去重）：批次在场期间重复轮询＋倒计时走秒重渲染——区域文本逐次不变。
+  const ax5T0 = await regionRead();
+  const leftT0 = await evaluate(page, `(() => {
+    const el = document.querySelector('.ats-ask-panel .ats-ask-left, .ats-ask-badge');
+    return el === null ? null : el.textContent;
+  })()`);
+  await sleep(2600); // ≥2×轮询间隔（1000ms）＋≥2 次走秒重渲染
+  const ax5T1 = await regionRead();
+  check('AX-5 播报去重：重复轮询与倒计时重渲染不重播（区域文本不变——读屏只读变化）',
+    ax5T0 !== null && ax5T1 !== null && ax5T0.raw === ax5T1.raw,
+    `区域文本 T0=${JSON.stringify(ax5T0?.raw)} T1=${JSON.stringify(ax5T1?.raw)}（2600ms 窗口，含 ≥2 轮轮询与走秒重渲染；倒计时读数 ${JSON.stringify(leftT0)} 属面板/徽标局部更新）`);
+
+  // AX-4②：overlay 座位复跑——面板常显形态同样播报、焦点不动、全页无 assertive。
+  await patchSettings({ askUiSeat: 'overlay' });
+  await sleep(1800);
+  const overlayAnchor = await evaluate(page, `(() => {
+    const b = document.querySelector('.ats-ask-badge, #root button:not([disabled])');
+    b?.focus();
+    return b === null || b === undefined ? null : document.activeElement === b;
+  })()`);
+  const ax4bBefore = await regionRead();
+  const sidShape = await triggerSingleBatch('Pick a shape');
+  if (sidShape === null) fail('AX-4②：单题批次两轮触发均未进 state');
+  const ax4b = await waitForRegion((r) => r.text === ANN_ZH && r.raw !== (ax4bBefore?.raw ?? ''));
+  const ax4bFocus = await evaluate(page, `(() => ({
+    panelVisible: document.querySelectorAll('.ats-ask-panel').length > 0,
+    assertive: document.querySelectorAll('[aria-live="assertive"]').length
+  }))()`);
+  check('AX-4② overlay 座位新题播报：区域文本再更新（连续同文靠零宽空格交替保证文本有差）、面板常显、全页无 aria-live=assertive',
+    ax4b !== null && ax4bFocus.panelVisible === true && ax4bFocus.assertive === 0 && overlayAnchor === true,
+    `区域=${JSON.stringify(ax4b)}（前值=${JSON.stringify(ax4bBefore)}——原始文本已变）面板在场=${String(ax4bFocus.panelVisible)} assertive=${String(ax4bFocus.assertive)}`);
+
+  // AX-6（语言）：uiLang=en 下新题→en 文案；切回 zh 后已冻结文本不被重写。
+  await patchSettings({ uiLang: 'en' });
+  await sleep(1500);
+  const ax6Before = await regionRead();
+  const sidPlace = await triggerSingleBatch('Pick a place');
+  if (sidPlace === null) fail('AX-6：单题批次两轮触发均未进 state');
+  const ax6En = await waitForRegion((r) => r.text === ANN_EN);
+  await patchSettings({ uiLang: 'zh' });
+  await sleep(1800);
+  const ax6Frozen = await regionRead();
+  check('AX-6 播报语言：uiLang=en 新题→en 数量句；切回 zh 后已冻结文本不变（语言切换不触发旧消息重播）',
+    ax6En !== null && ax6Frozen !== null && ax6Frozen.text === ANN_EN,
+    `en 档=${JSON.stringify(ax6En)}（前值=${JSON.stringify(ax6Before)}）切回 zh 后=${JSON.stringify(ax6Frozen)}（冻结）`);
+
+  // ════════ IME-3/4/5：组合期提交限制（ASK-IME-SUBMIT-01）真实面板链 ════════
+  const SIZE_TEXT = 'Pick a size';
+  const SHAPE_TEXT = 'Pick a shape';
+  // IME-3：组合期对提交钮的合成点击被拒——题仍 open、面板不消题。
+  const ime3Setup = await evaluate(page, `(() => {
+    const q = ${qExpr(SIZE_TEXT)};
+    if (q === null) return false;
+    q.querySelector('textarea.ats-ask-input')?.focus();
+    return document.activeElement === q.querySelector('textarea.ats-ask-input');
+  })()`);
+  if (ime3Setup !== true) fail('IME-3 步骤：Pick a size 的 textarea 程序聚焦不可得');
+  await page.send('Input.imeSetComposition', { text: '组词中答案', selectionStart: 5, selectionEnd: 5 });
+  await sleep(500);
+  const ime3Mid = await evaluate(page, `(() => {
+    const q = ${qExpr(SIZE_TEXT)};
+    return { composing: q?.getAttribute('data-composing') ?? '',
+      disabled: q?.querySelector('.ats-ask-submit')?.disabled === true, qCount: document.querySelectorAll('.ats-ask-panel .ats-ask-q').length };
+  })()`);
+  await evaluate(page, `${qExpr(SIZE_TEXT)}?.querySelector('.ats-ask-submit')?.click(), true`);
+  await sleep(700);
+  const ime3After = await evaluate(page, `(() => {
+    const q = ${qExpr(SIZE_TEXT)};
+    return { qCount: document.querySelectorAll('.ats-ask-panel .ats-ask-q').length, composing: q?.getAttribute('data-composing') ?? '' };
+  })()`);
+  const ime3State = await rpc('async-tools-ask/state', {});
+  check('IME-3 组合期动作被拒：合成 click 后题目仍在面板、state 仍列该题 open（被拒动作当场终结）',
+    ime3Mid.composing === 'true' && ime3Mid.disabled === true
+      && ime3After.qCount === ime3Mid.qCount && ime3After.composing === 'true'
+      && ime3State.items.some((it) => (it.question ?? '').includes(SIZE_TEXT) === true),
+    `组合中 data-composing=${String(ime3Mid.composing)} disabled=${String(ime3Mid.disabled)} 点击后题数 ${String(ime3Mid.qCount)}→${String(ime3After.qCount)} state 含该题=${String(ime3State.items.some((it) => (it.question ?? '').includes(SIZE_TEXT) === true))}`);
+
+  // IME-4：失焦结束组合（onBlur 复位）→按有效性恢复 enabled、无自动提交；迟到
+  // 合成 compositionend 幂等；显式点击后提交成行、转录含组合文本。
+  await evaluate(page, `${qExpr(SIZE_TEXT)}?.querySelector('textarea.ats-ask-input')?.blur(), true`);
+  await sleep(400);
+  const ime4Blur = await evaluate(page, `(() => {
+    const q = ${qExpr(SIZE_TEXT)};
+    const input = q?.querySelector('textarea.ats-ask-input');
+    return { composing: q?.getAttribute('data-composing') ?? '', disabled: q?.querySelector('.ats-ask-submit')?.disabled === true,
+      value: String(input?.value ?? ''), qCount: document.querySelectorAll('.ats-ask-panel .ats-ask-q').length };
+  })()`);
+  await evaluate(page, `(() => {
+    const input = ${qExpr(SIZE_TEXT)}?.querySelector('textarea.ats-ask-input');
+    input?.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '组词中答案' }));
+    return true;
+  })()`);
+  await sleep(400);
+  const ime4End = await evaluate(page, `(() => {
+    const q = ${qExpr(SIZE_TEXT)};
+    return { composing: q?.getAttribute('data-composing') ?? '', disabled: q?.querySelector('.ats-ask-submit')?.disabled === true,
+      qCount: document.querySelectorAll('.ats-ask-panel .ats-ask-q').length };
+  })()`);
+  await evaluate(page, `${qExpr(SIZE_TEXT)}?.querySelector('.ats-ask-submit')?.click(), true`);
+  let ime4Gone = false;
+  for (let i = 0; i < 10 && ime4Gone === false; i += 1) {
+    await sleep(700);
+    ime4Gone = (await evaluate(page, `${qExpr(SIZE_TEXT)} === null`)) === true;
+  }
+  let ime4TranscriptHit = false;
+  try {
+    const page4 = await transcriptOf(sidSize);
+    ime4TranscriptHit = JSON.stringify(page4).includes('组词中答案');
+  } catch { /* 转录读取失败按未命中留痕，不阻塞 */ }
+  check('IME-4 失焦结束组合不补发＋重校验＋再提交：blur 后按有效性恢复 enabled、无自动提交；迟到 compositionend 幂等；显式提交成行且转录含组合文本',
+    ime4Blur.composing === 'false' && ime4Blur.disabled === false && ime4Blur.qCount === ime3After.qCount
+      && ime4End.composing === 'false' && ime4End.disabled === false && ime4End.qCount === ime4Blur.qCount
+      && ime4Gone === true && ime4TranscriptHit === true,
+    `blur 后 composing=${String(ime4Blur.composing)} disabled=${String(ime4Blur.disabled)}（无自动提交题数 ${String(ime4Blur.qCount)}）；合成 end 后 disabled=${String(ime4End.disabled)}；显式提交后该题离场=${String(ime4Gone)} 转录含组合文=${String(ime4TranscriptHit)} 终值=${JSON.stringify(ime4Blur.value.slice(0, 16))}`);
+
+  // IME-5（隔离）：题 A 组合中——A 的「不答」可用且提交禁用；题 B 有效选中不受 A 组合影响。
+  const ime5Setup = await evaluate(page, `(() => {
+    const b = ${qExpr(Q2_TEXT)};
+    b?.querySelectorAll('button.ats-ask-opt')[0]?.click();
+    const a = ${qExpr(SHAPE_TEXT)};
+    a?.querySelector('textarea.ats-ask-input')?.focus();
+    return { bSelected: b?.querySelector('button.ats-ask-opt')?.getAttribute('data-selected') ?? '',
+      aFocused: document.activeElement === a?.querySelector('textarea.ats-ask-input') };
+  })()`);
+  if (ime5Setup.aFocused !== true) fail('IME-5 步骤：Pick a shape 的 textarea 程序聚焦不可得');
+  await page.send('Input.imeSetComposition', { text: '隔离组合', selectionStart: 4, selectionEnd: 4 });
+  await sleep(500);
+  const ime5Mid = await evaluate(page, `(() => {
+    const a = ${qExpr(SHAPE_TEXT)};
+    const b = ${qExpr(Q2_TEXT)};
+    return { aComposing: a?.getAttribute('data-composing') ?? '', aSubmit: a?.querySelector('.ats-ask-submit')?.disabled === true,
+      aSkipDisabled: a?.querySelector('.ats-ask-skip')?.disabled === true,
+      bSubmit: b?.querySelector('.ats-ask-submit')?.disabled === true };
+  })()`);
+  await evaluate(page, `${qExpr(SHAPE_TEXT)}?.querySelector('.ats-ask-skip')?.click(), true`);
+  let ime5Skipped = false;
+  for (let i = 0; i < 10 && ime5Skipped === false; i += 1) {
+    await sleep(700);
+    ime5Skipped = (await evaluate(page, `${qExpr(SHAPE_TEXT)} === null`)) === true;
+  }
+  check('IME-5 多题隔离：组合中「不答」可用（该题出列）；他题有效提交不受本题组合影响',
+    ime5Setup.bSelected === 'true' && ime5Mid.aComposing === 'true' && ime5Mid.aSubmit === true
+      && ime5Mid.aSkipDisabled === false && ime5Mid.bSubmit === false && ime5Skipped === true,
+    `题 B 选中=${String(ime5Setup.bSelected)}；题 A 组合中：data-composing=${String(ime5Mid.aComposing)} 提交禁用=${String(ime5Mid.aSubmit)} 不答禁用=${String(ime5Mid.aSkipDisabled)}；题 B 提交可用=${String(ime5Mid.bSubmit === false)}；组合中不答后 A 离场=${String(ime5Skipped)}`);
 } catch (error) {
   cleanup();
   fail(`未预期异常：${String(error?.stack ?? error)}`);

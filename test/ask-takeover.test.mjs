@@ -2767,3 +2767,340 @@ test('J41：状态读取代际——关闭／重开／卸载：迟到成功与�
   assert.equal(s.items.length, 0, '题目不被卸载后的回执改写');
   assert.equal(s.callFailed, null, '卸载后的回执不立失败旗标');
 });
+
+// ---------------------------------------------------------------------------
+// 新题温和提醒（ASK-ANNOUNCE-01，设计 .local/design/a2/design-ask-ui.md §1/§4.1
+// J1-J8）：复合键集合差的播报、代际配合、失败恢复、生命周期、两语冻结、
+// AskAnnouncer 树形状与 wireAskSeats 接线。
+// ---------------------------------------------------------------------------
+
+test('J50：新题温和提醒——首查合并计数、增量、乱序/旧代、失败恢复、生命周期、两语冻结', async () => {
+  const react = makeMiniReact();
+  const intervals = [];
+  const product = await loadClientProduct(react, {
+    setInterval: (fn, ms) => { intervals.push({ fn, ms }); return intervals.length; },
+    clearInterval: () => {}
+  });
+  const pending = [];
+  const remoteNs = { state: () => new Promise((res) => { pending.push(res); }) };
+  const scopeListeners = [];
+  let snap = { status: 'ready', value: { askTakeover: true, askUiSeat: 'sidebar', uiLang: 'zh' }, user: {} };
+  const scope = {
+    getSnapshot: () => snap,
+    subscribe: (fn) => { scopeListeners.push(fn); return () => {}; },
+    mutate: async () => true
+  };
+  const ctx = { configForms: { get: () => scope }, uiWorkspace: { openSession() {} } };
+  const flush = async () => { for (let i = 0; i < 4; i += 1) await Promise.resolve(); };
+  const setSnap = (value) => { snap = value; scopeListeners.forEach((fn) => fn()); };
+  const it = (batchId, questionId) => ({
+    batchId, questionId, sessionId: 's1', question: `题 ${questionId}`, options: [],
+    multiSelect: false, receivedAt: 0, expiresAt: 20_000, phase: 'open'
+  });
+  const zhText = product.DICTIONARIES.zh['ask.announceNew'];
+  const enText = product.DICTIONARIES.en['ask.announceNew'];
+
+  const model = product.createAskModel(ctx, remoteNs);
+  await flush();
+
+  // J1 首查合并：3 题合成一条数量播报（zh 档）；同 items 再读 announce 引用不变。
+  pending[0]({ ok: true, value: { serverNow: 10_000, items: [it('b1', 'q1'), it('b1', 'q2'), it('b1', 'q3')] } });
+  await flush();
+  let announce = model.store.getSnapshot().announce;
+  assert.ok(announce !== null, '首查生成播报（重载/重开视角：在场待答都是新事实）');
+  assert.equal(announce.text, zhText.replace('{n}', '3'), '3 题合并成一条（zh 词典值）');
+  assert.equal(announce.seq, 1, '播报序号从 1 起');
+  await intervals[0].fn();
+  await flush();
+  pending[1]({ ok: true, value: { serverNow: 10_500, items: [it('b1', 'q1'), it('b1', 'q2'), it('b1', 'q3')] } });
+  await flush();
+  assert.equal(model.store.getSnapshot().announce, announce, '同 items 重复轮询：announce 引用不变（DOM 文本不变，不重播）');
+
+  // J2 增量：新 batchId 两题到达→只播增量 2，旧题不重播。
+  await intervals[0].fn();
+  await flush();
+  pending[2]({ ok: true, value: { serverNow: 11_000, items: [it('b1', 'q1'), it('b2', 'q4'), it('b2', 'q5')] } });
+  await flush();
+  announce = model.store.getSnapshot().announce;
+  assert.equal(announce.text, zhText.replace('{n}', '2'), '增量只计新键（2），已播旧题不重播');
+  assert.equal(announce.seq, 2, '播报序号递增');
+
+  // J3 乱序：同代较旧回执后到→闸门丢弃，不产生播报、不把旧键漏进已播集合。
+  await intervals[0].fn();
+  await flush(); // pending[3]（seq 较新）在途
+  await intervals[0].fn();
+  await flush(); // pending[4]（seq 更旧，后发先回前先兑现较新）
+  pending[4]({ ok: true, value: { serverNow: 12_000, items: [it('b1', 'q1'), it('b2', 'q4'), it('b2', 'q5')] } });
+  await flush();
+  const beforeStale = model.store.getSnapshot().announce;
+  pending[3]({ ok: true, value: { serverNow: 11_500, items: [it('b0', 'q0'), it('b2', 'q4'), it('b2', 'q5')] } });
+  await flush();
+  assert.equal(model.store.getSnapshot().announce, beforeStale, '较旧回执被闸门丢弃：无新播报');
+  // 旧键 b0/q0 未被旧回执漏进已播集合——下一次合法读取仍会把它当新题播报。
+  await intervals[0].fn();
+  await flush();
+  pending[5]({ ok: true, value: { serverNow: 12_500, items: [it('b0', 'q0'), it('b2', 'q4'), it('b2', 'q5')] } });
+  await flush();
+  assert.equal(model.store.getSnapshot().announce.text, zhText.replace('{n}', '1'), '旧键未被乱序回执吞掉（漏进已播集合会这里少播）');
+
+  // J4 读失败恢复：失败夹在两次成功之间→已播集合保留，恢复读取只播新增。
+  await intervals[0].fn();
+  await flush();
+  pending[6](undefined); // 读取失败：不播报、不动已播集合
+  await flush();
+  assert.equal(model.store.getSnapshot().callFailed, 'state', '读取失败立 state 旗标（重连窗口）');
+  await intervals[0].fn();
+  await flush();
+  pending[7]({ ok: true, value: { serverNow: 13_000, items: [it('b0', 'q0'), it('b2', 'q4'), it('b2', 'q5'), it('b3', 'q6')] } });
+  await flush();
+  announce = model.store.getSnapshot().announce;
+  assert.equal(announce.text, zhText.replace('{n}', '1'), '恢复后只播断线期间新增（b3/q6），断线前旧题不重播');
+
+  // J6 两语与冻结：切 en 后已冻结 text 不重写；下一次新键才用新语言。
+  setSnap({ status: 'ready', value: { askTakeover: true, askUiSeat: 'sidebar', uiLang: 'en' }, user: {} });
+  const frozen = model.store.getSnapshot().announce;
+  assert.equal(frozen.text, zhText.replace('{n}', '1'), '语言切换不重写已冻结文本（不触发旧消息重播）');
+  await intervals[0].fn();
+  await flush();
+  pending[8]({ ok: true, value: { serverNow: 14_000, items: [it('b0', 'q0'), it('b2', 'q4'), it('b2', 'q5'), it('b3', 'q6'), it('b4', 'q7')] } });
+  await flush();
+  announce = model.store.getSnapshot().announce;
+  assert.equal(announce.text, enText.replace('{n}', '1'), '新键播报用切换后的语言（en 词典值）');
+
+  // J5 生命周期：关闭→announce 置空、已播集合清空；重开首查重新播报；旧代迟到回执不播。
+  const openPending = pending.length;
+  await intervals[0].fn();
+  await flush(); // 旧代在途回执（关闭后到达）
+  setSnap({ status: 'ready', value: { askTakeover: false }, user: {} });
+  assert.equal(model.store.getSnapshot().announce, null, '关闭清空播报（区域文本不残留失效消息）');
+  pending[openPending]({ ok: true, value: { serverNow: 15_000, items: [it('b9', 'q9')] } });
+  await flush();
+  assert.equal(model.store.getSnapshot().announce, null, '旧代迟到成功回执不产生播报（闸门先拒）');
+  setSnap({ status: 'ready', value: { askTakeover: true, askUiSeat: 'sidebar', uiLang: 'zh' }, user: {} });
+  await flush();
+  pending[openPending + 1]({ ok: true, value: { serverNow: 16_000, items: [it('b1', 'q1'), it('b2', 'q4')] } });
+  await flush();
+  announce = model.store.getSnapshot().announce;
+  assert.equal(announce.text, zhText.replace('{n}', '2'), '重开首查按首查口径重新播报（已播集合已清空）');
+  assert.ok(announce.seq > 4, '播报序号跨生命周期单调递增');
+  model.dispose();
+});
+
+test('J51：AskAnnouncer 树形状——role=status＋polite＋atomic＋视觉隐藏类、零宽空格交替、无渲染门槛', async () => {
+  const react = makeMiniReact();
+  const product = await loadClientProduct(react, { setInterval: () => 0, clearInterval: () => {} });
+  // 手工快照模型：Announcer 只读 store（subscribe/getSnapshot），不碰 actions。
+  const makeModel = (announce) => ({
+    store: {
+      subscribe: () => () => {},
+      getSnapshot: () => ({
+        enabled: false, seat: 'sidebar', uiLang: 'auto', serverNow: 0, fetchedAt: 0,
+        items: [], callFailed: null, answerRejectReason: null,
+        lostAnswers: [], undelivered: [], announce
+      })
+    },
+    locale: null
+  });
+  const spanOf = (model) => react.render(() => product.AskAnnouncer({ ask: model }));
+
+  // 关态（enabled=false、无题目——askHasFace=false）仍渲染本体：区域不设门槛。
+  const empty = spanOf(makeModel(null));
+  assert.ok(empty !== null && empty.type === 'span', '关/无题态：播报区域仍在场（不设渲染门槛）');
+  assert.equal(empty.props.className, 'ats-ask-sr', '视觉隐藏类在身');
+  assert.equal(empty.props.role, 'status', 'role=status（隐含 polite/atomic）');
+  assert.equal(empty.props['aria-live'], 'polite', '显式 polite（温和提醒：不打断当前朗读）');
+  assert.equal(empty.props['aria-atomic'], 'true', '显式 atomic（整条朗读，不半句拼接）');
+  assert.equal(String(empty.children), '', 'announce=null 时 children 为空');
+
+  const a1 = spanOf(makeModel({ text: '待答问题新增 1 题', seq: 1 }));
+  const a2 = spanOf(makeModel({ text: '待答问题新增 1 题', seq: 2 }));
+  assert.equal(String(a1.children), '待答问题新增 1 题', 'text 进 children');
+  assert.equal(String(a2.children), '待答问题新增 1 题\u200B', '连续同文按 seq 奇偶交替追加零宽空格（文本恒有差异）');
+  assert.notEqual(String(a1.children), String(a2.children), '两次同文播报的 DOM 文本不同（部分读屏才重播）');
+});
+
+test('J52：wireAskSeats 接线——overlay 槽注册返回 Fragment[AskAnnouncer, AskOverlaySeat]，与座位态解耦', async () => {
+  const react = makeMiniReact();
+  const product = await loadClientProduct(react, { setInterval: () => 0, clearInterval: () => {} });
+  let snap = { status: 'ready', value: { askTakeover: true, askUiSeat: 'sidebar' }, user: {} };
+  const scopeListeners = [];
+  const scope = {
+    getSnapshot: () => snap,
+    subscribe: (fn) => { scopeListeners.push(fn); return () => {}; },
+    mutate: async () => true
+  };
+  const registrations = [];
+  const askRemoteNs = { state: () => Promise.resolve({ ok: true, value: { serverNow: 0, items: [] } }) };
+  const fakeAgentPresets = { list: () => Promise.resolve({ ok: true, value: { presets: [] } }) };
+  const ctx = {
+    configForms: {
+      get: () => scope,
+      whileServed: (entries, fn) => { const off = fn(); return () => off?.(); }
+    },
+    slots: {
+      inject: (slot, factory) => { const off = factory(); return () => off?.(); },
+      register: (meta, renderFn) => { registrations.push({ meta, renderFn }); return () => {}; }
+    },
+    inject: (list, fn) => fn({ remote: { 'async-tools-ask': askRemoteNs, agentPresets: fakeAgentPresets } }),
+    locale: { register: () => () => {} },
+    remote: { $mount: () => Promise.resolve(() => {}), $on: () => () => {} },
+    on: () => () => {},
+    effect: (fn) => { const off = fn(); return () => off?.(); },
+    uiWorkspace: { openSession() {} }
+  };
+  product.apply(ctx);
+  await Promise.resolve();
+  await Promise.resolve();
+  const overlayReg = registrations.find((reg) => reg.meta.name === 'shell.overlay' && reg.meta.id === 'async-tools-ask');
+  assert.ok(overlayReg !== undefined, 'overlay 槽注册经 apply 生效');
+  // sidebar 座位态（面板不渲染的收起形态）下取注册渲染函数：Fragment 首子即播报区域。
+  const frag = overlayReg.renderFn();
+  assert.equal(frag.type, react.Fragment, 'overlay 注册返回 Fragment');
+  assert.equal(frag.children[0].type, product.AskAnnouncer, 'Fragment 首子＝AskAnnouncer（不设座位/收起门槛）');
+  assert.equal(frag.children[1].type, product.AskOverlaySeat, 'Fragment 次子＝AskOverlaySeat（座位本体照旧）');
+  // sidebar.footer.action 注册不受影响（label 闭包 + 座位本体）。
+  const sidebarReg = registrations.find((reg) => reg.meta.name === 'sidebar.footer.action' && reg.meta.id === 'async-tools-ask');
+  assert.ok(sidebarReg !== undefined && typeof sidebarReg.meta.label === 'function', 'sidebar 座位注册并存且 label 闭包不变');
+  assert.equal(sidebarReg.renderFn().type, product.AskSidebarSeat, 'sidebar 注册仍渲染座位本体');
+});
+
+// ---------------------------------------------------------------------------
+// 组合期提交限制（ASK-IME-SUBMIT-01，设计 .local/design/a2/design-ask-ui.md §2/§4.1
+// J9-J16）：每题组合状态、平台层 disabled、submit 复查、compositionend/onBlur
+// 复位与重校验、不答隔离、多题隔离、多选组合期（评审 M2）、blur 单独复位（M3）。
+// ---------------------------------------------------------------------------
+
+test('J53：组合期提交限制——置位/拦截/复查/复位/重校验/不答隔离/多选组合期/blur 复位', async () => {
+  const react = makeMiniReact();
+  const product = await loadClientProduct(react, { setInterval: () => 0, clearInterval: () => {} });
+  const t = (key) => key;
+  const submitted = [];
+  const ignored = [];
+  const ask = {
+    actions: {
+      answer(item, selected, custom, onDone) {
+        submitted.push({ selected, custom });
+        if (typeof onDone === 'function') onDone(true);
+      },
+      ignore(item, onDone) { ignored.push(item.questionId); if (typeof onDone === 'function') onDone(true); },
+      jump() {}, dismissLost() {}
+    },
+    store: null
+  };
+  const base = { batchId: 'b', sessionId: 's', question: 'q', receivedAt: 0,
+    expiresAt: Date.now() + 60000, phase: 'open' };
+  const opts = () => react.__lastTree.children.find((c) => c?.props?.className === 'ats-ask-opts').children;
+  const customInput = () => opts()[opts().length - 1].children[1];
+  const row = () => react.__lastTree.children.find((c) => c?.props?.className === 'ats-ask-row');
+  const submitBtn = () => row().children[0];
+  const skipBtn = () => row().children[1];
+  const reason = () => react.__lastTree.children.find((c) => c?.props?.className === 'ats-ask-reason');
+  const root = () => react.__lastTree;
+
+  // ── J9/J10/J11：单选自定义项的主线 ──────────────────────────────────────
+  const single = { ...base, questionId: 'q1', multiSelect: false, options: [{ label: 'a' }] };
+  react.render(() => product.AskItem({ item: single, t, ask, serverNow: 0, fetchedAt: 0 }));
+  // 前置：自定义有效文本→可提交；组合开始→平台层禁用＋就近原因＋探针锚点。
+  customInput().props.onChange({ target: { value: '拼音组合中' } });
+  assert.equal(submitBtn().props.disabled, false, '前置：有效自定义可提交');
+  customInput().props.onCompositionStart();
+  assert.equal(submitBtn().props.disabled, true, '组合开始：平台层 disabled（鼠标/触屏/键盘三入口同拦）');
+  assert.equal(reason()?.children[0], 'ask.composing', '就近原因=组合中（优先于有效性档）');
+  assert.equal(root().props['data-composing'], 'true', 'data-composing=true（探针锚点）');
+  // 组合中 onChange 输入非空白：自定义保持选中，仍禁用。
+  customInput().props.onChange({ target: { value: '拼音组合中续' } });
+  assert.equal(submitBtn().props.disabled, true, '组合中输入照进草稿，但提交仍禁用');
+  // J10 复查：组合中直接调 submit 的 onClick（绕过 disabled 的合成点击）→零调用。
+  submitBtn().props.onClick();
+  assert.equal(submitted.length, 0, '组合中被拒动作当场终结（提交入口复查读 ref）');
+  // J11 compositionend→按有效性恢复：有效（非空白自定义）→enabled、原因行退场。
+  customInput().props.onCompositionEnd();
+  assert.equal(submitBtn().props.disabled, false, '组合结束：有效性现算恢复启用');
+  assert.equal(reason(), undefined, '有效态无就近原因');
+  assert.equal(root().props['data-composing'], 'false', '组合结束复位探针锚点');
+  // 组合结束后同一 onClick→恰一次（须再次明确动作；不自动补发被拒动作）。
+  submitBtn().props.onClick();
+  assert.equal(submitted.length, 1, '组合结束后显式提交成功一次');
+  assert.deepEqual(submitted[0], { selected: [], custom: '拼音组合中续' }, '载荷＝组合确认后的草稿原文');
+  // J11b 无效恢复档：组合结束后空白自定义→disabled＋needCustom；无选择→needAnswer。
+  customInput().props.onChange({ target: { value: ' ' } });
+  assert.equal(submitBtn().props.disabled, true, '组合结束后空白自定义：按有效性禁用');
+  assert.equal(reason()?.children[0], 'ask.needCustom', '就近原因回到有效性档：自定义空白');
+  customInput().props.onClick(); // 重新选中后清空
+  customInput().props.onChange({ target: { value: '' } });
+  react.render(() => product.AskItem({ item: single, t, ask, serverNow: 0, fetchedAt: 0 }));
+  assert.equal(submitBtn().props.disabled, true, '新实例无选择：禁用');
+  assert.equal(reason()?.children[0], 'ask.needAnswer', '就近原因：需要选择答案');
+
+  // ── J12 不答隔离 ───────────────────────────────────────────────────────
+  const skipCase = { ...base, questionId: 'q2', multiSelect: false, options: [{ label: 'a' }] };
+  react.render(() => product.AskItem({ item: skipCase, t, ask, serverNow: 0, fetchedAt: 0 }));
+  customInput().props.onChange({ target: { value: '组合中不答' } });
+  customInput().props.onCompositionStart();
+  assert.notEqual(skipBtn().props.disabled, true, '「不答」不受组合位置 disabled（仅既有 busy 拦截）');
+  skipBtn().props.onClick();
+  assert.deepEqual(ignored, ['q2'], '组合中可直接不答该题（提交限制不管忽略入口）');
+
+  // ── J15 多选（预设＋自定义）组合期（评审 M2 补）────────────────────────
+  const multi = { ...base, questionId: 'q3', multiSelect: true, options: [{ label: 'a' }, { label: 'b' }] };
+  react.render(() => product.AskItem({ item: multi, t, ask, serverNow: 0, fetchedAt: 0 }));
+  opts()[0].props.onClick(); // 已选预设 a
+  customInput().props.onChange({ target: { value: '多选自定义' } });
+  assert.equal(submitBtn().props.disabled, false, '前置：预设＋有效自定义可提交');
+  customInput().props.onCompositionStart();
+  assert.equal(submitBtn().props.disabled, true, '多选组合期：整题禁提交（disabled 是题级判定）');
+  assert.equal(reason()?.children[0], 'ask.composing', '多选组合期就近原因');
+  submitBtn().props.onClick();
+  assert.equal(submitted.filter((s) => s.custom === '多选自定义').length, 0, '多选组合中被拒动作零调用');
+  customInput().props.onCompositionEnd();
+  assert.equal(submitBtn().props.disabled, false, '组合结束：「预设＋有效自定义」恢复可提交');
+  submitBtn().props.onClick();
+  assert.deepEqual(submitted[submitted.length - 1], { selected: ['a'], custom: '多选自定义' },
+    '多选组合结束后提交：预设与自定义并列进载荷');
+
+  // ── J16 blur 单独复位（评审 M3 补：历史引擎失焦不派发 compositionend）──
+  const blurCase = { ...base, questionId: 'q4', multiSelect: false, options: [{ label: 'a' }] };
+  react.render(() => product.AskItem({ item: blurCase, t, ask, serverNow: 0, fetchedAt: 0 }));
+  customInput().props.onChange({ target: { value: '失焦复位' } });
+  customInput().props.onCompositionStart();
+  assert.equal(submitBtn().props.disabled, true, '前置：组合中禁用');
+  customInput().props.onBlur(); // 只有 blur、没有 compositionend
+  assert.equal(submitBtn().props.disabled, false, 'blur 同步复位组合位（提交限制不卡死）');
+  assert.equal(root().props['data-composing'], 'false', 'blur 后探针锚点复位');
+  const countAfterBlur = submitted.length;
+  customInput().props.onCompositionEnd(); // 迟到的 compositionend：幂等复位、无补发
+  assert.equal(submitted.length, countAfterBlur, '迟到 compositionend 不自动提交（无存储意图可补发）');
+  assert.equal(submitBtn().props.disabled, false, '幂等复位不改变按有效性恢复的结果');
+
+  // ── J13 多题隔离：A 组合不改 B 的提交可用性（两实例共用一次渲染会话）──
+  const itemA = { ...base, questionId: 'qa', multiSelect: false, options: [{ label: 'a' }] };
+  const itemB = { ...base, questionId: 'qb', multiSelect: false, options: [{ label: 'b' }] };
+  react.render(() => [
+    product.AskItem({ item: itemA, t, ask, serverNow: 0, fetchedAt: 0 }),
+    product.AskItem({ item: itemB, t, ask, serverNow: 0, fetchedAt: 0 })
+  ]);
+  const treeOf = (i) => react.__lastTree[i];
+  const inputOf = (i) => {
+    const o = treeOf(i).children.find((c) => c?.props?.className === 'ats-ask-opts').children;
+    return o[o.length - 1].children[1];
+  };
+  const submitOf = (i) => treeOf(i).children.find((c) => c?.props?.className === 'ats-ask-row').children[0];
+  inputOf(0).props.onChange({ target: { value: 'A 组合' } });
+  inputOf(1).props.onChange({ target: { value: 'B 有效' } });
+  assert.equal(submitOf(1).props.disabled, false, '前置：两题各自有效');
+  inputOf(0).props.onCompositionStart();
+  assert.equal(submitOf(0).props.disabled, true, '题 A 组合中：A 禁用');
+  assert.equal(submitOf(1).props.disabled, false, '题 B 不受题 A 组合影响（每题状态独立）');
+  inputOf(1).props.onCompositionStart();
+  assert.equal(submitOf(1).props.disabled, true, '题 B 自己的组合同样生效');
+  inputOf(0).props.onCompositionEnd();
+  assert.equal(submitOf(0).props.disabled, false, 'A 结束组合恢复，B 仍处自己的组合期');
+
+  // ── J14 词典两语值 ─────────────────────────────────────────────────────
+  const zh = product.DICTIONARIES.zh, en = product.DICTIONARIES.en;
+  assert.match(zh['ask.composing'], /组词/, 'zh ask.composing 含组合语义');
+  assert.doesNotMatch(zh['ask.composing'], /compos|ref|state/i, 'zh 不含内部术语');
+  assert.match(en['ask.composing'], /composition/i, 'en ask.composing 含 composition 语义');
+  assert.match(zh['ask.announceNew'], /新增 \{n\} 题/, 'zh ask.announceNew 数量句式（与 ask.count 同风格）');
+  assert.match(en['ask.announceNew'], /\{n\} new/, 'en ask.announceNew 数量句式');
+});

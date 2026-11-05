@@ -1271,12 +1271,14 @@ var DICTIONARIES = {
     "opt.askUiSeat.overlay": "右下角浮窗",
     "ask.title": "待答问题",
     "ask.count": "{n} 题待答",
+    "ask.announceNew": "待答问题新增 {n} 题",
     "ask.answer": "提交",
     "ask.ignore": "不答",
     "ask.customAnswer": "自定义回答",
     "ask.customPlaceholder": "输入自定义回答",
     "ask.needAnswer": "请选择答案（可多选时选多项）或填写自定义回答",
     "ask.needCustom": "自定义回答为空：填写内容或改选其他答案",
+    "ask.composing": "输入法组词中：完成输入后再提交",
     "ask.jump": "打开会话",
     "ask.expired": "已超时，仍可作答",
     "ask.submitting": "提交中…",
@@ -1400,12 +1402,14 @@ var DICTIONARIES = {
     "opt.askUiSeat.overlay": "Bottom-right overlay",
     "ask.title": "Pending questions",
     "ask.count": "{n} pending",
+    "ask.announceNew": "Pending questions: {n} new",
     "ask.answer": "Submit",
     "ask.ignore": "Skip",
     "ask.customAnswer": "Custom answer",
     "ask.customPlaceholder": "Type a custom answer",
     "ask.needAnswer": "Choose answer(s) — several when the question allows — or type a custom answer",
     "ask.needCustom": "The custom answer is empty: fill it in or choose another answer",
+    "ask.composing": "Text composition in progress: finish typing before submitting",
     "ask.jump": "Open session",
     "ask.expired": "Timed out; still answerable",
     "ask.submitting": "Submitting…",
@@ -1456,6 +1460,19 @@ var DICTIONARIES = {
 // 作答/忽略/延长 = `answer`/`ignore`/`extend` 直调（载荷**裸传**，客户端按 wire 名
 // 组装位置参数）；回执 `{ok,value|error}`（voice-input 同款判法）。总开关关 → 模型停
 // 轮询、两座位渲染 null——零行为。
+//
+// 新题温和提醒（ASK-ANNOUNCE-01，需求 §4.2 新题提醒行）：状态读取的成功路径在
+// 读取代际闸门之后按复合键（batchId/questionId）算集合差识别新题，合并计数冻结成
+// `state.announce`（语言取播报时刻的生效 uiLang，切换语言不重写已冻结文本；连续
+// 同文按播报序号奇偶交替追加零宽空格）；播报走全界面唯一的视觉隐藏 live region
+// （AskAnnouncer，挂 overlay 槽注册内、不设任何渲染门槛）。首查播报当时全部待答
+// 数；读取失败不清已播集合；关闭清空。提醒是纯只读投影——不发 RPC、不改题目、
+// 期限或答案状态。
+//
+// 组合期提交限制（ASK-IME-SUBMIT-01，需求 §4.2.4 组合期行）：输入法组合期间整题
+// 禁提交——平台层原生 disabled 拦住全部用户入口，submit 入口再读 ref 复查承接
+// 程序化残余；被拒动作当场终结、不排队补发；组合结束按有效性恢复，等待新的明确
+// 提交。见 AskItem。
 
 /** 轮询间隔（待答状态的轮询周期；1000 ms，与 host 侧 state() 的轮询预期一致）。 */
 var ASK_STATE_POLL_MS = 1000;
@@ -1549,6 +1566,16 @@ var ASK_REMOTE = {
  * 无重试通道，需求 §4.4）。竞态补醒失败（设计 §4.3）经 `state().lost` 名单随轮询并入——
  * 两个时点共用同一复合键去重与「知道了」消除（消除后服务端名单不回弹）。
  *
+ * 新题温和提醒（ASK-ANNOUNCE-01）：成功读取在代际闸门后按复合键 batchId/questionId
+ * 算「本次回执 − 已播集合」的集合差；差集非空即合并计数生成一次 `state.announce`
+ * （{text, seq}——text 在播报时刻按生效 uiLang 冻结，语言切换不重写已冻结文本），
+ * 随后已播集合**裁剪到当前集合**（条目只出不进：batchId 每次接管唯一生成，同键不
+ * 复现，裁剪有界；重开新批带新键照播）。首查（页面重载、重新开启、宿主恢复服务
+ * 命名空间后的整体重挂）播报当时全部待答题数；读取失败不动已播集合、不播报（重
+ * 连恢复后只播断线期间新增）；关闭清空已播集合并置 announce=null。倒计时走秒、
+ * 同 items 重复轮询与 phase 变化都不触发播报（集合差为空 → announce 引用不变 →
+ * DOM 文本不变，读屏只读变化）。
+ *
  * @param {object} ctx - 客户端上下文（configForms/uiWorkspace 由 inject 声明）。
  * @param {object} remote - ask 命名空间代理（`ctx.inject(['remote.async-tools-ask'])`
  *   拿到的——自 mount 的命名空间**不能**直接读 `ctx.remote[ns]`，运行时要求先 inject，
@@ -1567,10 +1594,15 @@ function createAskModel(ctx, remote) {
   var lifecycle = 0;
   var readSeq = 0;
   var appliedReadSeq = 0;
+  // 新题已播集合与播报序号（ASK-ANNOUNCE-01）：复合键 batchId/questionId——与
+  // lostAnswers/undelivered 的去重键、AskItem 的渲染键同一体系。集合只在成功读取
+  // 的闸门后路径变更：差集非空 → 播报并整体裁剪到当前集合（有界）；关闭 → 清空。
+  var announcedKeys = new Set();
+  var announceSeq = 0;
   var state = {
     enabled: false, seat: "sidebar", uiLang: "auto",
     serverNow: 0, fetchedAt: 0, items: [], callFailed: null, answerRejectReason: null,
-    lostAnswers: [], undelivered: []
+    lostAnswers: [], undelivered: [], announce: null
   };
 
   function notify() {
@@ -1656,6 +1688,10 @@ function createAskModel(ctx, remote) {
       timer = null;
       state.items = [];
       state.serverNow = 0;
+      // 关闭同步清播报（ASK-ANNOUNCE-01）：已播集合清空、区域文本清空——不残留
+      // 失效消息；重开按首查口径重新播报（开关往返的重复播报是显式操作的结果）。
+      announcedKeys.clear();
+      state.announce = null;
     }
   }
 
@@ -1690,6 +1726,30 @@ function createAskModel(ctx, remote) {
     state.serverNow = result.value.serverNow;
     state.fetchedAt = Date.now();
     state.items = result.value.items;
+    // 新题识别与播报（ASK-ANNOUNCE-01）：成功路径、代际闸门后——旧代/乱序回执到
+    // 不了这里，已播事实不被回退。差集非空才生成新 announce（同 items 重复轮询差
+    // 集为空 → announce 引用不变 → DOM 文本不变，读屏只读变化）；文案只含数量、
+    // 在播报时刻按生效 uiLang 冻结（首查=本生命周期首个成功读取，全部在场待答题
+    // 合并成一条；读取失败路径在上方早退，不动已播集合）。
+    var currentKeys = new Set(state.items.map(function (it) {
+      return it.batchId + "/" + it.questionId;
+    }));
+    var newKeys = [];
+    currentKeys.forEach(function (key) {
+      if (!announcedKeys.has(key)) newKeys.push(key);
+    });
+    if (newKeys.length > 0) {
+      announceSeq += 1;
+      state.announce = {
+        text: askTranslator(state.uiLang, localeService)("ask.announceNew")
+          .replace("{n}", String(newKeys.length)),
+        seq: announceSeq
+      };
+    }
+    // 已播集合裁剪到当前集合（有界）：一个复合键只能随批次接管产生（batchId 每次
+    // 接管唯一生成），条目离开列表只因其落定、批次出列、清扫或交还——同键不会重
+    // 现；能使旧键「复活」的旧回执已被闸门挡在计算之前。
+    announcedKeys = currentKeys;
     absorbServerLost(result.value.lost);
     notify();
   }
@@ -1886,7 +1946,9 @@ function createAskModel(ctx, remote) {
   };
 }
 
-/** 待答面板的自有样式（只引用定义表内的别名 token，check-alias-tokens 把关）。 */
+/** 待答面板的自有样式（只引用定义表内的别名 token，check-alias-tokens 把关）。
+ *  视觉隐藏类 `.ats-ask-sr`（ASK-ANNOUNCE-01）只用几何裁剪，不引用任何颜色——
+ *  T14 颜色守卫（test/two-planes.test.mjs）与别名 token 检查同判。 */
 var ASK_CSS = ""
   // VIS-BADGE-01：面板宽度窄视口钳制（390px 侧栏形态下 340px 固定宽会横向溢出）。
   // sidebar 座位宽度钳制改 calc(100vw - 76px)（flash 视觉盲测缺陷②）：侧栏收起
@@ -2019,6 +2081,10 @@ var ASK_CSS = ""
   + "box-shadow:0 0 0 2px var(--dsw-alias-bg-layer-1)}"
   + "body[data-ds-dark-theme] .ats-ask-count{"
   + "background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 62%, black)}"
+  // 视觉隐藏的播报区域（ASK-ANNOUNCE-01）：几何裁剪隐藏（1px＋clip-path），
+  // 读屏可得、视觉无感；无任何颜色引用。
+  + ".ats-ask-sr{position:absolute;width:1px;height:1px;margin:-1px;"
+  + "overflow:hidden;clip-path:inset(50%);white-space:nowrap}"
 
 /** 样式注入（一次；id 防重；headless 守卫——无 DOM 环境不碰 document）。 */
 function injectAskStyles() {
@@ -2034,6 +2100,16 @@ function injectAskStyles() {
  * 单题组件（需求 §4.2.1–4.2.4）：预设选项与「自定义回答」并列作答，各自独立选中；
  * 单选互斥、多选可组合，未选中的自定义草稿不进提交；无有效答案时禁用提交并就近
  * 说明原因。剩余秒数（`expiresAt` 按宿主 `serverNow` 校准时差后本地走秒，仅显示用）。
+ *
+ * 组合期提交限制（ASK-IME-SUBMIT-01，需求 §4.2.4 组合期行）：输入法组合期间整题
+ * 禁提交——平台层原生 disabled 拦住鼠标/触屏/键盘三入口（与既有 `!valid` 禁用同
+ * 形态：不可聚焦、不派发 click/键激活）；`submit()` 入口再读 composingRef 复查，
+ * 承接程序化点击（对 disabled 元素直接 dispatchEvent/click() 的合成路径）与
+ * compositionstart 到下一次渲染之间微窗口内的残余。客户端不存在 Enter/快捷键提
+ * 交路径（textarea 的 Enter 是换行），键盘面由「平台层拦截＋离开输入框即结束组
+ * 合」结构性覆盖。被拒动作当场终结、不排队补发（无延迟提交队列或意图标记）；
+ * compositionend 后按有效性恢复启用，等待一次新的明确提交。「不答」不受组合影响
+ * （仅既有 busy 拦截）；服务端校验零改动。
  */
 function AskItem(props) {
   var item = props.item;
@@ -2070,6 +2146,20 @@ function AskItem(props) {
   var setDraft = draftPair[1];
   var busyRef = React.useRef(false);
   var rerender = React.useState(0)[1];
+  // 输入法组合状态（ASK-IME-SUBMIT-01）：每题独立（每题一个 AskItem 实例）。
+  // ref 供事件回调与 submit 复查读（组合位的置/复位不受渲染批影响），镜像 state
+  // 供按钮/原因行/data-composing 渲染。compositionstart 同步置位（React 离散事件
+  // 同步派发）；compositionend 与 onBlur 都复位且幂等共存——失焦即组合终结，
+  // 个别引擎失焦不派发 compositionend 时提交限制不致卡死；compositionupdate 不
+  // 单独建状态（中间文本经下方 onChange 进草稿，无需跟踪）。
+  var composingRef = React.useRef(false);
+  var composingPair = React.useState(false);
+  var composing = composingPair[0];
+  var setComposing = composingPair[1];
+  function endComposition() {
+    composingRef.current = false;
+    setComposing(false);
+  }
   // 本地走秒（需求 §4.3「倒计时继续运行」）：显示层每秒自跳一格，**不依赖轮询返回**——
   // 轮询挂起（宿主忙、RPC 排队）时读数照走，不再冻结在最后一次成功轮询的值上；
   // 服务端期限仍是权威，`skew` 校准在每轮成功轮询后自校。后台标签的浏览器
@@ -2092,7 +2182,11 @@ function AskItem(props) {
   var customBlank = selection.custom && draft.trim() === "";
   var valid = hasAnswer && !customBlank;
   function submit() {
-    if (busyRef.current || !valid) return;
+    // 组合期复查（ASK-IME-SUBMIT-01）：平台层 disabled 拦住全部用户入口，这里再
+    // 读 ref 承接两类残余——compositionstart 与下一次渲染之间微窗口内的程序化
+    // 点击、对 disabled 元素直接 dispatchEvent/click() 的合成路径（disabled 元素
+    // 不收用户事件，程序分发仍可触达监听器）。被拒动作当场终结，无补发队列。
+    if (busyRef.current || composingRef.current || !valid) return;
     busyRef.current = true;
     rerender(function (n) { return n + 1; });
     // 载荷只含当前选中的预设项与选中且有效的自定义原文（需求 §4.2.4）。
@@ -2127,7 +2221,9 @@ function AskItem(props) {
           ? React.createElement("span", { className: "ats-ask-optdesc" }, option.description)
           : null));
   });
-  return React.createElement("div", { className: "ats-ask-q" },
+  // data-composing 是浏览器探针的组合态锚点（ASK-IME-SUBMIT-01）——探针据此断
+  // 言组合期提交钮禁用与 compositionend 后复位，无需猜内部状态。
+  return React.createElement("div", { className: "ats-ask-q", "data-composing": composing ? "true" : "false" },
     React.createElement("p", { className: "ats-ask-text", id: questionDomId }, item.question),
     React.createElement("div", {
       className: "ats-ask-opts", role: multi ? "group" : "radiogroup",
@@ -2154,10 +2250,21 @@ function AskItem(props) {
         // 默认行为消费、同样不提交；换行与正文原样交付（4.2.4）。点击输入框
         // 选中自定义项；键盘 Tab 聚焦不选中（只认点击与主动输入）。输入非空白
         // 文本同样选中（取消后的重新选中路径）。
+        // 组合事件（ASK-IME-SUBMIT-01）：start 置位组合限制、end/blur 复位（幂等
+        // 共见上方 composingRef 注释）；浏览器在 compositionend 与最终 input 事件
+        // 的先后上各有差异——两个事件都到达、各司其职（草稿更新走 onChange，限
+        // 制复位走 compositionend/onBlur），有效性是渲染时从 draft+selection 现算
+        // 的派生值，无先后依赖。
         React.createElement("textarea", {
           className: "ats-ask-input", rows: 3, value: draft,
           placeholder: t("ask.customPlaceholder"), "aria-label": t("ask.customAnswer"),
           onClick: customOn,
+          onCompositionStart: function () {
+            composingRef.current = true;
+            setComposing(true);
+          },
+          onCompositionEnd: endComposition,
+          onBlur: endComposition,
           onChange: function (event) {
             var value = event.target.value;
             setDraft(value);
@@ -2167,15 +2274,19 @@ function AskItem(props) {
     React.createElement("div", { className: "ats-ask-row" },
       React.createElement("button", {
         type: "button", className: "ats-ask-submit", onClick: submit,
-        disabled: !valid || busyRef.current
+        // 平台层拦截（ASK-IME-SUBMIT-01）：组合位与既有 !valid/busy 同为原生
+        // disabled——鼠标/触屏/键盘三入口在平台层就不被接受。
+        disabled: !valid || busyRef.current || composing
       }, t(busyRef.current ? "ask.submitting" : "ask.answer")),
       React.createElement("button", { type: "button", className: "ats-ask-skip", onClick: skip }, t("ask.ignore")),
       React.createElement("span", {
         className: item.phase === "expired" ? "ats-ask-left ats-ask-expired" : "ats-ask-left"
       }, leftText)),
-    !valid && !busyRef.current
+    // 就近原因（ASK-IME-SUBMIT-01 扩展）：组合期优先于空白自定义/未选择——用户
+    // 先完成输入，再谈有效性；「不答」入口不受组合影响（上方 skip 按钮无组合位）。
+    (composing || !valid) && !busyRef.current
       ? React.createElement("p", { className: "ats-ask-reason" },
-          t(customBlank ? "ask.needCustom" : "ask.needAnswer"))
+          t(composing ? "ask.composing" : customBlank ? "ask.needCustom" : "ask.needAnswer"))
       : null);
 }
 
@@ -2270,17 +2381,18 @@ function AskList(props) {
 }
 
 /**
- * 座位/面板的文案翻译：`uiLang` 的 auto 档经客户端
- * `ctx.locale` 读取侧解析宿主当前语言（渲染订阅 `getSnapshot().active`、一次性读
- * `getLocale()`——返回值是快照对象，只读不写）；zh/en 走本包词典；两档之外回退
- * en 词典（「不得裸键名」护栏维持）。locale 服务缺席（旧装载环境/单测
- * 未注入）时 auto 档回退 en，不抛错。
+ * 生效语言档解析（座位翻译器与新题播报冻结共用的一小段，避免两处各写一套漂移）：
+ * 显式 zh/en 直接用；auto 档经客户端 `ctx.locale` 读取侧解析宿主当前语言（渲染
+ * 订阅 `getSnapshot().active`、一次性读 `getLocale()`——返回值是快照对象，只读不
+ * 写）；解析不出或解析到 zh/en 之外（locale 服务缺席的旧装载环境/单测未注入同判）
+ * 回退 en。
  *
  * @param {string} uiLang - 生效的语言开关值（auto/zh/en）。
  * @param {object} [locale] - `ctx.locale` 服务（可缺席）。
+ * @returns {string} "zh" | "en"。
  */
-function askTranslator(uiLang, locale) {
-  var hostLang = "auto";
+function resolveAskLang(uiLang, locale) {
+  if (uiLang === "zh" || uiLang === "en") return uiLang;
   if (locale !== undefined && locale !== null) {
     var active;
     if (typeof locale.getSnapshot === "function") {
@@ -2291,10 +2403,20 @@ function askTranslator(uiLang, locale) {
       var current = locale.getLocale();
       if (current !== undefined && current !== null) active = current.active;
     }
-    hostLang = active;
+    if (active === "zh" || active === "en") return active;
   }
-  var lang = uiLang === "zh" || uiLang === "en" ? uiLang : hostLang;
-  return makeTranslator(lang, function (key) {
+  return "en";
+}
+
+/**
+ * 座位/面板的文案翻译：`uiLang` 的 auto 档经 resolveAskLang 解析宿主当前语言；
+ * zh/en 走本包词典；两档之外回退 en 词典（「不得裸键名」护栏维持）。
+ *
+ * @param {string} uiLang - 生效的语言开关值（auto/zh/en）。
+ * @param {object} [locale] - `ctx.locale` 服务（可缺席）。
+ */
+function askTranslator(uiLang, locale) {
+  return makeTranslator(resolveAskLang(uiLang, locale), function (key) {
     return DICTIONARIES.en[key] !== undefined ? DICTIONARIES.en[key] : key;
   });
 }
@@ -2304,10 +2426,40 @@ function askTranslator(uiLang, locale) {
  * （undelivered——记录缺席的提交）才显示。failed 只发生在 expired 批迟到提交、
  * undelivered 只发生在记录缺席之后——两种形态该题条目随即不再列出，条件若只看
  * 计数，单题批次（最常见形态）的报错永不显示。未读失败不算「处理完」，消除后
- * 才回到消隐口径。
+ * 才回到消隐口径。新题播报（state.announce）不进本条件——播报区域常驻在场，
+ * 不是面板显形条件。
  */
 function askHasFace(state) {
   return state.items.length > 0 || state.lostAnswers.length > 0 || state.undelivered.length > 0;
+}
+
+/**
+ * 新题温和提醒的播报区域（ASK-ANNOUNCE-01，需求 §4.2 新题提醒行）：全待答界面
+ * 唯一的视觉隐藏 live region——`role="status"`＋显式 `aria-live="polite"` /
+ * `aria-atomic="true"`（role 隐含 polite 与 atomic，显式双写给探针一个确定断言
+ * 面，也覆盖个别读屏对隐式语义支持不全的形态）。polite＝变更排入读屏队列、等
+ * 当前语音结束再播（温和提醒、不打断朗读）；atomic＝文本替换时整条朗读。区域
+ * 不设任何渲染门槛（不受 enabled/seat/askHasFace 约束，挂法见 wireAskSeats）：
+ * overlay 常显、sidebar 展开、sidebar 收起（徽标态，面板不渲染）三形态都常驻，
+ * 座位切换不卸载。区域不可聚焦、不调 focus()——播报前后焦点不动；文案只含数
+ * 量，不读题干（题目内容仍由用户主动导航）。
+ */
+function AskAnnouncer(props) {
+  var state = React.useSyncExternalStore(props.ask.store.subscribe, props.ask.store.getSnapshot);
+  // sidebar 座位且面板未展开时样式同样就位（注入幂等）。
+  injectAskStyles();
+  var announce = state.announce;
+  var text = announce === null || announce === undefined ? "" : announce.text;
+  // 连续两次同文提醒（如两次各新增 1 题）DOM 不变则部分读屏不重播：按 seq 奇偶
+  // 交替追加零宽空格——文本恒有差异、读屏不朗读该字符、视觉无感；不引入异步
+  // 「清空再写」两段式（假窗测试环境不可调度，且时序依赖读屏实现）。
+  if (announce !== null && announce !== undefined && announce.seq % 2 === 0) text += "\u200B";
+  return React.createElement("span", {
+    className: "ats-ask-sr",
+    role: "status",
+    "aria-live": "polite",
+    "aria-atomic": "true"
+  }, text);
 }
 
 /** overlay 座位浮框（渲染条件见 askHasFace：题目与两类报错名单任一在场）。 */
@@ -2444,10 +2596,22 @@ function apply(ctx) {
    */
   function wireAskSeats(ctx, remoteNs) {
     var ask = createAskModel(ctx, remoteNs);
+    // 播报区域挂在 overlay 槽注册内、与座位组件并列返回（ASK-ANNOUNCE-01）：
+    // overlay 槽是全帧浮层槽、条目自定位，一个 1px 绝对定位元素不参与布局、
+    // 无视觉副作用。区域**不设任何渲染门槛**——不受 state.seat/state.enabled/
+    // askHasFace 约束：overlay 座位、sidebar 展开、sidebar 收起（徽标态，面板不
+    // 渲染）三形态都常驻，座位切换（overlay↔sidebar）不卸载，切换瞬间到达的新
+    // 题不丢提醒。座位接线先完成渲染，state() 的回执要跨一次 RPC 往返，首查播
+    // 报预期晚于区域挂载；极端调度下若首查文本随挂载初值在场，部分读屏不读初
+    // 始内容——AX-4 探针在真实实例上实测覆盖该时序。
     var disposeOverlay = ctx.slots.inject("shell.overlay", function () {
       return ctx.slots.register(
         { name: "shell.overlay", id: "async-tools-ask", order: 900 },
-        function () { return React.createElement(AskOverlaySeat, { ask: ask, ctx: ctx }); }
+        function () {
+          return React.createElement(React.Fragment, null,
+            React.createElement(AskAnnouncer, { ask: ask }),
+            React.createElement(AskOverlaySeat, { ask: ask, ctx: ctx }));
+        }
       );
     });
     var disposeSidebar = ctx.slots.inject("sidebar.footer.action", function () {
@@ -2532,9 +2696,11 @@ module.exports = {
   createAskModel: createAskModel,
   AskList: AskList,
   AskItem: AskItem,
+  AskAnnouncer: AskAnnouncer,
   AskOverlaySeat: AskOverlaySeat,
   AskSidebarSeat: AskSidebarSeat,
   askTranslator: askTranslator,
+  resolveAskLang: resolveAskLang,
   ASK_REMOTE: ASK_REMOTE,
   ASK_NAMESPACE: ASK_NAMESPACE,
   ASK_SERVICE_KEY: ASK_SERVICE_KEY,
