@@ -21,7 +21,7 @@
  *   node verify/_visual/probe-vis-ratify.mjs --service-root <宿主服务树> \
  *     [--host-subdir dsh-0.2.1-rc.5] [--repo <本仓路径>] [--keep]
  *
- * 红线：不连开发实例（38200），不动活体实例（38114）。--patch 只带 zai-glm.yml
+ * 红线：只操作本装置自建的隔离实例，不连接、不改动任何既有实例（开发用或常驻服务）。--patch 只带 zai-glm.yml
  * 模型路由。证据：`.local/evidence/vis-ratify-5/{logs,shots}`（不覆盖前四轮）。退出
  * 码 0＝全部通过、1＝存在 FAIL、2＝装置故障（FAULT，输出区分）。
  */

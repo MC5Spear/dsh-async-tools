@@ -20,7 +20,7 @@
  *   node verify/_visual/probe-settings-visual.mjs --service-root <宿主服务根> \
  *     [--host-subdir dsh-0.2.1-rc.5] [--repo <本仓路径>] [--keep]
  *
- * 红线：不连开发实例（38200），不动活体实例（38114）。装置只做草稿、不点保存。
+ * 红线：只操作自建隔离实例，不连接、不改动任何既有实例（开发用或常驻服务）。装置只做草稿、不点保存。
  * 证据：`.local/evidence/settings-visual/{logs,shots}`。退出 0＝全部通过、
  * 1＝存在 FAIL、2＝装置故障（FAULT，输出区分）。
  */
