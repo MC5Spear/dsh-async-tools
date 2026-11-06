@@ -67,9 +67,10 @@
           - id: tool-bash
             name: '@deepseek-ai/dsh-tool-bash'
             disabled: true
-          # 作业管理三件套（基线原行；行序前移到本包交付类行之前——async_run 等
-          # 行装载时的 job_output 隐藏登记要求 job_output 已在册，需求 9.3.5；
-          # job_list / job_kill 等非阻塞管理入口保留在场）。
+          # 作业管理三件套（基线原行，位置保持在本包交付类行之前——行序对账
+          # 判据的既定形态；job_output 的隐藏挂在 agent/created、按名册判定，
+          # 与行序无关（需求 9.3.5、设计 §3.5.1）；job_list / job_kill 等
+          # 非阻塞管理入口保留在场）。
           - id: tool-jobs
             name: '@deepseek-ai/dsh-tool-jobs'
           - id: async-run

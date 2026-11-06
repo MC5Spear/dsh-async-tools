@@ -1,18 +1,20 @@
 #!/usr/bin/env node
 /**
- * 绑定名单 GUI 持久化矩阵探针（VERIFY-01，设计 `.local/design/gui-persistence-visual.md`
- * §6 装置 A，BP-0..BP-9）：官方可写**临时实例**上，经 GUI（勾选＋保存按钮）驱动
- * boundPresets 的全部持久化形态，GUI 显示／落盘 profile patch／RPC describe 三侧互证。
+ * 绑定名单 GUI 持久化矩阵探针（VERIFY-01，BP-0..BP-9）：官方可写**临时实例**
+ * 上，经 GUI（勾选＋保存按钮）驱动 boundPresets 的全部持久化形态，GUI 显示／
+ * 落盘 profile patch／RPC describe 三侧互证。
  *
- * ## 装置在证什么（对照设计 §4 状态区分矩阵）
+ * ## 装置在证什么（状态区分矩阵）
  *
- * 2026-11-02 GUI 盲测只在**复制式 profile**上看过绑定块的渲染与交互——保存被宿主
- * 正确拒绝（复制式 profile 的已知限制），「官方可写实例上的保存持久化」一直是开放
- * 项（设计 §9.3 L1391）。本探针用 runtime-peers 同款**官方 CLI 安装的临时实例**
- * 补齐：保存子集、刷新回读、空名单（显式 `[]`，与 unset 是两个状态）、恢复默认
- * unset（删用户覆盖键）、unset 与他字段覆盖并存（按键 unset 不清整段）、实例重启
- * 保留、同名重装保留、换版本号升级保留（fixture 定义与真实升级的差距见设计 §6——
- * 同 schema 无迁移，不冒称）、收尾复原。
+ * 覆盖：保存子集、刷新回读、空名单（显式 `[]`，与 unset 是两个状态）、恢复
+ * 默认 unset（删用户覆盖键）、unset 与他字段覆盖并存（按键 unset 不清整段）、
+ * 实例重启保留、同名重装保留、换版本号升级保留（升级 fixture 用同 schema 的
+ * 版本号提升构造，不是真实跨版本迁移——同 schema 无迁移路径，不冒称）、
+ * 收尾复原。
+ *
+ * 边界条件：实例须可写（官方 CLI 安装的临时实例）。复制式 profile 的保存会被
+ * 宿主正确拒绝（复制式 profile 的已知限制），GUI 渲染与交互可看、保存持久化
+ * 不可用该形态取证——本探针全部用官方安装形态。
  *
  * 三侧载体：GUI＝DOM 读数（生效名单行／覆盖徽标／恢复默认按钮／复选框勾集）；
  * 落盘＝`$DSH_HOME/profiles/web/cordis.patch.yml` 文本全量快照；RPC＝
@@ -21,8 +23,8 @@
  * （整页重载即丢标记——r24 同型判据无此防护，此处补上）。
  *
  * 字段身份基线：值字段＝SETTING_FIELD_KEYS 去 boundPresets（19 枚，绑定块复选框
- * id 同以 plugin-config- 开头、按 ul.ats-preset-list 归属分流排除——设计 BP-0b）；
- * 绑定块本身单列判据（BP-0⑤），不与单值字段混计。
+ * id 同以 plugin-config- 开头、按 ul.ats-preset-list 归属分流排除）；绑定块本身
+ * 单列判据（BP-0⑤），不与单值字段混计。
  *
  * ## 用法（须 danger-full-access 或非受限环境——CDP 无头浏览器在受限沙箱档必早夭）
  *
@@ -53,8 +55,8 @@ let child = null;
 let browser = null;
 let bumpDirNow = null;
 const fail = (msg) => {
-  // 盲审 d1/d2：FAULT 先落已跑判据＋清理资源（设计 §10「退出 2 前先清」；含
-  // 升级临时目录 bumpDir）；早期调用（目录未建）时静默跳过落盘。
+  // FAULT 先落已跑判据＋清理资源（装置纪律：退出 2 前先清；含升级临时目录
+  // bumpDir）；早期调用（目录未建）时静默跳过落盘。
   try {
     mkdirSync(join(repo, '.local', 'evidence', 'gui-persist', 'logs'), { recursive: true });
     writeFileSync(join(repo, '.local', 'evidence', 'gui-persist', 'logs', 'fault.json'),
@@ -226,10 +228,10 @@ const setChecks = (targetIds) => evaluate(page, `(() => {
 })()`);
 const save = () => clickBy(`[...document.querySelectorAll('[data-plugin-config] button')].find((b) => /^(保存|Save)$/.test(b.textContent.trim()))`, '保存');
 async function waitForOutcome() {
-  // 盲审 c2 修正的时序洞（五跑实测）：只判「非 busy」会在保存请求发出前的窗口
-  // 早退、读到保存前状态。改为「见过 busy 且回落」才算到达观察点；若 busy 窗口
-  // 整个未被采样到（<250ms 的极端快径），退化为超时后终读——两种路径都返回
-  // 保存后的稳定读数，不早退。前 3s 用 250ms 粒度采样 busy 窗口。
+  // 时序要求：只判「非 busy」会在保存请求发出前的窗口早退、读到保存前状态。
+  // 改为「见过 busy 且回落」才算到达观察点；若 busy 窗口整个未被采样到
+  // （<250ms 的极端快径），退化为超时后终读——两种路径都返回保存后的稳定
+  // 读数，不早退。前 3s 用 250ms 粒度采样 busy 窗口。
   let sawBusy = false;
   for (let i = 0; i < 60; i += 1) {
     const state = await readBound();
@@ -307,7 +309,7 @@ try {
   tgzBase = tgzName;
   log(`repo=${repo} hostVersion=${hostVersion} tgz=${tgzName}`);
 
-  // 2) 官方 CLI 安装（可写前提：--patch 只带模型路由，不带本行 config——设计 §3）。
+  // 2) 官方 CLI 安装（可写前提：--patch 只带模型路由，不带本行 config）。
   home = mkdtempSync(join(tmpdir(), 'dsh-gui-persist-'));
   const install = spawnSync('node', [bin, 'plugin', '--profile', 'web', 'add', join(repo, '.local', tgzName)], {
     cwd: serviceRoot, encoding: 'utf8', timeout: 300_000, env: { ...process.env, DSH_HOME: home }
@@ -410,7 +412,7 @@ try {
   // 子集＝默认去尾项＋目录中不在默认内的首项（保持真勾选次序由 React 草稿构造决定，
   // 比较一律按排序后等值——顺序不是判据对象）。
   const catalogOrder = baselineBound.checked.map(([id]) => id);
-  // 盲审 a1：BP-0⑤ 补目录全量身份断言——宿主预设目录须含本包两预设＋至少一个
+  // BP-0⑤ 补目录全量身份断言——宿主预设目录须含本包两预设＋至少一个
   // 其他预设（默认勾集只是目录的子集，目录本身此前未断言）。
   check('BP-0⑥ 预设目录全量在场：含本包 dsh-async 与 dsh-async-create＋至少一个其他预设',
     catalogOrder.includes('dsh-async') && catalogOrder.includes('dsh-async-create')
@@ -429,7 +431,7 @@ try {
   const row1 = await describeRow();
   const patch1 = snapshotPatch('BP-1 子集');
   const checkedNow1 = afterSave1.checked.filter(([, on]) => on === true).map(([id]) => id);
-  // 盲审 c1：'dsh-async' ⊂ 'dsh-async-create'——子串断言换序即假红，改为对生效
+  // 'dsh-async' ⊂ 'dsh-async-create'——子串断言换序即假红，改为对生效
   // 行精确解析 id 后比集合（从默认去掉的那一项不得在场）。
   const removedId = DEFAULT_BOUND[DEFAULT_BOUND.length - 1];
   const effectiveIds1 = (afterSave1.effectiveLine.match(/[A-Za-z0-9_-]+/g) ?? []);
@@ -577,7 +579,7 @@ try {
   console.log('\n── BP-8 换版本号升级保留 ──');
   // 升级 fixture：解包基线 tgz→版本号提一位→重打包（文件集与基线同源，只有
   // package.json 版本不同——「同名行 id、新版本号包、覆盖安装」）。与真实升级的
-  // 差距（同 schema 无迁移路径、无注册表版本跨度）按设计 §6 如实登记，不冒称。
+  // 差距（同 schema 无迁移路径、无注册表版本跨度）如实登记，不冒称。
   const bumpDir = mkdtempSync(join(tmpdir(), 'dsh-gui-persist-upgrade-'));
   bumpDirNow = bumpDir;
   const extractDir = join(bumpDir, 'pkg');

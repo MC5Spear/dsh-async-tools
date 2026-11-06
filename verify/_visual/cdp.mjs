@@ -35,8 +35,9 @@ const EDGE_CANDIDATES = [
  *
  * 不清理的后果有两层：反复起实例会把多进程孤儿积在盘上；更要紧的是——
  * **每次启动无头 Edge 都会产生一条 4625 失败登录**（`Logon Type: 2`、
- * `Caller Process Name: msedge.exe`），本地账户策略按 **10 次 / 10 分钟 ⇒
- * 锁定 10 分钟**，账户一锁 NSSM 就用不了 `.\user` 拉起托管服务。
+ * `Caller Process Name: msedge.exe`）。本部署的本地账户策略是 **10 次失败 /
+ * 10 分钟 ⇒ 锁定 10 分钟**，账户一锁 NSSM 就用不了 `.\user` 拉起托管服务
+ * ——其他机器按自己的账户策略核对这条阈值，别等锁定发生。
  *
  * 现行做法：尽量少起进程与少碰系统服务，**按整棵进程树清理**。
  *
@@ -283,7 +284,7 @@ export async function waitFor(page, expression, predicate, timeoutMs = 8000) {
  * `Page.captureScreenshot` 返回 base64；`captureBeyondViewport: true` 让它连
  * 视口外的内容一起截，配合 `Emulation.setDeviceMetricsOverride` 设一个足够的视口高度。
  *
- * ## 视口变更后必须等布局/过渡收敛（待答面板四轮视觉复审定论）
+ * ## 视口变更后必须等布局/过渡收敛
  *
  * `setDeviceMetricsOverride` 后立即 capture 会拍到**中间态**：视口宽度切换触发
  * 停靠面板重排（曾把 sidebar 面板拍成 22px 竖条——同配置下一帧全宽）、宿主
@@ -335,9 +336,9 @@ export async function screenshot(page, path, options = {}) {
     if (typeof metrics === 'number' && metrics > height) height = Math.ceil(metrics);
   }
   const prev = lastMetrics.get(page);
-  // 同尺寸不重发 override（待答面板第 5 轮收口）：同值重发疑似再次触发面板
-  // 重建、清掉草稿——「断言绿、画面空、同一秒」的最后一个可疑环节。尺寸未变
-  // 时 override 已在生效，跳过是安全的；变更时下发并等稳定签名。
+  // 同尺寸不重发 override：同值重发疑似再次触发面板重建、清掉草稿（「断言绿、
+  // 画面空」形态的已知诱因之一）。尺寸未变时 override 已在生效，跳过是安全的；
+  // 变更时下发并等稳定签名。
   if (prev === undefined || prev.width !== width || prev.height !== height) {
     await page.send('Emulation.setDeviceMetricsOverride', {
       width,

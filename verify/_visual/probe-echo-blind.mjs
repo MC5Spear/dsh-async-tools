@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * fullCommandEcho 真机盲测采集装置（验收二轮盲测阶段；判定基准＝盲测代理的
- * 捕获计划，2026-11-06）。本脚本**只采集原始证据、不下任何通过判定**——逐项
+ * fullCommandEcho 真机盲测采集装置（判定基准＝盲测代理的捕获计划）。本脚本
+ * **只采集原始证据、不下任何通过判定**——逐项
  * 判据 PASS/FAIL/无法判定由独立盲测代理对回传材料作出（装置/审阅两栏记账，
  * 本装置是装置栏的取证人）。
  *
@@ -239,7 +239,7 @@ const textOfR = (r) => {
   if (typeof d.message?.content === 'string') return d.message.content;
   return '';
 };
-/** 判定式等待（盲测代理第四轮清单第 1/3 项）：断言不得命中注入指令文本——
+/** 判定式等待（捕获计划第 1/3 项）：断言不得命中注入指令文本——
  * 调用＝tool/call＋token；结算＝source.kind=async-tools-job-result 的
  * user/message 同条含输出 token（「已结算」同条共现）；引用＝assistant 记录。 */
 async function waitForPred(sessionId, pred, timeoutMs) {
@@ -310,7 +310,7 @@ async function gotoPluginPage() {
  *   3493-3496）：搜索框带查询时整棵树被替换——绝不能靠搜首提示词标记定位
  *   （会话标题是 LLM 生成的，不含标记）；进树前必须清空搜索框。
  * - 会话列表来自 session.list 全量刷新（页加载/重连时 handleConnected→
- *   refreshList），运行期靠 api-session/added 推送——推送缺席时整页重开即兜底。
+ *   refreshList），运行期靠 api-session/added 推送——推送缺席时以整页重开补拉。
  * 策略：① 标记已在页面→完成；② 展开侧栏＋清空搜索框（保树模式）＋选工作区；
  * ③ 等会话行出现（推送路径）→组行折叠则展开重试；④ 仍无→整页重开（列表必含
  * RPC 创建的会话）重复②③；⑤ 点行→轮询标记进正文（转录异步加载渲染）。 */
@@ -364,7 +364,7 @@ async function gotoSession(sessionId, marker, wsBasename, workspaceId) {
   let prep = await prepSidebar();
   if (prep === 'open') return 'clicked-after-prep';
   if (await tryRow(10_000) !== true) {
-    // 兜底：整页重开——加载即 refreshList 全量拉取，RPC 创建的会话必在列表。
+    // 回退路径：整页重开——加载即 refreshList 全量拉取，RPC 创建的会话必在列表。
     try { await page.close(); } catch { /* 已关 */ }
     page = await openPage(browser.port, `${ORIGIN}/?token=${encodeURIComponent(TOKEN)}`);
     await waitFor(page, 'document.querySelectorAll("button,[role=button]").length', (n) => n > 0, 15000);
@@ -393,11 +393,11 @@ async function gotoSession(sessionId, marker, wsBasename, workspaceId) {
   await waitFor(page, `document.body.textContent.includes(${JSON.stringify(marker)})`, (v) => v === true, 15_000);
   return (await bodyHasMarker()) ? 'clicked-row' : '行已点但标记未现（转录加载/渲染超时）';
 }
-/** M1 卡片采集 v3：卡片行类名＝宿主 flowItem（rc.5 实测 EvIC1a_flowItem）。
- * ① 只在含「工具调用」的 flowItem 卡内点展开钮（v2 全页 435 次误点）；
- * ② 从含 token 的最深元素向上找最近 flowItem 祖先＝卡片本体（v2 误抓
- * 视图容器 wSkVaW_viewArea/37 字符标签碎片）；③ 子树须同时含 token 与
- * 「工具调用」（≥150 字符完整性检查）才记 CAP。 */
+/** M1 卡片采集：卡片行类名＝宿主 flowItem（rc.5 实测 EvIC1a_flowItem）。
+ * ① 只在含「工具调用」的 flowItem 卡内点展开钮（全页无差别展开会点开数百个
+ * 非目标节点）；② 从含 token 的最深元素向上找最近 flowItem 祖先＝卡片本体
+ * （首个命中可能是视图容器或标签碎片，不能直接当卡片）；③ 子树须同时含
+ * token 与「工具调用」（≥150 字符完整性检查）才记 CAP。 */
 async function captureCard(toolName, tokenH, jsonOut, shotName) {
   const expandedInfo = await evaluate(page, `(() => {
     const cards = [...document.querySelectorAll('[class*="flowItem"]')].filter((n) => n.getClientRects().length > 0
@@ -412,7 +412,7 @@ async function captureCard(toolName, tokenH, jsonOut, shotName) {
       && (n.textContent || '').includes(${JSON.stringify(tokenH)}));
     if (hits.length === 0) return null;
     // 收集全部含 token 的 flowItem 卡（去重）——用户消息气泡也含 token 且在
-    // DOM 前面，工具调用卡须以「工具调用」标签区分（v3 取首个命中错抓用户消息）。
+    // DOM 前面，工具调用卡须以「工具调用」标签区分（首个命中可能是用户消息气泡）。
     const cards = [];
     for (const h of hits) {
       let cur = h;

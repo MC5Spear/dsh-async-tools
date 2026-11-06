@@ -27,12 +27,14 @@ export default {
   // ── 证据树四档 ────────────────────────────────────────────────────────────
   //
   // 事实登记簿里的 `包/文件:行号` 引用按前缀选树：`[0.2.1]` → `'021'`、
-  // `[0.1.7]` → `'017'`、`PKGS/` 与未标前缀 → `'015'`。
+  // `[0.2.0]` → `'020'`、`[0.1.7]` → `'017'`、`PKGS/` 与未标前缀 → `'015'`。
   //
   // `'021'` **可以不写**：它的缺省值是 `<hostModules>/@deepseek-ai`，这条缺省让
-  // "宿主锚"与"证据锚"在构造上不可能指向两棵不同的树。
+  // "宿主锚"与"证据锚"在构造上不可能指向两棵不同的树。`'020'` 是历史线，
+  // **没有派生缺省**——要用 `[0.2.0]` 引用时必须显式写。
   evidenceTree: {
     // '021': 'C:\\path\\to\\dsh-install\\node_modules\\@deepseek-ai',
+    // '020': 'C:\\path\\to\\dsh-020-install\\node_modules\\@deepseek-ai',
     '017': 'C:\\path\\to\\dsh-017-install\\node_modules\\@deepseek-ai',
     '015': 'C:\\Users\\<you>\\AppData\\Roaming\\npm\\node_modules\\@deepseek-ai\\dsh\\node_modules\\@deepseek-ai'
   },

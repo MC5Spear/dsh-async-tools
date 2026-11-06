@@ -1,7 +1,7 @@
 {
   "name": "dsh-async-tools",
   "version": "0.2.8+dsh.0.2.1-rc",
-  "description": "Async execution plugin for DSH: `async_run` moves long commands to background jobs instead of killing them, `async_agent` delegates in the background, `async_wait` is the single bounded wait over jobs and subagents whose settled result bodies are delivered directly, `async_workflow` runs script orchestration as a background job, and every bounded wait returns early on user messages while background work keeps running.",
+  "description": "Async execution plugin for DSH: async_run moves long commands to background jobs instead of killing them; async_wait is the single bounded wait over jobs and subagents — a steering user message interrupts it while queued messages simply wait for the next turn, and background work keeps running either way; settled job bodies are delivered directly, attached to a wait return or a completion message, separate from a subagent's own final-answer message; async_agent delegates in the background; async_workflow runs script orchestration as a background job; async_list_subagent_models lists and searches the model catalog read-only.",
   "license": "MIT",
   "author": "MC5Spear (https://github.com/MC5Spear)",
   "repository": {

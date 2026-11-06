@@ -41,9 +41,12 @@ function record(name, passed, detail) {
   console.log(`${passed ? 'PASS' : 'FAIL'}  ${name}${detail === undefined ? '' : `  — ${detail}`}`);
 }
 
-// ── 起跑基线：设置写回出厂默认并读回核对（每个真机脚本自己保证起跑状态） ──────────
-// 残留窄 `maxWaitMs` 会让 async_wait 早返"仍在运行"，settled 判据假红。
-const FACTORY_DEFAULTS = {
+// ── 起跑基线：写入本探针的测试基线并读回核对（每个真机脚本自己保证起跑状态）──
+// 与 final-acceptance.mjs 同一份基线（口径见其头注）：短下限 minYieldMs/minWaitMs
+// 是有意构造（放开小额 yield_ms/wait_ms 的夹紧），不是出厂默认；跑完由
+// restore-async-settings.mjs 还原出厂默认。残留窄 `maxWaitMs` 会让 async_wait
+// 早返"仍在运行"，settled 判据假红。
+const TEST_BASELINE = {
   defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
   defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000,
   pollIntervalMs: 500, maxResultChars: 30000, jobKind: 'async-command',
@@ -55,18 +58,18 @@ async function readSettings() {
 
 {
   const before = await readSettings();
-  const drifted = Object.keys(FACTORY_DEFAULTS).filter((k) => before[k] !== FACTORY_DEFAULTS[k]);
+  const drifted = Object.keys(TEST_BASELINE).filter((k) => before[k] !== TEST_BASELINE[k]);
   if (drifted.length > 0) {
-    console.log(`起跑前发现设置漂移，先归位：${drifted.map((k) => `${k}=${String(before[k])}`).join(' ')}`);
-    await patchNs(FACTORY_DEFAULTS);
+    console.log(`起跑前发现设置偏离本探针测试基线，先归位：${drifted.map((k) => `${k}=${String(before[k])}`).join(' ')}`);
+    await patchNs(TEST_BASELINE);
   }
   const after = await readSettings();
-  const stillDrifted = Object.keys(FACTORY_DEFAULTS).filter((k) => after[k] !== FACTORY_DEFAULTS[k]);
+  const stillDrifted = Object.keys(TEST_BASELINE).filter((k) => after[k] !== TEST_BASELINE[k]);
   if (stillDrifted.length > 0) {
     // 带着脏设置跑出来的红是假红，比不跑更糟——直接停（final-acceptance 同款纪律）。
     throw new Error(`起跑基线写不进去，拒绝继续：${stillDrifted.join(', ')}`);
   }
-  console.log(`起跑基线：设置全部等于出厂默认值（${drifted.length > 0 ? `本次归位了 ${String(drifted.length)} 项` : '本来就干净'}）。`);
+  console.log(`起跑基线：设置全部等于本探针测试基线（${drifted.length > 0 ? `本次归位了 ${String(drifted.length)} 项` : '本来就干净'}；跑完由 restore-async-settings.mjs 还原出厂默认）。`);
 }
 
 async function newSession(preset) {

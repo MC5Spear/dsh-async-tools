@@ -47,10 +47,11 @@ const OUT_FILE = outAt >= 0 && process.argv[outAt + 1] !== undefined
   : join(localConfig.evidenceDir, 'logs', 'settings-behavior-full.json');
 mkdirSync(dirname(OUT_FILE), { recursive: true });
 
-/** 起跑归位用的默认值（行为判据从这组数出发；收尾恢复的是**原状态**不是这组数）。
- * agentLang 出厂是 en（`lib/config.js`）；判据锚的等待读数与工具描述文案是中文档，
- * 跑动阶段各补丁统一钉 `agentLang: 'zh'`。 */
-const DEFAULTS = {
+/** 起跑归位用的测试基线（行为判据从这组数出发；收尾恢复的是**原状态**不是这组数）。
+ * 与其他真机探针同族——`minYieldMs`/`minWaitMs`/`maxResultChars` 三项有意偏离
+ * 出厂默认（口径见 final-acceptance.mjs 头注）。agentLang 出厂是 en（`lib/config.js`）；
+ * 判据锚的等待读数与工具描述文案是中文档，跑动阶段各补丁统一钉 `agentLang: 'zh'`。 */
+const TEST_BASELINE = {
   maxResultChars: 30000,
   defaultYieldMs: 20000,
   minYieldMs: 1000,
@@ -239,16 +240,16 @@ const evidence = { base: BASE, checks, runs: [] };
 let valueBefore = null;
 let userBefore = null;
 try {
-  // ── 起跑：先保存**原状态**（value 与 user 两层），再从 DEFAULTS 出发 ─────────
+  // ── 起跑：先保存**原状态**（value 与 user 两层），再从 TEST_BASELINE 出发 ──────
   //
   // 保存原状态是恢复的依据（收尾按 userBefore 逐键恢复，见 finally）；
-  // 随后无条件把设置写成 `DEFAULTS`，让行为判据从确定基线出发——外部切断
+  // 随后无条件把设置写成 `TEST_BASELINE`，让行为判据从确定基线出发——外部切断
   // （跑批超时 kill）留下的脏状态在下一次开跑即被抹平，不会累积。
   const entry0 = await readNs();
   valueBefore = structuredClone(entry0.value);
   userBefore = structuredClone(entry0.user);
   evidence.before = { value: entry0.value, user: entry0.user, revision: entry0.revision };
-  await patchNs(DEFAULTS);
+  await patchNs(TEST_BASELINE);
   const before = await readEffective();
   evidence.baseline = { maxWaitMs: before.maxWaitMs, maxResultChars: before.maxResultChars };
   console.log(`原状态已存（user 覆盖 ${String(Object.keys(userBefore).length)} 键）；起跑基线：maxWaitMs=${String(before.maxWaitMs)}  maxResultChars=${String(before.maxResultChars)}`);
@@ -286,7 +287,7 @@ try {
   //
   // 这是"值变了"与"行为变了"的分界：一个把设置读进内存后再也不看的实现，
   // 会老老实实等满 600 秒（或等到作业结束），而不是 2 秒就返回 running。
-  await patchNs({ ...DEFAULTS, maxWaitMs: 2000, defaultWaitMs: 2000, agentLang: 'zh' });
+  await patchNs({ ...TEST_BASELINE, maxWaitMs: 2000, defaultWaitMs: 2000, agentLang: 'zh' });
   const effectiveClamp = await readEffective();
   check('先把 `maxWaitMs` 写成 2000 并读回确认（区分"没写进去"与"写进去没生效"）',
     effectiveClamp.maxWaitMs === 2000,
@@ -341,7 +342,7 @@ try {
       : `已等待 ${waited[1]} ms（期望 ≥200；若下界失效会约 1，或干脆不进入等待）`);
 
   // ── ② 截断：把 maxResultChars 压到 500，长输出的返回必须变短并带截断说明 ──
-  await patchNs({ ...DEFAULTS, maxResultChars: 500, agentLang: 'zh' });
+  await patchNs({ ...TEST_BASELINE, maxResultChars: 500, agentLang: 'zh' });
   const effectiveCut = await readEffective();
   check('再把 `maxResultChars` 写成 500 并读回确认',
     effectiveCut.maxResultChars === 500,
@@ -415,7 +416,7 @@ try {
   // `defaultWaitMs` 必须跟着 `maxWaitMs` 一起收窄——跨字段校验会拒掉
   // "默认值落在区间外"的组合（`settings/rejected`：`defaultWaitMs (30000) 必须在 250–2000 ms 之内`）。
   // 那条校验本身是 `test/two-planes.test.mjs` T7b 在守的东西，这里撞上它说明它在工作。
-  await patchNs({ ...DEFAULTS, maxWaitMs: 2000, defaultWaitMs: 2000, minYieldMs: 1500, maxYieldMs: 450000, defaultYieldMs: 7000, agentLang: 'zh' });
+  await patchNs({ ...TEST_BASELINE, maxWaitMs: 2000, defaultWaitMs: 2000, minYieldMs: 1500, maxYieldMs: 450000, defaultYieldMs: 7000, agentLang: 'zh' });
   const pageYield = await sessionWith('回复一个句号即可，不要调用任何工具。');
   const runYield = (pageYield.records
     .filter((r) => r.event?.type === 'request/header')

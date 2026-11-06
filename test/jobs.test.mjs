@@ -420,6 +420,44 @@ function lossyProc({ spillPath, autoResolve = true } = {}) {
   return { proc, settle };
 }
 
+/**
+ * 自造「未丢但宿主报了落盘路径」的句柄：rc.5 的 `OutputCollector` 中 spillPath
+ * 与 lossy 是独立条件（首溢出即开文件、消费式读取跟紧则本侧永不 lossy），
+ * 「有路径未置 lossy」是可达形态——留存线索不能按 lossy 筛选（RA-SPILL-PATH）。
+ * @param {object} [options] - `{ spillPath, autoResolve }`。
+ * @returns {{ proc: object, settle: Function }} 句柄与结算探针。
+ */
+function pathNoLossyProc({ spillPath = 'C:\\spill\\stdout.txt', autoResolve = true } = {}) {
+  let reads = 0;
+  let settled = false;
+  let resolveDone;
+  const done = new Promise((resolve) => { resolveDone = resolve; });
+  const proc = {
+    status: 'running',
+    exitCode: 0,
+    signal: null,
+    done,
+    observed: {
+      stdout: { readFrom: () => ({ text: '', nextOffset: 0, lossy: false }) },
+      stderr: { readFrom: () => ({ text: '', nextOffset: 0, lossy: false }) }
+    },
+    readOutput: () => {
+      if (!settled) return { delta: '', lossy: false };
+      reads += 1;
+      if (reads > 1) return { delta: '', lossy: false };
+      return { delta: 'full body', lossy: false, stdoutSpillPath: spillPath };
+    }
+  };
+  const settle = (override) => {
+    settled = true;
+    proc.status = 'completed';
+    if (override !== undefined) Object.assign(proc, override);
+    resolveDone(proc);
+  };
+  if (autoResolve) queueMicrotask(() => settle());
+  return { proc, settle };
+}
+
 hostTest('async_run：请求必须带 shellEnv.collect(exec) 的 dshEnv', async () => {
   const f = fakeCtx();
   const { proc } = fakeProc({ text: 'ok' });
@@ -599,6 +637,33 @@ hostTest('async_run：lossy 但没有落点 → 必须明说没有落点，不�
   const view = g.jobsFake.views()[0];
   assert.match(view.detail, /no spill file reported/);
   assert.doesNotMatch(view.detail, /host-reported path/);
+});
+
+hostTest('async_run：未置 lossy 但宿主报告落盘路径 → 留存线索照给，不按 lossy 筛选（RA-SPILL-PATH）', async () => {
+  // 完成分支：note 给出落盘路径（spillDisk 对「超内存上限但已落盘」同样成立），
+  // 且不得出现「被丢弃／没有留存文件」类与事实不符的 lossy 断言。
+  const f = fakeCtx();
+  f.installShellExecute(() => Promise.resolve(pathNoLossyProc().proc));
+  const tool = createRunTool(f.ctx, config);
+  const completed = await tool.execute({ command: 'x', description: 'x' }, exec);
+  assert.equal(completed.status, 'completed');
+  assert.match(completed.note, /retained at the host-reported path\(s\): stdout: C:\\spill\\stdout\.txt/);
+  assert.doesNotMatch(completed.note, /was dropped|no spill file was reported/);
+
+  // 让出分支：作业结局 detail 里以独立一行转述（spillHintLine），且不带 lossy 括注。
+  const g = fakeCtx();
+  immediateTimers(g.ctx);
+  const later = pathNoLossyProc({ autoResolve: false });
+  g.installShellExecute(() => Promise.resolve(later.proc));
+  const yieldResult = await createRunTool(g.ctx, config)
+    .execute({ command: 'x', description: 'x', yield_ms: 5 }, exec);
+  assert.equal(yieldResult.status, 'running');
+  later.settle({ exitCode: 0 });
+  await new Promise((r) => { setTimeout(r, 0); });
+  const view = g.jobsFake.views()[0];
+  assert.match(view.detail, /the host reports spill files for this job/);
+  assert.match(view.detail, /stdout: C:\\spill\\stdout\.txt/);
+  assert.doesNotMatch(view.detail, /dropped from memory/);
 });
 
 hostTest('async_run：相对 workdir 按会话工作目录解析；无 cwd 时原样透传', async () => {

@@ -32,13 +32,16 @@ const STEER_MARKER = '插话投递标记';
 const QUEUE_TEXT = `${QUEUE_MARKER}：这条消息是用 queue 模式发进队列的。当它真正到达你时，请只回复一行：QUEUE_DELIVERED_OK`;
 const STEER_TEXT = `${STEER_MARKER}：这是插话（steer）。收到后只做一件事：调用一次 job_list，把其中 async-command 开头且状态是 running 的那一行原样贴出，然后立即结束回合。`;
 
-// 起跑前把设置写回出厂默认（上游残留会让窗口假窄）。
-const DEFAULTS = {
+// 起跑前把设置写成本探针的测试基线（上游残留会让窗口假窄）。基线口径见
+// final-acceptance.mjs 头注：minYieldMs/minWaitMs/maxResultChars 三项有意偏离
+// 出厂默认（指令里的 yield_ms=1500 需要短下限才原样生效）；跑完由
+// restore-async-settings.mjs 还原出厂默认。
+const TEST_BASELINE = {
   maxResultChars: 30000, defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
   defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000, pollIntervalMs: 500, jobKind: 'async-command'
 };
 // 设置写入经共享助手（`_r28-helpers.mjs` 的 NS 单一登记点＋嵌套 settings 形状）。
-await replaceNs(DEFAULTS);
+await replaceNs(TEST_BASELINE);
 
 const created = await rpc('session/create', { request: { cwd: CWD, agentPreset: PRESET } });
 if (created.agentPreset !== PRESET) throw new Error(`session/create fell back: ${String(created.agentPreset)}`);
@@ -184,7 +187,8 @@ judge('场景B判据2 打断的返回里明说作业未受影响（需求 §2.1.
 // B3 只认 **job_list 的工具结果行**（共享锚 `JOB_LIST_RUNNING`＝宿主渲染行
 // `<id> [<kind>] running — <label>`，行首＋列分隔符双边界；编号按不透明字符串对待——
 // 真实形态如 `async-command-29bb2c6b2dff4ad9`，旧数字夹具同认，锚回归见
-// test/message-markers.test.mjs）。`[async-command]` 类型标识的前提＝起跑写回出厂默认。
+// test/message-markers.test.mjs）。`[async-command]` 类型标识的前提＝起跑写入测试基线
+// （jobKind: 'async-command'）。
 // 让出句柄文案（`命令仍在运行：…`）不含 `[async-command]` 标记，不可能误满足；
 // 模型自述不作回退依据——它不是证据。
 judge('场景B判据3 打断后 job_list 的工具结果显示该作业仍在 running（需求 §2.1.2 的直接证据）',

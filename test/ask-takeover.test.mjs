@@ -609,7 +609,8 @@ hostTest('J11-a：运行中投递 → inject 恰一次、通知形（自声明 k
 
 hostTest('J24（A10）：选项说明进通知正文——同标签异说明不丢差异；无说明选项不拼空', async () => {
   // 互异标签配不同操作/风险说明：只拼 label 会让「重建/重启」这类近似标签的
-  // 真实区别消失（通知自含完整题目，不依赖旧工具调用记忆——用户裁定）。
+  // 真实区别消失（通知自含完整题目，不依赖旧工具调用记忆——用户裁定）。同标签
+  // 异说明按联合唯一（产品 2026-11-07 改判）放行，通知保留两条说明不合并。
   const agent = fakeAgent();
   const { registry, timer } = makeRegistry({ agentLang: 'zh' });
   const q = Q('qd', {
@@ -961,6 +962,163 @@ hostTest('作答有效性校验——非法作答可见拒绝、不记已答、�
   // 忽略提交同口径（需求 §4.4）：命中缺席批次 → 同 undelivered 区分。
   const missingIgnore = await service.ignore({ batchId, questionId: 'q2' });
   assert.deepEqual(missingIgnore, { outcome: 'gone', undelivered: true }, '忽略命中记录缺席：同口径 undelivered');
+});
+
+// ── 接单入口校验（ASK-DUPLICATE-01 产品决定 + RA-ROBUSTNESS 契约外防御）──────
+
+hostTest('接单入口拒绝——同标签同说明或均无说明整批拒绝并指明重复项；同标签异说明与跨题同标签放行', async () => {
+  // ASK-DUPLICATE-01（产品 2026-11-07 改判：label＋description 联合唯一）：
+  // 「标签＋说明」完全相同、或标签相同且均无说明的两条选项无法区分，接单即
+  // 拒绝整次载荷并说明重复的是哪些（重复项带说明摘要）；同标签异说明放行
+  // （通知语义见证 J24）；跨题同标签不跨题拒绝。
+  const agent = fakeAgent();
+  const dupNoDesc = Q('q1', { options: [{ label: '执行' }, { label: '执行' }, { label: '跳过' }] });
+  const { registry, timer } = makeRegistry({ agentLang: 'zh' });
+  await assert.rejects(
+    registry.take(makeRequest(agent, [dupNoDesc]), agent),
+    (error) => error instanceof Error
+      && error.message.includes(t('zh', 'ask.rejectDuplicateOptionLabels', { qid: 'q1', labels: '执行' })),
+    '同标签且均无说明 → 整批拒绝（重复项只写标签，zh 档词典逐字）'
+  );
+  assert.equal(registry.batches.size, 0, '拒绝发生在进注册表之前（零批次记录）');
+  assert.equal(timer.armed.length, 0, '定时器零武装');
+  // 同标签且说明相同 → 同判拒绝，重复项带说明摘要：
+  await assert.rejects(
+    registry.take(makeRequest(agent, [Q('q2', {
+      options: [
+        { label: '执行', description: '立即运行，不可撤销' },
+        { label: '跳过' },
+        { label: '执行', description: '立即运行，不可撤销' }
+      ]
+    })]), agent),
+    (error) => error.message.includes(
+      t('zh', 'ask.rejectDuplicateOptionLabels', { qid: 'q2', labels: '执行(立即运行，不可撤销)' })
+    ),
+    '同标签且说明相同 → 整批拒绝（重复项带说明摘要）'
+  );
+  // 任一题命中即整批拒绝（第二题重复同样拒）：
+  await assert.rejects(
+    registry.take(makeRequest(agent, [Q('ok1'), dupNoDesc]), agent),
+    () => true,
+    '多题载荷中任一题重复 → 整批拒绝'
+  );
+  // 同标签异说明 → 放行（联合唯一：说明区分真实差别；通知语义见证 J24）：
+  const agentTwins = fakeAgent('s-twin-labels');
+  const { registry: regTwins } = makeRegistry({ agentLang: 'en' });
+  const pendingQ3 = regTwins.take(makeRequest(agentTwins, [Q('q3', {
+    options: [
+      { label: 'Run', description: 'immediately' },
+      { label: 'Run', description: 'after a plan' },
+      { label: 'Skip' }
+    ]
+  })]), agentTwins);
+  assert.equal(regTwins.stateItems().items.length, 1, '同标签异说明放行（批次入列）');
+  // 标签相同、一条有说明一条无说明：两条不同选项，同样放行：
+  const pendingQ4 = regTwins.take(makeRequest(agentTwins, [Q('q4', {
+    options: [{ label: 'Go' }, { label: 'Go', description: 'with backup' }]
+  })]), agentTwins);
+  assert.equal(regTwins.stateItems().items.length, 2, '同标签一有一无说明也放行（不同选项）');
+  const twinItems = regTwins.stateItems().items;
+  regTwins.submitAnswer({ batchId: twinItems[0].batchId, questionId: 'q3', selected: ['Run'] });
+  regTwins.submitAnswer({ batchId: twinItems[1].batchId, questionId: 'q4', selected: ['Go'] });
+  await Promise.all([pendingQ3, pendingQ4]);
+  // en 档两语齐（均无说明的重复）：
+  const agentEn = fakeAgent('s-dup-en');
+  const { registry: regEn } = makeRegistry({ agentLang: 'en' });
+  await assert.rejects(
+    regEn.take(makeRequest(agentEn, [Q('q9', { options: [{ label: 'a' }, { label: 'b' }, { label: 'a' }] })]), agentEn),
+    (error) => error.message.includes(t('en', 'ask.rejectDuplicateOptionLabels', { qid: 'q9', labels: 'a' })),
+    'en 档拒绝文案 = 词典逐字'
+  );
+  // 跨题同标签不拒绝（唯一性只按题内判定）：
+  const agentOk = fakeAgent('s-cross');
+  const { registry: regOk } = makeRegistry({ agentLang: 'en' });
+  const pending = regOk.take(makeRequest(agentOk, [
+    Q('q1', { options: [{ label: '继续' }, { label: '停止' }] }),
+    Q('q2', { options: [{ label: '继续' }, { label: '取消' }] })
+  ]), agentOk);
+  assert.equal(regOk.stateItems().items.length, 2, '跨题同标签不受影响（两题都入列）');
+  const { items } = regOk.stateItems();
+  regOk.submitAnswer({ batchId: items[0].batchId, questionId: 'q1', selected: ['继续'] });
+  regOk.submitAnswer({ batchId: items[0].batchId, questionId: 'q2', selected: ['取消'] });
+  const settled = await pending;
+  assert.equal(settled.answers.length, 2, '合法路径齐答结清（不回归）');
+});
+
+hostTest('接单入口防御——契约外非数组 questions 可读拒绝而非 TypeError（RA-ROBUSTNESS）', async () => {
+  const agent = fakeAgent();
+  // 前置：判定序把非数组 questions 按「无题」放行（③ 强转空集不命中），接管
+  // 可达——宿主契约恒数组、没有合法反例，防线只能在 take 的接单入口，纯防御。
+  const { registry, timer } = makeRegistry({ agentLang: 'zh' });
+  for (const bad of [undefined, 'oops', { 0: Q('q1') }]) {
+    await assert.rejects(
+      registry.take(makeRequest(agent, bad), agent),
+      (error) => error instanceof Error
+        && !(error instanceof TypeError)
+        && error.message.includes(t('zh', 'ask.rejectQuestionsShape')),
+      `契约外 questions=${JSON.stringify(bad) ?? 'undefined'} → 可读拒绝（非 TypeError）`
+    );
+  }
+  assert.equal(registry.batches.size, 0, '零批次登记');
+  assert.equal(timer.armed.length, 0, '定时器零武装');
+  assert.equal(registry.seq, 0, '批次序号未消耗（拒绝在任何登记之前）');
+});
+
+hostTest('忽略入口题级缺席（ASK-IGNORE-MISSING）——批次在册而题号不在批内 → gone＋undelivered（与作答一致）；真实题号不回归', async () => {
+  const fakeReflectCtx = { reflect: { provide() {} } };
+  const agent = fakeAgent();
+  const { registry, timer } = makeRegistry();
+  const service = new AskTakeoverService(fakeReflectCtx, registry);
+  const pending = registry.take(makeRequest(agent, [Q('q1'), Q('q2')]), agent);
+  const { items } = registry.stateItems();
+  const batchId = items[0].batchId;
+
+  // 批次在册、题号不在批内：与作答入口 validateAnswer 的 'missing' 同口径，
+  // 不把不明送达状态写成成功。
+  assert.deepEqual(
+    await service.ignore({ batchId, questionId: 'nope' }),
+    { outcome: 'gone', undelivered: true },
+    '批次在册而题号不在批内 → gone＋undelivered'
+  );
+  assert.deepEqual(
+    await service.answer({ batchId, questionId: 'nope', selected: ['选项一'] }),
+    { outcome: 'gone', undelivered: true },
+    '作答入口同载荷同口径（既有行为对照）'
+  );
+
+  // 正常客户端从 state() 取真实题号：忽略照常 delivered；已落定题普通 gone。
+  assert.deepEqual(
+    await service.ignore({ batchId, questionId: 'q1' }),
+    { outcome: 'delivered' },
+    '真实题号忽略 → delivered（正常路径不回归）'
+  );
+  assert.deepEqual(
+    await service.ignore({ batchId, questionId: 'q1' }),
+    { outcome: 'gone' },
+    '已落定题 → 普通 gone（不带 undelivered，交轮询收敛）'
+  );
+
+  // 批次缺席（清扫/结清出列/交还）保持既有未送达回执：
+  assert.deepEqual(
+    await service.ignore({ batchId: 'ask-9-none', questionId: 'q1' }),
+    { outcome: 'gone', undelivered: true },
+    '批次缺席 → undelivered（既有）'
+  );
+
+  // expired 批上：错误题号同样题级缺席；真实题号照常迟到注入。
+  timer.fire(0);
+  await pending;
+  assert.deepEqual(
+    await service.ignore({ batchId, questionId: 'nope' }),
+    { outcome: 'gone', undelivered: true },
+    'expired 批上错误题号 → undelivered（与作答一致，原实现只回普通 gone）'
+  );
+  assert.deepEqual(
+    await service.ignore({ batchId, questionId: 'q2' }),
+    { outcome: 'late' },
+    'expired 批上真实题号 → 迟到注入不受影响'
+  );
+  assert.equal(agent.injectCalls.length, 1, '恰一次迟到投递');
 });
 
 // ── 座位与快照活性（J16 + 变异：开关活读）─────────────────────────────────
@@ -2270,6 +2428,55 @@ hostTest('J25（A-F08）：投递次序先于唤醒判定——投递抛错不�
   assert.ok(signal !== null, '等待方被唤醒（投递接受后事件即达）');
   assert.equal(signal.qid, 'q3', '唤醒信号透传题号');
   waitingOk.dispose();
+});
+
+hostTest('J26（ASK-PENDING-IDENTITY）：待领账本按批次＋题号对账——同摘要不同批次领取其一后，账本只留未领取项', async () => {
+  // 同批题号、同答案的两条迟到通知 summary 逐字相同：按字符串相等推定身份时，
+  // 领取其一后收件箱仍留同串摘要，两条都判「未领取」——已领取项滞留账本，
+  // 补醒与 lost 名单随之多算。对账必须按稳定批次标识＋题号逐条区分。
+  const agent = fakeAgent('s-twins');
+  const { registry, timer } = makeRegistry({ agentLang: 'en' });
+  const pendingA = registry.take(makeRequest(agent, [Q('q1')]), agent);
+  const pendingB = registry.take(makeRequest(agent, [Q('q1')]), agent);
+  const [a, b] = registry.stateItems().items;
+  assert.notEqual(a.batchId, b.batchId, '前置：两批批次标识不同');
+  timer.fire(0);
+  await pendingA;
+  timer.fire(1);
+  await pendingB;
+  assert.equal(registry.submitLate({ batchId: a.batchId, questionId: 'q1', kind: 'answer', selected: ['选项一'] }), 'late');
+  assert.equal(registry.submitLate({ batchId: b.batchId, questionId: 'q1', kind: 'answer', selected: ['选项一'] }), 'late');
+  const [msgA, msgB] = agent.injectCalls;
+  assert.equal(msgA.source.summary, msgB.source.summary, '前置：两通知摘要逐字相同（字符串相等不可区分身份）');
+  assert.equal(msgA.source.batchId, a.batchId, '通知 source 携带批次标识（甲）');
+  assert.equal(msgB.source.batchId, b.batchId, '通知 source 携带批次标识（乙）');
+  assert.equal(registry.lateLedger.length, 2, '两条都在待领账本');
+  // 宿主只领取第一条（claim 移出收件箱）；第二条滞留（末步竞态形态）。
+  agent.inbox.nextStep.splice(0, 1);
+  agent.finishTurn({ claim: false });
+  await flush();
+  assert.equal(agent.followupCalls.length, 1, '滞留一条 → 补醒提醒恰一条');
+  assert.equal(registry.lateLedger.length, 1, '账本剪除已领取条目（按批次＋题号对账）');
+  assert.equal(registry.lateLedger[0].batchId, b.batchId, '保留的是未领取的那条（批次可逐条区分）');
+  assert.deepEqual(registry.stateItems().lost, [], '补醒成功 → 无 lost 名单');
+
+  // 正常领取（两情形之全部领取）：同摘要两批都被领走 → 账本清空、不补醒。
+  const agent2 = fakeAgent('s-twins-both');
+  const { registry: reg2, timer: tim2 } = makeRegistry({ agentLang: 'en' });
+  const pA = reg2.take(makeRequest(agent2, [Q('q1')]), agent2);
+  const pB = reg2.take(makeRequest(agent2, [Q('q1')]), agent2);
+  const [iA, iB] = reg2.stateItems().items;
+  tim2.fire(0);
+  await pA;
+  tim2.fire(1);
+  await pB;
+  assert.equal(reg2.submitLate({ batchId: iA.batchId, questionId: 'q1', kind: 'answer', selected: ['选项一'] }), 'late');
+  assert.equal(reg2.submitLate({ batchId: iB.batchId, questionId: 'q1', kind: 'answer', selected: ['选项一'] }), 'late');
+  assert.equal(agent2.injectCalls[0].source.summary, agent2.injectCalls[1].source.summary, '前置：摘要仍逐字相同');
+  agent2.finishTurn(); // 正常收尾：先整批领取再转空闲
+  await flush();
+  assert.equal(agent2.followupCalls.length, 0, '全部已领取 → 不补醒');
+  assert.equal(reg2.lateLedger.length, 0, '账本清空（两条都剪除）');
 });
 
 // ═══════════════════ 延长等待（需求 §4.3，判据 E1–E8）═════════════════════

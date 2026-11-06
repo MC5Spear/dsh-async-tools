@@ -27,7 +27,8 @@ var module = { exports: {} }; var exports = module.exports;
 //   只有 `{view}`、没有 `form`，所以卡片自取控制器；模型在构造时订阅 scope，
 //   组件经 `model.bind(...)` 的快照存储 + `useSyncExternalStore` 重渲染（bind 只调一次）。
 // - 枚举字段（uiLang/agentLang/askUiSeat）与布尔字段（silentFailureGuard/
-//   askTakeover）：语义注册进模型（`enumFieldSpec`/`flagFieldSpec` 形状同
+//   askTakeover/workflowProgressLog/fullCommandEcho——防线总开关、提问接管
+//   与两个展示开关）：语义注册进模型（`enumFieldSpec`/`flagFieldSpec` 形状同
 //   `SettingsFieldSpec`），控件本体分别是原生 select 与官方 `P.Switch`，壳与帮助
 //   由 `FieldShell` 统一承担（设计 §5.5 的两条强制条目：无覆盖时下拉显示**生效值**；
 //   label `for`/控件 `id` 绑定 + `aria-describedby`/`aria-invalid`；布尔开关的
@@ -369,12 +370,14 @@ function decodeBoundDraft(text) {
 }
 
 /**
- * 模型装配：10 个数字字段（官方 `settingsNumberField`——七个毫秒预算 +
- * `maxResultChars` + 提问接管两字段）+ 2 个文本字段（官方 `settingsTextField`）+
- * 3 个枚举字段（本包 `enumFieldSpec`——两个语言开关 + 座位）+ 2 个布尔字段
- * （本包 `flagFieldSpec`——静默失败防线总开关 + 提问接管总开关）+ 1 个绑定字段
- * （本包 `presetBindingFieldSpec`——预设功能绑定），合计 20 个字段。字段键集合
- * 必须与 `FIELDS` 逐项相等（卡片装配断言钉住）。
+ * 模型装配：按 `FIELDS` 的字段形态逐项选 spec——数字字段与文本字段用官方
+ * spec（`settingsNumberField`：毫秒预算 + `maxResultChars` + 提问接管两窗口；
+ * `settingsTextField`：`jobKind`/`subagentProvider`）、枚举字段用本包
+ * `enumFieldSpec`（两个语言开关 + 座位）、布尔字段用本包 `flagFieldSpec`
+ * （静默失败防线、提问接管与两个展示开关共四个开关）、绑定字段用本包
+ * `presetBindingFieldSpec`（预设功能绑定）。字段键集合与顺序必须与 `FIELDS`
+ * 逐项相等（卡片装配断言钉住）；各类字段增减不维护本注释的计数——
+ * 总数以 `FIELDS` 为单一来源。
  *
  * @returns {object[]} spec 列表（顺序 = FIELDS 顺序）。
  */
@@ -814,7 +817,9 @@ function createCardModel(ctx) {
  * value:{presets:[…]}}`｜`{ok:false, error:{code, message}}`——宿主成例
  * `dsh-client-ui-agent-preset` 的 `readRoster` 同一契约）：
  * - `ok===true` → ready 态、items=`value.presets`（每项含 `{id,name?,
- *   description?,order?,broken?,isDefault}`，按宿主序）；
+ *   description?,order?,broken?,isDefault}`，按宿主序；`broken` 在场时是
+ *   **诊断字符串**——宿主 `diagnostic()` 的一行或多行装载失败原因，可用项
+ *   缺省该键），
  * - `error.code==='gateway/invocation-unavailable'` → error 态·服务缺席文案；
  * - 其余 error → error 态·失败原因文案。**任何失败都不是空目录**（需求 9.4.2
  *   「读取失败不得显示为空列表」）——失败态下列表区退回已保存绑定（value 层）。
@@ -897,16 +902,20 @@ function createPresetCatalog() {
 /**
  * 渲染预设功能绑定块（需求 9.4.2，表单末尾的独立块；不经 FieldShell——
  * 复选框组不是单值控件）。结构：
- * - 块头：标签（词典键 `boundPresets`）＋带圈问号帮助（`help.boundPresets`，
- *   开合模式照 `FieldShell`）＋「刷新」按钮（只重读目录，不碰草稿/保存/mutate）；
+ * - 块头：组标题（词典键 `boundPresets`；不是单值控件的 label——条目组经
+ *   `aria-labelledby` 指向它取得组名，RA-BIND-LABEL）＋带圈问号帮助
+ *   （`help.boundPresets`，开合模式照 `FieldShell`）＋「刷新」按钮（只重读
+ *   目录，不碰草稿/保存/mutate）；
  * - 生效值行：当前生效名单（value 层）＋覆盖徽标＋恢复默认按钮（走通用字段
  *   重置 → unset 只清用户覆盖；生效值按配置优先级重取——组合层仍配置时保持
  *   组合值，组合层与用户覆盖都不在时才是 schema 默认两预设）；
  * - 状态行：loading／目录空（与失败区分）／失败（带原因＋重试）；
  * - 条目行：目录项 = 原生 checkbox（键盘与辅助技术天然可操作）＋宿主显示名称
- *   （不由本包翻译）＋ID 小字；`broken` 项已绑定可取消、未绑定禁选；已绑定但
- *   不在目录的 ID 保留条目（注记「未在当前预设列表中发现」）、可取消——目录只
- *   用于发现与展示，不改变既有绑定；失败态下列表区退回已保存绑定（value 层）。
+ *   （不由本包翻译）＋ID 小字；`broken` 项（truthy 即异常——宿主实测是诊断
+ *   字符串，RA-BIND-BROKEN）已绑定可取消、未绑定禁选，注记显示异常标记并附
+ *   诊断原因原文（布尔 true 无原因可附时只显标记）；已绑定但不在目录的 ID
+ *   保留条目（注记「未在当前预设列表中发现」）、可取消——目录只用于发现与
+ *   展示，不改变既有绑定；失败态下列表区退回已保存绑定（value 层）。
  * 草稿存于设置表单模型（JSON 串经 spec 往返），刷新期间未保存勾选原样。
  *
  * @param {object} props - `{state, model, t, catalog}`。
@@ -928,6 +937,10 @@ function PresetBindingBlock(props) {
   var id = "plugin-config-boundPresets";
   var messageId = id + "-message";
   var helpId = id + "-help";
+  // RA-BIND-LABEL：组标题语义。块头不是单值控件的 label（复选框各有自己的
+  // label for 绑定），标题元素带 id、由条目组的 aria-labelledby 指向——组名
+  // 即可见标题（不再另立 aria-label 文案，也不留指向不存在控件的 htmlFor）。
+  var titleId = id + "-title";
   var label = t("boundPresets");
   var help = resolveCopy(t, "help.boundPresets");
   var helpA11y = help === undefined ? undefined
@@ -949,7 +962,12 @@ function PresetBindingBlock(props) {
     for (i = 0; i < catalogState.items.length; i += 1) {
       var item = catalogState.items[i];
       listed[item.id] = true;
-      rows.push({ id: item.id, name: item.name, broken: item.broken === true ? item.broken : undefined, absent: false });
+      // RA-BIND-BROKEN：宿主 agentPresets.list 的 broken 是**诊断字符串**
+      //（装载失败 = error.message，多行以 \n 连接；可用项缺省该键——见宿主
+      // dsh-agent-preset-registry 的 list()）。这里按 truthy 判异常：字符串诊断
+      // 或布尔 true 都是"装载失败"，false/空串/缺省 = 正常；诊断原文原样透传
+      // 给注记行（preset.brokenReason 的 {reason}）。
+      rows.push({ id: item.id, name: item.name, broken: item.broken ? item.broken : undefined, absent: false });
     }
     for (i = 0; i < draft.length; i += 1) {
       if (!listed[draft[i]]) rows.push({ id: draft[i], name: undefined, broken: undefined, absent: true });
@@ -964,7 +982,7 @@ function PresetBindingBlock(props) {
   return React.createElement("div", { className: "ats-enum-field", key: "boundPresets" },
     React.createElement("div", { className: "ats-enum-head" },
       React.createElement("span", { className: "ats-enum-labelGroup" },
-        React.createElement("label", { className: "ats-enum-label", htmlFor: id }, label),
+        React.createElement("span", { className: "ats-enum-label", id: titleId }, label),
         help === undefined ? null : React.createElement("button", {
           type: "button",
           className: "ats-help-button",
@@ -1004,10 +1022,12 @@ function PresetBindingBlock(props) {
         }, t("preset.retry")))
       : null,
     rows.length > 0 ? React.createElement("ul", {
-      className: "ats-preset-list", role: "group", "aria-label": t("preset.a11yList")
+      className: "ats-preset-list", role: "group", "aria-labelledby": titleId
     }, rows.map(function (row) {
       var checked = draftIndex[row.id] === true;
-      var rowDisabled = disabled || (row.broken === true && !checked);
+      // RA-BIND-BROKEN：异常项（broken 为 truthy——宿主实测是诊断字符串）未绑定
+      // 禁止新增勾选；已绑定允许取消（绑定只取消、不新增，不给装不上的预设开口）。
+      var rowDisabled = disabled || (row.broken !== undefined && !checked);
       return React.createElement("li", { key: row.id, className: "ats-preset-item" },
         React.createElement("input", {
           type: "checkbox",
@@ -1022,8 +1042,13 @@ function PresetBindingBlock(props) {
             ? React.createElement("span", { className: "ats-preset-id" }, row.id) : null),
         row.absent === true
           ? React.createElement("span", { className: "ats-preset-note" }, t("preset.absent"))
-          : row.broken === true
-          ? React.createElement("span", { className: "ats-preset-note" }, t("preset.broken"))
+          : row.broken !== undefined
+          ? React.createElement("span", { className: "ats-preset-note" },
+            // 异常标记 + 原因文本：宿主诊断字符串（可能多行）原样随注记展示；
+            // 布尔 true（无诊断可给）只显示异常标记。
+            typeof row.broken === "string" && row.broken !== ""
+              ? t("preset.brokenReason").replace("{reason}", row.broken)
+              : t("preset.broken"))
           : null);
     })) : null,
     helpOpen && help !== undefined ? React.createElement("div", {
@@ -1260,7 +1285,7 @@ var DICTIONARIES = {
     "help.pollIntervalMs": "配置键：pollIntervalMs（数值，毫秒）。\n\nasync_wait 的子代理目标以变化事件为主、轮询为备用的双通道检查是否仍在运行；本间隔是备用轮询的节奏，受 pollIntervalMs ≤ maxWaitMs 配对约束。",
     "help.maxResultChars": "配置键：maxResultChars（数值，字符）。\n\n按 String.length 计量，必须是正整数，小数草稿在保存时被拒。额度按交付批次共享：同批到达模型输入的多条结果——首次等待直接返回、等待返回的批次条目、完成消息——共用这一份上限，先到先分配，后到且预算耗尽的内容延后或裁剪（保首尾并说明省略量与截断）；状态行与提示另计。例如两个并行命令都在首次等待内完成时，两条直接返回合计不超过一份上限。",
     "help.jobKind": "配置键：jobKind（文本）。\n\n注册命令作业时使用的类型名称，用于作业列表与日志的辨识；输入空串会被拒绝。",
-    "help.subagentProvider": "配置键：subagentProvider（文本）。\n\nasync_agent 创建子代理使用的后端服务，默认 spawn；输入去掉首尾空白后为空时按默认值保存，填了不存在的后端时在调用时可读拒绝。需要指定模型时，在 async_agent 调用参数中用 provider 与 model 指定。",
+    "help.subagentProvider": "配置键：subagentProvider（文本）。\n\nasync_agent 创建子代理使用的后端服务，默认 spawn；输入去掉首尾空白后为空时按默认值生效，填了不存在的后端时，创建子代理的请求会被拒绝并显示原因。需要指定模型时，在 async_agent 调用参数中用 provider 与 model 指定。",
     "help.uiLang": "配置键：uiLang（枚举：auto / zh / en）。\n\n界面文案与 Agent 文案是两个独立开关：本开关只影响界面文案，Agent 文案语言由 agentLang 设置；auto 档跟随宿主语言。",
     "help.agentLang": "配置键：agentLang（枚举：en / zh）。\n\n控制模型可见文案（工具描述、参数说明、提示、错误与执行纪律）；界面文案语言由 uiLang 单独设置，两者互不影响。",
     "help.silentFailureGuard": "配置键：silentFailureGuard（布尔）。\n\n开启后，命令可能未执行且缺少明显报错的特定条件下，诊断提醒和检查建议出现在返回提示、命令描述与执行纪律三处。",
@@ -1310,7 +1335,7 @@ var DICTIONARIES = {
     // 在场断言守护；preset.* 系列两语成对由词典键集相等断言守护。
     "boundPresets": "适用预设",
     "hint.boundPresets": "选中后向该预设的会话注入异步执行纪律；静默失败提示与待答面板提问处理仍分别受各自开关控制。按会话当前实际预设匹配。",
-    "help.boundPresets": "配置键：boundPresets（预设 ID 数组）。\n\n选中预设后：该预设下的会话组稿注入本包执行纪律段；静默失败提示（silentFailureGuard）与提问接管（askTakeover）仍分别受各自开关控制——名单只决定作用范围，不代替开关。判定按会话当前实际预设匹配，同一工具被多个预设复用时未选中预设的会话不受影响。\n\n默认绑定本包两份预设（dsh-async / dsh-async-create）；保存空数组＝解除全部绑定；已绑定但不在当前预设列表中的条目保留显示，可取消。列表来自宿主预设注册表，「刷新」重读；读取失败时显示已保存绑定，可取消。",
+    "help.boundPresets": "配置键：boundPresets（预设 ID 数组）。\n\n勾选预设后：使用该预设的会话获得本包的执行纪律段——即给所选预设的 Agent 添加操作要求；静默失败提示（silentFailureGuard）与提问接管（askTakeover）仍分别受各自开关控制——名单只决定作用范围，不代替开关。判定按会话当前实际预设匹配，同一工具被多个预设复用时未勾选预设的会话不受影响。\n\n默认绑定本包两份预设（dsh-async / dsh-async-create）；全部取消勾选并保存＝解除全部绑定；已绑定但不在当前预设列表中的条目保留显示，可取消。列表来自宿主预设注册表，「刷新」重读；读取失败时显示已保存绑定，可取消。",
     "preset.refresh": "刷新",
     "preset.retry": "重试",
     "preset.loading": "正在读取预设列表…",
@@ -1320,8 +1345,9 @@ var DICTIONARIES = {
     "preset.noneBound": "当前未绑定任何预设",
     "preset.effectiveList": "生效名单：{list}",
     "preset.broken": "该预设装载失败",
-    "preset.absent": "未在当前预设列表中发现",
-    "preset.a11yList": "适用预设列表"
+    // RA-BIND-BROKEN：宿主诊断字符串（list() 的 broken）随 {reason} 原样透传。
+    "preset.brokenReason": "该预设装载失败：{reason}",
+    "preset.absent": "未在当前预设列表中发现"
   },
   en: {
     title: "Async tools",
@@ -1391,7 +1417,7 @@ var DICTIONARIES = {
     "help.pollIntervalMs": "Config key: pollIntervalMs (number, ms).\n\nasync_wait's subagent targets check whether the target is still running on two channels — change events first, polling as the backup; this interval sets the backup polling cadence and is bound by the pollIntervalMs ≤ maxWaitMs pairing.",
     "help.maxResultChars": "Config key: maxResultChars (number, characters).\n\nMeasured by String.length; it must be a positive integer, and non-integer drafts are rejected at save. The quota is shared per delivery batch: the multiple results reaching the model input in one batch — first-wait direct returns, wait-return batch entries, and completion messages — draw on this single cap, first come first served; content arriving after the quota is exhausted is deferred or truncated (head and tail kept, omission and truncation stated), and status lines and notices are counted separately. For example, when two parallel commands both finish inside their first waits, the two direct returns together stay within one cap.",
     "help.jobKind": "Config key: jobKind (text).\n\nType name used when registering command jobs, for identification in job lists and logs; an empty value is invalid.",
-    "help.subagentProvider": "Config key: subagentProvider (text).\n\nBackend service async_agent uses to create subagents, spawn by default; an empty value after trimming falls back to the default, and an unknown backend is rejected readably at call time. To specify a model, use the provider and model parameters of the async_agent call.",
+    "help.subagentProvider": "Config key: subagentProvider (text).\n\nBackend service async_agent uses to create subagents, spawn by default; an empty value after trimming falls back to the default, and an unknown backend is rejected with a readable reason when a subagent is created. To specify a model, use the provider and model parameters of the async_agent call.",
     "help.uiLang": "Config key: uiLang (enum: auto / zh / en).\n\nInterface copy and Agent-facing copy are two independent switches: this one only affects interface copy, and agentLang sets the Agent-facing language; the auto mode follows the host language.",
     "help.agentLang": "Config key: agentLang (enum: en / zh).\n\nControls model-visible copy (tool descriptions, parameter notes, notices, errors, and execution discipline); interface copy is set by uiLang separately, and the two do not affect each other.",
     "help.silentFailureGuard": "Config key: silentFailureGuard (boolean).\n\nWhen on, in the specific cases where a command may not have run with no visible error, the diagnostic reminders and checking advice appear in three places: return notes, command descriptions, and execution discipline.",
@@ -1442,7 +1468,7 @@ var DICTIONARIES = {
     // dictionary key-set equality assertion (zh/en must stay paired).
     "boundPresets": "Applicable presets",
     "hint.boundPresets": "When checked, sessions under that preset get the async execution discipline injected; the silent-failure hint and pending-panel question handling still answer to their own switches. Matching follows each session's current effective preset.",
-    "help.boundPresets": "Config key: boundPresets (an array of preset ids).\n\nWhen a preset is checked: sessions under it get this package's execution-discipline section in their composed prompts; the silent-failure hint (silentFailureGuard) and question takeover (askTakeover) still answer to their own switches — the list decides the scope only, it does not replace the switches. Matching follows the session's current effective preset; when the same tool is reused by several presets, sessions on unchecked presets are unaffected.\n\nThe default binds this package's two presets (dsh-async / dsh-async-create); saving an empty array unbinds everything; ids bound but absent from the current preset list stay listed and can be unchecked. The list comes from the host preset registry and reloads via \"Refresh\"; on a read failure the saved bindings are shown and can be unchecked.",
+    "help.boundPresets": "Config key: boundPresets (an array of preset ids).\n\nWhen a preset is checked: sessions under it get this package's execution-discipline section — operating requirements added for Agents on the chosen preset; the silent-failure hint (silentFailureGuard) and question takeover (askTakeover) still answer to their own switches — the list decides the scope only, it does not replace the switches. Matching follows the session's current effective preset; when the same tool is reused by several presets, sessions on unchecked presets are unaffected.\n\nThe default binds this package's two presets (dsh-async / dsh-async-create); unchecking every preset and saving unbinds them all; ids bound but absent from the current preset list stay listed and can be unchecked. The list comes from the host preset registry and reloads via \"Refresh\"; on a read failure the saved bindings are shown and can be unchecked.",
     "preset.refresh": "Refresh",
     "preset.retry": "Retry",
     "preset.loading": "Reading the preset list…",
@@ -1452,8 +1478,9 @@ var DICTIONARIES = {
     "preset.noneBound": "No presets are currently bound",
     "preset.effectiveList": "Effective presets: {list}",
     "preset.broken": "This preset failed to load",
-    "preset.absent": "Not found in the current preset list",
-    "preset.a11yList": "Applicable preset list"
+    // RA-BIND-BROKEN: the host diagnostic string (broken from list()) passes through {reason}.
+    "preset.brokenReason": "This preset failed to load: {reason}",
+    "preset.absent": "Not found in the current preset list"
   }
 };
 
@@ -1951,7 +1978,14 @@ function createAskModel(ctx, remote) {
 
 /** 待答面板的自有样式（只引用定义表内的别名 token，check-alias-tokens 把关）。
  *  视觉隐藏类 `.ats-ask-sr`（ASK-ANNOUNCE-01）只用几何裁剪，不引用任何颜色——
- *  T14 颜色守卫（test/two-planes.test.mjs）与别名 token 检查同判。 */
+ *  T14 颜色守卫（test/two-planes.test.mjs）与别名 token 检查同判。
+ *
+ *  VIS-INPUT-01：字号与命中区按「最低条件与增强目标分开」处理——待答输入
+ *  （textarea）16px 字号（<16px 时 iOS Safari 聚焦会自动放大页面）；全部交互
+ *  控件显式 min-height ≥24px（最低命中区）；主要按钮（提交）min-height 44px
+ *  （增强目标）。页面缩放不设限：本包不加 viewport 的 maximum-scale/
+ *  user-scalable 限制（禁缩放不是放大命中区的替代手段）。
+ */
 var ASK_CSS = ""
   // VIS-BADGE-01：面板宽度窄视口钳制（390px 侧栏形态下 340px 固定宽会横向溢出）。
   // sidebar 座位宽度钳制改 calc(100vw - 76px)（flash 视觉盲测缺陷②）：侧栏收起
@@ -1972,17 +2006,19 @@ var ASK_CSS = ""
   + ".ats-ask-grouphead{display:flex;align-items:center;gap:8px;"
   + "color:var(--dsw-alias-label-tertiary);font-size:12px}"
   + ".ats-ask-jump{margin-left:auto;background:none;border:none;cursor:pointer;"
-  + "color:var(--dsw-alias-brand-primary);font-size:12px;padding:0}"
+  + "color:var(--dsw-alias-brand-primary);font-size:13px;padding:0;"
+  + "min-height:24px;box-sizing:border-box}"
   + ".ats-ask-extend{background:none;border:.5px solid "
   + "var(--dsw-alias-border-l4);border-radius:8px;cursor:pointer;"
-  + "color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;padding:2px 8px}"
+  + "color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;"
+  + "padding:2px 8px;min-height:24px;box-sizing:border-box}"
   + ".ats-ask-q{padding:6px 0}"
   + ".ats-ask-text{margin:0 0 6px}"
   + ".ats-ask-opts{display:flex;flex-direction:column;gap:4px;margin-bottom:6px}"
   + ".ats-ask-opt{display:flex;align-items:flex-start;gap:8px;text-align:left;"
   + "border:.5px solid var(--dsw-alias-border-l4);border-radius:8px;background:none;"
-  + "color:var(--dsw-alias-label-primary);cursor:pointer;font:inherit;font-size:12px;"
-  + "padding:6px 8px}"
+  + "color:var(--dsw-alias-label-primary);cursor:pointer;font:inherit;font-size:13px;"
+  + "padding:6px 8px;min-height:24px;box-sizing:border-box}"
   // VIS-HOVER-01：作答项（预设选项）真实指针悬停规则——背景亮起与选中态同
   // 色但选中另带 brand 描边（区分不靠唯一颜色）；触摸屏点按的瞬时悬停不残留
   // 语义（背景变化是提示不是状态）。
@@ -2009,32 +2045,37 @@ var ASK_CSS = ""
   + ".ats-ask-custom[data-selected='true']{background:var(--dsw-alias-interactive-bg-hover);"
   + "border-color:var(--dsw-alias-brand-primary)}"
   + ".ats-ask-optctl{display:flex;align-items:flex-start;gap:8px;background:none;"
-  + "border:none;cursor:pointer;font:inherit;font-size:12px;padding:0;"
-  + "color:var(--dsw-alias-label-primary)}"
+  + "border:none;cursor:pointer;font:inherit;font-size:13px;padding:0;"
+  + "min-height:24px;box-sizing:border-box;color:var(--dsw-alias-label-primary)}"
   // VIS-HOVER-01：自定义作答开关的悬停可辨识（文字色加深；无背景壳可亮）。
   + ".ats-ask-optctl:hover{color:var(--dsw-alias-state-business-primary)}"
   // 上下布局（需求 §4.2.2）：第一行选择控件与标题，输入框独占该项可用内容
-  // 宽度；多行编辑——初始可见至少三行（12px 字号 × 1.5 行距 × 3 行 + 内边距），
-  // 长文本自动换行（pre-wrap），超出可见高度纵向滚动，可拖拽扩高。
+  // 宽度；多行编辑——初始可见至少三行（VIS-INPUT-01：16px 字号 × 1.5 行距 ×
+  // 3 行 + 内边距），长文本自动换行（pre-wrap），超出可见高度纵向滚动，可拖拽扩高。
   + ".ats-ask-custom .ats-ask-input{flex:none;width:100%;min-height:5.5em;"
   + "resize:vertical;overflow-y:auto;white-space:pre-wrap;word-break:break-word;"
   + "line-height:1.5;margin-bottom:0}"
   + ".ats-ask-reason{color:var(--dsw-alias-state-error-primary);font-size:12px;margin:4px 0 0}"
   + ".ats-ask-submit:disabled{opacity:.5;cursor:not-allowed}"
   + ".ats-ask-input{width:100%;box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l4);"
-  + "border-radius:8px;background:var(--dsw-alias-bg-layer-3);font:inherit;font-size:12px;"
-  + "padding:6px 8px;color:var(--dsw-alias-label-primary);margin-bottom:6px}"
+  + "border-radius:8px;background:var(--dsw-alias-bg-layer-3);font:inherit;"
+  // VIS-INPUT-01：待答输入 ≥16px——iOS Safari 对 <16px 的聚焦输入自动放大
+  // 页面；字号到 16px 即不触发（不得用禁用缩放替代这条）。
+  + "font-size:16px;padding:6px 8px;color:var(--dsw-alias-label-primary);margin-bottom:6px}"
   + ".ats-ask-row{display:flex;align-items:center;gap:8px}"
   + ".ats-ask-submit{border:.5px solid var(--dsw-alias-border-l4);border-radius:8px;"
   + "background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-bg-layer-3);"
-  + "cursor:pointer;font:inherit;font-size:12px;padding:4px 12px}"
+  // VIS-INPUT-01：主要按钮（提交）增强目标 44px——与 24px 最低命中区分开。
+  + "cursor:pointer;font:inherit;font-size:13px;padding:4px 12px;"
+  + "min-height:44px;box-sizing:border-box}"
   + ".ats-ask-skip{border:.5px solid var(--dsw-alias-border-l4);border-radius:8px;"
   + "background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;"
-  + "font:inherit;font-size:12px;padding:4px 12px}"
+  + "font:inherit;font-size:13px;padding:4px 12px;min-height:24px;box-sizing:border-box}"
   + ".ats-ask-left{margin-left:auto;color:var(--dsw-alias-label-tertiary);font-size:12px}"
   + ".ats-ask-expired{color:var(--dsw-alias-state-error-primary);font-size:12px}"
   + ".ats-ask-failed{color:var(--dsw-alias-state-error-primary);font-size:12px;margin:4px 0}"
-  + ".ats-ask-dismiss{margin-left:8px;padding:0 8px;font-size:12px;"
+  + ".ats-ask-dismiss{margin-left:8px;padding:0 8px;font-size:13px;"
+  + "min-height:24px;box-sizing:border-box;"
   + "border:.5px solid var(--dsw-alias-border-l4);border-radius:8px;"
   + "background:none;color:var(--dsw-alias-label-secondary);cursor:pointer}"
   // sidebar 座位形态（VIS-BADGE-01）：徽标长在侧栏底栏的窄图标槽——面板上移让出
@@ -2056,7 +2097,10 @@ var ASK_CSS = ""
   + ".ats-ask-badge{position:relative;display:inline-flex;align-items:center;"
   + "border:.5px solid var(--dsw-alias-border-l4);"
   + "border-radius:8px;background:none;color:var(--dsw-alias-label-secondary);"
-  + "cursor:pointer;font:inherit;font-size:12px;padding:5px 30px 5px 4px}"
+  // VIS-BADGE-RAIL：命中区显式钉 24px 下限（现盒高约 29px 本已达标）；宽度
+  // 几何（51px ≤ 52px 窄列）见上方 VIS-BADGE-01 注释——padding 不动。
+  + "cursor:pointer;font:inherit;font-size:12px;padding:5px 30px 5px 4px;"
+  + "min-height:24px;box-sizing:border-box}"
   // VIS-HOVER-01：真实指针悬停的可辨识态（与宿主卡片同款 interactive-bg-hover；
   // 键盘焦点另有 focus-visible 描边，不与悬停混用同一通道）。
   + ".ats-ask-badge:hover{background:var(--dsw-alias-interactive-bg-hover);"
@@ -2708,6 +2752,9 @@ module.exports = {
   ASK_NAMESPACE: ASK_NAMESPACE,
   ASK_SERVICE_KEY: ASK_SERVICE_KEY,
   ASK_STATE_POLL_MS: ASK_STATE_POLL_MS,
+  /** 待答面板样式表原文（VIS-INPUT-01/VIS-BADGE-RAIL 的浏览器外判据：测试
+   *  从这里解析字号/命中区/槽宽，钉住「24px 最低与 44px 增强」的分开处理）。 */
+  ASK_CSS: ASK_CSS,
   passthroughCodec: passthroughCodec,
   DICTIONARIES: DICTIONARIES,
   FIELDS: FIELDS,

@@ -775,7 +775,8 @@ hostTest('R58-l：说明两档上限——单条 200 截断、留存行合计 20
 });
 
 hostTest('R55（判据 2b·子代理侧）：next-step 滞留目标子代理的未领取结算通知 → settled（结束优先于插话）', async () => {
-  // 入口通知的 settled 交付要求注册表现读非运行（W-GATE-E 同门复核）。通知出口
+  // 入口通知的 settled 交付要求注册表现读非运行（与 W-GATE-E 复核同一判定：
+  // 通知只是线索，停止事实以注册表为准）。通知出口
   // 位于全部目标必要校验之后、其余入口返回条件（含插话判定）之前（§3.2.2/
   // §3.2.4）——本判据锚「返回条件之内结束优先于插话」这层优先级；校验次序由
   // W-MIX 系列锚定（混合非法目标时整次拒绝、通知不被消费）。装置补静止读数、
@@ -1256,7 +1257,7 @@ hostTest('W-EMPTY-A：无目标且无运行中工作 → no-work 立即返回，
     const result = await rig.waiter.execute({ wait_ms: 250 }, rig.exec());
     assert.equal(result.status, 'no-work', '无可等待工作：未挂起立即交回');
     assert.ok(result.waited_ms < 250, '立即返回（不等满预算——挂起等未来消息是旧缺陷形态）');
-    assert.match(result.note, /未确认存在可等待工作|No wait-worthy work/, '出口说明与两语键一致');
+    assert.match(result.note, /已确认没有可等待工作|No wait-worthy work exists/, '出口说明与两语键一致');
   } finally {
     await rig.dispose();
   }
@@ -1889,7 +1890,7 @@ hostTest('W-MIX-F：清单外子代理＋正等待——纠错清单竞速窗口
   // §3.2.2「校验期间只有工具取消与用户插话切断」的竞速窗口反例：正等待下
   // 目录已证查无（entry＝null）、纠错清单查询进行中时，目标消息恰好到达——
   // 修前该唤醒置 barrierWake 并按 sender 命中提前返回 changed，越过本应抛出的
-  // unknownAgent 整次拒绝（D13 同类残留）；修后查无事实照常落地，消息留收件箱
+  // unknownAgent 整次拒绝（D13 同类残留）；修后查无事实照常判定成立，消息留收件箱
   // 未被消费。装置：listChildren 第 1 次调用返回空（证查无），第 2 次挂起受控
   //（纠错清单竞速窗口），期间注入目标消息并真实发 `agent/inbox/inserted` 事件。
   let childCalls = 0;
@@ -2277,24 +2278,29 @@ hostTest('W-GATE-C：门后目标维持运行→到期按 running 交回＋目�
   }
 });
 
-hostTest('W-GATE-D：注册表读取抛错（unknown）→不制造 settled；到期未证实档＋标记说明', async () => {
+hostTest('W-GATE-D：注册表读取抛错（unknown）→不制造 settled；无其他已确认运行对象时不挂起、立即按未证实交回（RA-UNKNOWN-SUSPEND）', async () => {
   resetAgentBaselines();
   const rig = await buildRig('gate-d', [{ id: 'at-gate-d-child' }], {
     pollIntervalMs: 200,
     agentsGet: () => { throw new Error('registry down'); }
   });
   try {
-    const pending = rig.waiter.execute(
+    const started = Date.now();
+    const outcome = await rig.waiter.execute(
       { wait_ms: 700, targets: [{ kind: 'agent', id: 'at-gate-d-child' }] },
       rig.exec()
     );
-    await sleep(120);
-    rig.ctx.emit('agent/status', { agent: { id: 'at-gate-d-child' }, status: 'idle' });
-    const outcome = await pending;
-    assert.equal(outcome.status, 'running', '读取失败不制造停止：到期按有目标口径交回');
+    const wall = Date.now() - started;
+    // RA-UNKNOWN-SUSPEND：修前唯一目标 unknown（注册表读取抛错）仍挂满 700ms
+    // 预算、按 running 交回（验收 P8 的 402ms 实测形态）——「条件未证实」被冒充
+    // 成「观察到仍在运行」。修后与无目标等待的未证实证据标准同一口径：没有已确认
+    // 运行的目标就不挂起（未知既不能证明运行、也不能证明不存在）。不制造
+    // settled 的原始判据保留：unconfirmed 不是停止断言。
+    assert.equal(outcome.status, 'unconfirmed', '读取失败不制造停止、也不冒充运行：按未证实交回');
+    assert.ok(wall < 600, `不挂满预算（实耗 ${String(wall)} ms）`);
     assert.ok((outcome.targets ?? []).some((row) => row.id === 'at-gate-d-child' && row.status === 'unknown'),
       '目标已证状态为 unknown（未证实档）');
-    assert.ok(outcome.note.includes(t('en', 'wait.settleNoticePending', { ids: 'at-gate-d-child' })), '标记说明在场');
+    assert.ok(outcome.note.includes(t('en', 'wait.unconfirmedWork')), '说明用未证实口径（状态清单查询失败）');
   } finally {
     await rig.dispose();
   }
@@ -3527,7 +3533,7 @@ hostTest('ECHO-M3：正文恰好耗尽预算与空正文＋零剩余——原文
 // 载体以完成消息为主（sRig 忙通道逐条 inject）；E15/E16 用「同主体先后两个
 // config」构造设置翻转（echoOn 在开批时点读 config 定值——机制与「设置保存后
 // 下一批生效」同源）。反例如 R1 先例（jobs.test 开启向 label 断言）以「变异
-// → 指定断言必红」的判据结构落地；R2 另做受控重演（清一次性状态后重装配，
+// → 指定断言必红」的判据结构实施；R2 另做受控重演（清一次性状态后重装配，
 // 证明「恰一次」合计判据在双附形态下必红——判据活性证明，T7 先例）。
 
 hostTest('ECHO-E1：完成消息载体（命令 kind）——含「Command:」标签与命令全文恰一次', async () => {
@@ -6203,5 +6209,384 @@ hostTest('T-MIX-1 三项组合：外来静默完成＋等待返回被改写取�
     assert.equal(rig.followups.length, 0, '让位终局复查无残留可投');
   } finally {
     await rig.dispose();
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// 等待／交付运行期修复的回归锚（RA-BARRIER-WAKE、RA-UNKNOWN-SUSPEND、
+// RA-SYNC-LISTING-GUARD、BA-05、RA-SPILL-PATH、RA-STATUSLINE-DRIFT、
+// RA-FIRSTWAIT-ITEMS、RA-EXIT-CLEANUP——验收 088e846 问题单 §2）。
+// ═════════════════════════════════════════════════════════════════════
+
+hostTest('RA-BARRIER-WAKE-A：屏障查询在途窗口到达的合法目标消息不切断校验——同一在途查询重等完成、消息由返回条件消费（changed）', async () => {
+  resetAgentBaselines();
+  // 验收 P1 形态：目标 A 的目录关系查询在途时，目标 B 的 relay 消息到达。
+  // 修前：一次性唤醒信号 resolve 后，A 按未证实（timeout 标记）交回、B 的
+  // 屏障查询再与它竞速立即败北 → 整次 ~85ms 交回 unconfirmed（预算 5000ms）。
+  // 修后：唤醒标记已消费（后续竞速排除该信号），A 的同一在途查询只与取消、
+  // 总截止竞速重等；全部目标校验完成后由入口 earlyWake 扫描消费消息——
+  // changed＋出口指向 B（与消息先于调用在场的 P1b 形态同款结果）。
+  let childCalls = 0;
+  let releaseFirst;
+  const gate = new Promise((resolve) => { releaseFirst = resolve; });
+  const rows = [
+    { id: 'at-bw-a-first', label: '屏障挂起目标', activity: 'running' },
+    { id: 'at-bw-a-second', label: '消息来源目标', activity: 'running' }
+  ];
+  const rig = await buildWaitRig('bw-a', rows, {
+    agentsGet: (id) => ({ id, status: 'running' }),
+    listChildren: () => {
+      childCalls += 1;
+      return childCalls === 1 ? gate.then(() => rows) : Promise.resolve(rows);
+    }
+  });
+  try {
+    const started = Date.now();
+    const pending = rig.waiter.execute(
+      {
+        wait_ms: 4000,
+        targets: [{ kind: 'agent', id: 'at-bw-a-first' }, { kind: 'agent', id: 'at-bw-a-second' }]
+      },
+      rig.exec()
+    );
+    await sleep(80); // A 的屏障查询在途（listChildren 第 1 次挂起）
+    const { message } = inboxPayload({
+      agent: rig.parent, sourceKind: 'agent-message', form: 'relay',
+      summary: 'barrier-window relay', senderSessionId: 'at-bw-a-second', target: 'next-step'
+    });
+    rig.ctx.emit('agent/inbox/inserted', { agent: { id: rig.parent.id }, message });
+    await sleep(40); // 唤醒在竞速中胜出（修前在此按未证实提前交回）
+    releaseFirst();
+    const outcome = await pending;
+    const wall = Date.now() - started;
+    assert.equal(outcome.status, 'changed', '合法目标消息是返回条件不是中断：校验完成后按变化交回');
+    assert.equal(outcome.agent_id, 'at-bw-a-second', '出口指向消息来源目标');
+    assert.ok(outcome.note.includes(t('en', 'wait.targetMessage', { summary: 'barrier-window relay' })),
+      'targetMessage 文案在场');
+    assert.ok(wall < 1500, `不等满预算（实耗 ${String(wall)} ms）`);
+    assert.ok(
+      rig.parent.inbox.nextStep.length === 1 && rig.parent.inbox.nextStep[0]?.id === message.id,
+      '消息留收件箱（等待以它为返回条件，不由等待侧删除）'
+    );
+    assert.equal(childCalls, 2,
+      `屏障期唤醒不重发宿主查询（A 重等同一在途查询、B 一次新查询；实得 ${String(childCalls)} 次）`);
+  } finally {
+    releaseFirst();
+    await rig.dispose();
+  }
+});
+
+hostTest('RA-BARRIER-WAKE-B：屏障在途窗口到达的结算通知——校验完成后由通知出口消费（changed＋settleNoticeArrived）', async () => {
+  resetAgentBaselines();
+  // 验收 P2 形态：通知到达于屏障在途窗口。修前同款按未证实提前交回；修后
+  // 屏障完成校验，通知出口（先于消息返回条件）交回 changed＋通知说明。
+  let childCalls = 0;
+  let releaseFirst;
+  const gate = new Promise((resolve) => { releaseFirst = resolve; });
+  const rows = [
+    { id: 'at-bw-b-first', label: '屏障挂起目标', activity: 'running' },
+    { id: 'at-bw-b-second', label: '通知来源目标', activity: 'running' }
+  ];
+  const rig = await buildWaitRig('bw-b', rows, {
+    agentsGet: (id) => ({ id, status: 'running' }),
+    listChildren: () => {
+      childCalls += 1;
+      return childCalls === 1 ? gate.then(() => rows) : Promise.resolve(rows);
+    }
+  });
+  try {
+    const started = Date.now();
+    const pending = rig.waiter.execute(
+      {
+        wait_ms: 4000,
+        targets: [{ kind: 'agent', id: 'at-bw-b-first' }, { kind: 'agent', id: 'at-bw-b-second' }]
+      },
+      rig.exec()
+    );
+    await sleep(80);
+    const { message } = inboxPayload({
+      agent: rig.parent, sourceKind: 'subagent-settled', form: 'notice',
+      summary: 'barrier-window notice', senderSessionId: 'at-bw-b-second', target: 'next-step'
+    });
+    rig.ctx.emit('agent/inbox/inserted', { agent: { id: rig.parent.id }, message });
+    await sleep(40);
+    releaseFirst();
+    const outcome = await pending;
+    const wall = Date.now() - started;
+    assert.equal(outcome.status, 'changed', '结算通知经通知出口交回（不作停止断言）');
+    assert.equal(outcome.agent_id, 'at-bw-b-second', '出口指向通知来源目标');
+    assert.ok(outcome.note.includes(t('en', 'wait.settleNoticeArrived')), 'settleNoticeArrived 文案在场');
+    assert.ok(wall < 1500, `不等满预算（实耗 ${String(wall)} ms）`);
+    assert.ok(
+      rig.parent.inbox.nextStep.length === 1 && rig.parent.inbox.nextStep[0]?.id === message.id,
+      '通知留收件箱未被消费'
+    );
+    assert.equal(childCalls, 2, `同一在途查询重等、B 一次新查询（实得 ${String(childCalls)} 次）`);
+  } finally {
+    releaseFirst();
+    await rig.dispose();
+  }
+});
+
+hostTest('RA-UNKNOWN-SUSPEND-B：unknown 目标混入已确认运行目标——不提前交回，挂起观察至预算到期（running＋两行已证状态）', async () => {
+  resetAgentBaselines();
+  // RA-UNKNOWN-SUSPEND 的边界：立即按未证实交回仅适用于「没有任何已确认运行
+  // 目标」的形态；混入真实运行目标时挂起资格已证实，照常等待到预算到期。
+  const rig = await buildWaitRig('us-b', [
+    { id: 'at-us-b-unknown', label: '注册表读取失败目标', activity: 'running' },
+    { id: 'at-us-b-running', label: '运行中目标', activity: 'running' }
+  ], {
+    pollIntervalMs: 200,
+    agentsGet: (id) => {
+      if (id === 'at-us-b-unknown') throw new Error('registry down for one target');
+      return { id, status: 'running' };
+    }
+  });
+  try {
+    const started = Date.now();
+    const outcome = await rig.waiter.execute(
+      {
+        wait_ms: 500,
+        targets: [{ kind: 'agent', id: 'at-us-b-unknown' }, { kind: 'agent', id: 'at-us-b-running' }]
+      },
+      rig.exec()
+    );
+    const wall = Date.now() - started;
+    assert.equal(outcome.status, 'running', '有已确认运行目标：正常挂起到期（不误伤混合等待）');
+    assert.ok(wall >= 450 && wall < 1500, `挂满预算后到期交回（实耗 ${String(wall)} ms）`);
+    const rows = outcome.targets ?? [];
+    assert.ok(rows.some((row) => row.id === 'at-us-b-unknown' && row.status === 'unknown'),
+      '读取失败目标行如实标 unknown');
+    assert.ok(rows.some((row) => row.id === 'at-us-b-running' && row.status === 'running'),
+      '运行目标行如实标 running');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('RA-SYNC-LISTING-GUARD：listChildren 同步 throw 与异步 reject 同径——目标零等待 unconfirmed、无目标等待 unconfirmed（不冒成调用错误）', async () => {
+  resetAgentBaselines();
+  {
+    // 目标零等待：共享查询的宿主调用同步抛错 → 工厂内归一为查询失败。
+    const rig = await buildWaitRig('sg-z', [], {
+      listChildren: () => { throw new Error('sync listing boom'); },
+      agentsGet: (id) => ({ id, status: 'idle' })
+    });
+    try {
+      const outcome = await rig.waiter.execute(
+        { wait_ms: 0, targets: [{ kind: 'agent', id: 'at-sg-z-child' }] }, rig.exec()
+      );
+      assert.equal(outcome.status, 'unconfirmed',
+        '同步 throw 经 Promise 工厂归一为查询失败：按未证实交回（修前冒成整次调用拒绝）');
+      assert.ok((outcome.targets ?? []).some((row) => row.id === 'at-sg-z-child' && row.status === 'unknown'),
+        'targets 行如实标 unknown');
+    } finally {
+      await rig.dispose();
+    }
+  }
+  {
+    // 无目标正等待：资格检查的目录查询同步抛错 → 与异步失败同径 unconfirmed。
+    const rig = await buildWaitRig('sg-n', [], {
+      listChildren: () => { throw new Error('sync listing boom'); }
+    });
+    try {
+      const outcome = await rig.waiter.execute({ wait_ms: 300 }, rig.exec());
+      assert.equal(outcome.status, 'unconfirmed', '资格检查同径：未证实（不假装无工作、不冒成调用错误）');
+      assert.ok(outcome.note.includes(t('en', 'wait.unconfirmedWork')), 'note 用未证实口径');
+    } finally {
+      await rig.dispose();
+    }
+  }
+});
+
+hostTest('BA-05：零等待主出口 waited_ms 报实际检查耗时（统一检查窗内的真实成本，不固定冒报 0、仍不挂起）', async () => {
+  resetAgentBaselines();
+  const rig = await buildWaitRig('ba05', [], {
+    listChildren: () => sleep(150).then(() => [{ id: 'at-ba05-child', activity: 'running' }]),
+    agentsGet: (id) => ({ id, status: 'running' })
+  });
+  try {
+    const started = Date.now();
+    const outcome = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'agent', id: 'at-ba05-child' }] }, rig.exec()
+    );
+    const wall = Date.now() - started;
+    assert.equal(outcome.status, 'running', '前置：目标运行中，零等待主出口');
+    assert.ok(outcome.waited_ms >= 100,
+      `waited_ms 反映实际检查耗时（受控目录延迟 ≥100ms 应入账；实得 ${String(outcome.waited_ms)} ms）`);
+    assert.ok(outcome.waited_ms <= 1200 && wall <= 1200,
+      `仍受统一检查窗约束、不挂起（1000ms＋容差；实耗 ${String(wall)} ms）`);
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('RA-SPILL-PATH：宿主报告的留存路径不按 lossy 筛选——批次投影、等待载体与完成消息三处一致交付', async () => {
+  resetAgentBaselines();
+  // ① 批次投影单元（让出出口同一函数）：lossy=false＋宿主报告路径 → note 带路径。
+  const projected = projectBatchEntry({
+    jobId: 'ra-spill-unit', terminal: { status: 'completed', exitCode: 0 }, chars: 4,
+    text: 'BODY', truncated: false, lossy: false, spillPaths: ['synthetic/ra-spill-unit.bin']
+  }, 'en');
+  assert.ok(String(projected.note ?? '').includes('synthetic/ra-spill-unit.bin'),
+    'lossy=false 的宿主报告路径不被筛掉（注册表经读取回执报告合成路径的形态）');
+  const clean = projectBatchEntry({
+    jobId: 'ra-spill-unit2', terminal: { status: 'completed', exitCode: 0 }, chars: 0,
+    text: '', truncated: false, lossy: false, spillPaths: []
+  }, 'en');
+  assert.equal(clean.note, undefined, '无路径且未丢失不添注记（不声称有真实文件在场）');
+
+  // ② 端到端：真注册表装置手填 lossy=false＋spillPaths——等待载体（统一等待
+  // 出口，条目投影＝projectBatchEntry 同一实现）与完成消息载体都带路径。
+  const rig = await buildRig('ra-spill', []);
+  try {
+    const first = await rig.workflow.execute(
+      { ...WF_ARGS, meta: { name: 'at-ra-spill-run', description: 'RA-SPILL-PATH wait carrier' } }, rig.exec()
+    );
+    const spillId = `ra-spill-wait-${Math.random().toString(36).slice(2, 8)}`;
+    ledger.noteJobStarted(rig.ctx, { agentLang: 'en', maxResultChars: 4096 }, spillId, rig.parent.id);
+    const entry = ledger.jobs.get(spillId);
+    entry.terminal = { status: 'completed', exitCode: 0 };
+    entry.buffer = '';
+    entry.lossy = false;
+    entry.spillPaths = ['synthetic/ra-spill-wait.bin'];
+    entry.readyAt = ledger.now();
+    const outcome = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: first.job_id }] }, rig.exec()
+    );
+    const waitItem = (outcome.outputs ?? []).find((item) => item.job_id === spillId);
+    assert.ok(waitItem !== undefined, '就绪条目随批出现（不限于目标列表）');
+    assert.ok(String(waitItem.note ?? '').includes('synthetic/ra-spill-wait.bin'),
+      '等待载体：未丢失条目的宿主报告路径照常交付（修前仅 lossy 条目带路径）');
+    const unitMirror = projectBatchEntry({
+      jobId: spillId, terminal: { status: 'completed', exitCode: 0 }, chars: 0,
+      text: '', truncated: false, lossy: false, spillPaths: ['synthetic/ra-spill-wait.bin']
+    }, 'en');
+    assert.equal(waitItem.note, unitMirror.note,
+      '等待载体注记与批次投影逐字一致（RA-STATUSLINE-DRIFT：同一构造器）');
+
+    // ③ 完成消息载体（无活等待投递）：同款事实注记在场。
+    const msgId = `ra-spill-msg-${Math.random().toString(36).slice(2, 8)}`;
+    ledger.noteJobStarted(rig.ctx, { agentLang: 'en', maxResultChars: 4096 }, msgId, rig.parent.id);
+    const msgEntry = ledger.jobs.get(msgId);
+    msgEntry.terminal = { status: 'completed', exitCode: 0 };
+    msgEntry.buffer = 'SPILL-MSG-BODY';
+    msgEntry.lossy = false;
+    msgEntry.spillPaths = ['synthetic/ra-spill-msg.bin'];
+    msgEntry.readyAt = ledger.now();
+    const token = ledger.claimWait(rig.parent.id);
+    await ledger.releaseWait(token, rig.parent.id);
+    const sends = [...rig.followups, ...rig.injections];
+    assert.ok(sends.length > 0, '前置：完成消息已投出');
+    const text = sends[sends.length - 1].content.map((p) => p.text).join('');
+    assert.ok(text.includes('SPILL-MSG-BODY'), '完成消息正文在场');
+    assert.ok(text.includes('synthetic/ra-spill-msg.bin'), '完成消息：未丢失条目的留存路径照常交付');
+    ledger.detachJob(spillId);
+    ledger.detachJob(msgId);
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('RA-STATUSLINE-DRIFT：运行中增量与恢复条目的投影统一在 projectBatchEntry（等待载体不再自带副本）', async () => {
+  // 等待出口的运行中分键（completionItemRunning）与恢复头（recovery_line）
+  // 由共享投影直接支持——此前这两形态只在 lib/wait.js 的自带副本里，与让出
+  // 投影漂移（RA-STATUSLINE-DRIFT 的病根）。单元锚 + 载体一致性锚（上一测）。
+  const running = projectBatchEntry({
+    jobId: 'ra-drift-run', terminal: null, chars: 7, text: 'INC-BODY', truncated: false
+  }, 'en');
+  assert.match(running.status_line, /is still running/, '运行中条目走 completionItemRunning 分键');
+  assert.equal(running.exit_code, undefined, '运行中条目不带终态字段（exit_code）');
+  assert.equal(running.signal, undefined, '运行中条目不带终态字段（signal）');
+  assert.equal(running.detail, undefined, '运行中条目不带终态字段（detail）');
+  assert.equal(running.note, undefined, '无丢失无失败不加注记');
+  const recovered = projectBatchEntry({
+    jobId: 'ra-drift-rec', terminal: { status: 'completed' }, chars: 5, text: 'REC', truncated: false,
+    recovery: true, recoveryHead: '== recovery head =='
+  }, 'en');
+  assert.equal(recovered.recovery_line, '== recovery head ==', '恢复头经共享投影携带（render 置于状态行后）');
+});
+
+hostTest('RA-FIRSTWAIT-ITEMS：首次直付份额计入条数配额——空结果不再绕过单批 10 条、满批后同窗批次条目延后可恢复', async () => {
+  resetAgentBaselines();
+  const rig = await buildRig('fw-items', []);
+  try {
+    const owner = rig.parent.id;
+    const cfg = { agentLang: 'en', maxResultChars: 400 };
+    const token = ledger.claimWait(owner);
+    // ① 逐份「开份额→空结果结账（字符全额退还）」×12：字符预算每份都在，修前
+    // 条目名额从不计入——12 个并行空结果全部直付，绕过单批 10 条上限。
+    const shares = [];
+    for (let i = 0; i < 12; i += 1) {
+      const share = ledger.openFirstWaitShare(owner, cfg);
+      shares.push(share);
+      ledger.settleFirstWaitShare(owner, cfg, share, 0);
+    }
+    const subject = ledger.subjects.get(owner);
+    assert.equal(shares.filter((s) => s > 0).length, 10,
+      `前 10 份有份额、第 11/12 份为 0（条数与字符取更严者；实得 [${shares.join(',')}])`);
+    assert.equal(subject.batch.items, 10, '条目名额按直付累计（修前只扣字符）');
+    assert.ok(subject.batch.remaining > 0, '空结果结账退还字符：批字符预算未耗尽（正是修前绕过形态）');
+    // ② 多载体交错：同窗就绪的终态条目因条目名额满而延后（正文在册）。
+    const overflowId = `fw-items-over-${Math.random().toString(36).slice(2, 8)}`;
+    ledger.noteJobStarted(rig.ctx, cfg, overflowId, owner);
+    const overEntry = ledger.jobs.get(overflowId);
+    overEntry.terminal = { status: 'completed' };
+    overEntry.buffer = 'FW-ITEMS-OVERFLOW-BODY';
+    overEntry.readyAt = ledger.now();
+    const deferredPick = await rig.waiter.execute({ wait_ms: 0 }, rig.exec());
+    assert.ok((deferredPick.deferred ?? []).includes(overflowId),
+      '满批的就绪条目延后（同领取窗口的条目总量受 10 条约束）');
+    assert.ok((deferredPick.delivered ?? []).every((item) => item.job_id !== overflowId),
+      '延后条目不进本批 delivered');
+    // ③ 恢复方式：窗口关闭（释放手动 token → 批关闭）后，下一次零等待新批交付。
+    await ledger.releaseWait(token, owner);
+    ledger.closeBatchIfIdle(owner);
+    const recoveredPick = await rig.waiter.execute({ wait_ms: 0 }, rig.exec());
+    const rec = (recoveredPick.delivered ?? []).find((item) => item.job_id === overflowId);
+    assert.ok(rec !== undefined, '关批后新批交付延后条目（恢复出口）');
+    const recOut = (recoveredPick.outputs ?? []).find((item) => item.job_id === overflowId);
+    assert.equal(recOut?.text, 'FW-ITEMS-OVERFLOW-BODY', '延后正文完整随恢复批交付');
+    ledger.detachJob(overflowId);
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('RA-EXIT-CLEANUP：清理步骤抛错不覆盖出口——releaseWait 炸时正常结果原样返回；回滚炸时原始错误原样上抛', async () => {
+  resetAgentBaselines();
+  {
+    // 正常出口：finally 里 cleanup 的 releaseWait 抛错（修前 finally 抛错吞掉
+    // 返回值，整次调用以清理错误拒绝）——修后记 warn、结果原样返回。
+    const rig = await buildWaitRig('ec-ok', []);
+    const realRelease = ledger.releaseWait;
+    ledger.releaseWait = async () => { throw new Error('release exploded'); };
+    try {
+      const outcome = await rig.waiter.execute({ wait_ms: 0 }, rig.exec());
+      assert.equal(outcome.status, 'budget', '清理步骤抛错被隔离：正常出口不受影响');
+    } finally {
+      ledger.releaseWait = realRelease;
+      await rig.dispose();
+    }
+  }
+  {
+    // 错误出口：catch 的 undoClaim 抛错（修前覆盖原始错误上抛）——修后记 warn、
+    // 原始 unknownAgent 错误原样上抛。
+    const rig = await buildWaitRig('ec-err', []);
+    const realUndo = ledger.undoClaim;
+    ledger.undoClaim = () => { throw new Error('rollback exploded'); };
+    try {
+      await assert.rejects(
+        rig.waiter.execute(
+          { wait_ms: 0, targets: [{ kind: 'job', id: 'ec-err-ghost' }] }, rig.exec()
+        ),
+        (error) => String(error?.message ?? error).includes('ec-err-ghost')
+          && !String(error?.message ?? error).includes('rollback exploded'),
+        '回滚失败不覆盖原始错误（unknownJob 原样上抛）'
+      );
+    } finally {
+      ledger.undoClaim = realUndo;
+      await rig.dispose();
+    }
   }
 });

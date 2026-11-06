@@ -407,8 +407,8 @@ try {
   // 单调性按「首访顺序 DOM 递增」判。
   const focusables = await evaluate(page, `(() => {
     const all = [...document.querySelectorAll('.ats-ask-panel button, .ats-ask-panel textarea, .ats-ask-panel [tabindex]')]
-      // 不把 display:none 元素计入期望集（tabIndex 属性仍在但不可达——假红
-      // 方向脆弱性收口）。
+      // 不把 display:none 元素计入期望集（tabIndex 属性仍在但不可达——期望集
+      // 以「实际可聚焦」为准，否则朝假红方向脆弱）。
       .filter((el) => el.getClientRects().length > 0);
     return { focusable: all.map((el, i) => ({ i, desc: el.tagName.toLowerCase()
       + (el.getAttribute('role') !== null ? '|' + String(el.getAttribute('role')) : '')
@@ -668,7 +668,7 @@ try {
 
   // ════════ AX-4/5/6：新题温和提醒主链（ASK-ANNOUNCE-01）════════
   // 分层注明：合并多题计数（同批多题合成一条）由单元层 J50 在替身模型上覆盖；
-  // 浏览器侧用单题批次装置「新到达→播报→去重→语言」的真实链路。
+  // 浏览器侧用单题批次装置「新到达→播报→去重→语言」的真实调用链。
   const regionRead = () => evaluate(page, `(() => {
     const r = document.querySelector('.ats-ask-sr[role="status"]');
     return r === null ? null : { raw: r.textContent, text: r.textContent.replace(/\\u200B/g, '') };

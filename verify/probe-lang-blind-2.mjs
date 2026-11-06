@@ -1,7 +1,7 @@
 /**
  * lang 盲测采集装置·补采二号（verify/probe-lang-blind-2.mjs）。
  *
- * ## 装置定位（硬边界，同一号装置）
+ * ## 装置定位（装置边界，同一号装置）
  *
  * 只记 CAP/GAP（采到／缺口），绝不产出产品合格判定——材料是否满足
  * docs/requirements.md §5.3（L436-437：错误文案两档完整；只改一边另一边可见
@@ -14,8 +14,11 @@
  *   新会话 Agent 侧载体（header 工具描述、完成消息、错误文案）语言应仍随
  *   agentLang（en）——uiLang 只管设置表单与待答界面（GUI 面已由
  *   settings-visual 探针覆盖，本装置只采 Agent 侧）。
- * - U-2 错误文案两档：同会话触发一次缺 wait_ms 的 async_run 调用，采
- *   tool/result 错误文本；en／zh 两档各一次（zh 档在 L-1 的会话里采）。
+ * - U-2 错误文案两档：同会话触发一次缺 wait_ms 的 async_wait 调用（只传
+ *   targets、省略必填的 wait_ms——execute 侧抛 error.waitRequired，本包自有
+ *   错误文案、随 agentLang 两档；async_run 没有 wait_ms 参数，其首次等待键是
+ *   可选的 yield_ms，不能用来构造该用例），采 tool/result 错误文本；en／zh
+ *   两档各一次（en 档在 U-1 的会话里采，zh 档在 L-1 的会话里采）。
  * - L-1 同会话活读切换：zh 档会话完成一轮投递后，把 agentLang 切 en，同会话
  *   再投一轮——后续组稿（system/message 纪律段／收集句）语言形态原样落卷。
  *
@@ -147,9 +150,12 @@ async function rpc(endpoint, argsBody) {
   return parsed.result.value;
 }
 
-function cap(item, detail = '') {
-  evidence.capGap.push({ item, status: 'CAP', detail: String(detail).slice(0, 500) });
-  console.log(`CAP   ${item}${detail === '' ? '' : `  —— ${String(detail).slice(0, 200)}`}`);
+function cap(item, ok, detail = '') {
+  // ok＝采集是否成立：false 记 GAP 并保留 detail 里的原始失败事实——退出码仍为 0
+  // （装置跑完采集序列即 0，CAP/GAP 都是合法产出），采集不成立不靠退出码表达。
+  evidence.capGap.push({ item, status: ok ? 'CAP' : 'GAP', detail: String(detail).slice(0, 500) });
+  console.log(`${ok ? 'CAP' : 'GAP'}   ${item}${detail === '' ? '' : `  —— ${String(detail).slice(0, 200)}`}`);
+  if (!ok) evidence.gaps.push({ item, reason: String(detail).slice(0, 500) });
 }
 function gap(item, reason) {
   evidence.capGap.push({ item, status: 'GAP', detail: String(reason).slice(0, 500) });
@@ -180,7 +186,7 @@ const hadAgent = Object.hasOwn(beforeUser, 'agentLang');
 const hadUi = Object.hasOwn(beforeUser, 'uiLang');
 const agentUserVal = beforeUser.agentLang ?? null;
 const uiUserVal = beforeUser.uiLang ?? null;
-cap('settings 改前读值', `agentLang=${String(evidence.settingsTrace.before.agentLang)} uiLang=${String(evidence.settingsTrace.before.uiLang)}（user 层 agentLang=${JSON.stringify(agentUserVal)} uiLang=${JSON.stringify(uiUserVal)}）`);
+cap('settings 改前读值', true, `agentLang=${String(evidence.settingsTrace.before.agentLang)} uiLang=${String(evidence.settingsTrace.before.uiLang)}（user 层 agentLang=${JSON.stringify(agentUserVal)} uiLang=${JSON.stringify(uiUserVal)}）`);
 async function restoreAll() {
   if (restoredFlag) return;
   restoredFlag = true;
@@ -188,7 +194,7 @@ async function restoreAll() {
     if (hadAgent) await patch({ agentLang: agentUserVal }); else await unsetKey('agentLang');
     if (hadUi) await patch({ uiLang: uiUserVal }); else await unsetKey('uiLang');
     evidence.settingsTrace.afterRestore = await describeNs();
-    cap('settings 恢复原值回读', `agentLang=${String(evidence.settingsTrace.afterRestore.agentLang)} uiLang=${String(evidence.settingsTrace.afterRestore.uiLang)}`);
+    cap('settings 恢复原值回读', true, `agentLang=${String(evidence.settingsTrace.afterRestore.agentLang)} uiLang=${String(evidence.settingsTrace.afterRestore.uiLang)}`);
   } catch (error) {
     gap('settings 恢复原值回读', String(error?.message ?? error));
   }
@@ -288,14 +294,16 @@ function excerptOf(records, token) {
 // ── U-1：uiLang=zh（agentLang 保持 en 出厂档）→ 新会话 Agent 侧载体应仍 en。 ──
 await patch({ uiLang: 'zh' });
 evidence.settingsTrace.afterUiZh = await describeNs();
-cap('U-1 前置：uiLang=zh 改后读值', `agentLang=${String(evidence.settingsTrace.afterUiZh.agentLang)} uiLang=${String(evidence.settingsTrace.afterUiZh.uiLang)}`);
+cap('U-1 前置：uiLang=zh 改后读值', true, `agentLang=${String(evidence.settingsTrace.afterUiZh.agentLang)} uiLang=${String(evidence.settingsTrace.afterUiZh.uiLang)}`);
 const s1 = await createSession('U-1/L-err-en');
 const errTok = tokenOf();
-await promptOn(s1, `Run this single step: call the async_run tool with ONLY {"command":"node -e \\"process.stdout.write('${errTok}')\\""} — deliberately OMIT the wait_ms parameter entirely. Reply with the tool's exact error text and nothing else.`);
+// 错误用例＝缺 wait_ms 的 async_wait（只传 targets）：execute 侧 error.waitRequired，
+// 本包自有文案、随会话 agentLang 两档（async_run 没有 wait_ms 参数，不能构造此用例）。
+await promptOn(s1, `Run this single step: call the async_wait tool with ONLY {"targets":[{"kind":"job","id":"lang2-no-such-job"}]} — deliberately OMIT the required wait_ms parameter entirely. Reply with the tool's exact error text and nothing else.`);
 let waitState = await waitTurn(s1, (recs) => recs.some((r) => r.event?.type === 'tool/result' && textOf(r).length > 0), 120_000, 'U-1 错误回合');
 cap('U-2a(en) 错误回合结束', waitState.ok, `waitedMs=${String(waitState.waitedMs)}`);
 const jobTok1 = tokenOf();
-await promptOn(s1, `Run this single step: use async_run with command "node -e \\"const t=Date.now();while(Date.now()-t<45000);process.stdout.write('${jobTok1}')\\"" and wait_ms=20000. After it yields to background, end your turn immediately.`);
+await promptOn(s1, `Run this single step: use async_run with command "node -e \\"const t=Date.now();while(Date.now()-t<45000);process.stdout.write('${jobTok1}')\\"", description "lang2 blind bg job" and yield_ms=20000. After it yields to background, end your turn immediately.`);
 waitState = await waitTurn(s1, (recs) => recs.some((r) => r.event?.type === 'user/message' && r.event?.data?.source?.kind === 'async-tools-job-result' && textOf(r).includes(jobTok1)), 150_000, 'U-1 投递回合');
 // 作业 45s；完成消息经 followup 通道可能再等一轮（宿主开新回合投递）。
 if (waitState.ok !== true) {
@@ -310,14 +318,15 @@ evidence.turns.push({ trial: 'U-1', sessionId: s1, token: jobTok1, errorToken: e
 //         第二轮前把 agentLang 切回 en —— 同会话活读形态原样落卷。 ──
 await patch({ agentLang: 'zh' });
 evidence.settingsTrace.afterAgentZh = await describeNs();
-cap('L-1 前置：agentLang=zh 改后读值', `agentLang=${String(evidence.settingsTrace.afterAgentZh.agentLang)} uiLang=${String(evidence.settingsTrace.afterAgentZh.uiLang)}`);
+cap('L-1 前置：agentLang=zh 改后读值', true, `agentLang=${String(evidence.settingsTrace.afterAgentZh.agentLang)} uiLang=${String(evidence.settingsTrace.afterAgentZh.uiLang)}`);
 const s2 = await createSession('L-1 同会话两档');
 const errTokZh = tokenOf();
-await promptOn(s2, `Run this single step: call the async_run tool with ONLY {"command":"node -e \\"process.stdout.write('${errTokZh}')\\""} — deliberately OMIT the wait_ms parameter entirely. Reply with the tool's exact error text and nothing else.`);
+// zh 档同一用例：缺 wait_ms 的 async_wait（execute 侧 error.waitRequired 的中文档文案）。
+await promptOn(s2, `Run this single step: call the async_wait tool with ONLY {"targets":[{"kind":"job","id":"lang2-no-such-job"}]} — deliberately OMIT the required wait_ms parameter entirely. Reply with the tool's exact error text and nothing else.`);
 waitState = await waitTurn(s2, (recs) => recs.some((r) => r.event?.type === 'tool/result' && textOf(r).length > 0), 120_000, 'L-1 zh 错误回合');
 cap('U-2b(zh) 错误回合结束', waitState.ok, `waitedMs=${String(waitState.waitedMs)}`);
 const jobTok2 = tokenOf();
-await promptOn(s2, `Run this single step: use async_run with command "node -e \\"const t=Date.now();while(Date.now()-t<45000);process.stdout.write('${jobTok2}')\\"" and wait_ms=20000. After it yields to background, end your turn immediately.`);
+await promptOn(s2, `Run this single step: use async_run with command "node -e \\"const t=Date.now();while(Date.now()-t<45000);process.stdout.write('${jobTok2}')\\"", description "lang2 blind bg job" and yield_ms=20000. After it yields to background, end your turn immediately.`);
 waitState = await waitTurn(s2, (recs) => recs.some((r) => r.event?.type === 'user/message' && r.event?.data?.source?.kind === 'async-tools-job-result' && textOf(r).includes(jobTok2)), 150_000, 'L-1 zh 投递回合');
 if (waitState.ok !== true) {
   await promptOn(s2, 'Status check only: reply with the single word PONG.');
@@ -326,9 +335,9 @@ if (waitState.ok !== true) {
 // 同会话活读：agentLang zh→en，同会话再投一轮。
 await patch({ agentLang: 'en' });
 evidence.settingsTrace.afterAgentEnSameSession = await describeNs();
-cap('L-1 中点：同会话存活期间 agentLang 切 en 读值', `agentLang=${String(evidence.settingsTrace.afterAgentEnSameSession.agentLang)}`);
+cap('L-1 中点：同会话存活期间 agentLang 切 en 读值', true, `agentLang=${String(evidence.settingsTrace.afterAgentEnSameSession.agentLang)}`);
 const jobTok3 = tokenOf();
-await promptOn(s2, `Run this single step: use async_run with command "node -e \\"const t=Date.now();while(Date.now()-t<45000);process.stdout.write('${jobTok3}')\\"" and wait_ms=20000. After it yields to background, end your turn immediately.`);
+await promptOn(s2, `Run this single step: use async_run with command "node -e \\"const t=Date.now();while(Date.now()-t<45000);process.stdout.write('${jobTok3}')\\"", description "lang2 blind bg job" and yield_ms=20000. After it yields to background, end your turn immediately.`);
 waitState = await waitTurn(s2, (recs) => recs.some((r) => r.event?.type === 'user/message' && r.event?.data?.source?.kind === 'async-tools-job-result' && textOf(r).includes(jobTok3)), 150_000, 'L-1 en 投递回合');
 if (waitState.ok !== true) {
   await promptOn(s2, 'Status check only: reply with the single word PONG.');

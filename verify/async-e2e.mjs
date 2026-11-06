@@ -43,19 +43,25 @@ function contextBudget(page) {
   return total;
 }
 
-// ── 起跑前**确保设置是默认值** ────────────────────────────────────────────────
+// ── 起跑前把设置写成本脚本的测试基线 ────────────────────────────────────────
 //
 // **真机判据不能假设实例是干净的**：上游流程被外部中止时 `finally` 可能没跑完，
 // 把改小的设置留在实例上——例如残留 `maxWaitMs=2000` 时每次等待被夹在 2 秒，
-// 插话窗口窄到本脚本的 2 秒轮询撞不进。起跑前先写一遍默认值并读回核对，
+// 插话窗口窄到本脚本的 2 秒轮询撞不进。起跑前先写一遍基线并读回核对，
 // 把"上游留下的脏状态"从被测对象身上摘掉。
-const DEFAULTS = {
+//
+// 这是**自定义测试基线，不是出厂默认**（口径详见 final-acceptance.mjs 头注）：
+// `minYieldMs` 1000 是有意构造——本脚本指令要求模型传 `yield_ms=1500`，出厂默认
+// 20000 会把它夹紧为 20s，六秒长命令在首等内结算、不再让出，判据随之旁路；
+// `minWaitMs` 250 放开小额 `wait_ms` 的夹紧下限。跑完由 restore-async-settings.mjs
+// 还原出厂默认；需要出厂默认值时从 `lib/config.js` 取得，不在这里另抄副本。
+const TEST_BASELINE = {
   maxResultChars: 30000, defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
   defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000, pollIntervalMs: 500, jobKind: 'async-command'
 };
 // 设置读写经共享助手（`_r28-helpers.mjs` 的 NS 单一登记点＋嵌套 settings 形状）：
 // describe 里没有该 ns，replace 直接报 "No configurable plugin entry"。
-await replaceNs(DEFAULTS);
+await replaceNs(TEST_BASELINE);
 const effectiveWait = (await readNs()).value.maxWaitMs;
 console.log(`起跑基线：maxWaitMs=${String(effectiveWait)}（必须够宽，否则插话窗口只有 ${String(effectiveWait)} ms 宽，本脚本的 2 秒轮询撞不进）`);
 if (effectiveWait < 600000) {
@@ -175,7 +181,7 @@ for (;;) {
   //
   // **等待上限被夹小。** 若实例上残留 `maxWaitMs=2000`，每次"等待"只阻塞 2 秒，
   // 而本脚本的轮询间隔也是 2 秒——想在 2 秒宽的窗口里撞进去，概率本来就低
-  // （这就是起跑前重写默认值的原因，见上面那段）。
+  // （这就是起跑前重写测试基线的原因，见上面那段）。
   //
   // **判据不能靠运气。** 换成**有界重试**：发一次插话，看转录里有没有出现
   // "等待被打断"；没有就再发一次（最多 `MAX_INTERJECTIONS` 次）。判据仍是

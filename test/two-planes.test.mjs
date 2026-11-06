@@ -1711,8 +1711,9 @@ test('T23（PRESET-BIND-01·需求 9.4.2）：预设绑定块——目录四态/
   await Promise.resolve();
   await Promise.resolve();
   const Card = registrations[0];
-  // 桩词典约定同 T18；preset.failed 带 {reason} 占位（实现用 replace 填值）。
-  const t = (key) => (key === 'preset.failed' ? 'preset.failed|{reason}' : `${key}|`);
+  // 桩词典约定同 T18；带 {reason} 占位的键（preset.failed / preset.brokenReason）
+  // 单列——实现用 replace 填值，桩里没有占位会让"原因没填进去"漏过。
+  const t = (key) => (key === 'preset.failed' || key === 'preset.brokenReason' ? `${key}|{reason}` : `${key}|`);
 
   const expand = (node) => {
     if (node === null || node === undefined || typeof node !== 'object') return node;
@@ -1750,19 +1751,30 @@ test('T23（PRESET-BIND-01·需求 9.4.2）：预设绑定块——目录四态/
   assert.ok(textOf(tree).join('').includes('preset.loading|'), '目录装载中 ⇒ loading 文案在场');
   assert.equal(buttonByLabel(tree, 'preset.refresh|').props.disabled, true, '装载中「刷新」禁用');
 
-  // ── ready：四目录项 + 一个生效名单里的缺席 ID（P18）。
+  // ── ready：四目录项 + 一个生效名单里的缺席 ID（P18）。broken 用**宿主真实
+  //    形状**（RA-BIND-BROKEN）：agentPresets.list 的 broken 是诊断字符串。
   await settle(); // attach→load 的 list() 在微任务里入队
   pendingLists.shift()({ ok: true, value: { presets: [
     { id: 'dsh-async', name: '异步增强（演示）' },
     { id: 'dsh-async-create' },
-    { id: 'rwkv-selfbuilt', name: 'RWKV 自建', broken: true },
+    { id: 'rwkv-selfbuilt', name: 'RWKV 自建', broken: 'preset row missing required service: workflowEngine' },
     { id: 'third-ok' }
   ] } });
   await settle(); // then 链全部排空后目录状态落定
   tree = renderCard();
   const group = findNode(tree, (node) => node.type === 'ul' && node.props.role === 'group');
   assert.ok(group !== undefined, '条目区必须以 role=group 的列表在场（P22）');
-  assert.equal(group.props['aria-label'], 'preset.a11yList|', 'group 的 aria-label = preset.a11yList（P22）');
+  // RA-BIND-LABEL：组名 = 可见标题（aria-labelledby 指向真实标题元素）——
+  // 不再留指向不存在控件的 label htmlFor，也不另立 aria-label 文案。
+  assert.equal(group.props['aria-labelledby'], 'plugin-config-boundPresets-title',
+    'group 经 aria-labelledby 指向块头标题（组标题语义，块头不再是"伪控件 label"）');
+  const groupTitle = findNode(tree, (node) => node.type === 'span'
+    && node.props.id === 'plugin-config-boundPresets-title');
+  assert.ok(groupTitle !== undefined && textOf(groupTitle).join('').includes('boundPresets|'),
+    '块头标题元素在场、带 id 且渲染词典标签');
+  const strayBlockLabels = collectByType(tree, 'label')
+    .filter((node) => node.props.htmlFor === 'plugin-config-boundPresets');
+  assert.equal(strayBlockLabels.length, 0, '块头不得再有指向无控件 id 的 label htmlFor（各条目 label for 保留）');
   const checkboxes = collectByType(tree, 'input').filter((node) => node.props.type === 'checkbox');
   assert.equal(checkboxes.length, 5, '目录四项 + 缺席保留一项 ⇒ 5 个原生 checkbox');
   // P22：原生 checkbox（键盘 Tab/空格天然可操作）+ label for 绑定。
@@ -1785,11 +1797,13 @@ test('T23（PRESET-BIND-01·需求 9.4.2）：预设绑定块——目录四态/
   assert.ok(findNode(dshAsyncLabel, (node) => node.type === 'span'
     && node.props.className === 'ats-preset-id') !== undefined, 'name≠id ⇒ ID 小字在场');
 
-  // ── P17·broken：未绑定的 broken 项禁选；已绑定的 broken 项可取消。
+  // ── P17·broken（RA-BIND-BROKEN）：宿主真实形状是诊断字符串——truthy 即异常。
+  //    未绑定的 broken 项禁选；注记 = 异常标记 + 诊断原因原文（{reason} 填值）。
   const brokenBox = checkboxOf(tree, 'rwkv-selfbuilt');
-  assert.equal(brokenBox.props.disabled, true, 'broken 且未绑定 ⇒ 禁选（不给勾一个装不上的预设）');
-  assert.ok(textOf(noteOf(tree, 'rwkv-selfbuilt')).join('').includes('preset.broken|'),
-    'broken 条目带 preset.broken 注记');
+  assert.equal(brokenBox.props.disabled, true, 'broken（诊断字符串）且未绑定 ⇒ 禁选（不给勾一个装不上的预设）');
+  const brokenNote = textOf(noteOf(tree, 'rwkv-selfbuilt')).join('');
+  assert.ok(brokenNote.includes('preset.brokenReason|preset row missing required service: workflowEngine'),
+    '诊断字符串原样透传到注记（preset.brokenReason 的 {reason} 被实现填值，不再是仅认布尔 true 的静默放行）');
   // ── P18·缺席：生效名单里、目录外 ⇒ 保留条目 + 注记 + 可取消。
   const ghostBox = checkboxOf(tree, 'ghost-absent');
   assert.ok(ghostBox !== undefined && ghostBox.props.checked === true, '缺席 ID 保留条目且维持勾选');
@@ -1808,6 +1822,7 @@ test('T23（PRESET-BIND-01·需求 9.4.2）：预设绑定块——目录四态/
   pendingLists.shift()({ ok: true, value: { presets: [
     { id: 'dsh-async', name: '异步增强（演示）' },
     { id: 'dsh-async-create' },
+    // 兼容形状（RA-BIND-BROKEN）：布尔 true 同样判异常——无诊断可附时只显标记。
     { id: 'rwkv-selfbuilt', name: 'RWKV 自建', broken: true },
     { id: 'third-ok' }
   ] } });
@@ -1817,6 +1832,14 @@ test('T23（PRESET-BIND-01·需求 9.4.2）：预设绑定块——目录四态/
     && node.props.checked).map((node) => node.props.id).sort();
   assert.deepEqual(checkedAfter, checkedBefore, '刷新前后草稿勾选集合不变（刷新不碰草稿）');
   assert.equal(mutateCalls.length, 0, '刷新绝不能触发写（mutate 零调用）');
+  // RA-BIND-BROKEN 第二形状：布尔 broken ⇒ 同样禁选；注记走 preset.broken
+  //（无原因可附，不得出现 brokenReason 键或 {reason} 残留）。
+  assert.equal(checkboxOf(tree, 'rwkv-selfbuilt').props.disabled, true, '布尔 broken 未绑定 ⇒ 同样禁选');
+  const brokenBoolNote = textOf(noteOf(tree, 'rwkv-selfbuilt')).join('');
+  assert.ok(brokenBoolNote.includes('preset.broken|'),
+    '布尔 broken ⇒ preset.broken 注记（异常标记仍在）');
+  assert.ok(!brokenBoolNote.includes('preset.brokenReason|') && !brokenBoolNote.includes('{reason}'),
+    '布尔 broken 无诊断可附 ⇒ 不出现 brokenReason 键或未替换的占位');
 
   // ── P20·保存 ops：数组整组写入；空数组合法；恢复默认＝unset。
   // ① 取消缺席项 + 勾选 third-ok ⇒ 保存发整组 set（草稿序：过滤＋追加）。
@@ -1913,6 +1936,90 @@ test('T23（PRESET-BIND-01·需求 9.4.2）：预设绑定块——目录四态/
   assert.deepEqual(noticeEvents, ['connection/reset', 'settings/document-updated'],
     '刷新通知 = settings/document-updated + connection/reset（两订阅在场）');
   unmount();
+});
+
+test('T24（VIS-INPUT-01/VIS-BADGE-RAIL）：待答面板字号与命中区——24px 最低与 44px 增强分开；窄槽徽标几何', async () => {
+  // 布局级判据：从样式表原文解析可计算尺寸（字号、命中区、槽宽、面板避让
+  // 公式）。这不替代真机渲染测量——真实浏览器合成、触屏命中与非 Windows
+  // 布局的结论由视觉验收另行安排。
+  const { makePrimitivesDouble } = await import('./_primitives-double.mjs');
+  const reactStub = {
+    createElement: () => undefined, useState: () => [undefined, () => {}],
+    useEffect: () => {}, useRef: (v) => ({ current: v })
+  };
+  const double = makePrimitivesDouble(reactStub);
+  let loaded;
+  new Function('window', readFileSync(resolve(ROOT, 'client.js'), 'utf8'))(
+    { __ModuleLoader__: { load: (spec) => { loaded = spec; } } });
+  const product = loaded.factory((name) => (name === 'react' ? reactStub : double));
+  const css = product.ASK_CSS;
+  assert.ok(typeof css === 'string' && css.length > 0, 'ASK_CSS 必须导出（浏览器外可判的样式原文）');
+
+  /** 取某选择器的声明表（同名后写覆盖先写——与层叠一致；选择器逐字匹配）。 */
+  const rule = (selector) => {
+    const found = {};
+    const pattern = new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\{([^}]*)\\}', 'g');
+    for (const match of css.matchAll(pattern)) {
+      for (const decl of match[1].split(';')) {
+        const at = decl.indexOf(':');
+        if (at > 0) found[decl.slice(0, at).trim()] = decl.slice(at + 1).trim();
+      }
+    }
+    return found;
+  };
+  const px = (value) => Number.parseFloat(value);
+
+  // ① VIS-INPUT-01：待答输入 ≥16px——iOS Safari 对小于 16px 的聚焦输入自动
+  //    放大页面；到 16px 即不触发（不禁缩放，见 ⑤）。
+  assert.ok(px(rule('.ats-ask-input')['font-size']) >= 16,
+    '待答输入字号必须 ≥16px（VIS-INPUT-01：避免 iOS 聚焦缩放）');
+
+  // ② 交互控件最低命中区 24px（显式 min-height 下限；box-sizing 让它量外框）。
+  for (const selector of ['.ats-ask-opt', '.ats-ask-optctl', '.ats-ask-extend', '.ats-ask-jump',
+    '.ats-ask-dismiss', '.ats-ask-skip', '.ats-ask-badge']) {
+    const box = rule(selector);
+    assert.ok(Number.isFinite(px(box['min-height'])) && px(box['min-height']) >= 24,
+      `${selector} 必须显式 min-height ≥24px（最低命中区）`);
+    assert.equal(box['box-sizing'], 'border-box', `${selector} 命中区按外框计（border-box）`);
+  }
+
+  // ③ 主要按钮（提交）增强目标 44px——与 ② 的 24px 最低分开处理。
+  assert.ok(px(rule('.ats-ask-submit')['min-height']) >= 44,
+    '主要按钮（提交）必须 min-height ≥44px（增强目标，与最低命中区分开）');
+  assert.equal(rule('.ats-ask-submit')['box-sizing'], 'border-box',
+    '44px 量的是外框高度（border-box）');
+
+  // ④ VIS-BADGE-RAIL：窄图标列（宿主实测约 52px 且 overflow:hidden）下徽标
+  //    槽位不塌缩出列。盒宽 = 左内边距 + 图标 16px + 右内边距 + 双侧边框；
+  //    padding 几何（4px/30px/图标 16px）是 VIS-BADGE-01 定下的窄列适配，
+  //    本测钉住任何后续改动不把盒宽顶出 52px。
+  const badge = rule('.ats-ask-badge');
+  const badgeIcon = rule('.ats-ask-badge svg');
+  const pads = badge.padding.split(/\s+/);
+  const badgeWidth = px(pads[3]) + px(badgeIcon.width) + px(pads[1]) + 2 * px(badge.border);
+  assert.ok(badgeWidth <= 52,
+    `徽标盒宽必须 ≤52px（当前 ${String(badgeWidth)}px：padding ${pads.join(' ')} + 图标 ${String(badgeIcon.width)} + 边框）——超出即窄列内裁切`);
+  assert.ok(px(badge['min-height']) >= 24, '徽标命中区高度 ≥24px（含计数泡在内的整钮即点击区）');
+
+  // ⑤ 窄视口（约 360px 宽）面板避让：sidebar 座位宽度公式 min(340px, 100vw − 76px)
+  //    + 右锚 16px ⇒ 面板左缘恒 ≥60px，躲开实测约 56px 的侧栏收起列（+4px 净空）。
+  //    公式常数与避让边界都断言——改坏公式（如回到固定 340px）这里必红。
+  const panel = rule('.ats-ask-panel');
+  const sidebar = rule('.ats-ask-panel--sidebar');
+  const widthMatch = sidebar.width.match(/^min\(340px,calc\(100vw - (\d+)px\)\)$/);
+  assert.ok(widthMatch !== null, `sidebar 座位宽度公式必须是 min(340px, calc(100vw - Npx))（当前：${String(sidebar.width)}）`);
+  const reserve = Number(widthMatch[1]);
+  assert.equal(px(panel.right), 16, '面板右锚 16px（宽度公式避让的前提）');
+  const viewport = 360;
+  const panelWidth = Math.min(340, viewport - reserve);
+  const leftEdge = viewport - px(panel.right) - panelWidth;
+  assert.ok(leftEdge >= 56 + 4,
+    `360px 视口下面板左缘必须 ≥60px（当前 ${String(leftEdge)}px）——不得滑进侧栏收起列`);
+
+  // ⑥ 不禁止页面缩放：禁缩放（maximum-scale / user-scalable）不是放大命中区
+  //    的替代手段——代码零残留（注释里说明这两词不算，clientCode() 去注释）。
+  assert.doesNotMatch(clientCode(), /maximum-scale|user-scalable/,
+    '代码不得出现 maximum-scale / user-scalable 限制（VIS-INPUT-01：页面缩放不设限）');
 });
 
 function badges(nodes) {
@@ -2299,46 +2406,344 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     }
   }
 
-  // ④ help 展开区正锚（每字段 1–3 个不可省短语，两档各断言；锚只锁审查确认
-  //    必要的信息、稳定名称与协议标识——配对公式、验证规则、到期/迟到语义、
-  //    模型指定方式（provider 与 model）；en 为同义对译短语随本夹具定义）。
-  const HELP_ANCHORS_ZH = {
-    defaultYieldMs: ['先取得作业编号', 'minYieldMs ≤ defaultYieldMs ≤ maxYieldMs'],
-    minYieldMs: ['提前结束', '上下限'], maxYieldMs: ['提前结束', '上下限'],
-    defaultWaitMs: ['仅为示例', '必填'],
-    minWaitMs: ['正等待', '零等待例外'], maxWaitMs: ['正等待', '零等待不受区间抬高'],
-    pollIntervalMs: ['轮询', '配对'], maxResultChars: ['正整数', '截断', '另计'],
-    jobKind: ['空串'], subagentProvider: ['provider 与 model', '可读拒绝'],
-    uiLang: ['跟随宿主语言', '独立'], agentLang: ['工具描述', '互不影响'],
-    silentFailureGuard: ['诊断提醒', '返回提示'],
-    workflowProgressLog: ['滤除', '内容预算'], fullCommandEcho: ['工作流脚本', '不重复附上', '标明省略量'],
-    askTakeover: ['迟到', '不会送达'],
-    askTimeoutMs: ['共享', '仍接受作答'], askExtendMs: ['原截止点', '初始期限'], askUiSeat: ['消隐', '不改提问'],
-    // PRESET-BIND-01：名单语义三锚（开关正交／空数组解除／刷新重读）。
-    boundPresets: ['不代替开关', '解除全部绑定', '「刷新」重读']
+  // ④ help 展开区改为内容审查式（DOC-HELP-FIXTURE）：旧版冻结普通动词短语，
+  //    必要事实不变的等义改写也会红。改为与 ② 同一套事实组机制——必要事实 =
+  //    动作对象、后果、条件（协议标识与稳定名称仍可单短语组）；判据同 ② 的
+  //    a/b/c：词典两语言全部命中、等义改写样本通过、删单一事实组恰好缺该组。
+  //    文案改写（DOC-HELP-LANGUAGE/E4：界面动作表述）后与本夹具同步维护。
+  const HELP_FACTS_ZH = {
+    defaultYieldMs: [
+      // 动作对象（交回什么）/ 后果（后台继续）/ 条件（消息与取消）/ 配对公式 / 交付位置。
+      ['返回作业编号', '交回 job id'],
+      ['后台任务继续运行', '任务在后台继续'],
+      ['提前结束等待', '提前结束本次等待'],
+      ['minYieldMs ≤ defaultYieldMs ≤ maxYieldMs'],
+      ['附在等待返回或完成消息里', '随等待返回或完成消息']
+    ],
+    minYieldMs: [
+      ['按下限取值', '钳到下限'],
+      ['消息和取消', '消息或取消'],
+      ['首次等待时长的上下限', '首次等待上下限']
+    ],
+    maxYieldMs: [
+      ['按上限取值', '钳到上限'],
+      ['消息和取消', '消息或取消'],
+      ['首次等待时长的上下限', '首次等待上下限']
+    ],
+    defaultWaitMs: [
+      ['必填参数', '必填'],
+      ['缺省报错', '漏给会报错'],
+      ['仅为示例', '只是演示'],
+      ['区间配对', '与 minWaitMs、maxWaitMs 配对']
+    ],
+    minWaitMs: [
+      ['正等待', 'wait_ms > 0'],
+      ['零等待例外', 'wait_ms=0'],
+      ['不抬高到下限', '不会被抬高'],
+      ['交回控制权', '还回控制权'],
+      ['作业句柄仍有效', '句柄仍有效']
+    ],
+    maxWaitMs: [
+      ['按上限取值', '取上限'],
+      ['正等待的取值区间', 'wait_ms > 0 的取值区间'],
+      ['零等待不受区间抬高', '零等待不被抬高'],
+      ['交回控制权', '还回控制权'],
+      ['作业句柄仍有效', '句柄仍有效']
+    ],
+    pollIntervalMs: [
+      ['子代理目标', '子代理'],
+      ['变化事件为主、轮询为备用', '轮询作为备用通道'],
+      ['pollIntervalMs ≤ maxWaitMs', '配对约束']
+    ],
+    maxResultChars: [
+      ['正整数', 'String.length'],
+      ['按交付批次共享', '交付批次'],
+      ['先到先分配', '先到先得'],
+      ['保首尾并说明省略量与截断', '保首尾', '保留首尾、注明省略与截断'],
+      ['另计', '单独计量']
+    ],
+    jobKind: [
+      ['注册命令作业时使用的类型名称', '命令作业注册用的类型名'],
+      ['作业列表', '作业清单'],
+      ['日志'],
+      ['输入空串会被拒绝', '空串', '留空会被拒绝']
+    ],
+    // DOC-HELP-LANGUAGE/E4：动作表述（默认值生效/创建时拒绝并显示原因）。
+    subagentProvider: [
+      ['async_agent', '创建子代理使用的后端服务', '创建子代理的后端'],
+      ['默认 spawn', '缺省用 spawn'],
+      ['按默认值生效', '回落到默认值'],
+      ['创建子代理的请求会被拒绝并显示原因', '拒绝并显示原因', '创建时拒绝并说明原因'],
+      ['provider 与 model', 'provider、model 两参数']
+    ],
+    uiLang: [
+      ['两个独立开关', '互不联动的两个开关'],
+      ['只影响界面文案', '只管界面文案'],
+      ['由 agentLang 设置', 'agentLang 决定'],
+      ['auto 档跟随宿主语言', 'auto 跟宿主语言走']
+    ],
+    agentLang: [
+      ['模型可见文案', '模型侧文案'],
+      ['工具描述', '工具的说明文字'],
+      ['由 uiLang 单独设置', 'uiLang 管'],
+      ['互不影响', '互相独立']
+    ],
+    silentFailureGuard: [
+      ['命令可能未执行', '命令也许没执行'],
+      ['诊断提醒和检查建议', '诊断提示与检查建议'],
+      ['返回提示、命令描述与执行纪律', '三个位置：返回提示、命令描述、执行纪律']
+    ],
+    workflowProgressLog: [
+      ['默认关', '默认关闭'],
+      ['滤除各阶段进度行', '进度行', '把各阶段的进度记录滤掉'],
+      ['内容预算', '内容额度'],
+      ['Agent 收到的结果正文', 'Agent 拿到的结果'],
+      ['可能更早触发截断', '更容易碰到截断'],
+      ['原始记录不受本开关影响', '原始记录不受影响']
+    ],
+    fullCommandEcho: [
+      ['默认关', '默认关闭'],
+      ['结果交付时附上原文', '附上原文', '交付时带上原文'],
+      ['同一份原文在同一次交付中不重复附上', '不重复附上', '同一次交付不重复带'],
+      ['保留首尾并标明省略量', '保首尾、注明省略量'],
+      ['原始记录不受本开关控制', '原始记录不受这个开关管']
+    ],
+    askTakeover: [
+      ['迟到作答经通知送达', '迟到的回答会以通知送到'],
+      ['24 小时', '清扫阈值', '二十四小时只是清扫的门槛'],
+      ['仍可补答', '可保留更久', '还能再回答'],
+      ['不会送达', '送不到'],
+      ['所属会话直接回复', '去题目所在的会话里回']
+    ],
+    askTimeoutMs: [
+      ['同批多题共享期限', '一批多题共用一个期限'],
+      ['按超时处理', '算作超时'],
+      ['仍接受作答', '到期后仍接受', '过期后还能作答'],
+      ['直接开启新回合送达', '新回合', '开新回合直接送达'],
+      ['并入下一次消息领取', '下一次消息领取', '跟下一次消息一起领']
+    ],
+    askExtendMs: [
+      ['增加等待时间'],
+      ['每点击一次', '每点一下'],
+      ['未到期的批次', '当时未到期', '还没到期的批次'],
+      ['在原截止点上叠加', '原截止点', '叠加在原截止时点上'],
+      ['初始期限']
+    ],
+    askUiSeat: [
+      ['复用同一套题目交互', '同一套题目交互', '共用同一套答题交互'],
+      ['不改提问、计时或答案交付', '提问、计时、答案交付都不变'],
+      ['徽标计数在全部处理后消隐', '全部处理完徽标就隐去']
+    ],
+    // DOC-HELP-LANGUAGE：界面动作表述（勾选＝添加操作要求 / 全部取消勾选并保存）。
+    boundPresets: [
+      ['给所选预设的 Agent 添加操作要求', '添加操作要求', '为选中的预设补上操作要求'],
+      ['不代替开关', '仍分别受各自开关控制', '各开关照旧各管各的'],
+      ['按会话当前实际预设匹配', '当前实际预设', '按会话当下实际生效的预设算'],
+      ['全部取消勾选并保存', '取消勾选并保存', '把预设全部清空再保存'],
+      ['「刷新」重读', '点「刷新」重新读取']
+    ]
   };
-  const HELP_ANCHORS_EN = {
-    defaultYieldMs: ['returns the job id first', 'minYieldMs ≤ defaultYieldMs ≤ maxYieldMs'],
-    minYieldMs: ['end the first wait early', 'bounds'], maxYieldMs: ['end the first wait early', 'bounds'],
-    defaultWaitMs: ['only an example', 'required'],
-    minWaitMs: ['positive waits', 'zero-wait exception'], maxWaitMs: ['positive waits', 'not raised by the range'],
-    pollIntervalMs: ['polling', 'pairing'], maxResultChars: ['positive integer', 'truncation', 'counted separately'],
-    jobKind: ['empty value is invalid'], subagentProvider: ['provider and model', 'rejected readably'],
-    uiLang: ['follows the host language', 'independent'], agentLang: ['tool descriptions', 'do not affect each other'],
-    silentFailureGuard: ['diagnostic reminders', 'return notes'],
-    workflowProgressLog: ['filter out', 'content budget'], fullCommandEcho: ['workflow script', 'not attached twice', 'omitted size'],
-    askTakeover: ['Late answers', 'will not arrive'],
-    askTimeoutMs: ['share the deadline', 'keeps accepting answers'], askExtendMs: ['stacked on the original deadline', 'own initial deadlines'],
-    askUiSeat: ['hides once everything is handled', 'does not change questioning'],
-    // PRESET-BIND-01（与 zh 锚同事实）。
-    boundPresets: ['does not replace the switches', 'unbinds everything', 'reloads via "Refresh"']
+  const HELP_FACTS_EN = {
+    defaultYieldMs: [
+      ['returns the job id', 'you get a job id back'],
+      ['the background task keeps running', 'keeps running in the background'],
+      ['end the wait early', 'end the wait sooner'],
+      ['minYieldMs ≤ defaultYieldMs ≤ maxYieldMs'],
+      ['with a wait return or a completion message', 'delivered alongside a wait return or completion message']
+    ],
+    minYieldMs: [
+      ['is clamped to it', 'clamped', 'clamps to the lower bound'],
+      ['messages and cancellation', 'a message or cancellation'],
+      ['first-wait bounds', 'the bounds of the first wait']
+    ],
+    maxYieldMs: [
+      ['is clamped to it', 'clamped', 'clamps to the upper bound'],
+      ['messages and cancellation', 'a message or cancellation'],
+      ['first-wait bounds', 'the bounds of the first wait']
+    ],
+    defaultWaitMs: [
+      ['is required', 'wait_ms is required', 'must be provided'],
+      ['omitting it errors', 'leaving it out errors'],
+      ['only an example', 'for illustration only'],
+      ['pairs with the minWaitMs/maxWaitMs range', 'matched against the minWaitMs/maxWaitMs range']
+    ],
+    minWaitMs: [
+      ['positive waits', 'wait_ms > 0', 'waits with wait_ms > 0'],
+      ['zero-wait exception', 'wait_ms=0'],
+      ['not raised to the bound', 'not lifted'],
+      ['control returns', 'hands control back'],
+      ['job handle still valid', 'the handle stays valid']
+    ],
+    maxWaitMs: [
+      ['is clamped to it', 'clamps to the upper bound'],
+      ['positive waits', 'waits with wait_ms > 0'],
+      ['not raised by the range', 'the zero wait', 'zero waits are not lifted'],
+      ['control returns', 'hands control back'],
+      ['job handle still valid', 'the handle stays valid']
+    ],
+    pollIntervalMs: [
+      ['subagent targets', 'subagent'],
+      ['polling as the backup', 'change events first', 'polling as the fallback channel'],
+      ['pollIntervalMs ≤ maxWaitMs', 'pairing']
+    ],
+    maxResultChars: [
+      ['positive integer', 'String.length'],
+      ['shared per delivery batch', 'delivery batch'],
+      ['first come first served', 'first arrivals take the quota first'],
+      ['head and tail kept', 'omission and truncation stated', 'keeping the head and tail'],
+      ['counted separately', 'not counted toward the cap']
+    ],
+    jobKind: [
+      ['registering command jobs', 'Type name', 'the type label given to command jobs'],
+      ['job lists', 'job listings'],
+      ['logs', 'log entries'],
+      ['an empty value is invalid', 'empty value', 'leaving it blank is rejected']
+    ],
+    // DOC-HELP-LANGUAGE/E4 (en side): falls back / rejected with a readable reason
+    // when a subagent is created.
+    subagentProvider: [
+      ['uses to create subagents', 'Backend service', 'backend that spawns subagents'],
+      ['spawn by default', 'defaulting to spawn'],
+      ['falls back to the default', 'reverts to the default'],
+      ['rejected with a readable reason', 'readable reason', 'refused with an understandable reason'],
+      ['provider and model', 'specify provider plus model']
+    ],
+    uiLang: [
+      ['independent switches', 'separate switches'],
+      ['only affects interface copy', 'interface copy', 'governs just the interface text'],
+      ['agentLang'],
+      ['follows the host language', 'the auto mode', 'auto tracks the host language']
+    ],
+    agentLang: [
+      ['model-visible copy', 'model-side copy'],
+      ['tool descriptions', 'tool wording'],
+      ['uiLang', 'uiLang handles'],
+      ['do not affect each other', 'are independent']
+    ],
+    silentFailureGuard: [
+      ['may not have run', 'might not have executed'],
+      ['diagnostic reminders', 'diagnostic nudges'],
+      ['return notes, command descriptions, and execution discipline', 'three places',
+        'at return notes, command descriptions, and execution discipline']
+    ],
+    workflowProgressLog: [
+      ['Off by default', 'off by default', 'Disabled by default'],
+      ['per-phase progress lines', 'progress lines', 'phase-by-phase progress entries'],
+      ['content budget', 'content allowance'],
+      ['result bodies', 'the Agent sees', 'the results the Agent receives'],
+      ['may hit truncation earlier', 'run into truncation sooner'],
+      ['unaffected by this switch', 'untouched by the switch']
+    ],
+    fullCommandEcho: [
+      ['Off by default', 'off by default', 'Disabled by default'],
+      ['attach the original text', 'carry the original text'],
+      ['not attached twice', 'attached only once per delivery'],
+      ['keeps head and tail', 'omitted size', 'preserves the head and tail'],
+      ['not controlled by this switch', "outside this switch's control"]
+    ],
+    askTakeover: [
+      ['Late answers are delivered', 'delivered as notices', 'Answers that come in late'],
+      ['lazy sweep threshold', '24 hours', 'the 24-hour mark'],
+      ['can still be answered', 'live longer', 'remain answerable'],
+      ['will not arrive', 'never arrive'],
+      ['reply directly in the session', 'directly in the session', 'answer inside the owning session']
+    ],
+    askTimeoutMs: [
+      ['share the deadline', 'share a single deadline'],
+      ['treated as timed out', 'count as timed out'],
+      ['keeps accepting answers', 'after expiry', 'still takes answers past the deadline'],
+      ['opens a new turn', 'new turn', 'starts a fresh turn'],
+      ['joins the next message claim', 'next message claim', 'waits for the next claim']
+    ],
+    askExtendMs: [
+      ['Extend wait'],
+      ['click', 'press'],
+      ['not yet expired', 'each batch', 'still inside their window'],
+      ['stacked on the original deadline', 'original deadline', 'piled onto the original deadline'],
+      ['own initial deadlines', 'initial deadlines', 'their own starting deadlines']
+    ],
+    askUiSeat: [
+      ['share the same question interaction', 'same question interaction', 'use one shared interaction'],
+      ['does not change questioning, timing, or answer delivery', 'questioning, timing, or answer delivery',
+        'questioning, timing, and delivery all stay the same'],
+      ['the badge hides once everything is handled', 'hides once', 'the badge disappears when all are handled']
+    ],
+    // DOC-HELP-LANGUAGE (en side): operating requirements / unchecking every preset.
+    boundPresets: [
+      ['operating requirements added for Agents', 'operating requirements',
+        'adds operating requirements for Agents'],
+      ['it does not replace the switches', 'their own switches', 'the switches still govern on their own'],
+      ["session's current effective preset", 'current effective preset',
+        'the preset actually in effect for the session'],
+      ['unchecking every preset and saving', 'unchecking every preset', 'clear every checkbox and save'],
+      ['reloads via "Refresh"', 'the Refresh button reloads']
+    ]
   };
-  for (const [key, anchors] of Object.entries(HELP_ANCHORS_ZH)) {
-    for (const anchor of anchors) {
-      assert.ok(DICT.zh[`help.${key}`].includes(anchor), `zh 展开区正锚在场：help.${key} ⊇ ${anchor}`);
-    }
-    for (const anchor of HELP_ANCHORS_EN[key]) {
-      assert.ok(DICT.en[`help.${key}`].includes(anchor), `en 展开区正锚在场：help.${key} ⊇ ${anchor}`);
+  // 等义改写样本（同 ② 的自由度声明）：与词典同事实、不同措辞——刻意使用组内
+  // 非词典短语；稳定名称与协议标识（公式、按钮名、配置键）保持原样。
+  const HELP_REWRITE_ZH = {
+    defaultYieldMs: 'async_run、async_workflow 的首次等待限制单次调用的占用；时间到了还没完成就交回 job id，任务在后台继续，消息或取消也能提前结束本次等待。结算后的正文随等待返回或完成消息直接交付。默认值必须落在 minYieldMs ≤ defaultYieldMs ≤ maxYieldMs 里。',
+    minYieldMs: '本次 yield_ms 低于这个下限会被钳到下限；消息或取消同样能提前结束首次等待。它与 defaultYieldMs、maxYieldMs 一起定出首次等待上下限。',
+    maxYieldMs: '本次 yield_ms 高于这个上限会被钳到上限；消息或取消同样能提前结束首次等待。它与 minYieldMs、defaultYieldMs 一起定出首次等待上下限。',
+    defaultWaitMs: 'wait_ms 必填：等待入口每次调用都得显式给出，漏给会报错。返回提示里的取值只是演示，并与 minWaitMs、maxWaitMs 配对成区间。',
+    minWaitMs: '作用于正值等待（wait_ms > 0）的下限：低于它就取下限；wait_ms=0 只做即时检查、不会被抬高。到时还回控制权、句柄仍有效；消息来了可以提前结束本次等待。',
+    maxWaitMs: 'wait_ms 的上界：高于它就取上限。与 minWaitMs 构成 wait_ms > 0 的取值区间；零等待不被抬高。到时还回控制权、句柄仍有效；消息来了可以提前结束本次等待。',
+    pollIntervalMs: 'async_wait 的子代理按这个间隔定期查目标还在不在跑——变化事件优先、轮询作为备用通道；间隔受 pollIntervalMs ≤ maxWaitMs 约束。',
+    maxResultChars: '一个交付批次内到达模型输入的多条结果共享同一份字符额度（按 String.length 计量、必须是正整数），先到先得；额度耗尽后到的内容延后或裁剪，保留首尾、注明省略与截断；状态与提示单独计量。',
+    jobKind: '给命令作业注册用的类型名，方便在作业清单与日志里认出来；留空会被拒绝。',
+    subagentProvider: 'async_agent 创建子代理的后端，缺省用 spawn；输入去空白后为空就回落到默认值；写了不存在的后端，创建时拒绝并说明原因。要指定模型，就用调用的 provider、model 两参数。',
+    uiLang: '界面文字与 Agent 文案是互不联动的两个开关：本开关只管界面文案，Agent 文案语言 agentLang 决定；auto 跟宿主语言走。',
+    agentLang: '管模型侧文案（含工具的说明文字、参数说明、提示、错误与执行纪律）；界面文案 uiLang 管，两者互相独立。',
+    silentFailureGuard: '开启后，在命令也许没执行又看不到报错的情形下，诊断提示与检查建议出现在三个位置：返回提示、命令描述、执行纪律。',
+    workflowProgressLog: '默认关闭：编排作业的结果正文先把各阶段的进度记录滤掉再进内容额度，Agent 拿到的结果更短；打开后进度记录留在结果里，长编排更容易碰到截断。界面与日志的原始记录不受影响。',
+    fullCommandEcho: '默认关闭时 Agent 靠编号、名称或简短描述认任务；打开后，后台完成的作业在交付时带上原文，方便把结果对回所执行的命令或脚本；同一次交付不重复带，超长时保首尾、注明省略量。界面与日志的原始记录不受这个开关管。',
+    askTakeover: '迟到的回答会以通知送到；二十四小时只是清扫的门槛——下一个批次被接管时才清一次，没有新批时记录还能再回答；被清掉、Agent 收不了或投递失败的那些送不到。没送达时，直接办法是去题目所在的会话里回。',
+    askTimeoutMs: '从收到一批提问开始计时，一批多题共用一个期限；到期没答的算作超时，Agent 继续处理任务。面板过期后还能作答；迟到作答送回所属会话：会话空闲且无未领取的本插件通知，就开新回合直接送达；会话在忙或已有未领取通知，就跟下一次消息一起领，不马上开回合。',
+    askExtendMs: '待答面板的「增加等待时间」每点一下，就给该会话此刻还没到期的批次各加这段时间，叠加在原截止时点上；新批次按自己的初始期限计时。',
+    askUiSeat: '两种位置共用同一套答题交互，切换后提问、计时、答案交付都不变；全部处理完徽标就隐去。',
+    boundPresets: '勾选后，使用该预设的会话得到本包的执行纪律段——为选中的预设补上操作要求；静默失败提示与提问接管各开关照旧各管各的，名单不越权。匹配按会话当下实际生效的预设算。默认是本包两份预设；把预设全部清空再保存＝全部解除；目录里没有的已绑定项保留、可取消。点「刷新」重新读取；读失败时显示已保存绑定，可取消。'
+  };
+  const HELP_REWRITE_EN = {
+    defaultYieldMs: "async_run and async_workflow bound each call's occupancy with the first wait — past it with work unfinished, you get a job id back and the task keeps running in the background; messages or cancellation end the wait sooner. Settled bodies are delivered alongside a wait return or completion message. The default must sit inside minYieldMs ≤ defaultYieldMs ≤ maxYieldMs.",
+    minYieldMs: 'A yield_ms under this floor clamps to the lower bound; a message or cancellation can still end the first wait early. It forms the bounds of the first wait with defaultYieldMs and maxYieldMs.',
+    maxYieldMs: 'A yield_ms over this ceiling clamps to the upper bound; a message or cancellation can still end the first wait early. It forms the bounds of the first wait with minYieldMs and defaultYieldMs.',
+    defaultWaitMs: 'wait_ms must be provided: every call of the wait entry states it explicitly, and leaving it out errors. The value shown in return notes is for illustration only and is matched against the minWaitMs/maxWaitMs range.',
+    minWaitMs: 'Floor for waits with wait_ms > 0: below it the request clamps to the bound; wait_ms=0 is the exception — an immediate check only, not lifted. When the budget ends, hands control back; the handle stays valid; an arriving message can end the wait early.',
+    maxWaitMs: 'Ceiling for wait_ms: above it the request clamps to the upper bound. With minWaitMs it forms the range for waits with wait_ms > 0; zero waits are not lifted. When the budget ends, hands control back; the handle stays valid; an arriving message can end the wait early.',
+    pollIntervalMs: "async_wait's subagent side checks on two channels whether the target still runs — change events first, with polling as the fallback channel; the interval is bound by the pollIntervalMs ≤ maxWaitMs rule.",
+    maxResultChars: 'One delivery batch of results reaching the model input shares a single character allowance (measured by String.length, a positive integer), first arrivals take the quota first; past it content is deferred or cut, keeping the head and tail and noting what was omitted and truncated; status and notices are not counted toward the cap.',
+    jobKind: 'Registry entries carry the type label given to command jobs when they are registered, so they can be told apart in job listings and log entries; leaving it blank is rejected.',
+    subagentProvider: 'The backend that spawns subagents for async_agent, defaulting to spawn; an empty trimmed value reverts to the default; an unknown backend is refused with an understandable reason at subagent creation. To pick a model, specify provider plus model on the call.',
+    uiLang: 'Interface text and Agent-facing copy are two separate switches: this one governs just the interface text, and agentLang decides the Agent-facing language; auto tracks the host language.',
+    agentLang: 'Governs model-side copy (tool wording, parameter notes, notices, errors, and execution discipline); the interface side is what uiLang handles, and the two are independent.',
+    silentFailureGuard: 'When on, where a command might not have executed with no visible error, the diagnostic nudges and checking advice show up at return notes, command descriptions, and execution discipline.',
+    workflowProgressLog: 'Disabled by default: orchestration results strip the phase-by-phase progress entries before entering the content allowance, so the results the Agent receives are shorter; switched on, the entries stay, long orchestrations run into truncation sooner. Raw records in the interface and logs are untouched by the switch.',
+    fullCommandEcho: "Disabled by default, jobs are recognized by id, name, or short description; when on, finished background jobs carry the original text at delivery so results can be matched back to the command or script; the text is attached only once per delivery, and over-long text preserves the head and tail and marks how much was left out. Raw records sit outside this switch's control.",
+    askTakeover: 'Answers that come in late arrive as notices; the 24-hour mark is merely a sweep threshold — the queue is swept once when the next batch is taken over, and with no new batch records remain answerable; swept records, agents that can no longer receive them, and failed deliveries never arrive. When one will not arrive, the direct way out is to answer inside the owning session.',
+    askTimeoutMs: 'Timed from receiving a batch of questions; all questions in the batch share a single deadline; unanswered ones count as timed out and the Agent continues the task. The panel still takes answers past the deadline; a late answer reaches the owning session: if the session is idle with no unclaimed notices from this plugin, it starts a fresh turn and is delivered directly; if it is busy or already has unclaimed notices, it waits for the next claim instead of opening a turn at once.',
+    askExtendMs: 'Each press of "Extend wait" in the pending panel adds this much time to the batches of that session still inside their window, piled onto the original deadline; new batches run on their own starting deadlines.',
+    askUiSeat: 'Both placements use one shared interaction for questions — questioning, timing, and delivery all stay the same; the badge disappears when all are handled.',
+    boundPresets: "Checking a preset gives its sessions this package's execution-discipline section — it adds operating requirements for Agents on that preset; the silent-failure hint and question takeover keep answering to their own switches — the list only marks the scope. Matching goes by the preset actually in effect for the session. The default is this package's two presets; clear every checkbox and save to unbind them all; bound ids missing from the list stay and can be unchecked. Clicking the Refresh button reloads it; on a read failure saved bindings are shown and can be unchecked."
+  };
+  for (const key of Object.keys(HELP_FACTS_ZH)) {
+    // a) 词典两语言全部命中——改写不红、删事实才红。
+    assert.deepEqual(missingFactGroups(DICT.zh[`help.${key}`], HELP_FACTS_ZH[key]), [],
+      `zh 展开区事实组全部在场：${key}`);
+    assert.deepEqual(missingFactGroups(DICT.en[`help.${key}`], HELP_FACTS_EN[key]), [],
+      `en 展开区事实组全部在场：${key}`);
+    // b) 等义改写样本必须通过（钉事实不钉措辞——DOC-HELP-FIXTURE 的完成判据）。
+    assert.deepEqual(missingFactGroups(HELP_REWRITE_ZH[key], HELP_FACTS_ZH[key]), [],
+      `zh 展开区等义改写样本必须通过事实组：${key}`);
+    assert.deepEqual(missingFactGroups(HELP_REWRITE_EN[key], HELP_FACTS_EN[key]), [],
+      `en 展开区等义改写样本必须通过事实组：${key}`);
+    // c) 删单一事实组的全部命中短语后必须恰好缺该组（同 ②c 的独立信号判据）。
+    for (const [dict, facts] of [[DICT.zh[`help.${key}`], HELP_FACTS_ZH[key]],
+      [DICT.en[`help.${key}`], HELP_FACTS_EN[key]]]) {
+      for (let index = 0; index < facts.length; index += 1) {
+        const stripped = facts[index].reduce((acc, phrase) => acc.split(phrase).join('……'), dict);
+        assert.deepEqual(missingFactGroups(stripped, facts), [index],
+          `删除事实组 help.${key}[${String(index)}] 的全部命中短语后必须恰好只缺该组`);
+      }
     }
   }
 
@@ -2354,8 +2759,8 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     ['跟随界面语言', '中文', 'English'], 'uiLang 三选项齐备');
 
   // ⑥ 负向锚（两档各查）：defaultWaitMs 相关键不得出现「备用值」/「fallback」——
-  //    该事实以「仅为示例／必填、缺省报错」正面表达；「示例≠生效等待」由 ②③④
-  //    的正锚锁定。askTimeoutMs 的到期语义（仍可作答、后续批次）由 ③ 正锚锁定，
+  //    该事实以「仅为示例／必填、缺省报错」正面表达；「示例≠生效等待」由 ②④
+  //    的事实组锁定。askTimeoutMs 的到期语义（仍可作答、后续批次）由 ④ 锁定，
   //    排除式短语不得回潮。
   for (const lang of ['zh', 'en']) {
     for (const key of ['defaultWaitMs', 'hint.defaultWaitMs', 'help.defaultWaitMs']) {

@@ -23,13 +23,16 @@ const OUT = join(localConfig.evidenceDir, 'logs', 'queue-baseline.json');
 const QUEUE_MARKER = '排队投递测试';
 const QUEUE_TEXT = `${QUEUE_MARKER}：这条消息是用 queue 模式发进队列的。当它真正到达你时，请只回复一行：QUEUE_RECEIVED_OK`;
 
-// 起跑前把设置写回出厂默认（上游残留的 maxWaitMs 会让窗口假窄）。
-const DEFAULTS = {
+// 起跑前把设置写成本探针的测试基线（上游残留的 maxWaitMs 会让窗口假窄）。基线
+// 口径见 final-acceptance.mjs 头注：minYieldMs/minWaitMs/maxResultChars 三项有意
+// 偏离出厂默认（指令里的 yield_ms=1500 需要短下限才原样生效）；跑完由
+// restore-async-settings.mjs 还原出厂默认。
+const TEST_BASELINE = {
   maxResultChars: 30000, defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
   defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000, pollIntervalMs: 500, jobKind: 'async-command'
 };
 // 设置写入经共享助手（`_r28-helpers.mjs` 的 NS 单一登记点＋嵌套 settings 形状）。
-await replaceNs(DEFAULTS);
+await replaceNs(TEST_BASELINE);
 
 const created = await rpc('session/create', { request: { cwd: CWD, agentPreset: PRESET } });
 if (created.agentPreset !== PRESET) throw new Error(`session/create fell back: ${String(created.agentPreset)}`);

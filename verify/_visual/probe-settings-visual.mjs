@@ -1,19 +1,17 @@
 #!/usr/bin/env node
 /**
- * 设置页视觉证据探针（VERIFY-01，设计 `.local/design/gui-persistence-visual.md`
- * §7 装置 B，SV-1..SV-7）：官方可写临时实例上，对设置卡做**只读操作＋草稿**
- * （不保存）的机器面断言与两主题截图取证。
+ * 设置页视觉证据探针（VERIFY-01，SV-1..SV-7）：官方可写临时实例上，对设置卡做
+ * **只读操作＋草稿**（不保存）的机器面断言与两主题截图取证。
  *
  * ## 装置在证什么
  *
  * r24/card-visual 已证字段身份与尺寸基线；本装置补需求 §5.6 的视觉判据的
  * 机器面：帮助按钮触屏/键盘可操作（SV-1b）、帮助展开不裁切不遮挡（SV-2）、
- * 非法草稿四档的错误关联实际呈现（SV-3，含低于下界档——与设计 L1194 清单
- * 一一对应）、控件尺寸两主题（SV-4）、主题别名实际取值按语义分档（SV-5——
- * 结构色要求翻转、语义/强调色只要求非空解析，宿主语义色两主题同值是正常
+ * 非法草稿四档的错误关联实际呈现（SV-3，含低于下界档——四档＝非整数/越上界/
+ * 低于下界/链式）、控件尺寸两主题（SV-4）、主题别名实际取值按语义分档（SV-5
+ * ——结构色要求翻转、语义/强调色只要求非空解析，宿主语义色两主题同值是正常
  * 设计不据此判 FAIL）、绑定块两主题（SV-6）、非法态下帮助并存（SV-7）。
- * 只读态/保存中态不装置（rc.5 writable 恒 true，设计 §7 末段——真机不伪造
- * 状态）。
+ * 只读态/保存中态不装置（rc.5 writable 恒 true——真机不伪造状态）。
  *
  * ## 用法（须 danger-full-access 或非受限环境——CDP 无头浏览器在受限沙箱档必早夭）
  *
@@ -44,7 +42,7 @@ let child = null;
 let browser = null;
 let page = null;
 const fail = (msg) => {
-  // 盲审 d1/d2：FAULT 先落已跑判据＋清理资源（设计 §10「退出 2 前先清」）；
+  // FAULT 先落已跑判据＋清理资源（装置纪律：退出 2 前先清）；
   // 早期调用（目录未建）时静默跳过落盘。
   try {
     mkdirSync(join(repo, '.local', 'evidence', 'settings-visual', 'logs'), { recursive: true });
@@ -204,8 +202,8 @@ const ensureNoDialog = async () => {
   const left = await evaluate(page, `[...document.querySelectorAll('[role="dialog"], dialog')].filter((d) => d.getClientRects().length > 0).length`);
   if (Number(left) > 0) log(`警告：仍有 ${String(left)} 个对话框在场（截图可能被遮）`);
 };
-/** 草稿清净扫描（复审二轮发现：值还原后「已覆盖」pill 可能残留，污染下一主题
- * 的默认态截图）：统计带恢复默认按钮的字段行（草稿脏标记），脏则点字段级
+/** 草稿清净扫描（值还原后「已覆盖」pill 可能残留，污染下一主题的默认态
+ * 截图）：统计带恢复默认按钮的字段行（草稿脏标记），脏则点字段级
  * 「恢复默认」（草稿重置，不动保存面）再复读；返回清净与否。诊断计数入日志。 */
 const draftCleanSweep = async (label) => {
   const countPills = () => evaluate(page, `(() => {
@@ -230,16 +228,15 @@ const draftCleanSweep = async (label) => {
     await sleep(600);
     dirty = Number(await countPills());
   }
-  // 复审四轮发现（证据缺口）：扫场记录只在 stdout、未入 settings-visual.json——
-  // 以 JSON 为唯一可复现日志时「档前扫场」不可追。落 ok:null 留痕行（不作判定，
-  // 只作可复现记录：清前脏字段数＋清后结果）。
+  // 扫场记录不能只留在 stdout（JSON 为唯一可复现日志时「档前扫场」不可追）
+  // ——落 ok:null 留痕行（不作判定，只作可复现记录：清前脏字段数＋清后结果）。
   check(`草稿扫场 ${label}（留痕：拍前清净动作可复现）`, null,
     `清前脏字段=${String(cleaned)} 清后残留=${String(dirty)}`);
   if (dirty > 0) log(`警告：${label} 清场后仍有 ${String(dirty)} 个脏字段（默认态截图可能带 pill）`);
   return dirty === 0;
 };
 /** 内层滚动容器滚顶/滚底（视觉证据分段采集——fullPage 穿不透内层滚动容器，
- * 审阅首轮 top 图与 pano 重复、均只截到视口中段）。 */
+ * top 图与 pano 重复、均只截到视口中段）。 */
 const scrollTopTo = (where) => evaluate(page, `(() => {
   let node = document.querySelector('[data-plugin-config]');
   while (node !== null && node !== document.body) {
@@ -257,8 +254,8 @@ const shotOf = async (name, opts) => { await ensureNoDialog(); shots.push(name);
 /** 把元素滚进视口（窄屏/近景用）。 */
 const scrollIntoView = (selectorJs) => evaluate(page, `(() => { const n = ${selectorJs}; if (n !== null) n.scrollIntoView({ block: 'center' }); return n !== null; })()`);
 
-// SV-5 别名清单（client.js 样式段实读清点；分档按设计 SV-5②）。
-// 盲审 a3：label-caption 经核 client.js 未消费——从判定清单移除（宿主若不定义/
+// SV-5 别名清单（client.js 样式段实读清点；结构色/语义色分档）。
+// label-caption 经核 client.js 未消费——从判定清单移除（宿主若不定义/
 // 不翻转该别名会假红；实际取值仍由 readAliases 全量读入证据供查阅）。
 const STRUCTURAL_ALIASES = ['bg-layer-3', 'label-primary', 'label-secondary', 'label-tertiary', 'border-l2', 'border-l4', 'interactive-bg-hover'];
 const SEMANTIC_ALIASES = ['state-error-primary', 'state-warn-primary', 'state-warn-tertiary', 'state-warn-label', 'state-business-primary', 'brand-primary'];
@@ -279,8 +276,8 @@ const EVID = join(repo, '.local', 'evidence', 'settings-visual');
 const LOGS = join(EVID, 'logs');
 const SHOTS = join(EVID, 'shots');
 mkdirSync(LOGS, { recursive: true });
-// 复审三轮发现（旧图残留）：上一轮改名/弃用的截图会留在目录里与本次清单矛盾
-// （脏旧 pano 与新 tall 并存误导审阅）——跑前清空 shots，目录内容恒＝本次清单。
+// 跑前清空 shots：改名/弃用的旧截图会留在目录里与本次清单矛盾（脏旧 pano
+// 与新 tall 并存误导审阅）——目录内容恒＝本次清单。
 try { rmSync(SHOTS, { recursive: true, force: true }); } catch { /* 无旧目录 */ }
 mkdirSync(SHOTS, { recursive: true });
 
@@ -312,7 +309,7 @@ try {
     console.log(`\n── ${scheme === 'dark' ? '深' : '浅'}主题 ──`);
     const theme = await applyTheme(scheme);
     check(`SV-1前置 ${scheme} 主题实证（设置区底色${scheme === 'dark' ? '深 <90' : '浅 >180'}）`, theme.applied, `实得 ${theme.bg}`);
-    // 主题开局先清草稿（上一主题轮的还原残留不带入本主题截图——复审二轮发现），
+    // 主题开局先清草稿（上一主题的还原残留不带入本主题截图），
     // 再读本主题基线保存钮态（本主题轮开始时无任何草稿——「无变更即禁用」是官方
     // 形态之一，还原判据对齐基线而非「必须可用」）。
     const sweepStart = await draftCleanSweep(`${scheme} 主题开局`);
@@ -332,12 +329,12 @@ try {
     })()`);
     const helpVerdict = judgeHelpButtons(helpReading, SETTING_FIELD_KEYS);
     check(`SV-1 ${scheme} 帮助按钮 ${String(SETTING_FIELD_KEYS.length)} 枚逐项在场`, helpVerdict.ok, helpVerdict.detail);
-    // 全景分段（审阅首轮发现 fullPage 对内层滚动容器只截到视口中段、top 图
-    // 与 pano 画面重复；复审二轮再证 pano 实为视口非整页；复审三轮发现按
-    // [data-plugin-config] 区块量高仍截不到区块外的「包含的组件/来源信息」）
-    // ：改「高视口单帧整页」——按内层滚动容器的 scrollHeight（整页内容，含
-    // 区块外的组件与来源段）定视口高，一帧收全；机器面同时断言视口高≥内容高
-    // （整页性判据）；top/bottom 视口图保留（布局常态）。
+    // 全景分段（fullPage 对内层滚动容器只截到视口中段、top 图与 pano 画面
+    // 重复、pano 实为视口非整页，按 [data-plugin-config] 区块量高也截不到区块
+    // 外的「包含的组件/来源信息」）：改「高视口单帧整页」——按内层滚动容器的
+    // scrollHeight（整页内容，含区块外的组件与来源段）定视口高，一帧收全；
+    // 机器面同时断言视口高≥内容高（整页性判据）；top/bottom 视口图保留
+    // （布局常态）。
     const contentH = Number(await evaluate(page, `(() => {
       const sec = document.querySelector('[data-plugin-config]');
       if (sec === null) return 0;
@@ -437,9 +434,9 @@ try {
       ['值输入边框 ≤1px solid', metrics.input?.borderWidth, (v) => Number.parseFloat(v) <= 1 && metrics.input?.borderStyle === 'solid'],
       ['枚举下拉高度 34±2', metrics.select?.height, (v) => Math.abs(Number.parseFloat(v) - 34) <= 2],
       ['枚举下拉圆角 12±1', metrics.select?.radius, (v) => Math.abs(Number.parseFloat(v) - 12) <= 1],
-      // 盲审 a2：绑定复选框原为采集后无断言的死数据。实测 13×13（宿主官方
-      // 表单默认形态，本包未自绘）——低于常见 16px 基线，按观察项留痕交接
-      // （真实触屏目标与行级点击热区归人工面），不设机器阈值（无私自加严）。
+      // 绑定复选框只登记不设阈值（宿主官方表单默认形态，本包未自绘）——低于
+      // 常见 16px 基线，按观察项留痕交接（真实触屏目标与行级点击热区归人工面），
+      // 不私自加严。
       ['绑定块复选框包围盒（实测留痕，观察项——宿主默认形态，阈值归人工面）', metrics.checkboxBox, null]
     ];
     for (const [label, actual, ok] of REF) {
@@ -506,7 +503,8 @@ try {
       await sleep(300);
     }
     await clickBy(`document.querySelector('.ats-help-button[aria-controls="plugin-config-boundPresets-help"]')`, '帮助收起·绑定块');
-    // 勾选草稿还原后扫场（再点复选框失败时兜底清场——复审二轮浅色污染源之一）。
+    // 勾选草稿还原后扫场（再点复选框失败时由扫场承接清场——浅色主题曾由此
+    // 漏出残留污染）。
     await draftCleanSweep(`SV-6 ${scheme} 勾选草稿还原后`);
 
     // SV-3＋SV-7 非法草稿四档（两主题各呈现一遍；档值按 lib/budget-limits.js 边界选）。
@@ -521,8 +519,8 @@ try {
       if (savedBaselines[t.key] === undefined) {
         savedBaselines[t.key] = await evaluate(page, `document.querySelector('#plugin-config-${t.key}')?.value ?? ''`);
       }
-      // 复审三轮发现（组内串场）：上一档末的还原只回值、「已覆盖」pill 残留泄入
-      // 下一档截图——每档设非法草稿前全字段扫场，本档画面只含本档脏字段。
+      // 组内串场风险：上一档末的还原只回值，「已覆盖」pill 可能残留泄入下一档
+      // 截图——每档设非法草稿前全字段扫场，本档画面只含本档脏字段。
       await draftCleanSweep(`SV-3 ${scheme} ${t.tier} 档前`);
       const typed = await setDraft(t.key, t.value);
       await sleep(500);
@@ -564,8 +562,8 @@ try {
         const afterClose = await evaluate(page, `document.getElementById('plugin-config-${t.key}-invalid') !== null`);
         check(`SV-7 ${scheme} 帮助收起不消除错误行`, afterClose === true, `invalid 仍在=${String(afterClose)}`);
       }
-      // 档间即时还原（审阅首轮发现：逐档累积残留下一档画面——每档截图只呈现
-      // 本档非法，避免多错误同屏干扰审阅；末尾的聚合还原断言保持不变）。
+      // 档间即时还原（逐档累积会把残留带进下一档画面——每档截图只呈现本档
+      // 非法，避免多错误同屏干扰审阅；末尾的聚合还原断言保持不变）。
       await setDraft(t.key, savedBaselines[t.key]);
       await sleep(300);
     }
@@ -579,8 +577,8 @@ try {
     check(`SV-3 ${scheme} 四档草稿还原后无残留非法行、保存钮回基线态（装置不动保存面）`,
       residualInvalid === 0 && restored !== null && restored.disabled === (saveBaseline?.disabled ?? false),
       `残留非法=${String(residualInvalid)} 保存钮=${JSON.stringify(restored)} 基线=${JSON.stringify(saveBaseline)}`);
-    // 复审二轮发现（浅色默认态带「已覆盖」pill）：值还原后 pill 可能残留——
-    // 扫描并清场（字段级恢复默认＝草稿重置，不动保存面），关键拍点前保证默认态干净。
+    // 值还原后「已覆盖」pill 可能残留（浅色默认态下见过）——扫描并清场
+    // （字段级恢复默认＝草稿重置，不动保存面），关键拍点前保证默认态干净。
     await draftCleanSweep(`SV-3 ${scheme} 还原后`);
   }
 
@@ -591,11 +589,11 @@ try {
     `深=${JSON.stringify(sv6SaveByTheme.dark)} 浅=${JSON.stringify(sv6SaveByTheme.light)}`);
 
   // SV-1b 帮助按钮触屏与键盘可操作（主题无关，深色下执行一次）。
-  // 实测更正（六跑）：首五跑「触摸合成不触发 onClick、Tab 焦点被困、程序焦点被
-  // 夺回」的真因是宿主「预览版说明」对话框拦截指针事件与焦点——启动即关＋每张
-  // 截图前护栏后，touchStart/End 两翻成立、Tab 可遍历（67 步达帮助按钮）。键
-  // 激活需 keyDown 带 text:'\r'（无 text 不触发按钮激活合成）。观察项口径保留
-  // 为护栏失效时的兜底登记。
+  // 无头 CDP 下「触摸合成不触发 onClick、Tab 焦点被困、程序焦点被夺回」的
+  // 真因是宿主「预览版说明」对话框拦截指针事件与焦点——起页即关＋每张截图
+  // 前护栏后，touchStart/End 可用、Tab 可遍历至帮助按钮。键激活需 keyDown 带
+  // text:'\r'（无 text 不触发按钮激活合成）。观察项口径保留为护栏失效时的
+  // 备用登记。
   await applyTheme('dark');
   console.log('\n── SV-1b 触屏与键盘（深色一次）──');
   const structural = await evaluate(page, `(() => {
@@ -620,7 +618,7 @@ try {
     })()`);
     if (rect === null) return { method: 'missing', ok: false };
     const isOpen = () => evaluate(page, `document.querySelector('.ats-help-button[aria-controls="plugin-config-${key}-help"]')?.getAttribute('aria-expanded') === 'true'`);
-    // 盲审 b3：触摸三径各试一次构成判定环；鼠标坐标径只作事件通道对照诊断、
+    // 触摸三径各试一次构成判定环；鼠标坐标径只作事件通道对照诊断、
     // 不参与「触摸通过」判定（触摸受限而鼠标命中时不得记 FAIL——观察项纪律）。
     const attempts = [
       { method: 'synthesizeTapGesture', run: async () => {
@@ -707,7 +705,7 @@ try {
   }
   if (focused) {
     // Enter 激活：keyDown 须带 text:'\r'（＋nativeVirtualKeyCode）才会走浏览器
-    // 的按钮激活合成——六跑实测无 text 不激活；Space 为备径，哪条命中如实记录。
+    // 的按钮激活合成——keyDown 无 text 不激活；Space 为备径，哪条命中如实记录。
     const keyTap = async (spec) => {
       await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.vk, nativeVirtualKeyCode: spec.vk, text: spec.text });
       await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.vk, nativeVirtualKeyCode: spec.vk });
@@ -720,7 +718,7 @@ try {
       if (open?.expanded === true) { via = spec.name; break; }
     }
     const kbOpen = await helpStateOf('boundPresets');
-    // 收起复用命中键（复审 info：Enter 不激活而 Space 激活的环境里固定 Enter 会假红）。
+    // 收起复用命中键（Enter 不激活而 Space 激活的环境里固定 Enter 会假红）。
     const viaSpec = via === 'Space' ? { key: ' ', code: 'Space', vk: 32, text: ' ' } : { key: 'Enter', code: 'Enter', vk: 13, text: '\r' };
     await keyTap(viaSpec);
     const kbClose = await helpStateOf('boundPresets');
@@ -729,7 +727,7 @@ try {
         && kbClose !== null && kbClose.expanded === false && kbClose.regionPresent === false,
       `Tab 步数=${String(tabsUsed)} 激活键=${via || '未激活'} 开=${JSON.stringify(kbOpen)} 合=${JSON.stringify(kbClose)}`);
   } else {
-    check('SV-1b 键盘面：Tab 未达按钮且程序置入焦点失败（观察项——弹窗护栏生效后六跑未再出现此形态；如复现按缺口登记补拍）',
+    check('SV-1b 键盘面：Tab 未达按钮且程序置入焦点失败（观察项——弹窗护栏生效后未再出现此形态；如复现按缺口登记补拍）',
       null, `Tab×${String(tabsUsed)} 末焦点 ${activeDesc || '未记录'}；程序置入焦点=false`);
   }
 

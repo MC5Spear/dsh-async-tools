@@ -107,8 +107,9 @@ export async function loadYaml() {
   return { load: (text) => YAML.load(text, { schema: YAML.DEFAULT_SCHEMA.extend([JsType]) }) };
 }
 
-/** 四行顶层 async 工具行在基线行序列里的插入位：紧跟前移后的 `tool-jobs`（job_output
- * 隐藏登记的装载时序要求，需求 9.3.5——交付类行 apply 时 job_output 必须已在册）。 */
+/** 四行顶层 async 工具行在基线行序列里的插入位：紧跟前移后的 `tool-jobs`（行位判据
+ * 的既定形态——插入位保持稳定供对账；`job_output` 隐藏挂点在 `agent/created` 并按
+ * 名册判定，与行序无关，见 lib/index.js 与设计 §3.5.1）。 */
 const ASYNC_ROW_IDS = ['async-run', 'async-wait', 'async-agent', 'async-list-models'];
 /** toolName 五值（判据④：顶层四行 + delegation 组内第五行 async_workflow；WAIT-01 合并等待入口）。 */
 const EXPECTED_TOOL_NAMES = ['async_run', 'async_wait', 'async_agent', 'async_list_subagent_models', 'async_workflow'];

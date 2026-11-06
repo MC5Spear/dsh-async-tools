@@ -21,6 +21,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { HOST_SKIP_REASON, loadOfflineSafe } from './_host-gate.mjs';
@@ -28,7 +29,7 @@ import { HOST_SKIP_REASON, loadOfflineSafe } from './_host-gate.mjs';
 /** `lib/` 目录的绝对路径。 */
 const LIB_DIR = fileURLToPath(new URL('../lib/', import.meta.url));
 
-/** cordis 的 `FiberState.ACTIVE`（`@deepseek-ai/cordis` 4.0.4，`lib/types/fiber.d.ts:67-74` 的 const enum，ACTIVE = 2）。 */
+/** cordis 的 `FiberState.ACTIVE`（`@deepseek-ai/cordis` 4.0.5，`lib/types/fiber.d.ts:67-74` 的 const enum，ACTIVE = 2）。 */
 const ACTIVE = 2;
 
 /** 加载宿主入口（守卫式动态 import，判据见 `_host-gate.mjs`）。 */
@@ -307,7 +308,7 @@ function makeContext(Context) {
 
 /**
  * 等插件 fiber 进入 ACTIVE：cordis 的 `_reload()` 先 `await Promise.resolve()`
- * 才执行 `apply`（`@deepseek-ai/cordis` 4.0.4 `lib/index.js:1349-1358` 的
+ * 才执行 `apply`（`@deepseek-ai/cordis` 4.0.5 `lib/index.js:1349-1358` 的
  * `_reload` 链），因此推有限的微任务轮次就够，
  * 不是靠时间蒙。超限直接断言失败，不会静默放过一个没跑起来的插件。
  * @param {object} fork - `ctx.plugin()` 的返回值。
@@ -716,13 +717,22 @@ test('T20：tool:jobs 提示遮蔽——隐藏 job_output 的同一 Agent ctx �
 });
 
 test('T20b：遮蔽段与宿主 tool:jobs 原文同步——前缀逐字互锚＋收集句收窄判据（宿主改版必红）', async (t) => {
-  // 宿主 dsh-tool-jobs 的全局 tool:jobs 段源文（守卫式读取：离线形态自跳过——
-  // 独立盲审风险点③的落地：遮蔽段静态复制宿主文案，宿主改版不会自动跟进）。
+  // 宿主 dsh-tool-jobs 的全局 tool:jobs 段源文（守卫式读取：真离线形态自跳过
+  // ——独立盲审风险点③的对策：遮蔽段静态复制宿主文案，宿主改版不会自动跟进）。
   // 取材直接从 lib/jobs-shadow.js 导入（不 loadHost 整个入口模块——那会拖入
   // 五工具与宿主半边的依赖图）。
+  // 解析基点（BA-07/T-HOST）：本包 ESM 解析钩子（tools/_host-hooks.mjs）只改
+  // ESM import 的锚点，CJS 的 require.resolve 不经它——显式设置 DSAT_HOST_MODULES
+  // 时以宿主 node_modules 下的合成 CJS 基点解析（'__dsat_host_probe__.cjs' 是
+  // 虚拟文件名，只作解析起点，不要求在盘），宿主源进入判据、不误报离线；未设
+  // 置时按仓库本地解析（本地装了 peer 的开发形态）。两种基点都解析不到才按
+  // 离线形态跳过（纯公开快照＋无 env＝真离线）。
   let hostSource;
   try {
-    const require = createRequire(import.meta.url);
+    const hostModules = process.env.DSAT_HOST_MODULES;
+    const require = hostModules === undefined || hostModules === ''
+      ? createRequire(import.meta.url)
+      : createRequire(join(hostModules, '__dsat_host_probe__.cjs'));
     hostSource = readFileSync(require.resolve('@deepseek-ai/dsh-tool-jobs'), 'utf8');
   } catch (error) {
     if (['ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND', 'ENOENT'].includes(error?.code)) {

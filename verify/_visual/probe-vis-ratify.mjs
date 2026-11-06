@@ -1,29 +1,29 @@
 #!/usr/bin/env node
 /**
- * 隔离真机验收探针（官方 tgz 临时实例，zai 路由真实模型）。第五轮（vis-ratify-5，
- * VIS-BADGE-01 终态收官——第四轮后两处定向微调的复测）：
+ * 隔离真机验收探针（官方 tgz 临时实例，zai 路由真实模型；VIS-BADGE-01 终态
+ * 核对）：
  *
- * 微调形：①--sidebar 面板删 left:60px——右锚 16px＋width:min(340px,100vw-76px)
- * 在一切宽度左缘 ≥60px（390 形态 l=60 不变；768 回右锚 l≈412/r=752，消除四轮
- * 过度约束致面板居左的形态差）；②泡 right:-4px→-2px（四轮泡 r=57 贴列界 56 约
- * 1px——内收后泡盒右缘 ≤56 入列，判据 A 间隙应 ≥8px）。
+ * 当前几何预期：①--sidebar 面板右锚 16px＋width:min(340px,100vw-76px)，在一切
+ * 宽度左缘 ≥60px（390 形态 l=60；768 时 l≈412/r=752，面板不再被 left:60px
+ * 过度约束成居左形态）；②计数泡 right:-2px（泡盒右缘内收入列界 56px 内，
+ * 判据 A 间隙应 ≥8px）。
  *
- * 常设判据（第四轮起入判，本轮沿用同口径；判据为徽标/面板矩阵×4 配置＋徽标
- * 悬停两主题＋收口消隐，逐条见 check 调用点）：
+ * 常设计据（徽标/面板矩阵×4 配置＋徽标悬停两主题＋批次清空后的徽标消隐，
+ * 逐条见 check 调用点）：
  * - A：问号 svg 盒×计数泡盒零重叠（矩形相交即 FAIL）。
  * - B：面板盒×侧栏列盒（徽标第一个 overflow hidden/clip 祖先——等价选择器，
  *   不依赖宿主 CSS 模块类名）零重叠。
  * 其余：三盒零重叠维持（bottom=94px）、泡对比度（浅 92%/深 62% 混黑白字）、
  * aria 面、52px 盒在列内不裁切确认、悬停一眼（两主题）。
- * 前四轮证据 ../vis-ratify{,-2,-3,-4}/。本轮 0 FAIL 即 VIS-BADGE-01 终态
- * （shots badge/panel×4＋hover×2 供 flash 视觉复审）。
+ * 更早目录证据 ../vis-ratify{,-2,-3,-4}/（只读对照）。0 FAIL 即 VIS-BADGE-01
+ * 终态（shots badge/panel×4＋hover×2 供 flash 视觉复审）。
  *
  * ## 用法（须 danger-full-access 或非受限环境——CDP 无头浏览器在受限沙箱档必早夭）
  *   node verify/_visual/probe-vis-ratify.mjs --service-root <宿主服务树> \
  *     [--host-subdir dsh-0.2.1-rc.5] [--repo <本仓路径>] [--keep]
  *
  * 红线：只操作本装置自建的隔离实例，不连接、不改动任何既有实例（开发用或常驻服务）。--patch 只带 zai-glm.yml
- * 模型路由。证据：`.local/evidence/vis-ratify-5/{logs,shots}`（不覆盖前四轮）。退出
+ * 模型路由。证据：`.local/evidence/vis-ratify-5/{logs,shots}`（不覆盖更早目录）。退出
  * 码 0＝全部通过、1＝存在 FAIL、2＝装置故障（FAULT，输出区分）。
  */
 
@@ -315,8 +315,8 @@ const BADGE_READ = `(() => {
         tokenError: getComputedStyle(document.body).getPropertyValue('--dsw-alias-state-error-primary').trim() };
     })(),
     svg: sr === null ? null : { w: Math.round(sr.width), h: Math.round(sr.height), rect: { l: Math.round(sr.left), t: Math.round(sr.top), r: Math.round(sr.right), b: Math.round(sr.bottom) } },
-    // 判据 A（第四轮常设，flash 视觉盲测盲区）：问号图标盒与计数泡盒零重叠——
-    // 旧形泡直接叠图标右上，几何命中判据全过但问号被盖不可辨；两盒矩形相交即 FAIL。
+    // 判据 A：问号图标盒与计数泡盒零重叠——旧形泡直接叠图标右上，几何命中
+    // 判据全过但问号被盖不可辨；两盒矩形相交即 FAIL。
     svgCountOverlap: sr === null || cr === null ? null
       : !(sr.right <= cr.left + 0.5 || cr.right <= sr.left + 0.5 || sr.bottom <= cr.top + 0.5 || cr.bottom <= sr.top + 0.5),
     svgGapX: sr === null || cr === null ? null : Math.round((cr.left - sr.right) * 10) / 10,
@@ -348,10 +348,9 @@ const PANEL_READ = `(() => {
   // 泡盒分离（独立于徽标盒——泡带 top/right 负偏移，可能与面板角相碰）。
   const countSeparated = cr === null ? false
     : pr.bottom <= cr.top + 0.5 || cr.bottom <= pr.top + 0.5 || pr.right <= cr.left + 0.5 || cr.right <= pr.left + 0.5;
-  // 判据 B（第四轮常设，flash 视觉盲测盲区）：面板盒与宿主侧栏列盒（徽标的第一
-  // 个 overflow hidden/clip 祖先）零重叠——旧形 390 下面板 l=34 压进 ~52px 收起列、
-  // 裁到列内图标右缘；--sidebar 现形右锚 16px＋width:min(340px,100vw-76px)
-  //（左缘恒 ≥60px）避列。
+  // 判据 B：面板盒与宿主侧栏列盒（徽标的第一个 overflow hidden/clip 祖先）
+  // 零重叠——旧形 390 下面板 l=34 压进 ~52px 收起列、裁到列内图标右缘；
+  // --sidebar 现形右锚 16px＋width:min(340px,100vw-76px)（左缘恒 ≥60px）避列。
   const colNode = (() => {
     if (b === null) return null;
     let node = b.parentElement;
@@ -390,8 +389,8 @@ const PANEL_READ = `(() => {
       const cr = c.getBoundingClientRect();
       if (!(cr.width >= 10 && cr.height >= 10 && cr.right <= innerWidth + 0.5 && cr.bottom <= innerHeight + 0.5)) return false;
       // elementFromPoint 实际绘制可见性：fixed 高 z-index 面板遮挡时泡中心命中
-      // 的是面板而非泡（首跑 390 视口实证覆盖后的硬判——包围盒在视口内不等于
-      // 没被盖住）。
+      // 的是面板而非泡（390 窄视口下展开面板会实际盖住泡——包围盒在视口内不
+      // 等于没被盖住）。
       const hit = document.elementFromPoint(Math.round(cr.left + cr.width / 2), Math.round(cr.top + cr.height / 2));
       return hit !== null && (hit === c || c.contains(hit));
     })(),
@@ -416,7 +415,7 @@ async function expandPanel() {
 async function drainAsk() {
   const badge = Number(await evaluate(page, 'document.querySelectorAll(".ats-ask-badge").length'));
   if (badge < 1) return;
-  try { await expandPanel(); } catch { /* 面板门不判——尽力排空 */ }
+  try { await expandPanel(); } catch { /* 面板展开失败不另判——尽力排空 */ }
   for (let guard = 0; guard < 12; guard += 1) {
     const remain = Number(await evaluate(page, 'document.querySelectorAll(".ats-ask-panel .ats-ask-q").length'));
     if (remain < 1) break;
@@ -479,7 +478,7 @@ async function hoverSequence(label, elJs, theme, shotName, expectations) {
 
 // ── RA 双预设行为判据 ─────────────────────────────────────────────────────────
 /** 问题文本不得包含判别词（async_wait / job_output / wait_ms / set wait）。 */
-// ── 会话驱动（触发真实问答批次用；RA 双预设核对归首轮 ../vis-ratify/）────────
+// ── 会话驱动（触发真实问答批次用；RA 双预设核对归 ../vis-ratify/）──────────
 async function newSession(preset, cwd) {
   const created = await rpc('session/create', { request: { cwd, agentPreset: preset } });
   if (created.agentPreset !== preset) throw new Error(`预设回退：要 ${String(preset)}，得到 ${String(created.agentPreset)}`);
@@ -618,8 +617,8 @@ try {
           && collapsed.count.w >= 15 && collapsed.count.h >= 15 && collapsed.count.inViewport === true
           && (collapsed.count.bubbleHit === 'bubble' || collapsed.count.bubbleHit === 'badge'),
         `count=${JSON.stringify(collapsed.count)}`);
-      // 判据 A（第四轮常设）：svg 盒×泡盒零重叠——flash 视觉盲测抓到的盲区
-      //（旧形泡叠图标右上，问号被盖不可辨；几何命中判据对「盖住图标」天然失明）。
+      // 判据 A：svg 盒×泡盒零重叠——旧形泡叠图标右上，问号被盖不可辨；
+      // 几何命中判据对「盖住图标」天然失明，须以矩形相交直接判。
       check(`BADGE ${tag} 判据A：问号图标盒与计数泡盒零重叠（两盒矩形相交即 FAIL）`,
         collapsed.svgCountOverlap === false,
         `svg盒=${JSON.stringify(collapsed.svg?.rect)} 泡盒=${JSON.stringify(collapsed.count?.rect)} 相交=${String(collapsed.svgCountOverlap)} 横向间隙=${String(collapsed.svgGapX)}px`);
@@ -647,7 +646,7 @@ try {
     await shotOf(`badge-${tag}.png`, { width: cfg.w, height: cfg.h, fullPage: false });
     // 展开面板：--sidebar 让位＋宽度钳制＋aria 翻转。
     const panels = await expandPanel();
-    if (panels < 2) { check(`BADGE ${tag} 面板展开门（题数≥2）`, false, `题数=${String(panels)}`); continue; }
+    if (panels < 2) { check(`BADGE ${tag} 面板展开检查（题数≥2）`, false, `题数=${String(panels)}`); continue; }
     await sleep(400);
     const openBadge = await evaluate(page, BADGE_READ);
     const panel = await evaluate(page, PANEL_READ);
@@ -660,8 +659,8 @@ try {
       panel?.computedBottom === '94px' && panel?.sidebarClass === true && panel?.separatedFromBadge === true
         && panel?.separatedFromCount === true && panel?.badgeCountStillVisible === true,
       `bottom=${String(panel?.computedBottom)} sidebar类=${String(panel?.sidebarClass)} 分离(徽标)=${String(panel?.separatedFromBadge)} 分离(泡)=${String(panel?.separatedFromCount)} 泡中心命中(展开态)=${String(panel?.badgeCountStillVisible)} panel=${JSON.stringify(panel?.rect)} badge=${JSON.stringify(panel?.badgeRect)} 泡=${JSON.stringify(panel?.countRect)}`);
-    // 判据 B（第四轮常设）：面板盒×侧栏列盒零重叠——旧形 390 下面板 l=34 压进
-    // ~52px 收起列、裁到列内图标右缘（flash 视觉盲测盲区；机器面此前未设此判）。
+    // 判据 B：面板盒×侧栏列盒零重叠——旧形 390 下面板 l=34 压进 ~52px 收起列、
+    // 裁到列内图标右缘（该形态在整页截图上肉眼易漏，由机器判据直接拦截）。
     check(`BADGE ${tag} 判据B：面板盒与侧栏列盒零重叠（两盒矩形相交即 FAIL）`,
       panel?.colOverlap === false,
       `panel=${JSON.stringify(panel?.rect)} 列盒=${JSON.stringify(panel?.colRect)} 相交=${String(panel?.colOverlap)}`);
@@ -672,7 +671,7 @@ try {
     await ensureCollapsed();
   }
 
-  // ── 5) VIS-HOVER 回归（两主题；首轮三目标已证，本轮样式段重写只回归徽标）──
+  // ── 5) VIS-HOVER 回归（两主题；样式段重写后只回归徽标）──
   await setViewport(page, 1500, 1000);
   for (const scheme of ['dark', 'light']) {
     console.log(`\n── HOVER ${scheme === 'dark' ? '深' : '浅'}主题 ──`);
@@ -683,10 +682,10 @@ try {
       `hover-badge-${scheme}.png`, { bg: true, color: true });
   }
 
-  // ── 6) 收口批次：答掉两题（徽标随清空消隐——后续设置页阶段不再有 ask 面）──
+  // ── 6) 收尾批次：答掉两题（徽标随清空消隐——后续设置页阶段不再有 ask 面）──
   {
     // 判在场用徽标计数（sidebar 收起态 .ats-ask-panel 不渲染——读面板题数恒 0，
-    // 首跑实证此口径缺陷会把待答批次误判「已收口」）。
+    // 该口径会把待答批次误判为已清空）。
     const badgeText = await evaluate(page, `document.querySelector('.ats-ask-badge .ats-ask-count')?.textContent ?? ''`);
     const badgeCount = Number.parseInt(badgeText, 10);
     if (Number.isFinite(badgeCount) && badgeCount > 0) {
@@ -699,7 +698,7 @@ try {
       const s2 = await clickBy(`${qExpr(Q2_TEXT)}?.querySelector('.ats-ask-submit')`, 'Q2 提交');
       const gone = (await waitFor(page, 'document.querySelectorAll(".ats-ask-panel .ats-ask-q").length', (n) => Number(n) === 0, 10_000)) === 0;
       const badgeGone = Number(await evaluate(page, 'document.querySelectorAll(".ats-ask-badge").length')) === 0;
-      check('BADGE 收口：两题作答出列后徽标随待答清空消隐',
+      check('BADGE 收尾：两题作答出列后徽标随待答清空消隐',
         c1 === 'clicked' && s1 === 'clicked' && c2 === 'clicked' && s2 === 'clicked' && gone && badgeGone,
         `q1=${String(c1)}/${String(s1)} q2=${String(c2)}/${String(s2)} 题目清空=${String(gone)} 徽标消隐=${String(badgeGone)}`);
       // 消隐后的底栏帧（视觉盲审面补帧：徽标不在场、面板收起——供审阅面判定）。
@@ -707,12 +706,12 @@ try {
         await screenshot(page, join(SHOTS, 'badge-cleared.png'), { width: 768, height: 1024, fullPage: false });
       }
     } else {
-      check('BADGE 收口：批次已在早前收口（留痕）', null, `徽标计数读数=${JSON.stringify(badgeText)}`);
+      check('BADGE 收尾：批次已在早前清空（留痕）', null, `徽标计数读数=${JSON.stringify(badgeText)}`);
     }
   }
 
-  // 第二轮范围不含设置页正文对比度与 RA 双预设核对（首轮全 PASS，本轮 client.js
-  // 改动不涉及设置页与 lib/——证据沿用 ../vis-ratify/）。
+  // 本探针范围不含设置页正文对比度与 RA 双预设核对（该面证据在 ../vis-ratify/；
+  // 设置页与 lib/ 无新改动时沿用，不重复装置）。
 } catch (error) {
   cleanup();
   fail(`未预期异常：${String(error?.stack ?? error)}`);

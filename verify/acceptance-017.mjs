@@ -297,8 +297,10 @@ const CJK = /[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]/;
 
 const FOUR = ['async_run', 'async_wait', 'async_agent'];
 
-/** 生效设置的出厂默认（T17 对账的十项；漂移了读数就不可比）。 */
-const FACTORY = {
+/** 生效设置的核对基线（T17 对账的十项；实例上不是这组数时读数就不可比）。这份
+ * 基线与真机探针的测试基线同族——`minYieldMs`/`minWaitMs`/`maxResultChars`
+ * 三项有意偏离出厂默认（见 final-acceptance.mjs 头注），跑对账前应先写入这组数。 */
+const BASELINE = {
   defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000, defaultWaitMs: 30000,
   minWaitMs: 250, maxWaitMs: 600000, pollIntervalMs: 500, maxResultChars: 30000,
   jobKind: 'async-command', subagentProvider: 'spawn'
@@ -315,8 +317,8 @@ async function phaseFace() {
   record('前置 宿主行在线：settings/describe 含 async-tools-host',
     nsNames.includes('async-tools-host'), `命名空间数=${String(nsNames.length)}`);
   const liveValue = (await readNs()).value;
-  const drifted = Object.keys(FACTORY).filter((k) => liveValue[k] !== FACTORY[k]);
-  record('前置 生效设置 = 出厂默认（否则"数字随设置变"的读数不可比）',
+  const drifted = Object.keys(BASELINE).filter((k) => liveValue[k] !== BASELINE[k]);
+  record('前置 生效设置 = 核对基线（否则"数字随设置变"的读数不可比）',
     drifted.length === 0, drifted.length === 0 ? '十项全等' : `偏离=${drifted.join(',')}`);
 
   const sid = await newSession('dsh-async');

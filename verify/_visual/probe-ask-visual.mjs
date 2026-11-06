@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 /**
- * 待答面板视觉与可访问性探针（VERIFY-01，设计稿 `.local/design/gui-persistence-visual.md`
- * §8 装置 C，AV-1..AV-9）：官方可写临时实例（zai 路由真实模型）上，接管真实
+ * 待答面板视觉与可访问性探针（VERIFY-01，AV-1..AV-9）：官方可写临时实例（zai 路由真实模型）上，接管真实
  * ask_user_question 批次（一单选两项＋一多选三项，askTimeoutMs=600000 长窗），
  * 对两种座位（overlay／sidebar）×两主题×两宽度的面板做结构断言与截图矩阵，
  * 交互态近景两座位各拍 3 配置×4 态），Enter 换行/焦点不伪装选中/选中底纹/
@@ -40,7 +39,7 @@ let child = null;
 let browser = null;
 let page = null;
 const fail = (msg) => {
-  // 盲审 d1/d2：FAULT 先落已跑判据＋清理资源（设计 §10「退出 2 前先清」），
+  // FAULT 先落已跑判据＋清理资源（装置纪律：退出 2 前先清），
   // --keep 语义保留；早期调用（目录未建）时静默跳过落盘。
   try {
     mkdirSync(join(repo, '.local', 'evidence', 'ask-visual', 'logs'), { recursive: true });
@@ -164,9 +163,9 @@ const scrollToPanel = () => evaluate(page, `(() => {
   if (p !== null) p.scrollIntoView({ block: 'center' });
   return p !== null;
 })()`);
-/** 面板**可见**宽（复审三轮「竖条帧」定论：面板盒宽恒 340、被裁的是停靠祖先
- * 的 overflow）。首版祖先包围盒求交在 sidebar 席位全面误报——面板为 fixed
- * 定位、逃逸祖先 overflow 裁切（CSS：fixed 只被视口裁）。改为 elementFromPoint
+/** 面板**可见**宽（面板盒宽恒 340、被裁的是停靠祖先的 overflow——所以量
+ * 「可见宽」而不是盒宽）。祖先包围盒求交在 sidebar 席位全面误报——面板为
+ * fixed 定位、逃逸祖先 overflow 裁切（CSS：fixed 只被视口裁）。改为 elementFromPoint
  * 逐列采样：以面板纵向中点为扫描行，每 4px 一列，命中点落在面板内即计可见
  * ——量的是**实际绘制**的可见性（含遮挡/裁切/离屏），面板缺席返回 -1。 */
 const PANEL_VISIBLE_WIDTH_JS = `(() => {
@@ -183,15 +182,15 @@ const PANEL_VISIBLE_WIDTH_JS = `(() => {
   }
   return vis;
 })()`;
-/** 面板几何门：滚进视口后等面板**可见**宽 ≥minW（盒宽＋停靠裁切一体判），未达
- * 则告警留痕（截图证据质量存疑，不冒称）。 */
-const panelGeometryGate = async (minW) => {
+/** 面板可见宽检查：滚进视口后等面板**可见**宽 ≥minW（盒宽＋停靠裁切一体判），
+ * 未达则告警留痕（截图证据质量存疑，不冒称）。 */
+const ensurePanelVisibleWidth = async (minW) => {
   const width = Number(await waitFor(page, `Number(${PANEL_VISIBLE_WIDTH_JS})`, (n) => Number(n) >= minW, 5000));
-  if (width < minW) log(`警告：面板几何门未过（可见宽=${String(width)}<${String(minW)}——停靠/挂载竞态或渲染异常，后续截图证据质量存疑）`);
+  if (width < minW) log(`警告：面板可见宽未达标（可见宽=${String(width)}<${String(minW)}——停靠/挂载竞态或渲染异常，后续截图证据质量存疑）`);
   return width >= minW;
 };
-/** 滚进视口＋几何门（拍前标配）。 */
-const scrollToPanelStable = async () => { await scrollToPanel(); await panelGeometryGate(120); };
+/** 滚进视口＋可见宽检查（拍前标配）。 */
+const scrollToPanelStable = async () => { await scrollToPanel(); await ensurePanelVisibleWidth(120); };
 // ── 面板结构读取（单题作用域：目标批次的第一/第二题按题干文本定位）──────────
 const Q1_TEXT = 'Pick a color';
 const Q2_TEXT = 'Pick fruits';
@@ -235,9 +234,8 @@ const readQ = (text) => evaluate(page, `(() => {
   };
 })()`);
 /** 自定义草稿键入（React 受控——原生 setter＋input 事件）。multiline 近景的
- * 落稿闸门另见第 6 轮收口的「自身可见 textarea＋像素差分」双闸门（防隐藏
- * 测量克隆——克隆通常 visibility hidden 或 zero-size，qExpr 首命中的未必是
- * 被画的那个节点）。 */
+ * 落稿判定另见「自身可见 textarea＋像素差分」双重检查（防隐藏测量克隆——克隆
+ * 通常 visibility hidden 或 zero-size，qExpr 首命中的未必是被画的那个节点）。 */
 const setAskDraft = (text, value) => evaluate(page, `(() => {
   const q = ${qExpr(text)};
   const input = q?.querySelector('textarea.ats-ask-input');
@@ -258,8 +256,8 @@ const EVID = join(repo, '.local', 'evidence', 'ask-visual');
 const LOGS = join(EVID, 'logs');
 const SHOTS = join(EVID, 'shots');
 mkdirSync(LOGS, { recursive: true });
-// 跑前清空 shots：截图清单随轮次演化（25→35 张），旧名残留会与本次清单矛盾
-// （装置 B 复审三轮实证过此类误导）——目录内容恒＝本次清单。
+// 跑前清空 shots：截图清单随装置演化会变（旧名残留会与本次清单矛盾——装置 B
+// 曾实证此类误导）——目录内容恒＝本次清单。
 try { rmSync(SHOTS, { recursive: true, force: true }); } catch { /* 无旧目录 */ }
 mkdirSync(SHOTS, { recursive: true });
 /** 关闭宿主「预览版说明」类对话框（设置页视觉审阅发现：不关则截图被居中对话
@@ -284,10 +282,9 @@ const ensureNoDialog = async () => {
 };
 const shotOf = async (name, opts) => {
   await ensureNoDialog();
-  // 复审三轮发现（5 帧侧栏标签层偏暗）：宿主 chrome 过渡被拍进画面——拍前
-  // 定量等过渡收敛。
+  // 宿主 chrome 过渡（如侧栏标签层）可能被拍进画面——拍前定量等过渡收敛。
   await sleep(400);
-  // 复审三轮「竖条帧」（2/35）：拍前再查一次可见宽，未达则等待重查一次
+  // 偶发窄条帧（停靠/挂载竞态）：拍前再查一次可见宽，未达则等待重查一次
   // （间歇竞态），仍窄照拍但已留告警（面板缺席＝收起态场景，跳过）。
   for (let i = 0; i < 2; i += 1) {
     const vis = Number(await evaluate(page, `Number(${PANEL_VISIBLE_WIDTH_JS})`));
@@ -348,13 +345,13 @@ try {
         clientTimeZone: 'Asia/Hong_Kong'
       }
     });
-    // 盲审 b1＋诊断实证（tmp-diag-ask）：cdp.waitFor 超时只返回末值、从不 reject
+    // 已证事实（诊断装置 tmp-diag-ask）：cdp.waitFor 超时只返回末值、从不 reject
     // ——一切以返回值判定。模型按宿主 schema 发 snake_case `multi_select`（宿主
     // dsh-tool-ask-user 翻译为 multiSelect 进服务请求），转录正则只认 camelCase
     // 会把合规批次误判四连拒；重试换会话后页面还叠显旧会话面板（waitFor 瞬时
     // 假阳性）。改为：重开页面跟随最新会话；轮询**当前会话**转录直到 ask 调用
-    // 记录落地；再以接管 state RPC（面板语义权威源——客户端按它渲染）验批次
-    // 形态：Q1 单选＋Q2 多选都在册；面板门在其后。
+    // 记录到达；再以接管 state RPC（面板语义权威源——客户端按它渲染）验批次
+    // 形态：Q1 单选＋Q2 多选都在册；面板在场检查在其后。
     if (attempt > 1) {
       try { await page.close(); } catch { /* 已关 */ }
       page = await openPage(browser.port, `${ORIGIN}/?token=${encodeURIComponent(TOKEN)}`);
@@ -388,7 +385,7 @@ try {
       const cause = askRecordText === '' ? '转录未见 ask 调用（模型未依从）'
         : multiOk !== true ? '接管 state 批次形态不符（Q1 应单选＋Q2 应多选）'
           : `面板未出（题数=${String(panels)}）`;
-      // 失败诊断留痕（十跑发现「未见 ask 调用」需分辨模型自答/报错/未动）：
+      // 失败诊断留痕（「未见 ask 调用」需分辨模型自答/报错/未动）：
       // 转录尾部事件类型＋记录数＋末条文本片段。
       const tDiag = await transcriptOf(SESSION).catch(() => null);
       const diagRecs = tDiag?.records ?? [];
@@ -401,7 +398,7 @@ try {
       log(`  诊断：记录数=${String(diagRecs.length)} 尾部类型=${diagRecs.slice(-6).map((r) => r.event?.type).join(',')} 末条=${lastText}`);
     }
   }
-  if (!panelReady) fail(`四轮触发未达可用面板（attempts=${JSON.stringify(attemptsLog)}——含未出面板与批次形态不符两种形态，模型依从波动按装置纪律登记）`);
+  if (!panelReady) fail(`四次触发尝试未达可用面板（attempts=${JSON.stringify(attemptsLog)}——含未出面板与批次形态不符两种形态，模型依从波动按装置纪律登记）`);
   log(`面板就绪（sessionId=${String(SESSION)}，attempts=${JSON.stringify(attemptsLog)}）`);
   await ensureNoDialog();
 
@@ -416,11 +413,11 @@ try {
       if (panels < 2) {
         await evaluate(page, `document.querySelector('.ats-ask-badge')?.click(), true`);
         const after = Number(await waitFor(page, 'document.querySelectorAll(".ats-ask-panel .ats-ask-q").length', (n) => Number(n) >= 2, 10_000));
-        if (after < 2) fail(`sidebar 面板展开门未过（题数=${String(after)}）`);
+        if (after < 2) fail(`sidebar 面板展开检查未过（题数=${String(after)}）`);
       }
     } else {
       const panels = Number(await waitFor(page, 'document.querySelectorAll(".ats-ask-panel .ats-ask-q").length', (n) => Number(n) >= 2, 10_000));
-      if (panels < 2) fail(`overlay 面板门未过（题数=${String(panels)}）`);
+      if (panels < 2) fail(`overlay 面板在场检查未过（题数=${String(panels)}）`);
     }
   }
   const CONFIGS = [
@@ -444,8 +441,8 @@ try {
     const q1 = await readQ(Q1_TEXT);
     lineHCache[`${cfg.seat}/${cfg.theme}`] = q1.custom?.inputLineHeight ?? '';
     const q2 = await readQ(Q2_TEXT);
-    // 盲审 a6/b4：布局直读 flex 方向（文档序＋宽比作旁证）；行高须 px 可换算
-    // （'normal' 形态按留痕登记，不用 ||1 兜底冒称）。
+    // 布局直读 flex 方向（文档序＋宽比作旁证）；行高须 px 可换算（'normal'
+    // 形态按留痕登记，不用 ||1 伪造可换算值）。
     const rowsOk = (q) => q.present === true && q.custom !== null
       && q.custom.flow === 'column'
       && q.custom.ctlBeforeInput === true && q.custom.inputWidthRatio >= 85;
@@ -462,8 +459,8 @@ try {
       lhUsable !== true ? null
         : q1.custom?.rows === '3' && rowsOf(q1, lh1) >= 2.9 && q2.custom?.rows === '3' && rowsOf(q2, lh2) >= 2.9,
       `q1=${lhUsable === true ? `${String(Math.round(rowsOf(q1, lh1) * 10) / 10)} 行` : '行高不可换算'}（${q1.custom?.inputHeight}px/${q1.custom?.inputLineHeight}）；q2=${lhUsable === true ? `${String(Math.round(rowsOf(q2, lh2) * 10) / 10)} 行` : '行高不可换算'}`);
-    // 复审三轮发现（浅色窄屏两席 normal 拍成底部视图）：上一配置的底部图把
-    // 面板内部滚动容器留在底位且跨配置沿用——每配置拍全景前复位到顶并实证。
+    // 上一配置的底部图会把面板内部滚动容器留在底位且跨配置沿用（normal 帧就
+    // 拍成底部视图）——每配置拍全景前复位到顶并实证。
     const topReset = await evaluate(page, `(() => {
       const qs = [...document.querySelectorAll('.ats-ask-panel .ats-ask-q')];
       let node = qs[qs.length - 1] ?? null;
@@ -478,14 +475,13 @@ try {
       return { found: false, top: -1 };
     })()`);
     if (topReset.found === true && topReset.top !== 0) log(`警告：${cfg.seat}/${cfg.theme} 全景拍前面板滚动复位未达（scrollTop=${String(topReset.top)}——normal 可能非顶部视图）`);
-    // 终版盲测材料瑕疵②：窄屏 normal 帧与其余帧 1px 竖直偏移（复位写完即
-    // 拍、重排未收敛）——复位后双 rAF＋120ms 再拍。
+    // 复位写完即拍会有 1px 竖直偏移（重排未收敛）——复位后双 rAF＋120ms 再拍。
     await sleep(120);
     await shotOf(`ask-${cfg.seat}-${cfg.theme}-${cfg.w <= 500 ? 'narrow' : 'wide'}-normal.png`, { width: cfg.w, height: cfg.h, fullPage: false });
-    // 底部锚定图（**所有配置**——盲测发现宽屏缺对照：面板定高内部滚动在宽屏
-    // 同样截断内容，两题可达需顶/底成对证据）。复审材料问题 1：window.scrollBy
-    // 无效（面板滚动发生在面板自身滚动容器）——找第二题的可滚祖先滚到底，拍前
-    // 实证 scrollTop>0（未真滚即告警，不产出与 normal 同帧的假底部图）。
+    // 底部锚定图（**所有配置**——面板定高内部滚动在宽屏同样截断内容，两题
+    // 可达需顶/底成对证据，宽屏不能缺对照）。window.scrollBy 无效（面板滚动
+    // 发生在面板自身滚动容器）——找第二题的可滚祖先滚到底，拍前实证
+    // scrollTop>0（未真滚即告警，不产出与 normal 同帧的假底部图）。
     {
       const scrolled = await evaluate(page, `(() => {
         const qs = [...document.querySelectorAll('.ats-ask-panel .ats-ask-q')];
@@ -567,7 +563,7 @@ try {
       markPresent: mark != null, markOverlaps: overlap,
       selectedAfterType: custom.getAttribute('data-selected') };
   })()`);
-  // 盲审 b4/b5：行高须可按 px 换算（'normal' 形态按留痕登记，不换算不冒称）；
+  // 行高须可按 px 换算（'normal' 形态按留痕登记，不换算不冒称）；
   // 选择标记在场单列断言，重叠判两轴包围盒。
   const lhPx = Number.parseFloat(wrap?.lineHeight ?? '');
   const lhOk = Number.isFinite(lhPx) && lhPx > 0;
@@ -582,9 +578,9 @@ try {
   await shotOf('ask-overlay-dark-wide-wrap.png', { width: 1500, height: 1000, fullPage: false });
 
   // ── AV-5 焦点不伪装选中 ──
-  // 盲审 b2＋四跑实证：AV-3 键入长文已选中自定义项，且清空草稿按需求 §4.2.2
-  // 「保持选中」（client 只在非空白输入时选中、无输入即取消路径）——须先显式
-  // 取消（点 optctl 走 customOff）再聚焦，断言「焦点不翻转选中值」才是本判据。
+  // AV-3 键入长文已选中自定义项，且清空草稿按需求 §4.2.2「保持选中」（client
+  // 只在非空白输入时选中、无输入即取消路径）——须先显式取消（点 optctl 走
+  // customOff）再聚焦，断言「焦点不翻转选中值」才是本判据。
   await clickIn(`${qExpr(Q1_TEXT)}?.querySelector('.ats-ask-custom .ats-ask-optctl')`, '取消自定义项');
   await setAskDraft(Q1_TEXT, '');
   await sleep(300);
@@ -634,7 +630,7 @@ try {
       afterEnter.custom?.value.includes('\n') === true && Number(stillThere) >= 2
         && afterEnter.submit !== null && afterEnter.submit.disabled === true,
       `value=${JSON.stringify(afterEnter.custom?.value)} 题数=${String(stillThere)} submit=${JSON.stringify(afterEnter.submit)}`);
-    // 盲审 a6：有效选中态（两行草稿）下 Enter 同样不误提交——提交钮保持可用。
+    // 有效选中态（两行草稿）下 Enter 同样不误提交——提交钮保持可用。
     await setAskDraft(Q1_TEXT, 'Enter 有效性检查的第一行\n第二行内容');
     await sleep(300);
     await enterKey();
@@ -656,8 +652,8 @@ try {
   // ── AV-6 选中以底纹为主（两主题：选预设/选自定义 vs 未选中的计算底色） ──
   for (const scheme of ['dark', 'light']) {
     await applyTheme(scheme);
-    // 终版盲测材料瑕疵①：预设选中帧带聚焦环＋光标（前步焦点跨场景携带，
-    // 同悬停污染一类）——拍前 blur。
+    // 预设选中帧须不带聚焦环＋光标（前步焦点会跨场景携带，同悬停污染一类）
+    // ——拍前 blur。
     await evaluate(page, `(() => {
       if (document.activeElement !== null && document.activeElement !== document.body) document.activeElement.blur();
       return true;
@@ -693,18 +689,18 @@ try {
   }
 
   // ── 交互态近景矩阵：两座位×4 配置（宽/窄×深/浅）×3 态（悬停/选中/键盘焦点）──
-  // 审阅首轮教训（状态串场）：AV-3/5/6 步留下的选中与草稿泄入矩阵——hover 图
-  // 拍到的是已选中态。每个配置拍前先清题面状态（预设/自定义全取消＋草稿清空）。
-  // 盲测发现（焦点泄漏）：程序 .click() 不移动焦点，上一配置焦点步把焦点留在
-  // textarea 上跨配置携带——悬停帧 5/6 拍成聚焦态；清场步先 blur 活动元素。
+  // 状态串场：AV-3/5/6 步留下的选中与草稿会泄入矩阵——hover 图拍到的就不再是
+  // 悬停态。每个配置拍前先清题面状态（预设/自定义全取消＋草稿清空）。
+  // 焦点泄漏：程序 .click() 不移动焦点，上一配置焦点步把焦点留在 textarea 上
+  // 跨配置携带——悬停帧会拍成聚焦态；清场步先 blur 活动元素。
   const clearQ1 = async () => {
     await evaluate(page, `(() => {
       if (document.activeElement !== null && document.activeElement !== document.body) document.activeElement.blur();
       return true;
     })()`);
-    // 单选语义（client.js:1977-1993 实读）：预设再点＝幂等替换（不清除）、
-    // customOn 互斥清预设、customOff 只关自定义。同步双点会读到同一渲染闭包
-    // （双发 customOn 卡在选中）——改为按状态读数分步点，每步等状态落定。
+    // 单选语义（client.js 实读）：预设再点＝幂等替换（不清除）、customOn 互斥
+    // 清预设、customOff 只关自定义。同步双点会读到同一渲染闭包（双发 customOn
+    // 卡在选中）——改为按状态读数分步点，每步等状态落定。
     const ctlExpr = `${qExpr(Q1_TEXT)}?.querySelector('.ats-ask-custom .ats-ask-optctl')`;
     const st0 = await readQ(Q1_TEXT);
     if (st0.opts.some((o) => o.selected === 'true')) {
@@ -723,8 +719,8 @@ try {
   };
   for (const seat of ['overlay', 'sidebar']) {
     await ensurePanel(seat);
-    // 命名统一 ask-{座位}-{主题}-{宽度}-{场景}（盲测发现两套语序混用致歧义）；
-    // 窄屏补深色（盲测发现窄屏近景只有浅色）。
+    // 命名统一 ask-{座位}-{主题}-{宽度}-{场景}（两套语序混用会致歧义）；
+    // 窄屏补深色（窄屏近景不能只有浅色）。
     for (const [themeName, w, h, tag] of [['dark', 1500, 1000, 'dark-wide'], ['light', 1500, 1000, 'light-wide'], ['light', 390, 844, 'light-narrow'], ['dark', 390, 844, 'dark-narrow']]) {
       await applyTheme(themeName);
       await scrollToPanelStable();
@@ -758,13 +754,13 @@ try {
       await scrollToPanelStable();
       await shotOf(`ask-${seat}-${tag}-selected.png`, { width: w, height: h, fullPage: false });
       // 键盘焦点态：:focus-visible 外廓在输入框（程序焦点可得时）。
-      // 复审材料问题 2：选中态不清场时焦点帧与 selected 逐字节同帧（点击聚焦
-      // 也匹配 :focus-visible，选中帧已带环）——先取消选中再聚焦，焦点帧与
+      // 选中态不清场时焦点帧与 selected 逐字节同帧（点击聚焦也匹配
+      // :focus-visible，选中帧已带环）——先取消选中再聚焦，焦点帧与
       // 选中帧在图上可区分；:focus-visible 匹配入读数（不匹配时按观察项留痕）。
       const ctlExpr = `${qExpr(Q1_TEXT)}?.querySelector('.ats-ask-custom .ats-ask-optctl')`;
       await clickIn(ctlExpr, '取消自定义（焦点近景前）');
-      // 复审三轮发现（焦点帧状态不自洽）：框里带两行草稿却未选中是用户打不出
-      // 的中间态——清草稿，帧＝空框＋未选中＋聚焦环，状态自洽。
+      // 焦点帧状态须自洽：框里带两行草稿却未选中是用户打不出的中间态——
+      // 清草稿，帧＝空框＋未选中＋聚焦环，状态自洽。
       await setAskDraft(Q1_TEXT, '');
       await sleep(300);
       const focused = await evaluate(page, `(() => {
@@ -781,25 +777,25 @@ try {
         await scrollToPanelStable();
         await shotOf(`ask-${seat}-${tag}-focus.png`, { width: w, height: h, fullPage: false });
       } else {
-        // 盲审 e：不可拍的说明走判据留痕（不混入截图文件清单）。
+        // 不可拍的说明走判据留痕（不混入截图文件清单）。
         check(`AV-5 焦点近景 ${seat}/${tag}：程序焦点不可得（观察项，近景缺）`,
           null, 'focus 后 activeElement!==textarea');
       }
     }
   }
   // 多行长文近景＋徽标计数近景。
-  // 复核 c3 残余：直连座位切换补门禁返回值校验（面板重挂载慢时不拍空景）。
+  // 座位切换后校验面板在场（面板重挂载慢时不拍空景）。
   await patchSettings({ askUiSeat: 'overlay' });
   const mlPanels = Number(await waitFor(page, 'document.querySelectorAll(".ats-ask-panel .ats-ask-q").length', (n) => Number(n) >= 2, 10_000));
-  if (mlPanels < 2) fail(`multiline 近景前面板门禁未过（题数=${String(mlPanels)}）`);
+  if (mlPanels < 2) fail(`multiline 近景前面板在场检查未过（题数=${String(mlPanels)}）`);
   await applyTheme('dark');
   await scrollToPanelStable();
-  // 视口预置（四轮复审定论「断言绿、画面空」的根因）：上一矩阵窄幅（390）后
-  // 此处直接拍 1500——capture 时的视口切换触发 React 重挂载、草稿被清，断言
-  // 读到的是换前节点。先预置 1500×1000 等收敛，再灌稿——capture 时尺寸不变、
-  // 不再重挂载，草稿活着进入画面。
+  // 视口预置（防「断言绿、画面空」）：上一矩阵窄幅（390）后此处直接拍 1500
+  // ——capture 时的视口切换触发 React 重挂载、草稿被清，断言读到的是换前
+  // 节点。先预置 1500×1000 等收敛，再灌稿——capture 时尺寸不变、不再重挂载，
+  // 草稿活着进入画面。
   await setViewport(page, 1500, 1000);
-  // 第 5 轮收口做法①：面板身份稳定（根节点签名两读一致）后才灌稿。
+  // 面板身份稳定（根节点签名两读一致）后才灌稿——重挂载中灌稿会被清掉。
   const panelIdent = () => evaluate(page, `(() => {
     const p = document.querySelector('.ats-ask-panel');
     return p === null ? 'none' : p.className + ':' + String(p.childElementCount) + ':' + String(document.querySelectorAll('.ats-ask-q').length);
@@ -812,13 +808,13 @@ try {
     identPrev = ident;
   }
   const ML_TEXT = '多选题自定义内容第一行\n第二行\n第三行——用于多行长文近景与自动换行审阅';
-  // 第 6 轮收口（首次跑出 decisive 诊断「卡内 textarea 数=[1] 且自身中心点不可
-  // 见」＝无克隆，Q2 输入框在**画面外**——面板定高内部滚动，此前六轮整拍只拍
-  // 到顶部 Q1 的空框，DOM 读写的一直是画面外的真节点，像素里是 Q1 占位符）：
+  // 多行近景的四道防「断言绿、画面空」措施（该形态＝面板定高内部滚动时
+  // Q2 输入框在画面外，DOM 读写的一直是画面外的真节点，整页帧像素里只有
+  // 顶部 Q1 的占位框——绿勾与实际画面脱节）：
   // ①拍前把 Q2 输入框滚进面板内部视口（scrollIntoView block:center）；
   // ②写入与断言绑 **textarea 自身中心点可见**的节点（elementFromPoint 命中其
   //   自身或子节点＋computed visibility/opacity/尺寸——防真有隐藏克隆的形态）；
-  // ③闸门＝ **像素差分**——同一输入框区域「有草稿」与「清空占位符」两次裁剪
+  // ③判据＝**像素差分**——同一输入框区域「有草稿」与「清空占位符」两次裁剪
   //   截图逐字节比对：相同＝画面根本没画字（绿勾无效），不同＝草稿真在帧上；
   // ④写后等两帧 rAF＋150ms 再拍。
   const ML_Q_FILTER = `[...document.querySelectorAll('.ats-ask-q')]
@@ -870,11 +866,11 @@ try {
   const clipShot = async (rect) => Buffer.from((await page.send('Page.captureScreenshot', {
     format: 'png', clip: { x: rect.x, y: rect.y, width: rect.w, height: rect.h, scale: 1 }
   })).data, 'base64');
-  // 差分基线＝**天然占位符**（上一跑读数：草稿在「设置→截前裁剪」时真渲染
-  // ［截前像素差=true］、只在「清空→重灌」折腾后丢失——放弃清空-重灌循环，
-  // 不给受控值两次抖动）。流程：定位可见框→占位符裁剪→设稿→截前裁剪→整拍
-  // →拍后裁剪；闸门＝拍后≠占位符（草稿活在成品帧里）＋截前≠占位符（渲染过）
-  // ＋标记节点值非空。拍后丢失给一次重灌重拍。
+  // 差分基线＝**天然占位符**（草稿在「设置→截前裁剪」时真渲染、只在「清空→
+  // 重灌」折腾后丢失——放弃清空-重灌循环，不给受控值两次抖动）。流程：定位
+  // 可见框→占位符裁剪→设稿→截前裁剪→整拍→拍后裁剪；判据＝拍后≠占位符
+  // （草稿活在成品帧里）＋截前≠占位符（渲染过）＋标记节点值非空。拍后丢失
+  // 给一次重灌重拍。
   const locateMl = () => evaluate(page, `(() => {
     const found = ${ML_TA_JS};
     if (found.ta === null || found.ta === undefined) return { ok: false, diag: found.diag ?? [] };
@@ -894,7 +890,7 @@ try {
   })()`);
   const loc0 = await locateMl();
   if (loc0.ok !== true) {
-    check('AV-multiline 近景落稿（像素差分＋可见节点双闸门）', false,
+    check('AV-multiline 近景落稿（像素差分＋可见节点双重判据）', false,
       `未找到自身可见的 textarea（候选诊断=${JSON.stringify(loc0.diag ?? [])}）`);
   } else {
     if (loc0.value !== '') await setMlDraft('');
@@ -926,7 +922,7 @@ try {
     })()`);
     const census = await mlNodeCensus();
     await evaluate(page, `document.querySelector('textarea[data-ml-probe="1"]')?.removeAttribute('data-ml-probe')`);
-    check('AV-multiline 多行草稿整页帧（Q2 滚入视口；像素差分＋可见节点双闸门）',
+    check('AV-multiline 多行草稿整页帧（Q2 滚入视口；像素差分＋可见节点双重判据）',
       preDiff === true && postDiff === true && mlAfter?.includes('第三行') === true,
       `截前像素差=${String(preDiff)} 截后像素差=${String(postDiff)}（重拍=${String(retried)}） `
         + `截前值=${JSON.stringify(mlBefore ?? null).slice(0, 36)} 截后值=${JSON.stringify(mlAfter ?? null).slice(0, 36)} `
@@ -934,7 +930,7 @@ try {
   }
   await patchSettings({ askUiSeat: 'sidebar' });
   await waitFor(page, 'document.querySelectorAll(".ats-ask-badge").length', (n) => Number(n) >= 1, 10_000).catch(() => {});
-  // 徽标近景＝「面板收起」形态（审阅首轮：座位切换后面板仍展开，图与场景不符
+  // 徽标近景＝「面板收起」形态（座位切换后面板可能仍是展开态，图与场景不符
   // ——先点徽标收起再拍，AV-9 行为步在其后照常展开往返）。
   const panelsBeforeBadge = Number(await evaluate(page, 'document.querySelectorAll(".ats-ask-panel").length'));
   if (panelsBeforeBadge > 0) {
@@ -944,7 +940,7 @@ try {
   await shotOf('ask-sidebar-dark-wide-badge.png', { width: 1500, height: 1000, fullPage: false });
 
   // ── AV-9 徽标计数与展开（sidebar） ──
-  // 盲审 a4：解析徽标计数并与面板题数比对（不只断文本非空）。
+  // 解析徽标计数并与面板题数比对（不只断文本非空）。
   const badge = await evaluate(page, `(() => {
     const b = document.querySelector('.ats-ask-badge');
     if (b === null) return null;
@@ -977,7 +973,7 @@ try {
   }
 
   // ── AV-7 触屏点按＋目标度量 ──
-  // 复核 minor：座位切换补面板门禁（重挂载慢时 sizing 读 0×0 假红）。
+  // 座位切换后等面板在场再读尺寸（重挂载慢时 sizing 读 0×0 假红）。
   await ensurePanel('overlay');
   await applyTheme('dark');
   await scrollToPanelStable();
@@ -997,8 +993,8 @@ try {
   check('AV-7 触屏目标度量（自持口径）：选项/输入框/提交按钮包围盒 ≥24×24',
     sizing.every(([, w, h]) => w >= 24 && h >= 24), JSON.stringify(sizing));
   await page.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxPoints: 1 });
-  // 复核 info：tapVia 复用命中径（仅 synthesizeTapGesture 可用的环境下固定
-  // touchStart/End 会假红）——按已证方法分派。
+  // tapVia 复用已命中的合成方法（环境只支持某一方法时，固定另一种会假红）
+  // ——按已证方法分派。
   const tapVia = async (point, method) => {
     if (method === 'synthesizeTapGesture') {
       await page.send('Input.synthesizeTapGesture', { x: point.x, y: point.y, durationMs: 80, tapCount: 1, gestureSourceType: 'touch' });
@@ -1083,14 +1079,14 @@ try {
     typedFinal === 'set' && q1Before.custom?.selected === 'true' && q1Before.submit !== null && q1Before.submit.disabled === false,
     `value=${JSON.stringify(q1Before.custom?.value)} submit=${JSON.stringify(q1Before.submit)}`);
   const submitClick = await clickIn(`${qExpr(Q1_TEXT)}?.querySelector('.ats-ask-submit')`, '提交');
-  // 盲审 c4：出列用轮询（固定 sleep 提交慢时假红）。
+  // 出列用轮询（固定 sleep 在提交慢时假红）。
   const qGoneExpr = (text) => `(() => {
     const qs = [...document.querySelectorAll('.ats-ask-panel .ats-ask-q')];
     return qs.some((n) => (n.querySelector('.ats-ask-text')?.textContent ?? '').includes(${JSON.stringify(text)})) === false;
   })()`;
   const q1Gone = (await waitFor(page, qGoneExpr(Q1_TEXT), (v) => v === true, 10_000)) === true;
-  // ask 工具调用整批完成才出结果（首跑实测：q2 挂着时 45s 无回执）——随手答掉
-  // q2（预设＋提交）让批次收口，回执随批完成落转录。
+  // ask 工具调用整批完成才出结果（q2 挂着未答时回执不会到来）——随手答掉
+  // q2（预设＋提交）让批次收尾，回执随批完成落转录。
   const q2Ans = await clickIn(`${qExpr(Q2_TEXT)}?.querySelector('button.ats-ask-opt')`, 'q2 预设一');
   await sleep(300);
   const q2Submit = await clickIn(`${qExpr(Q2_TEXT)}?.querySelector('.ats-ask-submit')`, 'q2 提交');
@@ -1118,7 +1114,7 @@ try {
       log(`回执命中但换行不匹配，尾部：${text.slice(-400)}`);
     }
     if (!hit && i === 29) {
-      log(`回执未命中（批已收口），转录尾部事件类型：${(t?.records ?? []).slice(-8).map((r) => r.event?.type).join(',')}`);
+      log(`回执未命中（批次已收尾），转录尾部事件类型：${(t?.records ?? []).slice(-8).map((r) => r.event?.type).join(',')}`);
     }
   }
   check('AV-4② 提交后题目出列＋作答回执自定义原文含换行（未被折叠/改写空白）',
@@ -1134,8 +1130,8 @@ cleanup();
 
 let head = '';
 try { head = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: repo, encoding: 'utf8' }).stdout.trim(); } catch { /* 无 git 环境 */ }
-// 场景映射（盲测发现「日志只列文件名、名字判不出场景」）：随证据落盘，审阅
-// 者不必反推拍摄口径。
+// 场景映射（日志只列文件名时名字判不出场景）：随证据落盘，审阅者不必反推
+// 拍摄口径。
 const SCENE_NOTES = {
   'normal-bottom': '全景底锚：面板内部滚动容器滚到底（与顶锚成对证明两题可达）',
   'selected-preset': '预设选中近景（AV-6 底纹判据的图证；与 selected＝自定义选中区分）',

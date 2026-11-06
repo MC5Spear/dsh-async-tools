@@ -1,8 +1,10 @@
 /**
- * 终局验收：把目标里的**每一条强制要求**在验证实例上逐条实测，一次跑完并给出总判定。
+ * 终局验收（基础子集）：在验证实例上把下面列出的七组基础判据一次跑完并给出总判定。
  *
  * 为什么要单独写这个：既有脚本每个只验一到两条要求，收尾时"到底哪几条验过了"要靠人
- * 在几份 JSON 与文档之间对账。这份脚本把**强制要求 → 可观察判据**固化成一张表。
+ * 在几份 JSON 与文档之间对账。这份脚本把**已覆盖的强制要求 → 可观察判据**固化成一张表。
+ * 它**不**覆盖目标里的全部强制要求——路由查询与实时选择由 acceptance-017 承担、
+ * workflow 由专门探针承担、其余要求见 `verify/README.md` 第 3 节各探针的覆盖行。
  *
  * 覆盖：
  *   1. 呈现模式 native（需求 §1.2：有 async_run/async_wait/async_agent，无 run_code、无 pwsh）
@@ -33,7 +35,15 @@ function record(name, passed, detail) {
 }
 
 /**
- * 起跑前把设置**打回出厂默认值**，并核对确实打回去了。
+ * 起跑前把设置写成本探针的**测试基线**，并核对确实写进去了。
+ *
+ * ## 这是自定义测试基线，不是出厂默认
+ *
+ * `lib/config.js` 的 schema 默认值（出厂默认的唯一来源）与本表在**三处有意不同**：
+ * `minYieldMs` 1000（出厂 20000 会把本脚本指令里的 `yield_ms=1500` 夹紧为 20s，
+ * 六秒长命令在首等内结算、不再让出，判据④②被旁路）、`minWaitMs` 250（放开小额
+ * `wait_ms` 的夹紧下限）、`maxResultChars` 30000（结果预算余量，避免截断干扰断言）。
+ * 这三处是**有意构造的短预算**，不要"顺手"改回出厂值；其余字段与出厂默认一致。
  *
  * ## 为什么每个真机脚本都要做这一步（这是类问题，不是单点）
  *
@@ -45,11 +55,16 @@ function record(name, passed, detail) {
  * "等待被夹到 2 秒"而报行为不符，看起来像产品坏了。
  *
  * 所以每个真机脚本都**自己**保证起跑状态，不依赖别人的 `finally`：
- * 写一遍默认值 + 读回核对。写不进去就明确报出来并失败，而不是带着脏状态跑出假结论。
+ * 写一遍基线 + 读回核对。写不进去就明确报出来并失败，而不是带着脏状态跑出假结论。
  *
- * 归属边界：`restore-async-settings.mjs` 管"跑完之后还原"，这里管"跑之前先归位"。
+ * ## 写入与恢复的责任划分
+ *
+ * 本脚本只负责**起跑前**把设置写成这份基线；**跑完之后**的还原由
+ * `restore-async-settings.mjs` 承担——它用 `settings/replace` 复位全部 volatile
+ * 用户覆盖、让设置回落到 schema 默认（即回到真正的出厂默认）。需要引用当前
+ * 出厂默认值时从 `lib/config.js` 取得，不在探针里另抄一份会漂移的手抄副本。
  */
-const FACTORY_DEFAULTS = {
+const TEST_BASELINE = {
   defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
   defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000,
   pollIntervalMs: 500, maxResultChars: 30000, jobKind: 'async-command'
@@ -66,18 +81,18 @@ async function readSettings() {
 }
 
 const before = await readSettings();
-const drifted = Object.keys(FACTORY_DEFAULTS).filter((k) => before[k] !== FACTORY_DEFAULTS[k]);
+const drifted = Object.keys(TEST_BASELINE).filter((k) => before[k] !== TEST_BASELINE[k]);
 if (drifted.length > 0) {
-  console.log(`起跑前发现设置漂移，先归位：${drifted.map((k) => `${k}=${String(before[k])}`).join(' ')}`);
-  await patchNs(FACTORY_DEFAULTS);
+  console.log(`起跑前发现设置偏离本探针测试基线，先归位：${drifted.map((k) => `${k}=${String(before[k])}`).join(' ')}`);
+  await patchNs(TEST_BASELINE);
 }
 const after = await readSettings();
-const stillDrifted = Object.keys(FACTORY_DEFAULTS).filter((k) => after[k] !== FACTORY_DEFAULTS[k]);
+const stillDrifted = Object.keys(TEST_BASELINE).filter((k) => after[k] !== TEST_BASELINE[k]);
 if (stillDrifted.length > 0) {
   // 带着脏设置跑出来的红是**假红**，比不跑更糟——所以这里直接停。
   throw new Error(`起跑基线写不进去，拒绝继续（否则读数不可信）：${stillDrifted.join(', ')}`);
 }
-console.log(`起跑基线：设置全部等于出厂默认值（${drifted.length > 0 ? `本次归位了 ${String(drifted.length)} 项` : '本来就干净'}）。`);
+console.log(`起跑基线：设置全部等于本探针测试基线（${drifted.length > 0 ? `本次归位了 ${String(drifted.length)} 项` : '本来就干净'}；跑完由 restore-async-settings.mjs 还原出厂默认）。`);
 console.log('');
 
 /** 起一个会话并断言预设没被静默回退。 */

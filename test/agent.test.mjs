@@ -677,6 +677,106 @@ hostTest('async_agent：实时口径的四种拒绝形态互可区分且零派�
   assert.ok(envFlip.selectionReads.length >= 3, '第二次调用现读＋启动前重读（实时读，无会话冻结）');
 });
 
+hostTest('async_agent：策略服务契约外坏形状 → policyShapeRejected 可读拒绝、形状原错挂 rawReason 且零派生（RA-ROBUSTNESS）', async () => {
+  // 坏形状原先在名单校验的属性读取处崩成裸 TypeError；承接后错误说明实际形状
+  // （无空格紧凑记号进 reason），不改写成开关关闭或名单拒绝的正常宿主口径，
+  // 也不把各形状统一成同一句措辞——每类形状保留各自的真实原因。
+  const shapes = [
+    ['nope', 'string'],
+    [null, 'null'],
+    [[['zai/glm-5.3']], 'array'],
+    [{ enabled: true }, 'allowedModels=missing'],
+    [{ enabled: true, allowedModels: 'zai/glm-5.3' }, 'allowedModels=string'],
+    [{ enabled: true, allowedModels: [{ provider: 'zai', model: 'glm-5.3' }, null] }, 'allowedModels[1]=null']
+  ];
+  for (const [snapshot, shape] of shapes) {
+    const env = agentEnv({ selection: snapshot });
+    let caught;
+    try {
+      await createAgentTool(env.ctx, env.view).execute(
+        { description: 'x', prompt: 'y', provider: 'zai', model: 'glm-5.3' }, EXEC
+      );
+    } catch (error) {
+      caught = error;
+    }
+    assert.ok(caught instanceof Error && !(caught instanceof TypeError),
+      `${shape}：可读错误拒绝（非裸 TypeError）`);
+    assert.ok(caught.message.includes(shape), `${shape}：错误说明实际形状`);
+    assert.ok(caught.message.includes('instead of a policy object with an allowedModels array'),
+      `${shape}：policyShapeRejected 口径`);
+    assert.ok(!caught.message.includes('currently disabled'), `${shape}：不改写成开关关闭口径`);
+    assert.ok(!caught.message.includes('not allowed by the current model-selection'), `${shape}：不改写成名单拒绝口径`);
+    assert.equal(caught.rawReason?.message, `subagentModelSelection.current():${shape}`,
+      `${shape}：形状 TypeError 作为原错挂 rawReason`);
+    assert.deepEqual(env.activations, [], `${shape}：零派生`);
+  }
+  // zh 档两语齐（词典键进 zh 表）：
+  const envZh = agentEnv({ selection: { enabled: true } });
+  envZh.setConfig({ agentLang: 'zh' });
+  await assert.rejects(
+    createAgentTool(envZh.ctx, envZh.view).execute(
+      { description: 'x', prompt: 'y', provider: 'zai', model: 'glm-5.3' }, EXEC
+    ),
+    (error) => error.message.includes('不是带 allowedModels 数组的策略对象') && error.message.includes('allowedModels=missing'),
+    'zh 档承接文案'
+  );
+});
+
+hostTest('async_agent：启动前重读遇到坏形状 → routeRecheckReadFailed 承载形状原错（诊断①口径，不误报名单撤销）', async () => {
+  const env = agentEnv({
+    selection: [
+      { enabled: true, allowedModels: [{ provider: 'zai', model: 'glm-5.3' }] },
+      { enabled: true }
+    ]
+  });
+  await assert.rejects(
+    createAgentTool(env.ctx, env.view).execute(
+      { description: 'x', prompt: 'y', provider: 'zai', model: 'glm-5.3' }, EXEC
+    ),
+    (error) => error.message.includes('re-reading the model-selection settings right before the start failed')
+      && error.message.includes('subagentModelSelection.current():allowedModels=missing')
+      && !error.message.includes('no longer contains the selected route'),
+    '重读坏形状 → 读取失败诊断带形状原错'
+  );
+  assert.deepEqual(env.activations, [], '零派生（预检已过、启动前拒绝）');
+});
+
+hostTest('async_agent：getProvider 抛错 → providerQueryFailed 承载原始错误文本、完整原文进 stderr、零派生（RA-ROBUSTNESS）', async () => {
+  // 后端查询的契约外故障不裸抛、也不改写成「未注册」的正常宿主口径；{reason}
+  // 承载原始错误文本（单行化截断），完整原文进操作者日志（与预检拒绝同通道）。
+  const env = agentEnv();
+  env.ctx.subagents.getProvider = () => {
+    throw new Error('provider registry exploded\nwith a second line');
+  };
+  let caught;
+  const captured = await captureStderr(async () => {
+    try {
+      await createAgentTool(env.ctx, env.view).execute({ description: 'x', prompt: 'y' }, EXEC);
+    } catch (error) {
+      caught = error;
+    }
+  });
+  assert.ok(caught instanceof Error, '可读错误拒绝');
+  assert.ok(caught.message.includes('looking up subagent provider "spawn" failed'), 'providerQueryFailed 口径');
+  assert.ok(caught.message.includes('provider registry exploded'), '{reason} 承载原始错误文本');
+  assert.ok(!caught.message.includes('is not registered'), '不改写成「未注册」的正常宿主口径');
+  assert.ok(!/[\r\n\t]/.test(caught.message), '模型侧单行化');
+  assert.deepEqual(env.activations, [], '零派生');
+  const notice = captured.split('\n').find((line) => line.includes('subagent provider lookup failed'));
+  assert.ok(notice !== undefined, '操作者日志有一行承接通告');
+  assert.ok(notice.includes('with a second line'), 'stderr 携带完整原文（转义后仍在同一行）');
+
+  // zh 档两语齐：
+  const envZh = agentEnv();
+  envZh.ctx.subagents.getProvider = () => { throw new Error('boom-zh'); };
+  envZh.setConfig({ agentLang: 'zh' });
+  await assert.rejects(
+    createAgentTool(envZh.ctx, envZh.view).execute({ description: 'x', prompt: 'y' }, EXEC),
+    (error) => error.message.includes('查询子代理后端 "spawn" 失败：boom-zh'),
+    'zh 档承接文案'
+  );
+});
+
 hostTest('async_agent：预检拒绝保留单行化原因＋查询指引（含目标工具条件），完整原因进 stderr（A-F07）', async () => {
   const env = agentEnv({ llmMode: 'reject' });
   // 覆盖拒绝原文：多行宿主原文验证单行化（需求 §6.2——模型侧不进 CR/LF/TAB）。
