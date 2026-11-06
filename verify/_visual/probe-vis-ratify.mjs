@@ -702,6 +702,10 @@ try {
       check('BADGE 收口：两题作答出列后徽标随待答清空消隐',
         c1 === 'clicked' && s1 === 'clicked' && c2 === 'clicked' && s2 === 'clicked' && gone && badgeGone,
         `q1=${String(c1)}/${String(s1)} q2=${String(c2)}/${String(s2)} 题目清空=${String(gone)} 徽标消隐=${String(badgeGone)}`);
+      // 消隐后的底栏帧（视觉盲审面补帧：徽标不在场、面板收起——供审阅面判定）。
+      if (gone && badgeGone) {
+        await screenshot(page, join(SHOTS, 'badge-cleared.png'), { width: 768, height: 1024, fullPage: false });
+      }
     } else {
       check('BADGE 收口：批次已在早前收口（留痕）', null, `徽标计数读数=${JSON.stringify(badgeText)}`);
     }
