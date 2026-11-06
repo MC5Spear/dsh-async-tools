@@ -4,8 +4,9 @@
  *
  * 流程骨架与姊妹探针（probe-concurrent-wait／probe-wait-semantics）同款：npm pack
  * 受测 tgz→mkdtemp 独立 DSH_HOME→官方 CLI plugin add→随机端口隔离实例（模型
- * 路由 patch 取 `<serviceRoot>/patches/zai-glm.yml`）→RPC→单会话（agentPreset
- * ='dsh-async'）→三步单步指令（prompt 显式要求串行单工具调用）。装置前提：
+ * 路由 patch 见下「用法」——可传入自有 patch，缺省取本机部署常驻名）→RPC→
+ * 单会话（agentPreset='dsh-async'）→三步单步指令（prompt 显式要求串行单工
+ * 具调用）。装置前提：
  * prompt 的 yield_ms 24000 本身落在出厂区间 [20000,600000] 内、不被夹紧——
  * 与姊妹 concurrent-wait 的短窗调低前提不同，本探针无设置写入。
  *
@@ -51,15 +52,21 @@
  * ## 用法
  *
  *   node verify/probe-workflow-engine.mjs --service-root <宿主服务根> \
- *     --host-subdir <宿主树目录名，如 dsh-0.2.1-rc.5> [--repo <本仓路径>] [--keep]
+ *     --host-subdir <宿主树目录名，如 dsh-0.2.1-rc.5> \
+ *     [--model-patch <模型路由 patch>] [--repo <本仓路径>] [--keep]
  *
- * `--service-root` 必填（或设 `DSAT_SERVICE_ROOT`）。模型路由 patch 同姊妹探针
- * （本机部署环境提供，缺失时实例就绪等待处 FAULT）。tgz 产物结束自清；证据
- * JSON 每次落盘保留在 `.local/`（FAULT 路径的 tgz 不清，重跑前可手动清理）。
+ * `--service-root` 必填（或设 `DSAT_SERVICE_ROOT`），指向装有各宿主安装树的
+ * 目录；`--host-subdir` 是其中一棵树的目录名。真实模型步骤需要模型路由：
+ * `--model-patch`（或 `DSAT_MODEL_PATCH`）传入自备路由 patch（模板与凭据准备
+ * 方法见 verify/patches/model-routing.example.yml），缺省取
+ * `<serviceRoot>/patches/zai-glm.yml`（本机部署环境常驻名）；两处都没有时
+ * 启动前置检查即 FAULT 并指向模板——环境前提未满足，不是产品缺陷。tgz 产物
+ * 结束自清；证据 JSON 每次落盘保留在 `.local/`（FAULT 路径的 tgz 不清，重跑
+ * 前可手动清理）。
  * 退出码：0＝全部判定通过；1＝存在 FAIL 判定；2＝探针自身故障（FAULT）。
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -125,8 +132,18 @@ const addRun = spawnSync('node', [cliBin, 'plugin', '--profile', 'web', 'add', t
 if (addRun.status !== 0) fail(`plugin add 退出 ${String(addRun.status)}：stderr 尾部 ${String(addRun.stderr).slice(-600)}／stdout 尾部 ${String(addRun.stdout).slice(-600)}`);
 log('plugin add 完成');
 
-// 3) 起隔离实例（随机端口）。
-const child = spawn('node', [cliBin, '--patch', join(serviceRoot, 'patches', 'zai-glm.yml'), '--profile', 'web', '--host', '127.0.0.1', '--port', '0', '--no-open'], {
+// 3) 起隔离实例（随机端口）。真实模型步骤需要模型路由 patch：--model-patch
+//（或 DSAT_MODEL_PATCH）传入使用者自备 patch（模板与凭据准备方法见
+// verify/patches/model-routing.example.yml），缺省取本机部署环境常驻名；缺失
+// 时在此前置检查即 FAULT 并给出准备方法，不把失败推迟到实例就绪等待处。
+const modelPatchArg = argOf('model-patch') ?? process.env.DSAT_MODEL_PATCH;
+const modelPatch = modelPatchArg !== undefined && modelPatchArg.trim() !== ''
+  ? resolve(modelPatchArg)
+  : join(serviceRoot, 'patches', 'zai-glm.yml');
+if (!existsSync(modelPatch)) {
+  fail(`模型路由 patch 不存在：${modelPatch}。真实模型步骤需要模型路由——用 --model-patch（或环境变量 DSAT_MODEL_PATCH）传入自有 patch，或按 verify/patches/model-routing.example.yml 模板准备（密钥经 apiKeyEnv 指向的环境变量或隔离 home 凭据文件提供，不写进 patch 与仓库）。`);
+}
+const child = spawn('node', [cliBin, '--patch', modelPatch, '--profile', 'web', '--host', '127.0.0.1', '--port', '0', '--no-open'], {
   cwd: serviceRoot,
   env: { ...process.env, DSH_HOME: home },
   stdio: ['ignore', 'pipe', 'pipe']

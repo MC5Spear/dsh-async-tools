@@ -1,0 +1,41 @@
+# 模型路由 patch 模板（脱敏样例——不含任何密钥，供自建临时实例的真机探针使用）。
+#
+# 作用：dsh 启动命令追加 `--patch <本文件副本>` 后，按 id 匹配整行替换默认
+# profile 的对应组合行，为探针的真实模型会话提供 provider／模型路由与子代理
+# 选型名单。三个 id 行的 name 必须与目标宿主安装树内的插件包名逐字一致（可用
+# `dsh --profile web --dump-config` 查看出厂行）；不需要的行整行省略即可。
+#
+# 准备步骤：
+# 1. 复制本模板为 <serviceRoot>/patches/zai-glm.yml（各真机探针的缺省取用
+#    路径），或任意路径后经 --model-patch／DSAT_MODEL_PATCH 传入
+#    probe-workflow-engine 等支持显式传入的探针。
+# 2. 把 provider、模型 id、上下文与输出上限换成自己可用的真实路由；默认模型
+#    行与子代理选型名单指向同一 provider 时探针行为最稳定。
+# 3. 密钥不写进本文件：provider 的 apiKeyEnv 指向环境变量，实例进程继承启动
+#    进程的环境；也可改用隔离 home 的凭据文件登录。密钥不进仓库、不进证据。
+# 4. 缺少模型路由时，需要真实模型的探针在启动前置检查即 FAULT 并指向本模板
+#    ——属环境前提未满足，不是产品缺陷；第 2 节的静态／离线入口不依赖它。
+- id: llm-pi-ai
+  name: "@deepseek-ai/dsh-llm-pi-ai"
+  config:
+    providers:
+      your-provider:
+        models:
+          - id: your-model
+            name: Your Model
+            contextWindow: 131072
+            maxTokens: 16384
+        apiKeyEnv: YOUR_PROVIDER_API_KEY
+- id: agent-default-model
+  name: "@deepseek-ai/dsh-agent-default-model"
+  config:
+    provider: your-provider
+    model: your-model
+    reasoningEffort: low
+- id: subagent-model-selection-settings
+  name: "@deepseek-ai/dsh-tool-subagent/model-selection-settings"
+  config:
+    enabled: true
+    allowedModels:
+      - provider: your-provider
+        model: your-model

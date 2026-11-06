@@ -4694,7 +4694,9 @@ hostTest('RC-H：returned 标记的副本不被未标记的新装配覆盖（R2 
     const kept = subject.recoveries.get(jobId);
     assert.equal(kept.text, copy1.text, 'returned 副本保持首次份额（不被续段覆盖）');
     assert.equal(kept.returned, true, 'returned 标记保持');
-    assert.ok(String(rec1.output ?? '').includes('AT_FINAL_PAYLOAD'), '恢复＋续段两档都交');
+    assert.ok(String(rec1.output ?? '').includes('x'.repeat(20)), '续段交回：省略中段进正文');
+    assert.ok(!String(rec1.output ?? '').includes(t('en', 'delivery.recoveryMarker', { jobId })),
+      '有未交付内容时不重发副本（§2.6 续取优先——同批无「恢复＋续段」双档）');
     // 对照（直达账本，L 系列先例）：未标记的既有副本被新装配覆盖——最新份额是
     // 当前未确认内容。首装截断（700 字符正文在 500 预算下取首尾份额），续段
     // 装配登记新份额并覆盖未标记副本。
@@ -4728,7 +4730,9 @@ hostTest('RC-L：恢复条目批满/预算尽整条延后——挂起保持、�
   // collectBatch 恢复装配的延后分支（批条目满或剩余预算为零且正文非空）：恢复
   // 请求不清挂起、不消费副本——stagedRecovery 保持，本次出口不带标记行；批
   // 关闭后的下一次装配（此处直达账本重开批，生产由领取关批）正常第 1 档恢复
-  //（§3.3「批满/预算尽整条延后，保持挂起，下一批恢复」）。
+  //（§3.3「批满/预算尽整条延后，保持挂起，下一批恢复」）。进入第 1 档的前提
+  // 是目标无未交付内容（§2.6 续取优先）：首装恰好完整交付、副本未确认、缓冲
+  // 为空——这是本用例的构造形态。
   resetDeliveryLedger();
   const ctx = new Context();
   ledger.registerRow(ctx);
@@ -4737,13 +4741,13 @@ hostTest('RC-L：恢复条目批满/预算尽整条延后——挂起保持、�
     ledger.noteJobStarted(ctx, { maxResultChars: 400, agentLang: 'en' }, 'rc-l-job', owner);
     const entry = ledger.jobs.get('rc-l-job');
     entry.terminal = { status: 'completed', exitCode: 0 };
-    entry.buffer = `HEAD-${'a'.repeat(600)}`; // 首装即耗尽批预算（截断至 400）
+    entry.buffer = `HEAD-${'a'.repeat(395)}`; // 首装恰好用尽批预算（完整交付、无截断）
     const first = ledger.collectBatch(owner, { lang: 'en' });
-    assert.ok(first.delivered.length === 1 && first.delivered[0].truncated === true,
-      '前置：首装耗尽批预算（剩余 0）');
+    assert.ok(first.delivered.length === 1 && first.delivered[0].truncated === false,
+      '前置：首装完整交付（剩余 0、缓冲空）');
     const subject = ledger.subjects.get(owner);
     assert.ok(subject.recoveries.get('rc-l-job') !== undefined, '前置：副本在册（未确认）');
-    assert.equal(ledger.stageRecovery('rc-l-job', owner)?.tier, 1, '前置：第 1 档可恢复');
+    assert.equal(ledger.stageRecovery('rc-l-job', owner)?.tier, 1, '前置：无未交付内容、副本未确认——第 1 档可恢复');
     // 同批再装配：恢复条目撞预算尽 → 整条延后（直达账本形态下批不自动关闭）。
     const second = ledger.collectBatch(owner, { lang: 'en' });
     assert.ok(second.delivered.every((item) => item.recovery !== true),
@@ -4757,11 +4761,83 @@ hostTest('RC-L：恢复条目批满/预算尽整条延后——挂起保持、�
     const recoveryItem = third.delivered.find((item) => item.recovery === true);
     assert.ok(recoveryItem !== undefined, '下一批恢复交付（标记行＋副本正文）');
     assert.ok(recoveryItem.text.includes(t('en', 'delivery.recoveryMarker', { jobId: 'rc-l-job' })),
-      '标记行在场（400 预算下恢复体头段完整容纳标记行）');
+      '标记行在场（恢复体在 400 预算下被裁剪，头段完整容纳标记行）');
     assert.ok(recoveryItem.text.includes('HEAD-'),
-      '副本正文在场（首装份额头段；探针实证 100 预算下标记行会被 6:4 裁剪切中段，故用 400）');
-    assert.ok(recoveryItem.text.endsWith('a'.repeat(40)), '副本份额尾段在场');
+      '副本正文在场（首装份额头段）');
+    assert.ok(recoveryItem.text.endsWith('a'.repeat(160)), '副本份额尾段在场（尾 40% 份额）');
     assert.equal(subject.stagedRecovery, null, '恢复后挂起清空');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+hostTest('RC-M：续取优先——有未交付内容时不重发副本、中段持续前进；无未交付内容才按第 1 档交回', async () => {
+  // §2.6 恢复出口两形态辨析：显式零等待点名先辨「未交付内容续取」与「未确认
+  // 副本重发」——省略中段/延后条目仍在缓冲时本次经正常批次路径交付续段（副本
+  // 不在同批重发，否则份额被副本占满、中段在反复零等待下永不前进）；缓冲清空
+  // 且副本仍未确认时按第 1 档交回（标记行＋副本正文）。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  try {
+    const owner = `rc-m-owner-${Math.random().toString(36).slice(2, 8)}`;
+    ledger.noteJobStarted(ctx, { maxResultChars: 400, agentLang: 'en' }, 'rc-m-job', owner);
+    const entry = ledger.jobs.get('rc-m-job');
+    entry.terminal = { status: 'completed', exitCode: 0 };
+    entry.buffer = `HEAD-${'a'.repeat(600)}TAIL`;
+    const first = ledger.collectBatch(owner, { lang: 'en' });
+    assert.ok(first.delivered.length === 1 && first.delivered[0].truncated === true,
+      '前置：首装截断，中段留缓冲');
+    const subject = ledger.subjects.get(owner);
+    subject.batch = null; // 关批（生产＝领取关批）
+    assert.equal(ledger.stageRecovery('rc-m-job', owner), null,
+      '有未交付内容 → 不走恢复档（续取优先）');
+    const second = ledger.collectBatch(owner, { lang: 'en', triggerJobIds: ['rc-m-job'] });
+    assert.ok(second.delivered.every((item) => item.recovery !== true),
+      '同批不重发副本（标记行不得在场）');
+    assert.ok(second.delivered.some((item) => (item.text ?? '') !== ''), '续段进正文（中段前进）');
+    assert.equal(entry.buffer, '', '缓冲清空——反复零等待下中段持续前进');
+    subject.batch = null;
+    assert.equal(ledger.stageRecovery('rc-m-job', owner)?.tier, 1,
+      '无未交付内容、副本未确认 → 第 1 档');
+    const third = ledger.collectBatch(owner, { lang: 'en' });
+    const item = third.delivered.find((i) => i.recovery === true);
+    assert.ok(item !== undefined && item.text.includes(t('en', 'delivery.recoveryMarker', { jobId: 'rc-m-job' })),
+      '第 1 档交回：标记行＋副本正文');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+hostTest('RC-N：运行中增量登记副本——无新增量时按第 1 档交回（已交付事实缺席不否决）', async () => {
+  // §2.6 副本登记点＝collectBatch 终态条目与运行中增量装配（includeRunning）：
+  // 宿主改写取消错误时增量份额同样有恢复入口（9.3.2 丢失防护不区分增量与终态
+  // 正文）；不置认领与已交付事实——副本在册即构成恢复语义。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  try {
+    const owner = `rc-n-owner-${Math.random().toString(36).slice(2, 8)}`;
+    ledger.noteJobStarted(ctx, { maxResultChars: 400, agentLang: 'en' }, 'rc-n-job', owner);
+    const entry = ledger.jobs.get('rc-n-job');
+    entry.terminal = null; // 运行中
+    entry.buffer = `INC1-${'a'.repeat(100)}`;
+    const first = ledger.collectBatch(owner, { lang: 'en', includeRunning: true });
+    assert.ok(first.delivered.length === 1, '前置：运行中增量入批（includeRunning）');
+    assert.equal(entry.deliveredFact, null, '不置已交付事实');
+    assert.equal(entry.claimedBy, null, '不置认领');
+    const subject = ledger.subjects.get(owner);
+    const copy = subject.recoveries.get('rc-n-job');
+    assert.ok(copy !== undefined && copy.terminal === null && copy.via === 'wait',
+      '增量副本在册（终态空、等待载体）');
+    assert.equal(entry.buffer, '', '增量完整交付、缓冲空');
+    subject.batch = null;
+    assert.equal(ledger.stageRecovery('rc-n-job', owner)?.tier, 1,
+      '副本在册即有恢复语义（运行中作业同样成立）');
+    const second = ledger.collectBatch(owner, { lang: 'en' });
+    const item = second.delivered.find((i) => i.recovery === true);
+    assert.ok(item !== undefined && item.text.includes(t('en', 'delivery.recoveryMarker', { jobId: 'rc-n-job' })),
+      '第 1 档交回：标记行＋增量副本正文');
   } finally {
     ledger.disposeRow(ctx);
   }

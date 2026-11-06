@@ -470,10 +470,15 @@ test('T19：job_output 隐藏——agent/created 挂 agent 作用域 restrict，
     // 隐藏，曾实证的缺陷形态）。
     const agentRestrictCalls = [];
     const agentEffectDisposers = [];
+    // 生效边界（BA-02）：隐藏判据＝Agent 名册中 async_wait 可见——假 Agent 的
+    // tools.view 提供带 async_wait 的名册（反例锚见下方 noWait/throwView/noView）。
     const fakeAgent = {
       id: `agent-${toolName}`,
       ctx: {
-        tools: { restrict(policy) { agentRestrictCalls.push(policy); return () => {}; } },
+        tools: {
+          view() { return { visible: new Map([['async_wait', {}], [toolName, {}]]) }; },
+          restrict(policy) { agentRestrictCalls.push(policy); return () => {}; }
+        },
         effect(fn) { agentEffectDisposers.push(fn); }
       }
     };
@@ -493,13 +498,49 @@ test('T19：job_output 隐藏——agent/created 挂 agent 作用域 restrict，
       // 后续 Agent。
       const bare = { id: 'agent-bare' };
       ctx.emit('agent/created', { agent: bare });
-      const throwing = { id: 'agent-throw', ctx: { tools: { restrict() { throw new Error('boom'); } } } };
+      const throwing = {
+        id: 'agent-throw',
+        ctx: {
+          tools: {
+            view() { return { visible: new Map([['async_wait', {}]]) }; },
+            restrict() { throw new Error('boom'); }
+          }
+        }
+      };
       ctx.emit('agent/created', { agent: throwing });
       const afterFault = [];
       ctx.emit('agent/created', {
-        agent: { id: 'agent-after-fault', ctx: { tools: { restrict(p) { afterFault.push(p); return () => {}; } } } }
+        agent: { id: 'agent-after-fault', ctx: { tools: {
+          view() { return { visible: new Map([['async_wait', {}]]) }; },
+          restrict(p) { afterFault.push(p); return () => {}; }
+        } } }
       });
       assert.equal(afterFault.length, 1, '故障 Agent 不阻断后续 Agent 的隐藏登记（3.5.1 故障注入语义）');
+      // 生效边界反例（BA-02，9.3.5 第 3 条）：名册无 async_wait／view 抛错／
+      // view 缺席——保守不隐藏（restrict 零调用，原生 job_output 照常可见）。
+      const noWaitProbe = [];
+      ctx.emit('agent/created', {
+        agent: { id: 'agent-no-wait', ctx: { tools: {
+          view() { return { visible: new Map([['async_run', {}]]) }; },
+          restrict(p) { noWaitProbe.push(p); return () => {}; }
+        }, effect() {} } }
+      });
+      assert.equal(noWaitProbe.length, 0, '名册无 async_wait 不隐藏（单挂创建行的组合不剥夺原生读取入口）');
+      const throwViewProbe = [];
+      ctx.emit('agent/created', {
+        agent: { id: 'agent-view-throw', ctx: { tools: {
+          view() { throw new Error('view boom'); },
+          restrict(p) { throwViewProbe.push(p); return () => {}; }
+        }, effect() {} } }
+      });
+      assert.equal(throwViewProbe.length, 0, '名册读取抛错不隐藏（保守方向）');
+      const noViewProbe = [];
+      ctx.emit('agent/created', {
+        agent: { id: 'agent-no-view', ctx: { tools: {
+          restrict(p) { noViewProbe.push(p); return () => {}; }
+        }, effect() {} } }
+      });
+      assert.equal(noViewProbe.length, 0, 'tools.view 缺席不隐藏（保守方向）');
     } else {
       assert.equal(agentRestrictCalls.length, 0, '查询行不挂隐藏（9.3.5：查询类工具不受影响）');
     }
@@ -538,7 +579,10 @@ test('T20：tool:jobs 提示遮蔽——隐藏 job_output 的同一 Agent ctx �
     const fakeAgent = {
       id: `agent-shadow-${toolName}`,
       ctx: {
-        tools: { restrict() { return () => {}; } },
+        tools: {
+          view() { return { visible: new Map([['async_wait', {}]]) }; },
+          restrict() { return () => {}; }
+        },
         effect(fn) { effects.push(fn); },
         systemPrompt: {
           section(spec) { sectionCalls.push(spec); return () => {}; },
@@ -561,7 +605,16 @@ test('T20：tool:jobs 提示遮蔽——隐藏 job_output 的同一 Agent ctx �
       ctx.emit('agent/created', { agent: fakeAgent });
       assert.equal(sectionCalls.length, 1, '同一 Agent 重复 created 不重复注册（与隐藏共用去重）');
       // 降级①：agent.ctx 无 systemPrompt——监听器不外抛，隐藏不受影响。
-      const barePrompt = { id: 'agent-no-prompt', ctx: { tools: { restrict() { return () => {}; } }, effect() {} } };
+      const barePrompt = {
+        id: 'agent-no-prompt',
+        ctx: {
+          tools: {
+            view() { return { visible: new Map([['async_wait', {}]]) }; },
+            restrict() { return () => {}; }
+          },
+          effect() {}
+        }
+      };
       ctx.emit('agent/created', { agent: barePrompt });
       // 降级②：section 抛错——独立降级只记 warn，隐藏不被连坐（restrict 照挂）。
       const restrictProbe = [];
@@ -569,7 +622,10 @@ test('T20：tool:jobs 提示遮蔽——隐藏 job_output 的同一 Agent ctx �
         agent: {
           id: 'agent-prompt-throw',
           ctx: {
-            tools: { restrict(p) { restrictProbe.push(p); return () => {}; } },
+            tools: {
+              view() { return { visible: new Map([['async_wait', {}]]) }; },
+              restrict(p) { restrictProbe.push(p); return () => {}; }
+            },
             effect() {},
             systemPrompt: { section() { throw new Error('layer conflict'); }, getSectionOrder() { return 1; } }
           }
@@ -598,7 +654,10 @@ test('T20：tool:jobs 提示遮蔽——隐藏 job_output 的同一 Agent ctx �
     agent: {
       id: 'agent-shadow-zh',
       ctx: {
-        tools: { restrict() { return () => {}; } },
+        tools: {
+          view() { return { visible: new Map([['async_wait', {}]]) }; },
+          restrict() { return () => {}; }
+        },
         effect() {},
         systemPrompt: {
           section(spec) { zhSections.push(spec); return () => {}; },
@@ -629,7 +688,10 @@ test('T20：tool:jobs 提示遮蔽——隐藏 job_output 的同一 Agent ctx �
     agent: {
       id: 'agent-shadow-live',
       ctx: {
-        tools: { restrict() { return () => {}; } },
+        tools: {
+          view() { return { visible: new Map([['async_wait', {}]]) }; },
+          restrict() { return () => {}; }
+        },
         effect() {},
         systemPrompt: {
           section(spec) { liveSections.push(spec); return () => {}; },

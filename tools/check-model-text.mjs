@@ -307,6 +307,8 @@ const PROSE_ALLOWLIST = {
   ],
   'index.js': [
     { needle: 'the tool-jobs row must be part of', why: '操作者一侧诊断（ctx.logger.warn——job_output 隐藏登记降级行的尾段字面量，不进模型上下文；agent/created 挂点改版后的新措辞，needle 须与被抽取字面量同段）' },
+    { needle: 'tool roster view unavailable', why: '操作者一侧诊断（ctx.logger.info——生效边界判定的名册视图缺席分支：保守不隐藏的登记行，不进模型上下文）' },
+    { needle: 'async_wait not in visible roster', why: '同上（名册无 async_wait 的保守不隐藏行尾段——needle 须与被抽取字面量同段）' },
     { needle: 'agent.ctx.tools.restrict unavailable', why: '操作者一侧诊断（同上降级路径 throw 的 Error 消息——只在进程内被 catch 转 warn，不进模型上下文）' },
     { needle: 'agent.ctx.tools.register unavailable', why: '操作者一侧诊断（会话遮蔽注册降级的 warn 前缀——PRESET-ISOLATION-02 防御路径，不进模型上下文）' },
     { needle: 'shared description stays session-neutral', why: '同上（遮蔽注册失败降级行的说明尾段——共享定义回落基础文本的操作者侧交代）' },

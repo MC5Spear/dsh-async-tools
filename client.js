@@ -103,8 +103,11 @@ var FIELDS = [
   // 座位枚举 sidebar|overlay 只换呈现层，选项序 [sidebar, overlay] 与默认标记位
   // （需求 §5.2/5.5：默认 sidebar）。
   { key: "askTakeover", label: "askTakeover", ms: false, flag: true },
-  // 两个展示开关（需求 9.3.4）：默认 false = 编排结果滤除各阶段进度行、
-  // 命令作业列表只回显进度说明；开启保留/回显完整内容。
+  // 两个展示开关（需求 9.3.4）：默认 false = 编排交付正文滤除各阶段进度行、
+  // 命令与编排交付不附原文（作业以编号与 description 等紧凑标识呈现）；开启后
+  // 进度日志进入交付正文，原文经批次类载体附加并计入同批预算（正文份额优先、
+  // 同一领取窗口同一作业只附一次）。任务列表注册名称两态恒为 description／
+  // meta.name——原文不进任务列表，不经注册名称绕过批次预算。
   { key: "workflowProgressLog", label: "workflowProgressLog", ms: false, flag: true },
   { key: "fullCommandEcho", label: "fullCommandEcho", ms: false, flag: true },
   { key: "askTimeoutMs", label: "askTimeoutMs", ms: true },

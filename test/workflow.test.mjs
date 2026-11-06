@@ -527,6 +527,23 @@ hostTest('async_workflow（R34-g·zh）：完成渲染与截断标注随 agentLa
   assert.ok(result.result.endsWith('"\n}'), '中文档同样保首尾');
 });
 
+hostTest('async_workflow（R34-h）：首直付预算只限正文——状态头整段保留，头部额度不得流入结果尾部', async () => {
+  const { f, runs, agent, tool } = rig({ maxResultChars: 1 });
+  agent.session.append = () => {};
+  const exec = { agent, signal: new AbortController().signal };
+  const pending = tool.execute(BASE_ARGS, exec);
+  runs[0]._resolve({ stopReason: 'completed', agentsStarted: 1, value: { blob: 'x'.repeat(30) } });
+  const result = await pending;
+  const head = 'workflow "wf-demo" completed (1 agent).\nReturn value:\n';
+  const body = JSON.stringify({ blob: 'x'.repeat(30) }, null, 2);
+  assert.ok(result.result.startsWith(head), '状态头必须整段保留（需求 §2.2.3：状态说明另计、不占内容份额）');
+  assert.ok(result.result.includes(`[output truncated: ${String(body.length - 1)} chars omitted]`),
+    `省略量必须按正文计算（正文 ${String(body.length)} 字符、份额 1）`);
+  assert.ok(result.result.endsWith('}'), '正文可见尾部恰为份额 1 的最后一个字符——头部额度不得流入结果尾部');
+  const markerless = result.result.slice(head.length).replace(/\[output truncated: \d+ chars omitted\]/, '');
+  assert.ok(!/x/.test(markerless), '正文可见字符不得超过份额（markerless 段不得含任何 x）');
+});
+
 // ---------------------------------------------------------------------------
 // F8/F9（需求 §2.2.3/§2.1.2）：注册表收原始 JSON（后台读取整体只裁一次，
 // 预算不被实施两次）；取消与预算到期分别说明。
