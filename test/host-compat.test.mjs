@@ -110,6 +110,19 @@ hostTest('profile 形态：插件安装位置的同版本地副本可接受，�
   assert.match(rejected.out, /不同版/);
 });
 
+hostTest('宿主 dsh-tools 名册视图契约：view(scope) 返回 visible 名册（Map 名→定义）', () => {
+  // 设计 §3.5.1 生效边界的常设依据：job_output 隐藏按 Agent 作用域名册判定，
+  // 依赖宿主 ToolRuntime 的 view(scope).visible（名→定义的 Map，has() 可查）。
+  // 支持集合各树已实证提供；本锚在宿主锚树源文上静态复验三处形态，宿主改版
+  // 即红（与 agent-policy 逐行互锚同款守卫风格）。
+  const source = readFileSync(
+    join(hostModules, '@deepseek-ai', 'dsh-tools', 'lib', 'index.js'), 'utf8'
+  );
+  assert.match(source, /view\(scope\)\s*\{/, 'ToolRuntime 提供 view(scope) 作用域名册视图方法');
+  assert.match(source, /view\(scope\)\.visible\.get\(/, '调用方经 view(scope).visible 按名取定义（名册形态互证）');
+  assert.match(source, /visible\.set\(name, definition\)/, 'visible 名册按名→定义收集（Map 构造与填充形态）');
+});
+
 test('宿主根缺席或不可用时按环境不足退出（退出码 2），不算判据失败', async () => {
   const absent = await checkHostCompat({ root: ROOT, hostRoot: join(ROOT, 'no-such-host'), quiet: true });
   assert.equal(absent.code, 2, absent.out);

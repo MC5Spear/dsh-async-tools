@@ -4822,7 +4822,8 @@ hostTest('RC-N：运行中增量登记副本——无新增量时按第 1 档交
     const entry = ledger.jobs.get('rc-n-job');
     entry.terminal = null; // 运行中
     entry.buffer = `INC1-${'a'.repeat(100)}`;
-    const first = ledger.collectBatch(owner, { lang: 'en', includeRunning: true });
+    const carrier = { aborted: false };
+    const first = ledger.collectBatch(owner, { lang: 'en', includeRunning: true, carrierSignal: carrier });
     assert.ok(first.delivered.length === 1, '前置：运行中增量入批（includeRunning）');
     assert.equal(entry.deliveredFact, null, '不置已交付事实');
     assert.equal(entry.claimedBy, null, '不置认领');
@@ -4830,6 +4831,8 @@ hostTest('RC-N：运行中增量登记副本——无新增量时按第 1 档交
     const copy = subject.recoveries.get('rc-n-job');
     assert.ok(copy !== undefined && copy.terminal === null && copy.via === 'wait',
       '增量副本在册（终态空、等待载体）');
+    assert.strictEqual(copy.signal, carrier,
+      '增量副本记本次等待调用的取消信号——改写取消退回判据的凭据（删除传参即红）');
     assert.equal(entry.buffer, '', '增量完整交付、缓冲空');
     subject.batch = null;
     assert.equal(ledger.stageRecovery('rc-n-job', owner)?.tier, 1,
@@ -4838,6 +4841,40 @@ hostTest('RC-N：运行中增量登记副本——无新增量时按第 1 档交
     const item = second.delivered.find((i) => i.recovery === true);
     assert.ok(item !== undefined && item.text.includes(t('en', 'delivery.recoveryMarker', { jobId: 'rc-n-job' })),
       '第 1 档交回：标记行＋增量副本正文');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+hostTest('RC-O：多目标恢复同批单条——单槽末位胜出，其余副本保持在册可再请求', async () => {
+  // §2.6 恢复装配单槽：显式零等待点名多个第 1 档资格目标时，本批只装配一个
+  // 恢复条目（stagedRecovery 单槽、末位胜出），其余目标的副本保持在册，下一次
+  // 恢复请求逐批交回——不丢内容、不并批放大预算。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  try {
+    const owner = `rc-o-owner-${Math.random().toString(36).slice(2, 8)}`;
+    for (const id of ['rc-o-a', 'rc-o-b']) {
+      ledger.noteJobStarted(ctx, { maxResultChars: 400, agentLang: 'en' }, id, owner);
+      const e = ledger.jobs.get(id);
+      e.terminal = { status: 'completed', exitCode: 0 };
+      e.buffer = `HEAD-${'a'.repeat(60)}TAIL`;
+    }
+    const first = ledger.collectBatch(owner, { lang: 'en' });
+    assert.equal(first.delivered.length, 2, '前置：两作业完整交付（缓冲空、副本未确认）');
+    const subject = ledger.subjects.get(owner);
+    // 与 wait.js 零等待主出口同序：逐目标裁决——末位胜出挂起。
+    assert.equal(ledger.stageRecovery('rc-o-a', owner)?.tier, 1, 'A 亦可恢复');
+    assert.equal(ledger.stageRecovery('rc-o-b', owner)?.tier, 1, 'B 亦可恢复');
+    assert.equal(subject.stagedRecovery?.jobId, 'rc-o-b', '单槽末位胜出');
+    subject.batch = null;
+    const second = ledger.collectBatch(owner, { lang: 'en' });
+    const recoveryItems = second.delivered.filter((item) => item.recovery === true);
+    assert.equal(recoveryItems.length, 1, '同批只装配一个恢复条目');
+    assert.equal(recoveryItems[0].jobId, 'rc-o-b', '挂起者交回');
+    assert.ok(subject.recoveries.get('rc-o-a') !== undefined, 'A 副本保持在册（未消费）');
+    assert.equal(ledger.stageRecovery('rc-o-a', owner)?.tier, 1, 'A 可再请求逐批交回');
   } finally {
     ledger.disposeRow(ctx);
   }
