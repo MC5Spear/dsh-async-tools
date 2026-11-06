@@ -20,7 +20,7 @@ import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
 import { resolveConfig } from '../lib/config.js';
 import { LATE_ANSWER_EVENT } from '../lib/interrupts.js';
 import { t } from '../lib/text.js';
-import { resetAgentBaselines } from '../lib/wait-agent-target.js';
+import { resetAgentBaselines, describeEntry } from '../lib/wait-agent-target.js';
 import { checkedTool, inboxPayload } from './_helpers.mjs';
 
 // delivery.js 静态依赖 @deepseek-ai/dsh-llm（宿主链）——离线守卫禁止测试文件
@@ -775,8 +775,11 @@ hostTest('R58-l：说明两档上限——单条 200 截断、留存行合计 20
 });
 
 hostTest('R55（判据 2b·子代理侧）：next-step 滞留目标子代理的未领取结算通知 → settled（结束优先于插话）', async () => {
-  // r13 结算交付前的注册表复核（W-GATE-E）后，入口通知的 settled 交付要求注册表现读非运行；
-  // 本判据测的是入口侧优先级（结束优先于插话），装置补静止读数、断言不变。
+  // 入口通知的 settled 交付要求注册表现读非运行（W-GATE-E 同门复核）。通知出口
+  // 位于全部目标必要校验之后、其余入口返回条件（含插话判定）之前（§3.2.2/
+  // §3.2.4）——本判据锚「返回条件之内结束优先于插话」这层优先级；校验次序由
+  // W-MIX 系列锚定（混合非法目标时整次拒绝、通知不被消费）。装置补静止读数、
+  // 断言不变。
   const rig = await buildRig('pre2b', [], { agentsGet: (id) => ({ id, status: 'idle' }) });
   try {
     const childId = `at-r57-child-${Math.random().toString(36).slice(2, 8)}`;
@@ -1587,6 +1590,344 @@ hostTest('W-MIX-A：终态作业＋查无子代理的混合目标 → 全部资�
       '混合目标：查无子代理在校验遍拒绝，终态作业不被先行读取交付（校验先于返回）'
     );
   } finally {
+    await rig.dispose();
+  }
+});
+
+// ── W-MIX-B/C/D/E（§3.2.2/§3.2.4 校验先于返回——含先到结算通知出口的反例）────
+// 装置为 wait 工具面的裁剪 rig（真 Context＋真 LocalJobRegistry；jobs.list／
+// jobs.read 与 listChildren 经 options 受控覆盖并计数），与全工具 buildRig 分开。
+
+/**
+ * 组装只装 wait 工具面的被测环境（W-MIX 系列）：jobs.list／jobs.read 与
+ * listChildren 可经 options 受控覆盖并计数。每装置整体复位模块级账本与跨调用
+ * 登记（与 buildRig 同纪律）。
+ */
+async function buildWaitRig(label, childRows = [], options = {}) {
+  resetDeliveryLedger();
+  const base = new Context();
+  const parent = {
+    id: `at-mix-${label}-${Math.random().toString(36).slice(2, 8)}`,
+    ctx: base,
+    session: { append() {} },
+    inbox: { nextStep: [], nextTurn: [] }
+  };
+  base.provide('agents', {
+    // parent 是本主体；其余 id 默认 running，需要 idle／absent 形态的用例经
+    // options.agentsGet 覆盖（注册表现读走 agentStatusOf）。
+    get: (id) => (id === parent.id
+      ? parent
+      : (options.agentsGet === undefined ? { id, status: 'running' } : options.agentsGet(id)))
+  });
+  // 子代理目录：childRows 由调用方给（通知所有者必须在册）；options.listChildren
+  // 可整替（抛错／计数用例）。
+  base.provide('subagents', {
+    listChildren: options.listChildren === undefined ? async () => childRows : options.listChildren,
+    interrupt() {}
+  });
+  await base.plugin(LocalJobRegistry, {
+    maxConcurrentJobsPerOwner: 10, retainBytes: 1048576, settledRetainBytes: 1048576, pumpPollMs: 10
+  });
+  const ctx = await new Promise((resolve) => {
+    base.inject(['jobs', 'subagents'], async (c) => resolve(c));
+  });
+  const detach = ctx.jobs.attachController(`at-mix-${label}`);
+  const adapter = {
+    // options.jobsList／options.jobsRead＝受控外来行与受控读取（W-MIX-E 的终态
+    // 作业行与查询计数经此注入）；其余服务仍走真注册表。
+    jobs: (options.jobsList === undefined && options.jobsRead === undefined)
+      ? ctx.jobs
+      : {
+          ...ctx.jobs,
+          ...(options.jobsList === undefined ? {} : { list: options.jobsList }),
+          ...(options.jobsRead === undefined ? {} : { read: options.jobsRead })
+        },
+    subagents: ctx.subagents,
+    agents: ctx.agents,
+    on: (...args) => ctx.on(...args),
+    get: () => undefined,
+    logger: { info() {}, warn() {} },
+    timer: {
+      timeout: (fn, ms) => { const timer = setTimeout(fn, ms); return () => clearTimeout(timer); },
+      interval: (fn, ms) => { const timer = setInterval(fn, ms); return () => clearInterval(timer); }
+    }
+  };
+  const config = resolveConfig({
+    toolName: 'async_wait',
+    // 装置显式下限：正等待用例的小额 wait_ms 不吃出厂下限 20000 的夹紧。
+    minWaitMs: 1,
+    ...(options.pollIntervalMs === undefined ? {} : { pollIntervalMs: options.pollIntervalMs })
+  });
+  const waiter = checkedTool(createWaitTool(adapter, config));
+  const exec = () => ({ agent: parent, signal: new AbortController().signal });
+  return {
+    ctx,
+    parent,
+    waiter,
+    exec,
+    dispose: async () => { await ctx.jobs.disposeAll(); detach(); }
+  };
+}
+
+/** 注入一条未领取结算通知（W-GATE-E 同款形态），返回消息 id 供「未被消费」断言。 */
+const seedNotice = (rig, agentId) => {
+  const { message } = inboxPayload({
+    agent: rig.parent, sourceKind: 'subagent-settled', form: 'notice',
+    summary: 'child settled', senderSessionId: agentId, target: 'next-step'
+  });
+  return message.id;
+};
+
+/** 通知仍在 next-step 且未被领取（同一条消息、无新增）。 */
+const noticeIntact = (rig, noticeId) => rig.parent.inbox.nextStep.length === 1
+  && rig.parent.inbox.nextStep[0]?.id === noticeId;
+
+hostTest('W-MIX-B：通知在场＋未知作业目标 → 零等待整次可读拒绝（unknownJob），通知留在收件箱未被消费', async () => {
+  resetAgentBaselines();
+  const rig = await buildWaitRig('b', [{ id: 'at-mix-b-child', label: '通知所有者', activity: 'idle' }], {
+    agentsGet: (id) => ({ id, status: 'idle' })
+  });
+  try {
+    const noticeId = seedNotice(rig, 'at-mix-b-child');
+    await assert.rejects(
+      rig.waiter.execute(
+        {
+          wait_ms: 0,
+          targets: [{ kind: 'job', id: 'no-such-job' }, { kind: 'agent', id: 'at-mix-b-child' }]
+        },
+        rig.exec()
+      ),
+      (error) => String(error?.message ?? error).includes(
+        t('en', 'error.unknownJob', { jobId: 'no-such-job' })
+      ),
+      '校验先于通知出口：未知作业使整次调用可读拒绝，不因结算通知在场交回 settled'
+    );
+    assert.ok(noticeIntact(rig, noticeId), '拒绝不消费通知：next-step 仍是同一条结算通知');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-MIX-C：通知在场＋清单外子代理目标 → 整次可读拒绝（unknownAgent 附现有清单），通知未被消费', async () => {
+  resetAgentBaselines();
+  const childRows = [{ id: 'at-mix-c-child', label: '通知所有者', activity: 'idle' }];
+  const rig = await buildWaitRig('c', childRows, { agentsGet: (id) => ({ id, status: 'idle' }) });
+  try {
+    const noticeId = seedNotice(rig, 'at-mix-c-child');
+    const known = childRows.map((row) => describeEntry(row, 'en', t)).join('\n');
+    await assert.rejects(
+      rig.waiter.execute(
+        {
+          wait_ms: 0,
+          targets: [{ kind: 'agent', id: 'at-mix-c-ghost' }, { kind: 'agent', id: 'at-mix-c-child' }]
+        },
+        rig.exec()
+      ),
+      (error) => String(error?.message ?? error).includes(t('en', 'error.unknownAgent', {
+        agentId: 'at-mix-c-ghost',
+        children: known
+      })),
+      '清单外子代理使整次调用可读拒绝，文案附现有子代理清单；通知所有者仍以通知为关系证据'
+    );
+    assert.ok(noticeIntact(rig, noticeId), '拒绝不消费通知：next-step 仍是同一条结算通知');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-MIX-D：通知在场＋清单读取失败 → 正等待整次可读拒绝（listingUnavailable），通知未被消费', async () => {
+  resetAgentBaselines();
+  const rig = await buildWaitRig('d', [], {
+    listChildren: () => Promise.reject(new Error('directory down')),
+    agentsGet: (id) => ({ id, status: 'idle' })
+  });
+  try {
+    const noticeId = seedNotice(rig, 'at-mix-d-child');
+    await assert.rejects(
+      rig.waiter.execute(
+        {
+          wait_ms: 300,
+          targets: [{ kind: 'agent', id: 'at-mix-d-barrier' }, { kind: 'agent', id: 'at-mix-d-child' }]
+        },
+        rig.exec()
+      ),
+      (error) => String(error?.message ?? error).includes(t('en', 'error.listingUnavailable')),
+      '未命中通知的目标屏障查询失败：正等待按 listingUnavailable 整次拒绝，不因通知在场交回 settled'
+    );
+    assert.ok(noticeIntact(rig, noticeId), '拒绝不消费通知：next-step 仍是同一条结算通知');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-MIX-E：同形拒绝后合法混合零等待正常出口（settled／changed 两形态）——通知命中目标 listChildren 0 次，普通合法目标共享查询恰一次', async () => {
+  resetAgentBaselines();
+  {
+    // ① 同形拒绝（通知＋未知作业）→ ② 纯合法混合（终态作业＋通知命中的子代理），
+    // 同一装置连续执行：拒绝不消费通知、不残留状态，下一次调用正常出口。
+    const jobId = 'at-mix-e-job';
+    let listCalls = 0;
+    let childCalls = 0;
+    const rig = await buildWaitRig('e-idle', [{ id: 'at-mix-e-child', label: '通知所有者', activity: 'idle' }], {
+      agentsGet: (id) => ({ id, status: 'idle' }),
+      jobsList: () => { listCalls += 1; return [{ id: jobId, status: 'completed' }]; },
+      jobsRead: async () => ({ chunks: [] }),
+      listChildren: async () => {
+        childCalls += 1;
+        return [{ id: 'at-mix-e-child', label: '通知所有者', activity: 'idle' }];
+      }
+    });
+    try {
+      const noticeId = seedNotice(rig, 'at-mix-e-child');
+      const listBeforeReject = listCalls;
+      await assert.rejects(
+        rig.waiter.execute(
+          {
+            wait_ms: 0,
+            targets: [{ kind: 'job', id: 'at-mix-e-ghost' }, { kind: 'agent', id: 'at-mix-e-child' }]
+          },
+          rig.exec()
+        ),
+        (error) => String(error?.message ?? error).includes(
+          t('en', 'error.unknownJob', { jobId: 'at-mix-e-ghost' })
+        ),
+        '① 同形拒绝：未知作业在校验遍整次拒绝'
+      );
+      assert.ok(noticeIntact(rig, noticeId), '① 拒绝不消费通知');
+      assert.equal(listCalls - listBeforeReject, 1, '① 拒绝路径也只取入口共享快照一次');
+
+      const listBeforeOk = listCalls;
+      const settled = await rig.waiter.execute(
+        {
+          wait_ms: 0,
+          targets: [{ kind: 'job', id: jobId }, { kind: 'agent', id: 'at-mix-e-child' }]
+        },
+        rig.exec()
+      );
+      assert.equal(settled.status, 'settled', '② 注册表现读 idle：通知按现行 settled 交付');
+      assert.equal(settled.agent_id, 'at-mix-e-child', '② 出口指向通知命中的目标');
+      assert.ok(settled.note.includes(t('en', 'via.noticePreexisting')), '② via.noticePreexisting 文案在场');
+      assert.ok(
+        Array.isArray(settled.delivered)
+          && settled.delivered.some((item) => item.job_id === jobId && item.status === 'completed'),
+        '② 终态作业经对账并入本批（delivered 在场）'
+      );
+      assert.equal(listCalls - listBeforeOk, 1, `② 本次调用 jobs.list 恰一次（实得 ${String(listCalls - listBeforeOk)}）`);
+      assert.equal(childCalls, 0, `② 全部子代理目标都通知命中：不为它发 listChildren（实得 ${String(childCalls)}）`);
+    } finally {
+      await rig.dispose();
+    }
+  }
+  {
+    // ② 变体：注册表现读 running——通知已到、静止未证实，按 changed 交付。
+    let listCalls = 0;
+    let childCalls = 0;
+    const rig = await buildWaitRig('e-run', [{ id: 'at-mix-e-run-child', label: '通知所有者', activity: 'running' }], {
+      agentsGet: (id) => ({ id, status: 'running' }),
+      jobsList: () => { listCalls += 1; return [{ id: 'at-mix-e-run-job', status: 'completed' }]; },
+      jobsRead: async () => ({ chunks: [] }),
+      listChildren: async () => { childCalls += 1; return []; }
+    });
+    try {
+      seedNotice(rig, 'at-mix-e-run-child');
+      const changed = await rig.waiter.execute(
+        {
+          wait_ms: 0,
+          targets: [{ kind: 'job', id: 'at-mix-e-run-job' }, { kind: 'agent', id: 'at-mix-e-run-child' }]
+        },
+        rig.exec()
+      );
+      assert.equal(changed.status, 'changed', '注册表现读 running：不作停止断言，按变化交回');
+      assert.ok(changed.note.includes(t('en', 'wait.settleNoticeArrived')), 'settleNoticeArrived 文案在场');
+      assert.equal(listCalls, 1, `本次调用 jobs.list 恰一次（实得 ${String(listCalls)}）`);
+      assert.equal(childCalls, 0, `通知命中目标不发目录查询（实得 ${String(childCalls)}）`);
+    } finally {
+      await rig.dispose();
+    }
+  }
+  {
+    // ③ 对照：无通知命中的普通合法子代理目标在场 → 共享 listChildren 恰一次。
+    let childCalls = 0;
+    let listCalls = 0;
+    const rig = await buildWaitRig('e-contrast', [
+      { id: 'at-mix-e-other', label: '普通合法目标', activity: 'running' },
+      { id: 'at-mix-e-contrast-child', label: '通知所有者', activity: 'idle' }
+    ], {
+      agentsGet: (id) => ({ id, status: 'idle' }),
+      jobsList: () => { listCalls += 1; return []; },
+      listChildren: async () => {
+        childCalls += 1;
+        return [
+          { id: 'at-mix-e-other', label: '普通合法目标', activity: 'running' },
+          { id: 'at-mix-e-contrast-child', label: '通知所有者', activity: 'idle' }
+        ];
+      }
+    });
+    try {
+      seedNotice(rig, 'at-mix-e-contrast-child');
+      const outcome = await rig.waiter.execute(
+        {
+          wait_ms: 0,
+          targets: [
+            { kind: 'agent', id: 'at-mix-e-other' },
+            { kind: 'agent', id: 'at-mix-e-contrast-child' }
+          ]
+        },
+        rig.exec()
+      );
+      assert.equal(outcome.status, 'settled', '前置：混合目标全部合法，通知出口正常交付');
+      assert.equal(listCalls, 1, `零等待入口 jobs.list 恰一次（实得 ${String(listCalls)}）`);
+      assert.equal(childCalls, 1, `无通知命中的目标经共享 listChildren 恰一次（实得 ${String(childCalls)}）`);
+    } finally {
+      await rig.dispose();
+    }
+  }
+});
+
+hostTest('W-MIX-F：清单外子代理＋正等待——纠错清单竞速窗口内到达的目标消息不切断校验（unknownAgent 整次拒绝、消息不被消费）', async () => {
+  resetAgentBaselines();
+  // §3.2.2「校验期间只有工具取消与用户插话切断」的竞速窗口反例：正等待下
+  // 目录已证查无（entry＝null）、纠错清单查询进行中时，目标消息恰好到达——
+  // 修前该唤醒置 barrierWake 并按 sender 命中提前返回 changed，越过本应抛出的
+  // unknownAgent 整次拒绝（D13 同类残留）；修后查无事实照常落地，消息留收件箱
+  // 未被消费。装置：listChildren 第 1 次调用返回空（证查无），第 2 次挂起受控
+  //（纠错清单竞速窗口），期间注入目标消息并真实发 `agent/inbox/inserted` 事件。
+  let childCalls = 0;
+  let releaseKnown;
+  const gate = new Promise((resolve) => { releaseKnown = resolve; });
+  const rig = await buildWaitRig('f', [], {
+    listChildren: () => {
+      childCalls += 1;
+      if (childCalls === 2) return gate.then(() => []);
+      return Promise.resolve([]);
+    },
+    agentsGet: (id) => ({ id, status: 'idle' })
+  });
+  try {
+    const pending = rig.waiter.execute(
+      { wait_ms: 4000, targets: [{ kind: 'agent', id: 'at-mix-f-ghost' }] },
+      rig.exec()
+    );
+    await sleep(80); // 进入纠错清单竞速（childEntry 已证查无）
+    const { message } = inboxPayload({
+      agent: rig.parent, sourceKind: 'subagent-settled', form: 'notice',
+      summary: 'ghost message during race', senderSessionId: 'at-mix-f-ghost', target: 'next-step'
+    });
+    rig.ctx.emit('agent/inbox/inserted', { agent: { id: rig.parent.id }, message });
+    await assert.rejects(
+      pending,
+      (error) => String(error?.message ?? error).includes('at-mix-f-ghost')
+        && /unknown|not found|查无/i.test(String(error?.message ?? error)),
+      '竞速窗口内的目标消息不切断校验：清单外子代理仍整次可读拒绝（unknownAgent）'
+    );
+    assert.ok(
+      rig.parent.inbox.nextStep.length === 1
+        && rig.parent.inbox.nextStep[0]?.id === message.id,
+      '拒绝不消费消息：next-step 仍是同一条目标消息'
+    );
+    assert.ok(childCalls >= 2, `纠错清单确实进入竞速（listChildren ≥2 次，实得 ${String(childCalls)}）`);
+  } finally {
+    releaseKnown();
     await rig.dispose();
   }
 });
@@ -4241,15 +4582,15 @@ hostTest('RC-B2：改写取消时序——副本标记 returned 不被 turn-stop
     await ledger.releaseWait(hold, rig.parent.id);
     const row = (outcome.delivered ?? []).find((item) => item.job_id === jobId);
     assert.ok(row !== undefined, '前置：零等待装配交付编排终值');
-    const copy = ledger.subjects.get(rig.parent.id)?.recoveries?.get(jobId);
-    assert.ok(copy !== undefined, '装配登记恢复副本（修前：无 recoveries＝红）');
-    assert.equal(copy.via, 'wait', '等待载体副本');
+    const copies = ledger.subjects.get(rig.parent.id)?.recoveries?.get(jobId) ?? [];
+    assert.equal(copies.length, 1, '装配登记恢复份额（修前：无 recoveries＝红）');
+    assert.equal(copies[0].via, 'wait', '等待载体份额');
     // 改写取消时序：出口后工具信号中止 → turn-stopping 复检命中 → 按退回标记。
     controller.abort();
     rig.ctx.emit('agent/turn-stopping', { agent: { id: rig.parent.id } });
-    const after = ledger.subjects.get(rig.parent.id)?.recoveries?.get(jobId);
-    assert.ok(after !== undefined, 'turn-stopping 不清除 returned 副本（M1 豁免）');
-    assert.equal(after.returned, true, '复检中止信号 → 副本按退回标记');
+    const after = ledger.subjects.get(rig.parent.id)?.recoveries?.get(jobId) ?? [];
+    assert.equal(after.length, 1, 'turn-stopping 不清除 returned 份额（M1 豁免）');
+    assert.equal(after[0].returned, true, '复检中止信号 → 份额按退回标记');
     assert.equal(ledger.jobs.get(jobId)?.confirmedAt ?? null, null, '条目保持未确认');
     // 恢复出口：显式零等待点名 → 标记行＋副本正文（第 1 档）。触发目标正文由
     // 出口 `output` 字段携带（outputs 条目按既有去重口径置空 text）。
@@ -4482,9 +4823,9 @@ hostTest('RC-A：完成消息接受点登记副本（via=message）；领取事�
     rig.finisher();
     await sleep(150); // #beat → deliverIfNoWait → inject（主体忙）→ 接受点
     assert.ok(rig.injections.length > 0, '前置：完成消息经 inject 接受');
-    const copy = ledger.subjects.get(rig.parent.id)?.recoveries?.get(jobId);
-    assert.ok(copy !== undefined, '接受点登记副本（inject 正常返回＝已持久入箱）');
-    assert.equal(copy.via, 'message', '完成消息载体');
+    const copies = ledger.subjects.get(rig.parent.id)?.recoveries?.get(jobId) ?? [];
+    assert.equal(copies.length, 1, '接受点登记份额（inject 正常返回＝已持久入箱）');
+    assert.equal(copies[0].via, 'message', '完成消息载体');
     rig.ctx.emit('agent/inbox/claimed', { agent: { id: rig.parent.id } });
     const entry = ledger.jobs.get(jobId);
     assert.notEqual(entry.confirmedAt ?? null, null, '领取确认：confirmedAt 置位');
@@ -4510,12 +4851,12 @@ hostTest('RC-C：领取前丢弃（agent/inbox/discarded）→ 副本退回未�
     const jobId = wf.job_id;
     rig.finisher();
     await sleep(150);
-    const copy = ledger.subjects.get(rig.parent.id)?.recoveries?.get(jobId);
-    assert.ok(copy !== undefined, '前置：完成消息接受点登记副本');
+    const copies = ledger.subjects.get(rig.parent.id)?.recoveries?.get(jobId) ?? [];
+    assert.equal(copies.length, 1, '前置：完成消息接受点登记份额');
     rig.ctx.emit('agent/inbox/discarded', { agent: { id: rig.parent.id } });
-    const after = ledger.subjects.get(rig.parent.id)?.recoveries?.get(jobId);
-    assert.ok(after !== undefined, '丢弃退回：副本保持（可恢复）');
-    assert.equal(after.returned, true, 'returned 标记置位');
+    const after = ledger.subjects.get(rig.parent.id)?.recoveries?.get(jobId) ?? [];
+    assert.equal(after.length, 1, '丢弃退回：份额保持（可恢复）');
+    assert.equal(after[0].returned, true, 'returned 标记置位');
     assert.equal(ledger.jobs.get(jobId)?.confirmedAt ?? null, null, '未确认');
     const recovery = await rig.waiter.execute(
       { wait_ms: 0, targets: [{ kind: 'job', id: jobId }] }, rig.exec()
@@ -4557,6 +4898,8 @@ hostTest('RC-D：副本期限惰性清扫——过期后恢复按第 3 档如实
       assert.equal(recovery.status, 'completed', '终态照常');
       assert.ok(String(recovery.note).includes(t('en', 'wait.recoveryExpired', { jobId })),
         '第 3 档注记：副本过期、正文不可重发（如实说明）');
+      assert.ok(String(recovery.note).includes(t('en', 'wait.recoveryPortionsLost', { ords: '1' })),
+        '第 3 档附缺失份额序号（§2.6——到期未服务完的份额入丢失清单）');
       assert.equal(recovery.output, '', '不伪造正文');
     } finally {
       ledger.now = realNow;
@@ -4580,18 +4923,22 @@ hostTest('RC-E：副本上限与行清扫——条数 10 FIFO、字符 2×maxRes
     return jobId;
   };
   try {
-    // ① 条数上限：11 个就绪候选一批至多装配 10（条目上限），副本恰 10；关批后
-    // 装配延后者 → FIFO 逐出最旧。
+    // ① 条数上限（按份额记录计）：11 个就绪候选一批至多装配 10（条目上限），
+    // 份额恰 10；关批后装配延后者 → FIFO 逐出最旧份额。
     const idsA = [];
     for (let i = 0; i < 11; i += 1) idsA.push(mk(ownerA, i, 10, 100000));
     ledger.collectBatch(ownerA, { lang: 'en' });
     const subject = ledger.subjects.get(ownerA);
-    assert.equal(subject.recoveries.size, 10, '副本条数上限 10（延后候选不入副本）');
+    let portionsA = 0;
+    for (const portions of subject.recoveries.values()) portionsA += portions.length;
+    assert.equal(portionsA, 10, '份额条数上限 10（延后候选不入份额）');
     subject.batch = null;
     ledger.collectBatch(ownerA, { lang: 'en' });
-    assert.equal(subject.recoveries.size, 10, '仍 10（新进旧出）');
-    assert.equal(subject.recoveries.has(idsA[0]), false, '最旧副本被逐出');
-    assert.equal(subject.recoveries.has(idsA[10]), true, '最新副本在册');
+    portionsA = 0;
+    for (const portions of subject.recoveries.values()) portionsA += portions.length;
+    assert.equal(portionsA, 10, '仍 10（新进旧出）');
+    assert.equal(subject.recoveries.has(idsA[0]), false, '最旧份额被逐出');
+    assert.equal(subject.recoveries.has(idsA[10]), true, '最新份额在册');
     // ② 字符上限 2×maxResultChars：500×2＝1000；逐批装配 400 字符×3 →
     // 第三份登记时总量 1200>1000 → 逐出最旧（本次登记项受保护）。
     const idsB = [];
@@ -4602,9 +4949,12 @@ hostTest('RC-E：副本上限与行清扫——条数 10 FIFO、字符 2×maxRes
     }
     const subB = ledger.subjects.get(ownerB);
     let total = 0;
-    for (const c of subB.recoveries.values()) total += c.text.length;
-    assert.ok(total <= 1000, `副本字符总量 ≤2×maxResultChars（实得 ${String(total)}）`);
-    assert.equal(subB.recoveries.size, 2, '超限逐出到恰 2 份');
+    let portionCount = 0;
+    for (const portions of subB.recoveries.values()) {
+      for (const one of portions) { total += one.text.length; portionCount += 1; }
+    }
+    assert.ok(total <= 1000, `份额字符总量 ≤2×maxResultChars（实得 ${String(total)}）`);
+    assert.equal(portionCount, 2, '超限逐出到恰 2 份');
     assert.equal(subB.recoveries.has(idsB[2]), true, '本次登记项受保护');
     // ③ 行卸载清本行作业副本。
     ledger.disposeRow(ctxA);
@@ -4632,8 +4982,15 @@ hostTest('RC-F：确认后的重复等待零新消息；恢复份额计入同批
       { wait_ms: 0, targets: [{ kind: 'job', id: jobId }] }, rig.exec()
     );
     assert.ok(String(recovery.output ?? '').includes('AT_FINAL_PAYLOAD'), '副本重发在场');
-    assert.ok((recovery.output ?? '').length <= 100 + 60,
-      `恢复条目计入同批预算（标记行＋正文经同一分配封顶；实得 ${String((recovery.output ?? '').length)}）`);
+    // 新口径（§2.6）：标记行＋位置说明行入必要说明层——完整在场、不裁剪、
+    // 不占内容预算；正文切片计入当批内容预算（≤maxResultChars＝100）。
+    const outputLines = String(recovery.output ?? '').split('\n');
+    assert.ok(outputLines[0].includes(t('en', 'delivery.recoveryMarker', { jobId })),
+      '标记行完整在场（必要说明层不裁剪）');
+    assert.ok(outputLines[1].includes('portion 1'), '位置说明行在场（份额序＋字符区间）');
+    const sliceLen = outputLines.slice(2).join('\n').length;
+    assert.ok(sliceLen <= 100 && sliceLen > 0,
+      `恢复切片计入同批内容预算（实得 ${String(sliceLen)} ≤100；标记/位置行另计）`);
     assert.equal(rig.followups.length + rig.injections.length, messagesBefore,
       '恢复出口零新完成消息（载体是工具返回）');
   } finally {
@@ -4663,66 +5020,67 @@ hostTest('RC-G：完成消息通道失败→不登记副本；正文回滚后由
   }
 });
 
-hostTest('RC-H：returned 标记的副本不被未标记的新装配覆盖（R2 守卫）；未标记副本随新装配更新', async () => {
-  const rig = await buildRig('rc-h', [], { maxResultChars: 400 });
-  ledger.attachClaimedListener(rig.ctx);
+hostTest('RC-H：份额按登记序并存——连续取消的各份额都可先后恢复（无单槽覆盖守卫）', async () => {
+  // §2.6 份额登记：每份装配必登记、不设覆盖守卫——returned 份额不被顶掉、也
+  // 不阻止新份额入册（旧单槽守卫的缺陷形态：连续取消时后续份额无副本可恢复、
+  // 永久丢失）。恢复流按登记序逐份交回。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  ledger.attachClaimedListener(ctx);
   try {
-    const controller = new AbortController();
-    const pending = rig.workflow.execute({ ...WF_ARGS, yield_ms: 20 }, rig.exec());
-    const jobId = (await pending).job_id;
-    const hold = ledger.claimWait(rig.parent.id);
-    // 大值：400 字符预算下首次装配必然截断（partial）——副本记首次份额。
-    rig.finisher(undefined, { proof: 'AT_FINAL_PAYLOAD', pad: 'x'.repeat(600) });
-    await sleep(150);
-    // 首次装配：60 字符预算下正文截断（partial）——副本记首次份额。
-    const first = await rig.waiter.execute({ wait_ms: 0 }, { agent: rig.parent, signal: controller.signal });
-    await ledger.releaseWait(hold, rig.parent.id);
-    const subject = ledger.subjects.get(rig.parent.id);
-    const copy1 = subject.recoveries.get(jobId);
-    assert.ok(copy1 !== undefined, '前置：首次装配登记副本');
-    assert.equal(copy1.partial, true, '截断份额记 partial');
-    controller.abort();
-    rig.ctx.emit('agent/turn-stopping', { agent: { id: rig.parent.id } });
-    assert.equal(subject.recoveries.get(jobId)?.returned, true, '中止复检：副本置 returned');
-    // 关批：本测试全程持有活等待登记（压住完成消息路径），批预算不会因等待
-    // 返回自然关闭——领取事件承担关批（生产里两次调用之间隔一次领取）。
-    rig.ctx.emit('agent/inbox/claimed', { agent: { id: rig.parent.id } });
-    // R2 守卫：续段（未标记的新装配）不得覆盖 returned 副本。
-    const rec1 = await rig.waiter.execute(
-      { wait_ms: 0, targets: [{ kind: 'job', id: jobId }] }, rig.exec()
-    );
-    const kept = subject.recoveries.get(jobId);
-    assert.equal(kept.text, copy1.text, 'returned 副本保持首次份额（不被续段覆盖）');
-    assert.equal(kept.returned, true, 'returned 标记保持');
-    assert.ok(String(rec1.output ?? '').includes('x'.repeat(20)), '续段交回：省略中段进正文');
-    assert.ok(!String(rec1.output ?? '').includes(t('en', 'delivery.recoveryMarker', { jobId })),
-      '有未交付内容时不重发副本（§2.6 续取优先——同批无「恢复＋续段」双档）');
-    // 对照（直达账本，L 系列先例）：未标记的既有副本被新装配覆盖——最新份额是
-    // 当前未确认内容。首装截断（700 字符正文在 500 预算下取首尾份额），续段
-    // 装配登记新份额并覆盖未标记副本。
-    const ctx2 = new Context();
-    ledger.registerRow(ctx2);
-    try {
-      const owner2 = `rc-h-owner2-${Math.random().toString(36).slice(2, 8)}`;
-      ledger.noteJobStarted(ctx2, { maxResultChars: 500, agentLang: 'en' }, 'rc-h-plain', owner2);
-      const e2 = ledger.jobs.get('rc-h-plain');
-      e2.terminal = { status: 'completed', exitCode: 0 };
-      e2.buffer = `HEAD-${'a'.repeat(350)}TAIL-${'b'.repeat(350)}`;
-      ledger.collectBatch(owner2, { lang: 'en' });
-      const s2 = ledger.subjects.get(owner2);
-      const firstCopy = s2.recoveries.get('rc-h-plain');
-      assert.ok(firstCopy !== undefined && firstCopy.returned === false, '前置：未标记副本在册');
-      assert.equal(firstCopy.partial, true, '前置：首装截断（partial）');
-      s2.batch = null;
-      ledger.collectBatch(owner2, { lang: 'en' });
-      const secondCopy = s2.recoveries.get('rc-h-plain');
-      assert.notEqual(secondCopy.text, firstCopy.text, '未标记副本随续段装配更新（最新未确认份额）');
-      assert.equal(secondCopy.returned, false, '新装配未标记');
-    } finally {
-      ledger.disposeRow(ctx2);
+    const owner = `rc-h-owner-${Math.random().toString(36).slice(2, 8)}`;
+    ledger.noteJobStarted(ctx, { maxResultChars: 400, agentLang: 'en' }, 'rc-h-job', owner);
+    const entry = ledger.jobs.get('rc-h-job');
+    entry.terminal = { status: 'completed', exitCode: 0 };
+    entry.buffer = `HEAD-${'a'.repeat(600)}TAIL`;
+    const subjectOf = () => ledger.subjects.get(owner);
+    const portions = () => subjectOf()?.recoveries.get('rc-h-job') ?? [];
+    // 份额 1：首装在 400 预算下截断（partial）——载体随后改写取消（中止复检退回）。
+    const carrier1 = new AbortController();
+    ledger.collectBatch(owner, { lang: 'en', carrierSignal: carrier1.signal });
+    assert.equal(portions().length, 1, '前置：首装登记份额 1');
+    assert.equal(portions()[0].partial, true, '截断份额记 partial');
+    carrier1.abort();
+    ctx.emit('agent/turn-stopping', { agent: { id: owner } });
+    assert.equal(portions()[0].returned, true, '中止复检：份额 1 置 returned（不确认、不清除）');
+    subjectOf().batch = null; // 关批（生产＝领取关批）
+    // 份额 2：续段装配（缓冲的中段）——旧守卫下 returned 份额阻止新登记（份额 2
+    // 永久丢失＝修前红）；份额模型下两份并存。
+    const carrier2 = new AbortController();
+    ledger.collectBatch(owner, { lang: 'en', carrierSignal: carrier2.signal });
+    assert.equal(portions().length, 2, '份额 2 与份额 1 并存（修前：被守卫挡掉＝红）');
+    assert.equal(portions()[1].returned, false, '份额 2 未标记');
+    carrier2.abort();
+    ctx.emit('agent/turn-stopping', { agent: { id: owner } });
+    assert.equal(portions().length, 2, '两份 returned 份额都保持（M1 豁免）');
+    assert.ok(portions().every((one) => one.returned === true), '两份额均按退回标记');
+    // 缓冲已清空（首尾＋中段都装配过）→ 恢复流：按登记序逐份交回。
+    assert.equal(entry.buffer, '', '前置：无未交付内容（续取优先不适用）');
+    subjectOf().batch = null; // 关批后进入恢复流（生产＝领取关批）
+    let served = '';
+    // 份额 1 全文 441 字符（截断装配含省略标注）超一批预算（400）——恢复流按
+    // 游标分批：份额 1 两批（400＋41）、份额 2 一批；期望份额序序列 [1, 1, 2]。
+    for (const expectedOrd of [1, 1, 2]) {
+      assert.equal(ledger.stageRecovery('rc-h-job', owner)?.tier, 1,
+        `份额 ${String(expectedOrd)} 第 1 档可恢复`);
+      const batch = ledger.collectBatch(owner, { lang: 'en' });
+      const item = batch.delivered.find((one) => one.recovery === true);
+      assert.ok(item !== undefined, `份额 ${String(expectedOrd)} 恢复条目在批`);
+      assert.ok(item.recoveryHead.includes(`portion ${String(expectedOrd)}`),
+        `位置说明行报份额序 ${String(expectedOrd)}`);
+      assert.ok(item.recoveryHead.includes(t('en', 'delivery.recoveryMarker', { jobId: 'rc-h-job' })),
+        '标记行在场（必要说明层，不入正文预算）');
+      served += item.text;
+      subjectOf().batch = null;
     }
+    assert.equal(ledger.stageRecovery('rc-h-job', owner)?.drained, true,
+      '两份额服务完：流取尽待定案');
+    assert.equal(served, portions().map((one) => one.text).join(''),
+      '两份额全文按登记序交回（份额 1 在前、份额 2 在后）');
+    // 载体构造失败的对照（RC-K 详测）：undoClaim 回退游标、份额仍在册可重取。
   } finally {
-    await rig.dispose();
+    ledger.disposeRow(ctx);
   }
 });
 
@@ -4755,17 +5113,24 @@ hostTest('RC-L：恢复条目批满/预算尽整条延后——挂起保持、�
     assert.ok(second.deferred.includes('rc-l-job'), '延后随 deferred 清单可见');
     assert.equal(subject.stagedRecovery?.jobId, 'rc-l-job', '挂起保持（不清）');
     assert.ok(subject.recoveries.get('rc-l-job') !== undefined, '副本未被消费');
-    // 批关闭（生产＝领取关批；此处直达账本置空重开）→ 下一批第 1 档恢复。
+    // 批关闭（生产＝领取关批；此处直达账本置空重开）→ 下一批第 1 档恢复：自
+    // 游标起顺序切片（标记行＋位置说明行入必要说明层，不入正文预算）。
     subject.batch = null;
     const third = ledger.collectBatch(owner, { lang: 'en' });
     const recoveryItem = third.delivered.find((item) => item.recovery === true);
-    assert.ok(recoveryItem !== undefined, '下一批恢复交付（标记行＋副本正文）');
-    assert.ok(recoveryItem.text.includes(t('en', 'delivery.recoveryMarker', { jobId: 'rc-l-job' })),
-      '标记行在场（恢复体在 400 预算下被裁剪，头段完整容纳标记行）');
-    assert.ok(recoveryItem.text.includes('HEAD-'),
-      '副本正文在场（首装份额头段）');
-    assert.ok(recoveryItem.text.endsWith('a'.repeat(160)), '副本份额尾段在场（尾 40% 份额）');
+    assert.ok(recoveryItem !== undefined, '下一批恢复交付（标记行＋正文切片＋位置说明行）');
+    assert.ok(recoveryItem.recoveryHead.includes(t('en', 'delivery.recoveryMarker', { jobId: 'rc-l-job' })),
+      '标记行在恢复头（必要说明层，不再占用/挤占正文预算）');
+    assert.ok(recoveryItem.recoveryHead.includes('portion 1'),
+      '位置说明行报份额序与字符区间');
+    assert.equal(recoveryItem.text, 'HEAD-' + 'a'.repeat(395),
+      '切片＝份额全文（400 预算恰好容纳，顺序切片不首尾裁剪）');
+    const stream = subject.recoveryStreams.get('rc-l-job');
+    assert.equal(stream?.ord, 1, '游标在份额 1');
+    assert.equal(stream?.offset, 400, '游标推进到份额末尾');
     assert.equal(subject.stagedRecovery, null, '恢复后挂起清空');
+    assert.equal(ledger.stageRecovery('rc-l-job', owner)?.drained, true,
+      '同回合重复请求：流取尽待定案（状态说明口径，不重发正文）');
   } finally {
     ledger.disposeRow(ctx);
   }
@@ -4802,8 +5167,9 @@ hostTest('RC-M：续取优先——有未交付内容时不重发副本、中段
       '无未交付内容、副本未确认 → 第 1 档');
     const third = ledger.collectBatch(owner, { lang: 'en' });
     const item = third.delivered.find((i) => i.recovery === true);
-    assert.ok(item !== undefined && item.text.includes(t('en', 'delivery.recoveryMarker', { jobId: 'rc-m-job' })),
-      '第 1 档交回：标记行＋副本正文');
+    assert.ok(item !== undefined
+      && item.recoveryHead.includes(t('en', 'delivery.recoveryMarker', { jobId: 'rc-m-job' })),
+      '第 1 档交回：标记行（恢复头）＋副本正文');
   } finally {
     ledger.disposeRow(ctx);
   }
@@ -4828,19 +5194,20 @@ hostTest('RC-N：运行中增量登记副本——无新增量时按第 1 档交
     assert.equal(entry.deliveredFact, null, '不置已交付事实');
     assert.equal(entry.claimedBy, null, '不置认领');
     const subject = ledger.subjects.get(owner);
-    const copy = subject.recoveries.get('rc-n-job');
+    const copy = (subject.recoveries.get('rc-n-job') ?? [])[0];
     assert.ok(copy !== undefined && copy.terminal === null && copy.via === 'wait',
-      '增量副本在册（终态空、等待载体）');
+      '增量份额在册（终态空、等待载体）');
     assert.strictEqual(copy.signal, carrier,
-      '增量副本记本次等待调用的取消信号——改写取消退回判据的凭据（删除传参即红）');
+      '增量份额记本次等待调用的取消信号——改写取消退回判据的凭据（删除传参即红）');
     assert.equal(entry.buffer, '', '增量完整交付、缓冲空');
     subject.batch = null;
     assert.equal(ledger.stageRecovery('rc-n-job', owner)?.tier, 1,
-      '副本在册即有恢复语义（运行中作业同样成立）');
+      '份额在册即有恢复语义（运行中作业同样成立）');
     const second = ledger.collectBatch(owner, { lang: 'en' });
     const item = second.delivered.find((i) => i.recovery === true);
-    assert.ok(item !== undefined && item.text.includes(t('en', 'delivery.recoveryMarker', { jobId: 'rc-n-job' })),
-      '第 1 档交回：标记行＋增量副本正文');
+    assert.ok(item !== undefined
+      && item.recoveryHead.includes(t('en', 'delivery.recoveryMarker', { jobId: 'rc-n-job' })),
+      '第 1 档交回：标记行（恢复头）＋增量份额正文');
   } finally {
     ledger.disposeRow(ctx);
   }
@@ -4877,6 +5244,373 @@ hostTest('RC-O：多目标恢复同批单条——单槽末位胜出，其余副
     assert.equal(ledger.stageRecovery('rc-o-a', owner)?.tier, 1, 'A 可再请求逐批交回');
   } finally {
     ledger.disposeRow(ctx);
+  }
+});
+
+// ── RC-P～RC-U（§2.6 恢复份额模型：游标分批、推进回退与定案、多份额并存、
+// 流取尽待定案、同批单条与预算口径、清除与丢失边界）──────────────────────
+
+/** 主体后缀：随机串隔离各装置的主体键。 */
+const rcSuffix = () => Math.random().toString(36).slice(2, 8);
+
+/**
+ * 直达账本装置的公共步：开作业账并把终态与缓冲拨到待交付形态
+ *（noteJobStarted 只建账；terminal／buffer 由装置直接置位，同上方
+ * RC-L／RC-M／RC-N 装置）。
+ */
+function seedTerminalJob(ctx, owner, jobId, config, body) {
+  ledger.noteJobStarted(ctx, config, jobId, owner);
+  const entry = ledger.jobs.get(jobId);
+  entry.terminal = { status: 'completed', exitCode: 0 };
+  entry.buffer = body;
+  return entry;
+}
+
+hostTest('RC-P：恢复流游标分批——切片＝min(批剩余,未服务长)，位置行给字符区间与后续态，跨批续取至份额交齐', async () => {
+  // §2.6 恢复流装配：份额内正文按字符顺序切片，长度＝剩余批预算与未服务长度的
+  // 较小值；读取游标（份额序＋偏移）在装配点推进，标记行＋位置行随条目携带。
+  // 首装用宽预算让 900 字符整段成一份额，随后把作业额度改窄到 400——恢复批按
+  // 400＋400＋100 三批取完，逐批核对切片区间与游标落点。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  try {
+    const owner = `rc-p-owner-${rcSuffix()}`;
+    const entry = seedTerminalJob(
+      ctx, owner, 'rc-p-job', { maxResultChars: 1000, agentLang: 'en' }, 'b'.repeat(900)
+    );
+    const first = ledger.collectBatch(owner, { lang: 'en' });
+    assert.ok(first.delivered.length === 1 && first.delivered[0].chars === 900,
+      '前置：首装整段交付成单一份额（900 字符）');
+    const subject = ledger.subjects.get(owner);
+    assert.equal(subject.recoveries.get('rc-p-job')?.[0]?.text, 'b'.repeat(900),
+      '前置：份额正文在册');
+    subject.batch = null; // 关批（生产＝领取事件或全部活等待提交；装置内直达置空）
+    entry.config = { maxResultChars: 400, agentLang: 'en' }; // 恢复批按 400 额度开
+    const plan = [400, 400, 100];
+    let served = 0;
+    for (let i = 0; i < plan.length; i += 1) {
+      const sliceLen = plan[i];
+      assert.equal(ledger.stageRecovery('rc-p-job', owner)?.tier, 1,
+        `第 ${i + 1} 批：第 1 档可恢复`);
+      const item = ledger.collectBatch(owner, { lang: 'en' }).delivered
+        .find((one) => one.recovery === true);
+      assert.ok(item !== undefined, `第 ${i + 1} 批：恢复条目在批`);
+      assert.equal(item.chars, sliceLen,
+        `第 ${i + 1} 批：切片长恰为 min(批剩余, 未服务)＝${sliceLen}`);
+      assert.equal(item.text, 'b'.repeat(900).slice(served, served + sliceLen),
+        `第 ${i + 1} 批：切片＝未服务区间的正文`);
+      const more = i < plan.length - 1;
+      assert.ok(item.recoveryHead.includes(t('en', 'delivery.recoveryMarker', { jobId: 'rc-p-job' })),
+        '标记行随每次恢复条目携带（恢复类别＋可能重复警示）');
+      assert.ok(item.recoveryHead.includes(t('en', 'delivery.recoveryPosition', {
+        index: 1,
+        from: served + 1,
+        to: served + sliceLen,
+        state: t('en', more ? 'delivery.recoveryMore' : 'delivery.recoveryDone')
+      })), `位置行给字符区间 ${served + 1}–${served + sliceLen}${more ? ' 且注明还有后续' : ' 且注明交齐'}`);
+      served += sliceLen;
+      const stream = subject.recoveryStreams.get('rc-p-job');
+      assert.ok(stream !== undefined && stream.ord === 1 && stream.offset === served,
+        `第 ${i + 1} 批后游标：份额 1、偏移 ${served}`);
+      if (more) subject.batch = null; // 关批后下一批自游标续
+    }
+    assert.equal(served, 900, '三批合计＝份额全文（区间无重叠、无跳空）');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+hostTest('RC-Q：推进的确认与回退——中止信号回退游标并重发同区间；未中止对照份额清除＋确认转第 2 档', async () => {
+  // §2.6「推进的确认与回退」：恢复切片的推进记录带本次恢复调用的取消信号，回合
+  // 收尾复检——中止者回退（游标回到装配前、份额保留，重取区间按可能重复标记交
+  // 回）；未中止者定案（份额服务到末尾即清除、作业确认标记置位，后续点名按
+  // 第 2 档只交状态）。确认/回退判据挂在行监听（attachClaimedListener）。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  ledger.attachClaimedListener(ctx);
+  try {
+    // 回退分支：切片信号在装配后中止 → 游标回起点、份额退回保留、下次重发同区间。
+    const ownerA = `rc-q-a-${rcSuffix()}`;
+    seedTerminalJob(ctx, ownerA, 'rc-q-job-a', { maxResultChars: 400, agentLang: 'en' }, 'q'.repeat(200));
+    const carrier = { aborted: false };
+    assert.equal(ledger.collectBatch(ownerA, { lang: 'en', carrierSignal: carrier }).delivered.length, 1,
+      '前置：首装交付份额');
+    const subjectA = ledger.subjects.get(ownerA);
+    subjectA.batch = null;
+    assert.equal(ledger.stageRecovery('rc-q-job-a', ownerA)?.tier, 1, '前置：第 1 档可恢复');
+    const rolled = ledger.collectBatch(ownerA, { lang: 'en', carrierSignal: carrier }).delivered
+      .find((one) => one.recovery === true);
+    assert.ok(rolled !== undefined && rolled.chars === 200, '前置：恢复切片一次取完份额');
+    carrier.aborted = true; // 装配后中止（宿主改写取消窗口）
+    ctx.emit('agent/turn-stopping', { agent: { id: ownerA } });
+    const streamA = subjectA.recoveryStreams.get('rc-q-job-a');
+    assert.ok(streamA !== undefined && streamA.ord === 1 && streamA.offset === 0,
+      '中止推进被回退：游标回到装配前（份额 1、偏移 0）');
+    assert.equal(streamA.advances.length, 0, '回退后本回合推进记录清空');
+    const portionsA = subjectA.recoveries.get('rc-q-job-a');
+    assert.ok(portionsA !== undefined && portionsA.length === 1 && portionsA[0].returned === true,
+      '份额保留（退回标记置位，确认信号对其无效）');
+    subjectA.batch = null;
+    assert.equal(ledger.stageRecovery('rc-q-job-a', ownerA)?.tier, 1, '回退后份额仍可恢复');
+    const resend = ledger.collectBatch(ownerA, { lang: 'en' }).delivered
+      .find((one) => one.recovery === true);
+    assert.ok(resend !== undefined && resend.text === 'q'.repeat(200), '重发同一区间全文');
+    assert.ok(resend.recoveryHead.includes(t('en', 'delivery.recoveryPosition', {
+      index: 1, from: 1, to: 200, state: t('en', 'delivery.recoveryDone')
+    })), '位置行区间与上批相同（可能重复由标记行表达）');
+    assert.ok(resend.recoveryHead.includes(t('en', 'delivery.recoveryMarker', { jobId: 'rc-q-job-a' })),
+      '重发携带可能重复标记行');
+
+    // 对照分支：信号未中止 → 回合收尾定案：份额清除＋确认，再次点名第 2 档。
+    const ownerB = `rc-q-b-${rcSuffix()}`;
+    seedTerminalJob(ctx, ownerB, 'rc-q-job-b', { maxResultChars: 400, agentLang: 'en' }, 'w'.repeat(200));
+    const steady = { aborted: false };
+    ledger.collectBatch(ownerB, { lang: 'en', carrierSignal: steady });
+    const subjectB = ledger.subjects.get(ownerB);
+    subjectB.batch = null;
+    ledger.stageRecovery('rc-q-job-b', ownerB);
+    assert.ok(ledger.collectBatch(ownerB, { lang: 'en', carrierSignal: steady }).delivered
+      .some((one) => one.recovery === true), '前置：恢复切片一次取完份额');
+    ctx.emit('agent/turn-stopping', { agent: { id: ownerB } });
+    assert.equal(subjectB.recoveries.get('rc-q-job-b'), undefined,
+      '未中止推进定案：份额清除（服务到末尾）');
+    assert.notEqual(ledger.jobs.get('rc-q-job-b').confirmedAt, null, '作业确认标记置位');
+    assert.deepEqual(ledger.stageRecovery('rc-q-job-b', ownerB), { tier: 2 },
+      '再次点名按第 2 档交回（不重发正文）');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+hostTest('RC-R：连续取消多份额并存——两份额退回在册不被覆盖，恢复按登记序逐份全文交回', async () => {
+  // §2.6 份额登记「每份装配必登记、不设覆盖守卫」：同一作业的连续装配各成一份额
+  //（此处用运行中增量的两次装配），各自在取消窗口退回后都保留恢复锚点；恢复流
+  // 按登记次序逐份服务，单个恢复条目只交一份额、不跨份额拼接。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  ledger.attachClaimedListener(ctx);
+  try {
+    const owner = `rc-r-owner-${rcSuffix()}`;
+    ledger.noteJobStarted(ctx, { maxResultChars: 400, agentLang: 'en' }, 'rc-r-job', owner);
+    const entry = ledger.jobs.get('rc-r-job');
+    entry.terminal = null; // 运行中：增量装配逐次登记份额
+    const portions = [`INC1-${'a'.repeat(96)}`, `INC2-${'b'.repeat(96)}`];
+    for (const text of portions) {
+      entry.buffer = text;
+      const carrier = { aborted: false };
+      assert.equal(
+        ledger.collectBatch(owner, { lang: 'en', includeRunning: true, carrierSignal: carrier })
+          .delivered.length,
+        1, '前置：增量入批（includeRunning）'
+      );
+      carrier.aborted = true; // 装配后中止：份额落在退回窗口
+      ctx.emit('agent/turn-stopping', { agent: { id: owner } });
+      ledger.subjects.get(owner).batch = null;
+    }
+    const subject = ledger.subjects.get(owner);
+    const inBook = subject.recoveries.get('rc-r-job');
+    assert.ok(inBook !== undefined && inBook.length === 2, '两份份额并存在册（不覆盖、不顶掉）');
+    assert.deepEqual(inBook.map((one) => one.ord), [1, 2], '份额序按登记次序');
+    assert.ok(inBook.every((one) => one.returned === true), '两份额都按退回标记保留');
+    assert.deepEqual(inBook.map((one) => one.text), portions, '两份额原文完整（连续取消不丢正文）');
+    for (let index = 1; index <= 2; index += 1) {
+      const text = portions[index - 1];
+      assert.equal(ledger.stageRecovery('rc-r-job', owner)?.tier, 1, `份额 ${index}：第 1 档可恢复`);
+      const item = ledger.collectBatch(owner, { lang: 'en' }).delivered
+        .find((one) => one.recovery === true);
+      assert.ok(item !== undefined, `份额 ${index}：恢复条目在批`);
+      assert.equal(item.text, text, `份额 ${index}：单批交齐该份额全文（预算充足）`);
+      assert.ok(item.recoveryHead.includes(t('en', 'delivery.recoveryPosition', {
+        index, from: 1, to: text.length, state: t('en', 'delivery.recoveryDone')
+      })), `位置行点名份额 ${index} 且注明交齐`);
+      subject.batch = null; // 关批后下一批交下一份额
+    }
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+hostTest('RC-S：流取尽待定案——同回合再次点名返回 drained 形态不挂起；收尾定案清除份额并置确认', async () => {
+  // §2.6 恢复出口「流已取尽、待回合收尾定案」：份额被切片服务到末尾而推进尚未
+  // 定案时，同回合的重复恢复请求不装配正文、不挂起（{tier:1,drained:true}）；
+  // 回合收尾（推进信号未中止）把份额定案清除并置作业确认标记——经恢复载体完成
+  // 交付。首装信号在此前中止，使份额不走等待载体的确认清除、专测推进定案路径。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  ledger.attachClaimedListener(ctx);
+  try {
+    const owner = `rc-s-owner-${rcSuffix()}`;
+    const firstCarrier = { aborted: false };
+    seedTerminalJob(ctx, owner, 'rc-s-job', { maxResultChars: 400, agentLang: 'en' }, 's'.repeat(150));
+    ledger.collectBatch(owner, { lang: 'en', carrierSignal: firstCarrier });
+    const subject = ledger.subjects.get(owner);
+    subject.batch = null;
+    assert.equal(ledger.stageRecovery('rc-s-job', owner)?.tier, 1, '前置：第 1 档可恢复');
+    const steady = { aborted: false };
+    assert.ok(ledger.collectBatch(owner, { lang: 'en', carrierSignal: steady }).delivered
+      .some((one) => one.recovery === true), '前置：恢复切片一次服务到份额末尾');
+    const stream = subject.recoveryStreams.get('rc-s-job');
+    assert.ok(stream !== undefined && stream.offset === 150, '前置：游标偏移＝正文长');
+    assert.deepEqual(ledger.stageRecovery('rc-s-job', owner), { tier: 1, drained: true },
+      '同回合再次点名：drained 形态（不带正文、不挂起）');
+    assert.equal(subject.stagedRecovery, null, 'drained 不挂起消费标记');
+    firstCarrier.aborted = true; // 首装份额落退回窗口：收尾不走确认清除，走推进定案
+    ctx.emit('agent/turn-stopping', { agent: { id: owner } });
+    assert.equal(subject.recoveries.get('rc-s-job'), undefined,
+      '推进定案：份额清除（经恢复载体完成交付）');
+    assert.notEqual(ledger.jobs.get('rc-s-job').confirmedAt, null, '作业确认标记置位');
+    assert.deepEqual(ledger.stageRecovery('rc-s-job', owner), { tier: 2 }, '后续点名按第 2 档');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+hostTest('RC-T：同批单恢复条目与预算口径——单槽末位胜出、批预算只扣切片、recoveryAssembled 后同批不装第二条', async () => {
+  // §2.6 恢复装配的单批口径：挂起消费标记单槽（多目标点名末位胜出，一次
+  // collectBatch 只装配一个恢复条目）；批内容预算只扣正文切片——标记行＋位置行
+  // 属必要说明层不占预算，份额恰等于批预算时全文交付、剩余归零；同批已装过恢复
+  // 条目（recoveryAssembled 置位）后，再挂起的恢复整条延后、随 deferred 清单可见。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  try {
+    const owner = `rc-t-owner-${rcSuffix()}`;
+    for (const [id, mark] of [['rc-t-a', 'A'], ['rc-t-b', 'B']]) {
+      seedTerminalJob(ctx, owner, id, { maxResultChars: 100, agentLang: 'en' }, mark.repeat(100));
+      assert.equal(ledger.collectBatch(owner, { lang: 'en' }).delivered.length, 1,
+        `前置：${id} 整段交付成份额`);
+      ledger.subjects.get(owner).batch = null;
+    }
+    const subject = ledger.subjects.get(owner);
+    assert.equal(ledger.stageRecovery('rc-t-a', owner)?.tier, 1, 'A 第 1 档可恢复');
+    assert.equal(ledger.stageRecovery('rc-t-b', owner)?.tier, 1, 'B 第 1 档可恢复');
+    assert.equal(subject.stagedRecovery?.jobId, 'rc-t-b', '单槽末位胜出（B 挂起、A 无挂起）');
+    const recoveryItems = ledger.collectBatch(owner, { lang: 'en' }).delivered
+      .filter((one) => one.recovery === true);
+    assert.equal(recoveryItems.length, 1, '一次 collectBatch 只装配一个恢复条目');
+    assert.equal(recoveryItems[0].jobId, 'rc-t-b', '挂起者（B）交回');
+    assert.equal(recoveryItems[0].chars, 100, '份额恰 100 字符＝批预算：切片为全文');
+    assert.equal(recoveryItems[0].text, 'B'.repeat(100), '全文交付（不裁剪）');
+    assert.equal(subject.batch.remaining, 0, '批剩余恰为切片全额扣减（说明行不占预算）');
+    assert.equal(subject.batch.items, 1, '恢复条目计一个条目名额');
+    assert.ok(subject.recoveries.get('rc-t-a') !== undefined, 'A 份额保持在册（未消费）');
+    // 同批剩额：他条目先行消耗预算（批剩余 60、条目余量足够）后，恢复切片恰为
+    // 剩余量——说明行不占剩余预算，下一批自游标续取剩余部分。
+    subject.batch = { remaining: 60, items: 1, recoveryAssembled: false, echoOn: false };
+    assert.equal(ledger.stageRecovery('rc-t-a', owner)?.tier, 1, 'A 点名挂起（同批剩额形态）');
+    const partialSlice = ledger.collectBatch(owner, { lang: 'en' }).delivered
+      .find((one) => one.recovery === true);
+    assert.ok(partialSlice !== undefined && partialSlice.chars === 60,
+      '切片恰为同批剩余量（min(批剩余, 未服务)＝60）');
+    assert.equal(partialSlice.text, 'A'.repeat(60), '切片自份额起点（游标 0 起）');
+    assert.ok(partialSlice.recoveryHead.includes(t('en', 'delivery.recoveryMore')),
+      '位置行注明还有后续（未取尽）');
+    const streamA = subject.recoveryStreams.get('rc-t-a');
+    assert.ok(streamA !== undefined && streamA.offset === 60, '游标推进到 60（下一批自游标续取）');
+    subject.batch = null;
+    // 同批不再装第二条：批已装过恢复条目时整条延后——直接改批对象隔离该标记
+    //（剩余与条目数都留余量，延后只可归因于 recoveryAssembled）。
+    subject.batch = { remaining: 100, items: 0, recoveryAssembled: true, echoOn: false };
+    assert.equal(ledger.stageRecovery('rc-t-a', owner)?.tier, 1, 'A 再次点名挂起');
+    const second = ledger.collectBatch(owner, { lang: 'en' });
+    assert.ok(second.delivered.every((one) => one.recovery !== true), '同批不装第二条恢复条目');
+    assert.ok(second.deferred.includes('rc-t-a'), '整条延后随 deferred 清单可见');
+    assert.equal(subject.stagedRecovery?.jobId, 'rc-t-a', '挂起保持（下一批自游标续）');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+hostTest('RC-U：清除与丢失边界——行卸载清份额/游标/丢失清单；期限清扫与条数逐出记录丢失序号并按第 3 档交回', async () => {
+  // §2.6「副本上限与生命周期」：行卸载按行清三账（份额、恢复流游标、丢失清单，
+  // 与他行作业隔离）；份额期限 30 分钟按登记时刻惰性清扫——恢复请求时点现查现
+  // 清，未服务完即消失的序号记入丢失清单，有已交付事实时第 3 档附缺失序号与
+  // 终态事实；条数上限 10 逐出跨作业按登记时刻 FIFO，被逐出的未服务份额同录丢失。
+  resetDeliveryLedger();
+  const realClock = () => Number(process.hrtime.bigint() / 1_000_000n);
+  const rows = [];
+  try {
+    // ① 行卸载：卸载一行只清该行创建作业的份额、游标与丢失清单，他行作业照旧。
+    const owner1 = `rc-u-o1-${rcSuffix()}`;
+    const row1 = new Context();
+    const row2 = new Context();
+    rows.push(row1, row2);
+    ledger.registerRow(row1);
+    ledger.registerRow(row2);
+    seedTerminalJob(row1, owner1, 'rc-u-j1', { maxResultChars: 400, agentLang: 'en' }, 'x'.repeat(120));
+    seedTerminalJob(row2, owner1, 'rc-u-j2', { maxResultChars: 400, agentLang: 'en' }, 'y'.repeat(120));
+    for (const id of ['rc-u-j1', 'rc-u-j2']) {
+      ledger.collectBatch(owner1, { lang: 'en' });
+      ledger.subjects.get(owner1).batch = null;
+    }
+    const subject1 = ledger.subjects.get(owner1);
+    ledger.stageRecovery('rc-u-j1', owner1); // 建 J1 的恢复流游标
+    assert.ok(ledger.collectBatch(owner1, { lang: 'en' }).delivered
+      .some((one) => one.recovery === true), '前置：J1 恢复流游标在册');
+    // 丢失清单的写入机制由 ②期限清扫与 ③条数逐出实测；此处按数据形状预置，
+    // 专测行卸载对三账的清理边界。
+    subject1.lostPortions.set('rc-u-j1', [1]);
+    ledger.disposeRow(row1);
+    assert.equal(ledger.jobs.get('rc-u-j1'), undefined, '行卸载清该行作业条目');
+    assert.equal(subject1.recoveries.get('rc-u-j1'), undefined, '行卸载清该行作业份额');
+    assert.equal(subject1.recoveryStreams.get('rc-u-j1'), undefined, '行卸载清该行作业恢复流游标');
+    assert.equal(subject1.lostPortions.get('rc-u-j1'), undefined, '行卸载清该行作业丢失清单');
+    assert.ok(subject1.recoveries.get('rc-u-j2') !== undefined, '他行作业份额不受影响（按行隔离）');
+
+    // ② 期限惰性清扫：份额未服务完即到期——假时钟把每次读数都推到期限之外，
+    // stageRecovery 现查现清；已交付事实在场 → 第 3 档附缺失份额序号与终态事实。
+    const owner2 = `rc-u-o2-${rcSuffix()}`;
+    const row3 = new Context();
+    rows.push(row3);
+    ledger.registerRow(row3);
+    seedTerminalJob(row3, owner2, 'rc-u-t3', { maxResultChars: 400, agentLang: 'en' }, 'z'.repeat(120));
+    ledger.collectBatch(owner2, { lang: 'en' }); // 已交付事实在册、份额未确认
+    const subject2 = ledger.subjects.get(owner2);
+    let fake = ledger.now() + 31 * 60 * 1000;
+    ledger.now = () => (fake += 31 * 60 * 1000);
+    const tier3 = ledger.stageRecovery('rc-u-t3', owner2);
+    ledger.now = realClock;
+    assert.deepEqual(tier3,
+      { tier: 3, terminal: { status: 'completed', exitCode: 0 }, spillPaths: [], lost: [1] },
+      '第 3 档：缺失份额序号在场、终态事实随行、不伪造正文');
+    assert.equal(subject2.recoveries.get('rc-u-t3'), undefined, '到期份额被清扫（未服务完即消失）');
+    assert.deepEqual(subject2.lostPortions.get('rc-u-t3'), [1], '丢失清单记录其份额序号');
+
+    // ③ 条数逐出（上限 10，跨作业 FIFO）：两作业交错登记 11 份增量份额，第 11 份
+    // 入册时最旧一份被逐出并记丢失；步进时钟保证登记次序可比。
+    const owner3 = `rc-u-o3-${rcSuffix()}`;
+    const row4 = new Context();
+    rows.push(row4);
+    ledger.registerRow(row4);
+    let tick = 1_000_000;
+    ledger.now = () => (tick += 1);
+    for (const id of ['rc-u-ea', 'rc-u-eb']) {
+      ledger.noteJobStarted(row4, { maxResultChars: 100, agentLang: 'en' }, id, owner3);
+      ledger.jobs.get(id).terminal = null; // 运行中：增量装配逐次登记份额
+    }
+    for (let i = 1; i <= 11; i += 1) {
+      const id = i % 2 === 1 ? 'rc-u-ea' : 'rc-u-eb';
+      ledger.jobs.get(id).buffer = `p${i}-chunk`;
+      const outcome = ledger.collectBatch(owner3, { lang: 'en', includeRunning: true });
+      assert.equal(outcome.delivered.length, 1, `第 ${i} 份：增量入批登记份额`);
+      ledger.subjects.get(owner3).batch = null; // 逐次关批（主体记录由装配创建）
+    }
+    const subject3 = ledger.subjects.get(owner3);
+    assert.deepEqual(subject3.recoveries.get('rc-u-ea')?.map((one) => one.ord), [2, 3, 4, 5, 6],
+      'A 存留 5 份（最旧的份额 1 被逐出）');
+    assert.deepEqual(subject3.recoveries.get('rc-u-eb')?.map((one) => one.ord), [1, 2, 3, 4, 5],
+      'B 存留 5 份（逐出跨作业按登记时刻 FIFO）');
+    assert.deepEqual(subject3.lostPortions.get('rc-u-ea'), [1], '被逐出的未服务份额序号记入丢失清单');
+    assert.equal(subject3.lostPortions.get('rc-u-eb'), undefined, 'B 无丢失记录');
+  } finally {
+    ledger.now = realClock; // 复位时钟（②③用假钟，resetDeliveryLedger 之外的自恢复）
+    for (const row of rows) {
+      if (ledger.rows.has(row)) ledger.disposeRow(row);
+    }
   }
 });
 
@@ -5028,16 +5762,16 @@ hostTest('RC-I：首等直付登记恢复副本——改写取消后可恢复（
     const jobId = rig.ctx.jobs.list(rig.parent.id)
       .find((j) => j.status === 'completed' && j.kind === 'async-workflow').id;
     const subject = ledger.subjects.get(rig.parent.id);
-    const copy = subject.recoveries.get(jobId);
-    assert.ok(copy !== undefined, '首等直付登记恢复副本（修前：无副本＝红）');
-    assert.equal(copy.via, 'firstwait', '副本载体＝判据表第一行（firstwait）');
-    assert.ok(copy.text.includes('AT_FINAL_PAYLOAD'), '副本记本次直付文本');
+    const copy = (subject.recoveries.get(jobId) ?? [])[0];
+    assert.ok(copy !== undefined, '首等直付登记恢复份额（修前：无副本＝红）');
+    assert.equal(copy.via, 'firstwait', '份额载体＝判据表第一行（firstwait）');
+    assert.ok(copy.text.includes('AT_FINAL_PAYLOAD'), '份额记本次直付文本');
     // 改写取消窗口：装配后、回合收尾前中止——退回不确认（M1 豁免）。
     controller.abort();
     rig.ctx.emit('agent/turn-stopping', { agent: { id: rig.parent.id } });
-    const returnedCopy = subject.recoveries.get(jobId);
-    assert.ok(returnedCopy !== undefined, '退回副本保持未确认（修前：无副本可退＝红）');
-    assert.equal(returnedCopy.returned, true, '中止复检置 returned（不确认）');
+    const returnedCopies = subject.recoveries.get(jobId) ?? [];
+    assert.equal(returnedCopies.length, 1, '退回份额保持未确认（修前：无副本可退＝红）');
+    assert.equal(returnedCopies[0].returned, true, '中止复检置 returned（不确认）');
     // 恢复出口：显式零等待点名 → 第 1 档（标记行＋副本正文重发）。
     const recovered = await rig.waiter.execute(
       { wait_ms: 0, targets: [{ kind: 'job', id: jobId }] }, rig.exec()
@@ -5056,53 +5790,60 @@ hostTest('RC-I：首等直付登记恢复副本——改写取消后可恢复（
 
 hostTest('RC-J：出口中止的登记现查——装配时信号已中止即置 returned（minor ⑤，修前红）', async () => {
   // 残余窗口（评审 minor ⑤）：装配后、回合收尾前中止＋同回合续段再装配——无
-  // 登记现查时新装配不带标记，R2 守卫漏保护该份额。修后 #registerRecovery 在
-  // 登记时现查 signal.aborted，中止窗口内的装配直接带 returned 落册。
+  // 登记现查时新装配不带标记，份额级退回判据漏保护该份额。修后 #registerRecovery
+  // 在登记时现查 signal.aborted，中止窗口内的装配直接带 returned 落册。
   const ctx = new Context();
   ledger.registerRow(ctx);
+  ledger.attachClaimedListener(ctx);
   try {
     const owner = `rc-j-owner-${Math.random().toString(36).slice(2, 8)}`;
     ledger.noteJobStarted(ctx, { maxResultChars: 500, agentLang: 'en' }, 'rc-j-job', owner);
     const entry = ledger.jobs.get('rc-j-job');
     entry.terminal = { status: 'completed', exitCode: 0 };
     entry.buffer = `HEAD-${'a'.repeat(350)}TAIL-${'b'.repeat(350)}`;
-    const controller = new AbortController();
-    // 首次装配（信号未中止）：副本不带标记。
-    ledger.collectBatch(owner, { lang: 'en', carrierSignal: controller.signal });
+    const carrier1 = new AbortController();
+    // 首次装配（信号未中止）：份额 1 不带标记。
+    ledger.collectBatch(owner, { lang: 'en', carrierSignal: carrier1.signal });
     const subject = ledger.subjects.get(owner);
-    const firstCopy = subject.recoveries.get('rc-j-job');
-    assert.ok(firstCopy !== undefined && firstCopy.returned === false, '前置：首装副本未标记');
+    const firstCopy = (subject.recoveries.get('rc-j-job') ?? [])[0];
+    assert.ok(firstCopy !== undefined && firstCopy.returned === false, '前置：首装份额未标记');
     subject.batch = null;
     // 中止发生在两次装配之间：第二次装配在改写取消窗口内——登记现查必须置
-    // returned（修前：copy2.returned === false＝红）。
-    controller.abort();
+    // returned（修前：份额 2.returned === false＝红）。两载体各持独立信号：
+    // 份额 1 的信号保持未中止（回合收尾按未中止确认），份额 2 现查即退回。
+    const carrier2 = new AbortController();
+    carrier2.abort();
     entry.buffer = `CONT-${'c'.repeat(300)}`;
-    ledger.collectBatch(owner, { lang: 'en', carrierSignal: controller.signal });
-    const secondCopy = subject.recoveries.get('rc-j-job');
-    assert.equal(secondCopy?.returned, true,
+    ledger.collectBatch(owner, { lang: 'en', carrierSignal: carrier2.signal });
+    const copies = subject.recoveries.get('rc-j-job') ?? [];
+    assert.equal(copies.length, 2, '两份额并存（中止窗口内的装配同样登记）');
+    assert.equal(copies[1]?.returned, true,
       '中止窗口内的装配直接带 returned 落册（登记现查）');
-    // M1：回合收尾不确认带标记副本。
+    // M1：回合收尾确认未标记份额（份额 1 删除）、带标记份额免疫确认信号。
     ctx.emit('agent/turn-stopping', { agent: { id: owner } });
-    assert.equal(ledger.subjects.get(owner).recoveries.get('rc-j-job')?.returned, true,
-      '带标记副本对确认信号免疫（仍可恢复）');
+    const rest = ledger.subjects.get(owner).recoveries.get('rc-j-job') ?? [];
+    assert.equal(rest.length, 1, '份额 1 经回合收尾确认清除');
+    assert.equal(rest[0]?.returned, true, '带标记份额对确认信号免疫（仍可恢复）');
   } finally {
     ledger.disposeRow(ctx);
   }
 });
 
-hostTest('RC-K：恢复条目不参与回滚链——undoClaim 跳过 recovery 条目（minor ①，修前红）', async () => {
-  // 修前形态：出口异常把恢复条目（标记行＋副本正文）当普通条目回滚——original
-  // 回写 buffer、deliveredFact 清位，后续批次把标记行再当作业正文投一次。修后
-  // undoClaim 对 recovery 条目整条跳过：恢复交付无可还原状态。
+hostTest('RC-K：恢复条目回滚＝游标回退——undoClaim 不写作业缓冲、不清交付事实（minor ①）', async () => {
+  // 修前形态：出口异常把恢复条目当普通条目回滚——original 回写 buffer、
+  // deliveredFact 清位，后续批次把标记行再当作业正文投一次。份额模型下恢复
+  // 条目的回滚＝恢复游标回退到装配前位置（载体构造失败时切片自游标重发），
+  // 不写作业缓冲、不置认领、不重置已交付事实、不登记新份额。
   const ctx = new Context();
   ledger.registerRow(ctx);
+  ledger.attachClaimedListener(ctx);
   try {
     const owner = `rc-k-owner-${Math.random().toString(36).slice(2, 8)}`;
     ledger.noteJobStarted(ctx, { maxResultChars: 4000, agentLang: 'en' }, 'rc-k-job', owner);
     const entry = ledger.jobs.get('rc-k-job');
     entry.terminal = { status: 'completed', exitCode: 0 };
     entry.buffer = 'RC-K-BODY-唯一正文';
-    ledger.collectBatch(owner, { lang: 'en' }); // 首装：deliveredFact 置位＋副本登记
+    ledger.collectBatch(owner, { lang: 'en' }); // 首装：deliveredFact 置位＋份额登记
     assert.notEqual(entry.deliveredFact, null, '前置：已交付事实在册');
     const subject = ledger.subjects.get(owner);
     subject.batch = null;
@@ -5111,18 +5852,36 @@ hostTest('RC-K：恢复条目不参与回滚链——undoClaim 跳过 recovery �
     const { delivered } = ledger.collectBatch(owner, { lang: 'en' });
     const recoveryItem = delivered.find((item) => item.recovery === true);
     assert.ok(recoveryItem !== undefined, '前置：恢复条目在批');
-    assert.match(recoveryItem.text, /recovery copy|恢复副本/, '恢复条目带标记行');
-    // 出口异常路径的回滚凭据携带恢复条目——跳过，不破坏任何账面状态。
+    assert.equal(recoveryItem.text, 'RC-K-BODY-唯一正文', '条目正文＝切片（标记行不入正文）');
+    assert.ok(recoveryItem.recoveryHead.includes(t('en', 'delivery.recoveryMarker', { jobId: 'rc-k-job' })),
+      '恢复头带标记行');
+    const stream = subject.recoveryStreams.get('rc-k-job');
+    assert.equal(stream?.offset, 'RC-K-BODY-唯一正文'.length, '前置：游标推进到切片末尾');
+    // 出口异常路径的回滚凭据携带恢复条目——游标回退，不破坏任何账面状态。
     ledger.undoClaim(owner, delivered);
     assert.notEqual(ledger.jobs.get('rc-k-job').deliveredFact, null,
       '恢复回滚不清已交付事实（修前：清位＝红）');
     assert.equal(ledger.jobs.get('rc-k-job').buffer, '',
-      '标记行不回写 buffer（修前：original 回写＝红）');
-    assert.ok(subject.recoveries.get('rc-k-job') !== undefined,
-      '副本本体不受回滚影响（仍可再次恢复）');
+      '不回写作业缓冲（修前：original 回写＝红）');
+    const rolled = subject.recoveryStreams.get('rc-k-job');
+    assert.equal(rolled?.ord, 1, '回滚后游标仍在份额 1');
+    assert.equal(rolled?.offset, 0, '游标回退到装配前位置（切片自起点重发）');
+    assert.ok((subject.recoveries.get('rc-k-job') ?? []).length === 1,
+      '份额本体不受回滚影响（仍可再次恢复）');
+    // 重取：再次挂起＋装配 → 同区间切片重发（载体构造失败不丢份额）。
     subject.batch = null;
+    assert.equal(ledger.stageRecovery('rc-k-job', owner)?.tier, 1, '回退后第 1 档仍可恢复');
     const next = ledger.collectBatch(owner, { lang: 'en' });
-    assert.equal(next.delivered.filter((item) => item.job_id === 'rc-k-job').length, 0,
+    const again = next.delivered.find((item) => item.recovery === true);
+    assert.equal(again?.text, 'RC-K-BODY-唯一正文', '同区间切片重发（游标回退即送达保护）');
+    // 回合收尾定案（载体信号未中止）：份额清除＋确认，后续恢复第 2 档、批次
+    // 不再投该作业。
+    ctx.emit('agent/turn-stopping', { agent: { id: owner } });
+    assert.equal(subject.recoveries.get('rc-k-job'), undefined, '定案清除份额');
+    assert.equal(ledger.stageRecovery('rc-k-job', owner)?.tier, 2, '确认后第 2 档');
+    subject.batch = null;
+    const later = ledger.collectBatch(owner, { lang: 'en' });
+    assert.equal(later.delivered.filter((item) => item.job_id === 'rc-k-job').length, 0,
       '后续批次不再投该作业（修前：标记行当正文再投＝红）');
   } finally {
     ledger.disposeRow(ctx);
@@ -5312,7 +6071,9 @@ trcGate('T-RC-1 真 agent-loop 装置：真投影折叠＋真实事件时序驱�
       await sleep(150);
       assert.equal(rig.injections.length, 1, '前置：完成消息经 inject 接受（宿主接受点）');
       const msgCopies = () => [...ledger.subjects.get('trc1-hot').recoveries.entries()]
-        .filter(([, copy]) => copy.via === 'message');
+        .flatMap(([jobId, portions]) => portions
+          .filter((copy) => copy.via === 'message')
+          .map((copy) => [jobId, copy]));
       assert.equal(msgCopies().length, 1, '前置：消息载体副本在接受点登记');
       const msgJobId = msgCopies()[0][0];
       session.append('agent/inbox/spliced', {
@@ -5342,8 +6103,8 @@ trcGate('T-RC-1 真 agent-loop 装置：真投影折叠＋真实事件时序驱�
         { target: 'next-step', start: 0, removedCount: 1, inserted: [], outcome: 'canceled' });
       root.emit('agent/inbox/discarded',
         { agent: { id: 'trc1-hot' }, message: { id: 'trc1-drop' } });
-      assert.equal(ledger.subjects.get('trc1-hot').recoveries.get(dropJobId)?.returned, true,
-        '取消待处理输入＝副本退回（保持未确认，可恢复）');
+      assert.equal((ledger.subjects.get('trc1-hot').recoveries.get(dropJobId) ?? [])[0]?.returned, true,
+        '取消待处理输入＝份额退回（保持未确认，可恢复）');
     } finally {
       await rig.dispose();
     }
@@ -5410,18 +6171,21 @@ hostTest('T-MIX-1 三项组合：外来静默完成＋等待返回被改写取�
     assert.ok(deliveredIds.includes(handle.job_id), '编排正文随等待载体交付');
     assert.ok(deliveredIds.includes(foreignId), '外来终态经对账发现同批交付');
     const subject = ledger.subjects.get(rig.parent.id);
-    assert.ok(subject.recoveries.get(handle.job_id)?.via === 'wait', '编排副本（等待载体）');
-    assert.ok(subject.recoveries.get(foreignId)?.via === 'wait', '外来副本（等待载体）');
-    // 改写取消：装配后、回合收尾前中止——两副本一并退回（M1 豁免）。
+    assert.ok((subject.recoveries.get(handle.job_id) ?? [])[0]?.via === 'wait', '编排份额（等待载体）');
+    assert.ok((subject.recoveries.get(foreignId) ?? [])[0]?.via === 'wait', '外来份额（等待载体）');
+    // 改写取消：装配后、回合收尾前中止——两份额一并退回（M1 豁免）。
     controller.abort();
     rig.ctx.emit('agent/turn-stopping', { agent: { id: rig.parent.id } });
-    assert.equal(subject.recoveries.get(handle.job_id)?.returned, true, '编排副本退回');
-    assert.equal(subject.recoveries.get(foreignId)?.returned, true, '外来副本退回');
+    assert.equal((subject.recoveries.get(handle.job_id) ?? [])[0]?.returned, true, '编排份额退回');
+    assert.equal((subject.recoveries.get(foreignId) ?? [])[0]?.returned, true, '外来份额退回');
     // 恢复：两作业各自显式零等待点名——第 1 档重发，互不干扰。
     rig.ctx.emit('agent/inbox/claimed', { agent: { id: rig.parent.id } }); // 关批（生产里隔一次领取）
     const recWf = await rig.waiter.execute(
       { wait_ms: 0, targets: [{ kind: 'job', id: handle.job_id }] }, rig.exec()
     );
+    // 同批单恢复条目（§2.6）：第二份额的恢复经领取关批后进新批（生产里两次
+    // 点名之间隔一次领取——与既有装置节奏一致）。
+    rig.ctx.emit('agent/inbox/claimed', { agent: { id: rig.parent.id } });
     const recForeign = await rig.waiter.execute(
       { wait_ms: 0, targets: [{ kind: 'job', id: foreignId }] }, rig.exec()
     );
