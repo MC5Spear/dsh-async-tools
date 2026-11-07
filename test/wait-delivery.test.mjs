@@ -20,7 +20,7 @@ import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
 import { resolveConfig } from '../lib/config.js';
 import { LATE_ANSWER_EVENT } from '../lib/interrupts.js';
 import { t } from '../lib/text.js';
-import { resetAgentBaselines, describeEntry } from '../lib/wait-agent-target.js';
+import { AgentTarget, resetAgentBaselines, describeEntry } from '../lib/wait-agent-target.js';
 import { checkedTool, inboxPayload } from './_helpers.mjs';
 
 // delivery.js 静态依赖 @deepseek-ai/dsh-llm（宿主链）——离线守卫禁止测试文件
@@ -6590,3 +6590,52 @@ hostTest('RA-EXIT-CLEANUP：清理步骤抛错不覆盖出口——releaseWait �
     }
   }
 });
+
+hostTest('RA-BASELINE-LIFECYCLE：真实行卸载回调仅在末行清空全部观察登记', () => {
+  resetDeliveryLedger();
+  resetAgentBaselines();
+  const first = rowRig();
+  const last = rowRig();
+  const a = new AgentTarget({ owner: 'baseline-owner-a', agentId: 'child' });
+  const b = new AgentTarget({ owner: 'baseline-owner-b', agentId: 'child' });
+  try {
+    applyRow(first.ctx, { toolName: 'async_run' });
+    applyRow(last.ctx, { toolName: 'async_wait' });
+    a.noteReported('idle');
+    b.noteReported('running');
+    runRowDisposers(first.state);
+    assert.equal(ledger.rowsCount(), 1);
+    assert.equal(a.baseline(), 'idle', '非末行卸载保留已报告静止');
+    assert.equal(b.baseline(), 'running', '非末行卸载保留其他主体登记');
+    runRowDisposers(last.state);
+    assert.equal(ledger.rowsCount(), 0);
+    assert.equal(a.baseline(), undefined, '末行整体卸载清空静止登记');
+    assert.equal(b.baseline(), undefined, '末行整体卸载清空所有主体登记');
+  } finally {
+    if (ledger.rows.has(first.ctx)) runRowDisposers(first.state);
+    if (ledger.rows.has(last.ctx)) runRowDisposers(last.state);
+    resetDeliveryLedger();
+    resetAgentBaselines();
+  }
+});
+
+hostTest('RA-BASELINE-LIFECYCLE：存在屏障确认查无清除已报告登记', async () => {
+  resetAgentBaselines();
+  const rig = await buildWaitRig('baseline-missing', []);
+  const target = new AgentTarget({ owner: rig.parent.id, agentId: 'baseline-missing-child' });
+  try {
+    target.noteReported('idle');
+    await assert.rejects(
+      rig.waiter.execute(
+        { wait_ms: 0, targets: [{ kind: 'agent', id: target.agentId }] }, rig.exec()
+      ),
+      (error) => String(error?.message ?? error).includes(target.agentId)
+    );
+    assert.equal(target.baseline(), undefined, '查无出口清除旧登记');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+// RA-BASELINE-LIFECYCLE 的终态保留由 W-GATE-A 覆盖：停止交付后再次等待得到
+// settled 与 targetsSettled「维持已确认静止」，不能把终态交付当作登记清理时机。

@@ -1316,6 +1316,11 @@ var DICTIONARIES = {
     // 重试通道，允许手动消除。
     "ask.callFailed": "提交后没有收到宿主确认——可能已送达，也可能没有；稍候面板自动刷新，若仍显示未作答可再提交一次。",
     "ask.answerRejected": "宿主明确拒绝：本次提交没有生效",
+    "ask.rejectUnknownOption": "所选答案不在本题选项内",
+    "ask.rejectSingleMultiple": "单选题只能选择一项答案",
+    "ask.rejectBlankCustom": "自定义回答已选中但内容为空",
+    "ask.rejectSingleBoth": "单选题在预设选项与自定义回答中只能选一项",
+    "ask.rejectNothing": "未选择任何答案：请选择一项选项或填写自定义回答",
     "ask.undelivered": "未送达：题目记录已不在，本次提交未被接受（具体原因无法从回执确认）；如仍需作答，请在所属会话中直接回复。",
     "ask.stateFailed": "待答状态读取失败；面板会自动重试。",
     "ask.extendFailed": "延长请求没有收到宿主确认——可能已生效，也可能没有；按面板刷新后的剩余时间决定是否再点（每次点击都会累加）。",
@@ -1448,6 +1453,11 @@ var DICTIONARIES = {
     // 重试通道。（与 zh 词典区同款说明：文案本身是英文界面文本，注释是中文。）
     "ask.callFailed": "No confirmation was received from the host after submitting — it may or may not have arrived; the panel refreshes automatically, and if it still shows unanswered, you can submit again.",
     "ask.answerRejected": "The host explicitly refused this submission — it did not take effect",
+    "ask.rejectUnknownOption": "the selected options are not offered by this question",
+    "ask.rejectSingleMultiple": "a single-select question accepts at most one option",
+    "ask.rejectBlankCustom": "the custom answer is selected but its text is blank",
+    "ask.rejectSingleBoth": "a single-select question accepts either an option or a custom answer, not both",
+    "ask.rejectNothing": "nothing selected: choose an option or provide a custom answer",
     "ask.undelivered": "Not delivered: the question record is gone, so this submission was not accepted (the receipt cannot confirm why); if you still want to answer, reply directly in the session.",
     "ask.stateFailed": "Failed to fetch the pending-questions state; the panel retries automatically.",
     "ask.extendFailed": "No confirmation was received for the extend request — it may or may not have taken effect; decide whether to click again based on the remaining time shown after the panel refreshes (each click adds up).",
@@ -1488,27 +1498,34 @@ var DICTIONARIES = {
 //
 // 通道：状态 = 轮询自有 typert remote 命名空间（1000 ms，模块 dispose 清除）；
 // 作答/忽略/延长 = `answer`/`ignore`/`extend` 直调（载荷**裸传**，客户端按 wire 名
-// 组装位置参数）；回执 `{ok,value|error}`（voice-input 同款判法）。总开关关 → 模型停
-// 轮询、两座位渲染 null——零行为。
+// 组装位置参数；answer 的 `selected` 为选项序号数组——RA-OPTION-IDENTITY，见
+// AskItem 与 ASK_REMOTE 注释）；回执 `{ok,value|error}`（voice-input 同款判法）。
+// 总开关关 → 模型停轮询、两座位渲染 null——零行为。
 //
 // 新题温和提醒（ASK-ANNOUNCE-01，需求 §4.2 新题提醒行）：状态读取的成功路径在
-// 读取代际闸门之后按复合键（batchId/questionId）算集合差识别新题，合并计数冻结成
+// 读取代数检查（弃置旧代与乱序旧回执）之后按复合键（batchId/questionId）算集合差识别新题，合并计数冻结成
 // `state.announce`（语言取播报时刻的生效 uiLang，切换语言不重写已冻结文本；连续
 // 同文按播报序号奇偶交替追加零宽空格）；播报走全界面唯一的视觉隐藏 live region
 // （AskAnnouncer，挂 overlay 槽注册内、不设任何渲染门槛）。首查播报当时全部待答
 // 数；读取失败不清已播集合；关闭清空。提醒是纯只读投影——不发 RPC、不改题目、
 // 期限或答案状态。
 //
-// 组合期提交限制（ASK-IME-SUBMIT-01，需求 §4.2.4 组合期行）：输入法组合期间整题
-// 禁提交——平台层原生 disabled 拦住全部用户入口，submit 入口再读 ref 复查承接
-// 程序化残余；被拒动作当场终结、不排队补发；组合结束按有效性恢复，等待新的明确
-// 提交。见 AskItem。
+// 组合期提交限制（ASK-IME-SUBMIT-01＋ASK-COMPOSITION-GESTURE，需求 §4.2.4 组合
+// 期行）：输入法组合期间整题禁提交——平台层原生 disabled 拦住全部用户入口，
+// submit 入口再复查当前组合位（承接程序化残余）与手势组合位（拦「组合期按下提交
+// 按钮、失焦结束组合后同一手势抬起的 click」的迟到提交）；被拒动作当场终结、不
+// 排队补发；组合结束按有效性恢复，等待新的明确提交。见 AskItem。
 
 /** 轮询间隔（待答状态的轮询周期；1000 ms，与 host 侧 state() 的轮询预期一致）。 */
 var ASK_STATE_POLL_MS = 1000;
 /** 命名空间与服务键（设计 §4.3；与宿主 `lib/ask-takeover.js` 同串，对账锚点）。 */
 var ASK_NAMESPACE = "async-tools-ask";
 var ASK_SERVICE_KEY = "asyncToolsAsk";
+// 只翻译本包作答校验的五个稳定原因键；未知原因保留回执原文。
+var ASK_ANSWER_REJECTION_KEYS = [
+  "ask.rejectUnknownOption", "ask.rejectSingleMultiple", "ask.rejectBlankCustom",
+  "ask.rejectSingleBoth", "ask.rejectNothing"
+];
 
 /**
  * 透传 strict codec（手写形态）。`$mount` 会走
@@ -1533,6 +1550,10 @@ function passthroughCodec(typeSymbol) {
 /**
  * 手写 strict descriptors（voice-input 同款形态）。`wire` 与宿主服务方法的
  * **参数名**逐字一致（`submission`）——双断言：参数名一致 + 假 RPC 载荷单层包裹。
+ * answer 的 `submission.selected` 是选项序号数组（number[]，指向题目选项数组的
+ * 下标；题目选项在服务端接管时冻结，序号即身份——RA-OPTION-IDENTITY），不是
+ * 标签数组；state/ignore/extend 载荷不变。codec 双侧透传（invoke 期无 decode），
+ * 序号合法性由服务端 validateAnswer 统一拒绝并可读。
  */
 var ASK_REMOTE = {
   package: PACKAGE_NAME,
@@ -1576,15 +1597,16 @@ var ASK_REMOTE = {
  * ?? 组合层 ?? 默认），（重新）开启即发起首查并按间隔轮询 `state()`。`visibilitychange
  * → visible` 与每次 answer/ignore 动作后立即补一次轮询；后台标签页由浏览器节流，轮询
  * 不以可见性为前提（设计 §4.3：页面恢复可见及每次提交后立即刷新；后台页节流不当作
- * 服务端停止计时）。状态回执统一经读取代际闸门（设计 §4.3）：旧代（关闭／重开／卸载
+ * 服务端停止计时）。状态回执统一经读取代数检查（设计 §4.3）：旧代（关闭／重开／卸载
  * 后到达）与乱序的较旧回执丢弃，较旧响应不回退新题目、计数与期限。
  *
  * 失败不静默（失败三分）：`callFailed` 分型旗标（null | 'submit' |
  * 'state' | 'extend' | 'answerRejected' | 'extendRejected'，面板顶按失败动作分键
  * 报错。RPC 拒绝（'submit'/'extend'，**没有确认**——执行与否未知，不断定
  * "未送达"，可重试）与宿主回执 `{ok:false}`（'answerRejected'/'extendRejected'，
- * **明确拒绝**——请求已送达、被拒，未执行可断定；作答档随附回执 error 的 message（gateway rpcFailure 对象契约，voice-input 同款读法）存
-  * `answerRejectReason`——服务端拒绝原因随 agentLang 透传展示，不预判原因）分开报错；'extend' 两条路径
+ * **明确拒绝**——请求已送达、被拒，未执行可断定；作答档同时保存回执
+ * error.message 与 details.reasonKey。message 保持 agentLang；面板按 uiLang
+ * 翻译已知原因键，未知原因保留原文）分开报错；'extend' 两条路径
  * 都立即 poll() 复查真实期限（重试前先看刷新后的剩余时间——每次点击继续
  * 累加，不伪幂等）；
   * 宿主回执 `outcome:'gone'` 且带 `undelivered:true`（批次/题记录缺席——清扫、
@@ -1596,7 +1618,7 @@ var ASK_REMOTE = {
  * 无重试通道，需求 §4.4）。竞态补醒失败（设计 §4.3）经 `state().lost` 名单随轮询并入——
  * 两个时点共用同一复合键去重与「知道了」消除（消除后服务端名单不回弹）。
  *
- * 新题温和提醒（ASK-ANNOUNCE-01）：成功读取在代际闸门后按复合键 batchId/questionId
+ * 新题温和提醒（ASK-ANNOUNCE-01）：成功读取在代数检查后按复合键 batchId/questionId
  * 算「本次回执 − 已播集合」的集合差；差集非空即合并计数生成一次 `state.announce`
  * （{text, seq}——text 在播报时刻按生效 uiLang 冻结，语言切换不重写已冻结文本），
  * 随后已播集合**裁剪到当前集合**（条目只出不进：batchId 每次接管唯一生成，同键不
@@ -1626,12 +1648,12 @@ function createAskModel(ctx, remote) {
   var appliedReadSeq = 0;
   // 新题已播集合与播报序号（ASK-ANNOUNCE-01）：复合键 batchId/questionId——与
   // lostAnswers/undelivered 的去重键、AskItem 的渲染键同一体系。集合只在成功读取
-  // 的闸门后路径变更：差集非空 → 播报并整体裁剪到当前集合（有界）；关闭 → 清空。
+  // 的成功路径（代数检查通过后）变更：差集非空 → 播报并整体裁剪到当前集合（有界）；关闭 → 清空。
   var announcedKeys = new Set();
   var announceSeq = 0;
   var state = {
     enabled: false, seat: "sidebar", uiLang: "auto",
-    serverNow: 0, fetchedAt: 0, items: [], callFailed: null, answerRejectReason: null,
+    serverNow: 0, fetchedAt: 0, items: [], callFailed: null, answerRejectReason: null, answerRejectReasonKey: null,
     lostAnswers: [], undelivered: [], announce: null
   };
 
@@ -1736,7 +1758,7 @@ function createAskModel(ctx, remote) {
     });
   }
 
-  /** 状态回执的代际闸门（设计 §4.3）：旧代（关闭／重开／卸载后到达）与
+  /** 状态回执的代数检查（设计 §4.3）：旧代（关闭／重开／卸载后到达）与
    * 同代内乱序的较旧回执直接丢弃——成功不写 items／serverNow，失败也不
    * 立 callFailed:'state'（迟到失败同样不得污染新生命周期）；动作类旗标
    * 与丢失／未送达名单不在此路径，不受影响。 */
@@ -1756,7 +1778,7 @@ function createAskModel(ctx, remote) {
     state.serverNow = result.value.serverNow;
     state.fetchedAt = Date.now();
     state.items = result.value.items;
-    // 新题识别与播报（ASK-ANNOUNCE-01）：成功路径、代际闸门后——旧代/乱序回执到
+    // 新题识别与播报（ASK-ANNOUNCE-01）：成功路径、代数检查后——旧代/乱序回执到
     // 不了这里，已播事实不被回退。差集非空才生成新 announce（同 items 重复轮询差
     // 集为空 → announce 引用不变 → DOM 文本不变，读屏只读变化）；文案只含数量、
     // 在播报时刻按生效 uiLang 冻结（首查=本生命周期首个成功读取，全部在场待答题
@@ -1778,7 +1800,7 @@ function createAskModel(ctx, remote) {
     }
     // 已播集合裁剪到当前集合（有界）：一个复合键只能随批次接管产生（batchId 每次
     // 接管唯一生成），条目离开列表只因其落定、批次出列、清扫或交还——同键不会重
-    // 现；能使旧键「复活」的旧回执已被闸门挡在计算之前。
+    // 现；能使旧键「复活」的旧回执已被代数检查挡在计算之前。
     announcedKeys = currentKeys;
     absorbServerLost(result.value.lost);
     notify();
@@ -1819,13 +1841,16 @@ function createAskModel(ctx, remote) {
           if (result === undefined || result === null || result.ok !== true) {
             // 失败三分——ok:false 是宿主**明确拒绝**（请求已送达、被拒）：可断定
             // 未执行；与 RPC 拒绝（'submit'，执行与否未知）分开报，不混说"未送达"。
-            // 回执 error 是对象（gateway rpcFailure 契约：{code,message,details}，
-            // 同一调用链的 voice-input 同款读法）——message 携带服务端拒绝原因（随
-            // agentLang），透传展示，不猜因。
+            // 回执 error 按 gateway 契约携带 {code,message,details}：message
+            // 保留 agentLang 模型文案；同时保存 details.reasonKey，供面板按
+            // uiLang 翻译本包已知原因。未知或无键的原因保留原串。
             state.callFailed = 'answerRejected';
             state.answerRejectReason = result.error !== undefined && result.error !== null
               && typeof result.error.message === "string" && result.error.message !== ""
               ? result.error.message : null;
+            state.answerRejectReasonKey = result.error && result.error.details
+              && typeof result.error.details.reasonKey === "string"
+              ? result.error.details.reasonKey : null;
             notify();
             onDone(false);
             return;
@@ -1847,6 +1872,7 @@ function createAskModel(ctx, remote) {
           if (state.callFailed === 'submit' || state.callFailed === 'answerRejected') {
             state.callFailed = null;
             state.answerRejectReason = null;
+            state.answerRejectReasonKey = null;
           }
           onDone(true);
           poll();
@@ -1863,12 +1889,15 @@ function createAskModel(ctx, remote) {
       remote.ignore({ batchId: item.batchId, questionId: item.questionId })
         .then(function (result) {
           if (result === undefined || result === null || result.ok !== true) {
-            // 与 answer 同一分法：明确拒绝（已送达、被拒）≠ 未收到确认；error 对象
-            // 的 message 同款透传（忽略路径现无服务端拒绝生产者，结构同款）。
+            // 与 answer 共用拒绝状态：同时更新原串与原因键，避免沿用上次作答的键。
+            // 忽略路径现无自有拒绝生产者；未知或无键的 message 在面板原样显示。
             state.callFailed = 'answerRejected';
             state.answerRejectReason = result.error !== undefined && result.error !== null
               && typeof result.error.message === "string" && result.error.message !== ""
               ? result.error.message : null;
+            state.answerRejectReasonKey = result.error && result.error.details
+              && typeof result.error.details.reasonKey === "string"
+              ? result.error.details.reasonKey : null;
             notify();
             onDone(false);
             return;
@@ -1886,6 +1915,7 @@ function createAskModel(ctx, remote) {
           if (state.callFailed === 'submit' || state.callFailed === 'answerRejected') {
             state.callFailed = null;
             state.answerRejectReason = null;
+            state.answerRejectReasonKey = null;
           }
           onDone(true);
           poll();
@@ -2078,27 +2108,24 @@ var ASK_CSS = ""
   + "min-height:24px;box-sizing:border-box;"
   + "border:.5px solid var(--dsw-alias-border-l4);border-radius:8px;"
   + "background:none;color:var(--dsw-alias-label-secondary);cursor:pointer}"
-  // sidebar 座位形态（VIS-BADGE-01）：徽标长在侧栏底栏的窄图标槽——面板上移让出
-  // 底栏整行：390×844 实测底栏顶=视口底−88（徽标顶 756）——88px 恰使面板底
-  // 与徽标盒相接，但计数泡 top:-6px 负偏移使泡顶=750，与面板底角碰 12×5px
-  // （复测 vis-ratify-2 判据「分离(泡)」）——让位取 94px＝底栏 88＋泡偏移 6，
-  // 两宽度下面板与徽标盒及泡盒均零重叠；overlay 座位维持右下角原位（该形
-  // 态无底栏徽标）。
+  // sidebar 座位形态：徽标长在侧栏底栏的窄图标槽——面板上移让出底栏整行。
+  // 390×844 实测底栏顶=视口底−88（徽标顶 756）：88px 只使面板底与徽标盒相接，
+  // 计数泡 top:-6px 负偏移仍使泡顶=750、与面板底角相碰；让位取 94px＝底栏 88
+  // ＋泡偏移 6，两档宽度下面板与徽标盒及泡盒均零重叠。overlay 座位维持右下角
+  // 原位（该形态无底栏徽标）。
   + ".ats-ask-panel--sidebar{bottom:94px;"
   + "width:min(340px,calc(100vw - 76px))}"
-  // ── VIS-BADGE-01（实测返修：窄图标列几何）──────────────────────────────
+  // ── 侧栏徽标（窄图标列几何）──────────────────────────────────────────
   // 宿主窄侧栏图标列（.pI_x6G_sidebarCol）实测仅约 52px 且 overflow:hidden——
-  // 「图标＋计数并排」的 68px 盒在 390/768 两宽度四配置全部左缘裁切 6px。紧凑
-  // 形两轮：①泡直接叠图标右上角（盒 26px）——几何判据全过但 flash 视觉盲测
-  // 抓到泡盖住问号圆环上半、图标不可辨（缺陷①）；②现形＝图标左置＋右侧
-  // 30px 净空区承载泡（盒约 51px ≤ 52px 列），泡绝对定位悬于净空区上方，
-  // 与图标横向不相交——一位数间隙 10px、两位数 2px（三位数会吻到图标右缘
-  // 约 6px，极端计数下的可接受退化，注释在案）。
+  // 「图标＋计数并排」的 68px 盒在 390/768 两档宽度全部左缘裁切 6px，不可用。
+  // 现行形＝图标左置＋右侧 30px 净空区承载计数泡（盒约 51px ≤ 52px 列），泡
+  // 绝对定位悬于净空区上方、与图标横向不相交——一位数间隙 10px、两位数 2px
+  // （三位数会贴近图标右缘约 6px，极端计数下的可接受退化）。
   + ".ats-ask-badge{position:relative;display:inline-flex;align-items:center;"
   + "border:.5px solid var(--dsw-alias-border-l4);"
   + "border-radius:8px;background:none;color:var(--dsw-alias-label-secondary);"
-  // VIS-BADGE-RAIL：命中区显式钉 24px 下限（现盒高约 29px 本已达标）；宽度
-  // 几何（51px ≤ 52px 窄列）见上方 VIS-BADGE-01 注释——padding 不动。
+  // 命中区显式钉 24px 下限（现盒高约 29px 本已达标）；宽度
+  // 几何（51px ≤ 52px 窄列）见上方侧栏徽标注释——padding 不动。
   + "cursor:pointer;font:inherit;font-size:12px;padding:5px 30px 5px 4px;"
   + "min-height:24px;box-sizing:border-box}"
   // VIS-HOVER-01：真实指针悬停的可辨识态（与宿主卡片同款 interactive-bg-hover；
@@ -2148,15 +2175,21 @@ function injectAskStyles() {
  * 单选互斥、多选可组合，未选中的自定义草稿不进提交；无有效答案时禁用提交并就近
  * 说明原因。剩余秒数（`expiresAt` 按宿主 `serverNow` 校准时差后本地走秒，仅显示用）。
  *
- * 组合期提交限制（ASK-IME-SUBMIT-01，需求 §4.2.4 组合期行）：输入法组合期间整题
- * 禁提交——平台层原生 disabled 拦住鼠标/触屏/键盘三入口（与既有 `!valid` 禁用同
- * 形态：不可聚焦、不派发 click/键激活）；`submit()` 入口再读 composingRef 复查，
- * 承接程序化点击（对 disabled 元素直接 dispatchEvent/click() 的合成路径）与
- * compositionstart 到下一次渲染之间微窗口内的残余。客户端不存在 Enter/快捷键提
- * 交路径（textarea 的 Enter 是换行），键盘面由「平台层拦截＋离开输入框即结束组
- * 合」结构性覆盖。被拒动作当场终结、不排队补发（无延迟提交队列或意图标记）；
- * compositionend 后按有效性恢复启用，等待一次新的明确提交。「不答」不受组合影响
- * （仅既有 busy 拦截）；服务端校验零改动。
+ * 组合期提交限制（ASK-IME-SUBMIT-01＋ASK-COMPOSITION-GESTURE，需求 §4.2.4 组
+ * 合期行）：输入法组合期间整题禁提交——平台层原生 disabled 拦住鼠标/触屏/键盘
+ * 三入口（与既有 `!valid` 禁用同形态：不可聚焦、不派发 click/键激活）；`submit()`
+ * 入口再复查两个组合位。composingRef（当前组合位）承接程序化点击（对 disabled
+ * 元素直接 dispatchEvent/click() 的合成路径）与 compositionstart 到下一次渲染之
+ * 间微窗口内的残余；gestureComposingRef（手势组合位）拦迟到提交——组合期按下
+ * 提交按钮，按下使输入框失焦，blur 复位当前组合位、按钮重新可用后，同一手势抬
+ * 起才派发 click。一次手势开始时的组合状态决定该次提交是否被拒，同一手势内的
+ * blur/compositionend 不使其获准（组合状态在按钮 pointerdown 时抄录，时序先于
+ * mousedown→blur；手势结束即清位，中断手势不留残留，见组件内手势组合位注释）。
+ * 客户端不存在 Enter/快捷键提交路径（textarea 的 Enter 是换行），键盘面由「平台
+ * 层拦截＋离开输入框即结束组合」结构性覆盖。被拒动作当场终结、不排队补发（无延
+ * 迟提交队列或意图标记），保留草稿与已选项；compositionend 后按有效性恢复启用，
+ * 等待一次新的明确提交。「不答」不受组合影响（仅既有 busy 拦截）；服务端校验零
+ * 改动。
  */
 function AskItem(props) {
   var item = props.item;
@@ -2165,15 +2198,18 @@ function AskItem(props) {
   var multi = item.multiSelect === true;
   // 选择状态（需求 §4.2.1）：预设项集合 + 自定义项独立选中位。单选（multiSelect
   // 缺省 false）点任一项是**替换**并清自定义选中；多选各自切换、互不清除——
-  // 与原生 user-questions 的 choose() 同语义。
+  // 与原生 user-questions 的 choose() 同语义。预设项以题内选项序号为身份
+  // （RA-OPTION-IDENTITY）：options 顺序由服务端接单冻结副本提供、跨轮询稳定
+  // （item 以 batchId/questionId 挂键，刷新不重建组件），同标签不同说明的选项
+  // 各自独立选中；提交载荷 selected 即序号数组（wire 契约见 ASK_REMOTE 注释）。
   var reducer = function (state, action) {
     if (action.type === "preset") {
       if (action.multiSelect === true) {
         var next = new Set(state.presets);
-        if (next.has(action.label)) next.delete(action.label); else next.add(action.label);
+        if (next.has(action.index)) next.delete(action.index); else next.add(action.index);
         return { presets: next, custom: state.custom };
       }
-      return { presets: new Set([action.label]), custom: false };
+      return { presets: new Set([action.index]), custom: false };
     }
     if (action.type === "customOn") {
       return action.multiSelect === true
@@ -2207,6 +2243,54 @@ function AskItem(props) {
     composingRef.current = false;
     setComposing(false);
   }
+  // 手势组合位（ASK-COMPOSITION-GESTURE，需求 §4.2.4 组合期行）：提交按钮
+  // pointerdown 时抄录当前组合位与**该手势的指针身份**——指针事件先于
+  // mousedown→blur 到达，抄到的值代表「本次手势开始时是否处于组合期」。组合期
+  // 按下按钮、按下使输入框失焦后，blur/compositionend 只复位当前组合位，同一
+  // 手势抬起派发的 click 由 submit() 复查此位当场拒绝（保留草稿与已选项，不
+  // 排队补发）。位在该**同一指针**的结束事件后清空：清位经 document 级
+  // pointerup/pointercancel 捕获监听按 pointerId 匹配（多点触控时另一指针的
+  // 抬起不得清掉仍按在按钮上的那次组合手势——否则该手势随后抬起派发的 click
+  // 会在组合已结束后被误放行；鼠标恒为同一常量 pointerId，行为与单指针一致）
+  // 加宏任务延迟：click 在 pointerup 之后同步派发，清位必须排在 click 之后
+  // （setTimeout(0)）；监听器与未触发的清位定时器随组件卸载成对清理，不泄
+  // 漏。抄录时同时撤销未触发的清位定时器——上一手势的清位不得抹掉新手势刚抄录
+  // 的值（两次按下之间该定时器可能仍未运行）。被中断的手势（按下后拖离、无
+  // click）不残留影响键盘提交——键盘激活按钮不产生指针事件，无从刷新此位。
+  var gestureComposingRef = React.useRef(false);
+  var gesturePointerIdRef = React.useRef(null);
+  var gestureClearTimerRef = React.useRef(null);
+  function recordGestureComposing(event) {
+    if (gestureClearTimerRef.current !== null) {
+      window.clearTimeout(gestureClearTimerRef.current);
+      gestureClearTimerRef.current = null;
+    }
+    gestureComposingRef.current = composingRef.current;
+    gesturePointerIdRef.current = event?.pointerId ?? null;
+  }
+  React.useEffect(function () {
+    if (typeof document === "undefined") return; // 无 DOM 环境（无头测试）不挂监听
+    function scheduleGestureClear(event) {
+      // 只认同一指针的结束：他指针的 pointerup/pointercancel 不清仍按住的手势位。
+      if ((event?.pointerId ?? null) !== gesturePointerIdRef.current) return;
+      if (gestureClearTimerRef.current !== null) return;
+      gestureClearTimerRef.current = window.setTimeout(function () {
+        gestureClearTimerRef.current = null;
+        gestureComposingRef.current = false;
+        gesturePointerIdRef.current = null;
+      }, 0);
+    }
+    document.addEventListener("pointerup", scheduleGestureClear, true);
+    document.addEventListener("pointercancel", scheduleGestureClear, true);
+    return function () {
+      document.removeEventListener("pointerup", scheduleGestureClear, true);
+      document.removeEventListener("pointercancel", scheduleGestureClear, true);
+      if (gestureClearTimerRef.current !== null) {
+        window.clearTimeout(gestureClearTimerRef.current);
+        gestureClearTimerRef.current = null;
+      }
+    };
+  }, []);
   // 本地走秒（需求 §4.3「倒计时继续运行」）：显示层每秒自跳一格，**不依赖轮询返回**——
   // 轮询挂起（宿主忙、RPC 排队）时读数照走，不再冻结在最后一次成功轮询的值上；
   // 服务端期限仍是权威，`skew` 校准在每轮成功轮询后自校。后台标签的浏览器
@@ -2229,11 +2313,14 @@ function AskItem(props) {
   var customBlank = selection.custom && draft.trim() === "";
   var valid = hasAnswer && !customBlank;
   function submit() {
-    // 组合期复查（ASK-IME-SUBMIT-01）：平台层 disabled 拦住全部用户入口，这里再
-    // 读 ref 承接两类残余——compositionstart 与下一次渲染之间微窗口内的程序化
-    // 点击、对 disabled 元素直接 dispatchEvent/click() 的合成路径（disabled 元素
-    // 不收用户事件，程序分发仍可触达监听器）。被拒动作当场终结，无补发队列。
-    if (busyRef.current || composingRef.current || !valid) return;
+    // 组合期复查（ASK-IME-SUBMIT-01＋ASK-COMPOSITION-GESTURE）：平台层 disabled
+    // 拦住全部用户入口，这里再读两个 ref 承接残余——composingRef（当前组合位）
+    // 覆盖组合仍在进行时的程序化点击：compositionstart 与下一次渲染之间微窗口内
+    // 的点击、对 disabled 元素直接 dispatchEvent/click() 的合成路径（disabled 元
+    // 素不收用户事件，程序分发仍可触达监听器）；gestureComposingRef（手势组合
+    // 位）覆盖组合期开始的手势——按下使输入框失焦、当前组合位已复位后，同一手
+    // 势的迟到 click 仍拒绝。被拒动作当场终结，保留草稿与选择，无补发队列。
+    if (busyRef.current || composingRef.current || gestureComposingRef.current || !valid) return;
     busyRef.current = true;
     rerender(function (n) { return n + 1; });
     // 载荷只含当前选中的预设项与选中且有效的自定义原文（需求 §4.2.4）。
@@ -2253,13 +2340,16 @@ function AskItem(props) {
   var questionDomId = "ats-q-" + item.batchId + "-" + item.questionId;
   var optionRole = multi ? "checkbox" : "radio";
   var customOn = function () { dispatch({ type: "customOn", multiSelect: multi }); };
-  var options = item.options.map(function (option) {
-    var on = selection.presets.has(option.label);
+  var options = item.options.map(function (option, index) {
+    // 选项身份＝题内序号（RA-OPTION-IDENTITY）：key/选中判定/动作载荷都用序号
+    // ——同标签不同说明的选项各自独立（React 重复 key 消除、aria-checked 逐钮
+    // 独立）；可用名称靠选项体自含的说明文本区分（A10）。
+    var on = selection.presets.has(index);
     return React.createElement("button", {
-      key: option.label, type: "button", className: "ats-ask-opt",
+      key: "opt-" + index, type: "button", className: "ats-ask-opt",
       role: optionRole, "aria-checked": on ? "true" : "false",
       "data-selected": on ? "true" : "false", "data-multi": multi ? "true" : "false",
-      onClick: function () { dispatch({ type: "preset", label: option.label, multiSelect: multi }); }
+      onClick: function () { dispatch({ type: "preset", index: index, multiSelect: multi }); }
     },
       React.createElement("span", { className: "ats-ask-mark", "aria-hidden": "true" }),
       React.createElement("span", { className: "ats-ask-optbody" },
@@ -2298,7 +2388,9 @@ function AskItem(props) {
         // 选中自定义项；键盘 Tab 聚焦不选中（只认点击与主动输入）。输入非空白
         // 文本同样选中（取消后的重新选中路径）。
         // 组合事件（ASK-IME-SUBMIT-01）：start 置位组合限制、end/blur 复位（幂等
-        // 共见上方 composingRef 注释）；浏览器在 compositionend 与最终 input 事件
+        // 共见上方 composingRef 注释——复位只作用于当前组合位；组合期按下提交按
+        // 钮的手势由手势组合位另行记下，end/blur 不让同一手势获准，见
+        // recordGestureComposing 注释）；浏览器在 compositionend 与最终 input 事件
         // 的先后上各有差异——两个事件都到达、各司其职（草稿更新走 onChange，限
         // 制复位走 compositionend/onBlur），有效性是渲染时从 draft+selection 现算
         // 的派生值，无先后依赖。
@@ -2321,8 +2413,14 @@ function AskItem(props) {
     React.createElement("div", { className: "ats-ask-row" },
       React.createElement("button", {
         type: "button", className: "ats-ask-submit", onClick: submit,
+        // 手势起点抄录（ASK-COMPOSITION-GESTURE）：pointerdown 先于 mousedown→
+        // blur 到达，此处抄录手势开始时的组合状态供 submit() 复查（见上方手势组
+        // 合位注释）；只记录、不 preventDefault——失焦照常发生。
+        onPointerDown: recordGestureComposing,
         // 平台层拦截（ASK-IME-SUBMIT-01）：组合位与既有 !valid/busy 同为原生
-        // disabled——鼠标/触屏/键盘三入口在平台层就不被接受。
+        // disabled——鼠标/触屏/键盘三入口在平台层就不被接受。disabled 只反映当前
+        // 组合位：手势中途失焦结束组合后按钮重新可用，同一手势的提交由 submit()
+        // 复查手势组合位拒绝。
         disabled: !valid || busyRef.current || composing
       }, t(busyRef.current ? "ask.submitting" : "ask.answer")),
       React.createElement("button", { type: "button", className: "ats-ask-skip", onClick: skip }, t("ask.ignore")),
@@ -2331,6 +2429,9 @@ function AskItem(props) {
       }, leftText)),
     // 就近原因（ASK-IME-SUBMIT-01 扩展）：组合期优先于空白自定义/未选择——用户
     // 先完成输入，再谈有效性；「不答」入口不受组合影响（上方 skip 按钮无组合位）。
+    // 原因行随当前组合位渲染：手势中途失焦结束组合后，组合中提示退场、按钮重新
+    // 可用，但同一手势的提交仍被 submit() 的手势组合位拒绝——该拒绝不另设提示，
+    // 草稿与选择原地保留，等待新的明确操作。
     (composing || !valid) && !busyRef.current
       ? React.createElement("p", { className: "ats-ask-reason" },
           t(composing ? "ask.composing" : customBlank ? "ask.needCustom" : "ask.needAnswer"))
@@ -2387,8 +2488,11 @@ function AskList(props) {
       t("ask.title") + " · " + t("ask.count").replace("{n}", String(state.items.length))),
     state.callFailed ? React.createElement("p", { className: "ats-ask-failed" },
       (state.callFailed === 'answerRejected'
-        // 明确拒绝档：基础句＋回执携带的服务端原因串（随 agentLang 透传，不猜因）。
-        ? t("ask.answerRejected") + (state.answerRejectReason ? " · " + state.answerRejectReason : "")
+        // 基础句与已知原因键都按 uiLang 显示；agentLang 的 message 仅在
+        // 原因键未知或缺席时原样显示，不把本包自有原因当作宿主原文。
+        ? t("ask.answerRejected") + (ASK_ANSWER_REJECTION_KEYS.indexOf(state.answerRejectReasonKey) !== -1
+          ? " · " + t(state.answerRejectReasonKey)
+          : state.answerRejectReason ? " · " + state.answerRejectReason : "")
         : t(state.callFailed === 'state'
           ? "ask.stateFailed"
           : state.callFailed === 'extend' ? "ask.extendFailed"

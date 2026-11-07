@@ -9,7 +9,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { AgentTarget } from '../lib/wait-agent-target.js';
+import { AgentTarget, clearAgentBaselines } from '../lib/wait-agent-target.js';
 
 /** 最小 ctx：注册表观察按状态表驱动（`get` 抛错＝unknown 形态）。 */
 function ctxWith(statusById, { throws = false } = {}) {
@@ -95,4 +95,45 @@ test('登记生命周期：翻转覆盖、查无清除、按主体×目标隔离
   other.noteReported('running');
   const fresh = target({ 'child-a': 'idle' });
   assert.equal(fresh.baseline(), undefined, '主体×目标复合键——他主体的登记不串扰');
+});
+
+test('RA-BASELINE-LIFECYCLE：全量清理覆盖不同主体的登记', () => {
+  const a = target({ 'child-a': 'idle' });
+  const b = target({ 'child-a': 'running' });
+  a.noteReported('idle');
+  b.noteReported('running');
+  clearAgentBaselines();
+  assert.equal(a.baseline(), undefined);
+  assert.equal(b.baseline(), undefined);
+});
+
+test('RA-BASELINE-LIFECYCLE：新写入清扫超过 7 天未触达项，保留边界及读写刷新项', (t) => {
+  clearAgentBaselines();
+  let now = 1000;
+  t.mock.method(Date, 'now', () => now);
+  const week = 7 * 24 * 60 * 60 * 1000;
+  const stale = target({ 'child-a': 'idle' });
+  const touched = target({ 'child-a': 'idle' });
+  const rewritten = target({ 'child-a': 'running' });
+  const boundary = target({ 'child-a': 'idle' });
+  const fresh = target({ 'child-a': 'running' });
+  try {
+    stale.noteReported('idle');
+    touched.noteReported('idle');
+    rewritten.noteReported('idle');
+    now += 1;
+    boundary.noteReported('idle');
+    now += week - 1;
+    assert.equal(touched.baseline(), 'idle', '读取刷新最后触达时间');
+    rewritten.noteReported('running');
+    now += 1;
+    fresh.noteReported('running');
+    assert.equal(stale.baseline(), undefined, '新登记触发清扫，无需读取超龄目标');
+    assert.equal(boundary.baseline(), 'idle', '恰好 7 天仍保留');
+    assert.equal(touched.baseline(), 'idle', '近期读取的登记保留');
+    assert.equal(rewritten.baseline(), 'running', '近期写入的登记保留');
+    assert.equal(fresh.baseline(), 'running');
+  } finally {
+    clearAgentBaselines();
+  }
 });
