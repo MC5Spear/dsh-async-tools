@@ -47,13 +47,13 @@ export const SUBJECT_UNTOUCHED = /结束等待没有终止[\s\S]{0,60}工作|End
  * | 标记 | 出处（zh / en 同键） |
  * |---|---|
  * | `不再被观察到在运行` / `is no longer observed running` | `lib/text.js` 的 `note.settled`（`settledNote`，两个渠道共用） |
- * | `完成了当前工作（状态转为 idle）` / `finished its current work (status turned idle)` | `lib/text.js` 的 `via.idle`（结算通知渠道） |
- * | `有进展，当前不处于运行态` / `made progress and is currently no longer in a running state` | `lib/text.js` 的 `via.recheck`（activity 复查渠道） |
+ * | `状态转为 idle，不再被观察到在运行` / `status turned idle; it is no longer observed running` | `lib/text.js` 的 `via.idle`（结算通知渠道；只述已证状态，不作完成断言） |
+ * | `复查不再把该子代理读作运行中` / `A follow-up check no longer reads this subagent as running` | `lib/text.js` 的 `via.recheck`（activity 复查渠道） |
  */
 export const CHILD_SETTLED = [
   /不再被观察到在运行|is no longer observed running/,
-  /完成了当前工作（状态转为 idle）|finished its current work \(status turned idle\)/,
-  /有进展，当前不处于运行态|made progress and is currently no longer in a running state/
+  /状态转为 idle，不再被观察到在运行|status turned idle; it is no longer observed running/,
+  /复查不再把该子代理读作运行中|A follow-up check no longer reads this subagent as running/
 ];
 
 /**

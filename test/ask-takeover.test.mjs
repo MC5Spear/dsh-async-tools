@@ -727,7 +727,7 @@ hostTest('J11-d：空闲但自家 followup 尚未开跑（收件箱有未领取�
     '闩住回合顺走滞留件后转空闲：补醒观察对账为空，不补提醒（真机 870-875 do-while 语义）');
 });
 
-hostTest('J12：迟到忽略 → 通知形正文 = ask.lateIgnore 模板；两通道同步抛错 → failed 仍出列', async () => {
+hostTest('J12：迟到忽略 → 通知形正文 = ask.lateIgnore 模板；两通道同步抛错 → failed 且题回滚可再投', async () => {
   const agent = fakeAgent();
   const { registry, timer } = makeRegistry({ agentLang: 'en' });
   const pending = registry.take(makeRequest(agent, [Q('q1'), Q('q2')]), agent);
@@ -744,7 +744,8 @@ hostTest('J12：迟到忽略 → 通知形正文 = ask.lateIgnore 模板；两�
     qid: 'q1', question: '问题文本 q1', options: '选项一, 选项二', multiSelect: 'false', delay: 5
   }), '迟到忽略正文 = 词典模板逐字（自含题目内容：id/题干/选项/multiSelect/时延——自走钟下时延=窗口 5 s）');
 
-  // inject 抛错（运行中通道，agent 引用失效的最坏形态）：审计 + 仍出列 + failed。
+  // inject 抛错（运行中通道，agent 引用失效的最坏形态）：审计 + 回滚为 open +
+  // failed（ASK-LATE-FAILED-RETRY：未送达的题保持可再投，不伪装成「已有答案」）。
   const broken = fakeAgent('s-broken');
   broken.inject = () => { throw new Error('agent gone'); };
   const pending2 = registry.take(makeRequest(broken, [Q('q3')]), broken);
@@ -754,7 +755,11 @@ hostTest('J12：迟到忽略 → 通知形正文 = ask.lateIgnore 模板；两�
   await pending2;
   assert.equal(
     registry.submitLate({ batchId: q3Item.batchId, questionId: 'q3', kind: 'answer', selected: [0] }),
-    'failed', 'inject 失败返回 failed（调用方可上屏重试语义——本批无重试通道，设计 §4.4）'
+    'failed', 'inject 失败返回 failed（调用方可上屏重试语义——重试即重新投递，设计 §4.4）'
+  );
+  assert.ok(
+    registry.stateItems().items.some((item) => item.questionId === 'q3'),
+    'failed 后 q3 仍 open（回轮询列表——失败不等于出列）'
   );
 
   // followup 抛错（空闲通道）同样 failed：
@@ -767,6 +772,10 @@ hostTest('J12：迟到忽略 → 通知形正文 = ask.lateIgnore 模板；两�
   assert.equal(
     registry.submitLate({ batchId: q4Item.batchId, questionId: 'q4', kind: 'answer', selected: [0] }),
     'failed', 'followup 失败返回 failed（设计 §4.4：任一通道同步抛错）'
+  );
+  assert.ok(
+    registry.stateItems().items.some((item) => item.questionId === 'q4'),
+    'failed 后 q4 仍 open（两通道同一回滚口径）'
   );
 });
 
@@ -2522,7 +2531,7 @@ hostTest('J25（A-F08）：投递次序先于唤醒判定——投递抛错不�
   assert.equal(registry.lateLedger.length, 0, '待领账本零登记');
   assert.equal(registry.sweeps.size, 0, '空闲观察零武装');
   assert.equal(registry.stateItems().lost.length, 0, '投递失败不进 lost（那是补醒失败名单）');
-  assert.equal(registry.batches.size, 0, 'failed 仍出列（J12 口径不变）');
+  assert.equal(registry.batches.size, 1, 'failed 回滚为 open——题保持可再投、批次留驻（ASK-LATE-FAILED-RETRY，替代旧「仍出列」口径）');
   // 等待方不被「答案已到」打断：事件没发、收件箱为空（事件与起始检查两路都
   // 不命中），等待保持原预算继续、到期照常交回。已 resolve 的 promise 在微任务
   // 里先于 flush（宏任务）胜出——quiet ＝ 确实没醒（旧次序此处必得 woken）。
@@ -2577,6 +2586,29 @@ hostTest('J25（A-F08）：投递次序先于唤醒判定——投递抛错不�
   assert.ok(signal !== null, '等待方被唤醒（投递接受后事件即达）');
   assert.equal(signal.qid, 'q3', '唤醒信号透传题号');
   waitingOk.dispose();
+
+  // ── ASK-LATE-FAILED-RETRY（探针 M1 双故障形态回归）：q1 首投 failed（回执可
+  // 能丢失——主体侧只看到题仍在列表）后，通道恢复、重试同一提交＝重新投递，
+  // 不落进「已有答案」的无说明 gone。
+  assert.ok(
+    registry.stateItems().items.some((item) => item.questionId === 'q1'),
+    'q1 投递失败后回滚为 open——仍在轮询列表（「从未投出」与「已投递」可区分）'
+  );
+  const healedDeliveries = [];
+  broken.inject = (message) => { healedDeliveries.push(message); };
+  assert.equal(
+    registry.submitLate({ batchId: badItem.batchId, questionId: 'q1', kind: 'answer', selected: [0] }),
+    'late', '通道恢复后重试同一提交 → 重新投递成功（不是 gone）'
+  );
+  assert.equal(healedDeliveries.length, 1, '重试真投递恰一次');
+  assert.equal(
+    emitted.filter((e) => e.name === LATE_ANSWER_EVENT && e.payload.questionId === 'q1').length, 1,
+    '重试成功后 q1 事件恰一次'
+  );
+  assert.ok(
+    !registry.stateItems().items.some((item) => item.questionId === 'q1'),
+    '重试成功后 q1 正常出列'
+  );
 });
 
 hostTest('J26（ASK-PENDING-IDENTITY）：待领账本按批次＋题号对账——同摘要不同批次领取其一后，账本只留未领取项', async () => {
@@ -3181,7 +3213,7 @@ test('J50：新题温和提醒——首查合并计数、增量、乱序/旧代�
   assert.equal(announce.text, zhText.replace('{n}', '2'), '增量只计新键（2），已播旧题不重播');
   assert.equal(announce.seq, 2, '播报序号递增');
 
-  // J3 乱序：同代较旧回执后到→闸门丢弃，不产生播报、不把旧键漏进已播集合。
+  // J3 乱序：同代较旧回执后到→代际检查丢弃，不产生播报、不把旧键漏进已播集合。
   await intervals[0].fn();
   await flush(); // pending[3]（seq 较旧）在途
   await intervals[0].fn();
@@ -3191,7 +3223,7 @@ test('J50：新题温和提醒——首查合并计数、增量、乱序/旧代�
   const beforeStale = model.store.getSnapshot().announce;
   pending[3]({ ok: true, value: { serverNow: 11_500, items: [it('b0', 'q0'), it('b2', 'q4'), it('b2', 'q5')] } });
   await flush();
-  assert.equal(model.store.getSnapshot().announce, beforeStale, '较旧回执被闸门丢弃：无新播报');
+  assert.equal(model.store.getSnapshot().announce, beforeStale, '较旧回执被代际检查丢弃：无新播报');
   // 旧键 b0/q0 未被旧回执漏进已播集合——下一次合法读取仍会把它当新题播报。
   await intervals[0].fn();
   await flush();
@@ -3231,7 +3263,7 @@ test('J50：新题温和提醒——首查合并计数、增量、乱序/旧代�
   assert.equal(model.store.getSnapshot().announce, null, '关闭清空播报（区域文本不残留失效消息）');
   pending[openPending]({ ok: true, value: { serverNow: 15_000, items: [it('b9', 'q9')] } });
   await flush();
-  assert.equal(model.store.getSnapshot().announce, null, '旧代迟到成功回执不产生播报（闸门先拒）');
+  assert.equal(model.store.getSnapshot().announce, null, '旧代迟到成功回执不产生播报（代际检查先拒）');
   setSnap({ status: 'ready', value: { askTakeover: true, askUiSeat: 'sidebar', uiLang: 'zh' }, user: {} });
   await flush();
   pending[openPending + 1]({ ok: true, value: { serverNow: 16_000, items: [it('b1', 'q1'), it('b2', 'q4')] } });

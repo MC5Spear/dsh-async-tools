@@ -227,14 +227,30 @@ test('R28 判据6：签名 2 锚对矩阵——同对两枚都在场才命中，
   assert.equal(hasDenialAnchors('Failed To Run — Access is denied'), false, '大小写敏感：改大小写不算命中');
   assert.equal(hasDenialAnchors(''), false, '空输出无锚');
   // 签名 2 只有开关 + 锚对两道关卡：不设捕获形/空白/受限/执行器的关卡（需求"附加提示"口径）。
-  const notes = silentFailureNotes({
+  // 分档断言（DOC-SILENT-RETRY-CAPABILITY）：有无提权目标的文案必须是两条不同的
+  // 出路——NoEscalation 档的 sandbox_permissions 只以否定形态出现（「没有提权入口」），
+  // 正向档才给「带 sandbox_permissions 重试」的指引；用整句锚保持区分度，避免
+  // /sandbox_permissions/ 单词锚被否定句继续命中（实现盲审 m2）。
+  const noEsc = silentFailureNotes({
     proc: {}, collector: collector('failed to run: Access is denied'),
     command: 'anything', escalationModes: [], guard: true, lang: 'en'
   });
-  assert.equal(notes.length, 1, '无沙箱盖章、无执行器、输出非空——锚对在仍出直陈式');
-  assert.match(notes[0], /visible denial signature/, '直陈式：说明这是可见拒绝签名');
-  assert.match(notes[0], /once as a bare call/, '出路 1');
-  assert.match(notes[0], /sandbox_permissions/, '出路 2');
+  assert.equal(noEsc.length, 1, '无沙箱盖章、无执行器、输出非空——锚对在仍出直陈式');
+  assert.match(noEsc[0], /visible denial signature/, '直陈式：说明这是可见拒绝签名');
+  assert.match(noEsc[0], /once as a bare call/, '出路 1（两档共有）：裸调用重试');
+  assert.match(noEsc[0], /offers no sandbox_permissions escalation/,
+    '无提权档：明说本组合没有提权入口（否定形态）');
+  assert.doesNotMatch(noEsc[0], /retry it with sandbox_permissions/,
+    '无提权档不得给「带 sandbox_permissions 重试」的正向指引');
+  const withEsc = silentFailureNotes({
+    proc: {}, collector: collector('failed to run: Access is denied'),
+    command: 'anything', escalationModes: ['workspace-write'], guard: true, lang: 'en'
+  });
+  assert.equal(withEsc.length, 1, '同输入换声明提权目标——仍出直陈式');
+  assert.match(withEsc[0], /retry it with sandbox_permissions/,
+    '有提权档：正向指路（与否定档互斥的整句锚）');
+  assert.doesNotMatch(withEsc[0], /offers no sandbox_permissions escalation/,
+    '有提权档不得再出现「没有提权入口」的否定句');
 });
 
 test('R28 判据7：输出非空且无锚 ⇒ 两条签名都不产出', () => {

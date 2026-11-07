@@ -10,7 +10,9 @@
  * - M3 **恒无分隔**：增量与 `result` 直接拼接 → 必须红在「非换行结尾的增量
  *   恰一个换行」的精确文本断言上。守分隔规则的边界二。
  *
- * **本脚本会原地改写真实的 `lib/delivery.js`**，跑完在 `finally` 里写回并核对摘要。
+ * **本脚本在当前树的隔离副本里改写 `lib/delivery.js` 并跑测试**（`verify/_isolate.mjs`）：
+ * 运行前核对副本目标与开发树逐字一致，运行后比对开发树原始摘要——开发树不再被
+ * 原地写回（`finally` 的还原只作用于副本）。
  *
  * 用法：node verify/mutate-atb01-final-result.mjs
  * （会跑 `node --test` 测试文件：受限沙箱下按「没跑成不算 CAUGHT」fail-closed，
@@ -20,10 +22,11 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { prepareIsolatedMutation } from './_isolate.mjs';
 
-// 从模块自身位置推仓根（verify/ 上一级）——变异脚本要在任意 cwd 下都能跑。
-const ROOT = fileURLToPath(new URL('..', import.meta.url));
+// 隔离现场：变异与测试都发生在副本里；ROOT＝副本根（开发树全程只读）。
+const iso = prepareIsolatedMutation({ script: 'verify/mutate-atb01-final-result.mjs', targets: ['lib/delivery.js'] });
+const ROOT = iso.root;
 const TARGET = join(ROOT, 'lib', 'delivery.js');
 const TESTS = ['test/wait-delivery.test.mjs'];
 
@@ -77,11 +80,11 @@ function firstFailOf(out) {
   return (out.split('\n').find((l) => /^✖ /.test(l.trim())) ?? '').trim().slice(0, 110);
 }
 
-/** 写回原文并核对摘要。 */
+/** 写回原文并核对摘要（只作用于隔离副本——开发树本来就没被写）。 */
 function restore() {
   writeFileSync(TARGET, original, 'utf8');
   const after = createHash('sha256').update(readFileSync(TARGET, 'utf8'), 'utf8').digest('hex');
-  if (after !== hashBefore) throw new Error(`还原失败：${TARGET} 与变异前不一致，请 git checkout 恢复。`);
+  if (after !== hashBefore) throw new Error(`还原失败：副本里的 ${TARGET} 与变异前不一致（不影响开发树，仅提示副本残留）。`);
 }
 
 // 现行实现的合并段（lib/delivery.js 的 chunksTextOf 尾部三分支）。
@@ -93,6 +96,7 @@ const M3_MUTATED = "  if (read?.result === undefined) return delta;\n  return `$
 const baseline = runTests(120000);
 if (baseline.state !== 'green') {
   console.log(`BASELINE-${baseline.state === 'red' ? 'RED' : 'DIDNT-RUN'}  未变异时不是绿的（${baseline.summary}）——先修基线/换环境。`);
+  iso.cleanup();
   process.exit(2);
 }
 console.log('基线：未变异时目标测试文件全绿。');
@@ -126,7 +130,9 @@ try {
 } finally {
   restore();
 }
+iso.assertDevTreeUntouched('变异收尾');
+iso.cleanup();
 console.log('');
 console.log(ok ? '变异被抓住：最终回答的正向交付与两条分隔边界都有能失败的判据。' : '**变异逃逸或没跑成**——判据是恒真的，或环境不可用。');
-console.log('还原完成，摘要一致。');
+console.log(`隔离副本已清理；开发树 ${iso.devRoot} 的 lib/delivery.js 全程未被写入（起跑摘要与收尾一致）。`);
 process.exitCode = ok ? 0 : 1;

@@ -824,10 +824,13 @@ hostTest('子代理目录行形状：无 kind 的 catalog 行与 kind:"child" �
 });
 
 hostTest('子代理目录行形状：诊断行不进存在屏障；纠错清单如实列出（带 reason）', async () => {
+  // RA-AGENT-RECHECK：正等待查无不立即拒绝——先按 pollIntervalMs 做至多三周期
+  // 短暂不可见重查（这里 10ms），仍查无才走查无出口。装置给小轮询间隔使三周期
+  // 落在 80ms 预算内，断言保持「诊断行不是可等待目标、按查无拒绝」的原判据。
   const rig = await buildRig('shape-diag', [
     { id: 'shape-live', label: '调研丙', activity: 'running' },
     { id: 'shape-diag', kind: 'diagnostic', reason: 'registry unreadable' }
-  ]);
+  ], { pollIntervalMs: 10 });
   try {
     await assert.rejects(
       rig.waiter.execute({ wait_ms: 80, targets: [{ kind: 'agent', id: 'shape-diag' }] }, rig.exec()),
@@ -1570,7 +1573,9 @@ hostTest('W-WAKE-A：有目标等待不以迟到作答提前结束（作答留�
 });
 
 hostTest('W-MIX-A：终态作业＋查无子代理的混合目标 → 全部资格校验先于终态读取（拒绝）', async () => {
-  const rig = await buildRig('mix-order', []);
+  // RA-AGENT-RECHECK：查无先经三周期短暂不可见重查（10ms 轮询）再拒绝——
+  // 判据不变：校验遍拒绝先于终态作业的读取交付。
+  const rig = await buildRig('mix-order', [], { pollIntervalMs: 10 });
   try {
     const wf = await rig.workflow.execute(WF_ARGS, rig.exec());
     rig.finisher();
@@ -1888,18 +1893,20 @@ hostTest('W-MIX-E：同形拒绝后合法混合零等待正常出口（settled�
 hostTest('W-MIX-F：清单外子代理＋正等待——纠错清单竞速窗口内到达的目标消息不切断校验（unknownAgent 整次拒绝、消息不被消费）', async () => {
   resetAgentBaselines();
   // §3.2.2「校验期间只有工具取消与用户插话切断」的竞速窗口反例：正等待下
-  // 目录已证查无（entry＝null）、纠错清单查询进行中时，目标消息恰好到达——
-  // 修前该唤醒置 barrierWake 并按 sender 命中提前返回 changed，越过本应抛出的
-  // unknownAgent 整次拒绝（D13 同类残留）；修后查无事实照常判定成立，消息留收件箱
-  // 未被消费。装置：listChildren 第 1 次调用返回空（证查无），第 2 次挂起受控
-  //（纠错清单竞速窗口），期间注入目标消息并真实发 `agent/inbox/inserted` 事件。
+  // 目录已证查无（三周期重查后 entry＝null，RA-AGENT-RECHECK）、纠错清单查询
+  // 进行中时，目标消息恰好到达——修前该唤醒置 barrierWake 并按 sender 命中提前
+  // 返回 changed，越过本应抛出的 unknownAgent 整次拒绝（D13 同类残留）；修后查无
+  // 事实照常判定成立，消息留收件箱未被消费。装置：listChildren 第 1–3 次调用（屏
+  // 障三周期）返回空（证查无），第 4 次（纠错清单）挂起受控（竞速窗口），期间注
+  // 入目标消息并真实发 `agent/inbox/inserted` 事件；20ms 轮询使三周期在注入前完成。
   let childCalls = 0;
   let releaseKnown;
   const gate = new Promise((resolve) => { releaseKnown = resolve; });
   const rig = await buildWaitRig('f', [], {
+    pollIntervalMs: 20,
     listChildren: () => {
       childCalls += 1;
-      if (childCalls === 2) return gate.then(() => []);
+      if (childCalls === 4) return gate.then(() => []);
       return Promise.resolve([]);
     },
     agentsGet: (id) => ({ id, status: 'idle' })
@@ -1909,7 +1916,8 @@ hostTest('W-MIX-F：清单外子代理＋正等待——纠错清单竞速窗口
       { wait_ms: 4000, targets: [{ kind: 'agent', id: 'at-mix-f-ghost' }] },
       rig.exec()
     );
-    await sleep(80); // 进入纠错清单竞速（childEntry 已证查无）
+    await sleep(150); // 屏障三周期（≈60ms）已过，纠错清单（第 4 次调用）竞速中
+    assert.ok(childCalls >= 4, `前置：纠错清单确实进入竞速（listChildren ≥4 次，实得 ${String(childCalls)} 次）`);
     const { message } = inboxPayload({
       agent: rig.parent, sourceKind: 'subagent-settled', form: 'notice',
       summary: 'ghost message during race', senderSessionId: 'at-mix-f-ghost', target: 'next-step'
@@ -1926,7 +1934,7 @@ hostTest('W-MIX-F：清单外子代理＋正等待——纠错清单竞速窗口
         && rig.parent.inbox.nextStep[0]?.id === message.id,
       '拒绝不消费消息：next-step 仍是同一条目标消息'
     );
-    assert.ok(childCalls >= 2, `纠错清单确实进入竞速（listChildren ≥2 次，实得 ${String(childCalls)}）`);
+    assert.ok(childCalls >= 5, `唤醒后纠错清单重查一次新查询（listChildren ≥5 次，实得 ${String(childCalls)}）`);
   } finally {
     releaseKnown();
     await rig.dispose();
@@ -6324,6 +6332,42 @@ hostTest('RA-BARRIER-WAKE-B：屏障在途窗口到达的结算通知——校�
     assert.equal(childCalls, 2, `同一在途查询重等、B 一次新查询（实得 ${String(childCalls)} 次）`);
   } finally {
     releaseFirst();
+    await rig.dispose();
+  }
+});
+
+hostTest('RA-BARRIER-LATE-ROW：重查周期后清单在场目标＝关系证据——按屏障命中继续校验（不以「清单在场却拒绝」自相矛盾）', async () => {
+  resetAgentBaselines();
+  // RA-AGENT-RECHECK 的清单命中出口（wait.js lateRow 分支）：三周期重查都查无
+  // 后，诊断清单里目标却在场＝窗口内变为可见。修前形态＝清单在场仍按
+  // unknownAgent 拒绝（错误与自证清单自相矛盾）；修后＝按屏障命中继续校验，
+  // 等待正常挂起到预算到期，目标行按已证 running 交回。
+  let calls = 0;
+  const targetRow = { id: 'at-lr-late', label: '窗口内可见目标', activity: 'running' };
+  const rowsWithout = [{ id: 'at-lr-other', label: '另一子代理', activity: 'running' }];
+  const rowsWith = [rowsWithout[0], targetRow];
+  const rig = await buildWaitRig('lr', rowsWith, {
+    pollIntervalMs: 10,
+    agentsGet: (id) => ({ id, status: 'running' }),
+    listChildren: () => {
+      calls += 1;
+      // 第 1–3 次＝屏障三周期（查无），第 4 次起＝清单查询/后续（目标在场）。
+      return Promise.resolve(calls <= 3 ? rowsWithout : rowsWith);
+    }
+  });
+  try {
+    const outcome = await rig.waiter.execute(
+      { wait_ms: 300, targets: [{ kind: 'agent', id: targetRow.id }] },
+      rig.exec()
+    );
+    assert.equal(outcome.status, 'running',
+      '清单命中＝关系证据：校验继续、挂起到预算（不抛 unknownAgent）');
+    const rows = outcome.targets ?? [];
+    assert.ok(rows.some((row) => row.id === targetRow.id && row.status === 'running'),
+      '目标行按已证 running 交回（清单行成为关系证据）');
+    assert.equal(calls, 4,
+      `恰 3 次重查＋1 次清单查询（实得 ${String(calls)} 次）`);
+  } finally {
     await rig.dispose();
   }
 });

@@ -17,30 +17,46 @@
  *
  * @module verify/_rpc
  */
-import { instanceCredentials, loadLocalPlaneOrSkip } from '../tools/_local-config.mjs';
+import { instanceCredentials, loadLocalPlaneOrSkip, tokenEntryUrl } from '../tools/_local-config.mjs';
 
 const config = await loadLocalPlaneOrSkip('verify/_rpc.mjs（活体实例 RPC 通道）');
 const { base: BASE, token } = instanceCredentials(config);
 
-const indexResponse = await fetch(`${BASE}/?token=${token}`, { redirect: 'manual' });
+// 认证首跳与 API 调用统一 redirect:'manual'：认证 RPC 不应被重定向携带凭据跳转，
+// 3xx 一律按错误处理（见 assertNotRedirected）。
+const indexResponse = await fetch(tokenEntryUrl(BASE, token), { redirect: 'manual' });
+assertNotRedirected(indexResponse, 'token exchange');
 const cookie = (indexResponse.headers.getSetCookie?.() ?? []).map((e) => e.split(';', 1)[0]).join('; ');
 if (cookie.length === 0) throw new Error('token exchange returned no cookie');
 
 /**
+ * 拒绝重定向响应：认证请求被 3xx 携带凭据跳转是错误，不跟随。
+ *
+ * @param {Response} response - fetch 结果。
+ * @param {string} what - 报错时指名哪一步。
+ */
+function assertNotRedirected(response, what) {
+  if (response.status >= 300 && response.status < 400) {
+    throw new Error(`${what}：收到 ${String(response.status)} 重定向（Location=${String(response.headers.get('location'))}）`
+      + '——认证 RPC 不跟随重定向，请核对实例地址；这按错误处理。');
+  }
+}
+
+/**
+ * 可自动重试的方法（只读、无副作用——重发只是再问一遍）。
+ * 其余方法（`session/create`、`session/prompt`、`settings/*`、`commands/execute`、
+ * `job/kill` 等非幂等写）**不自动重发**：fetch 拒绝只说明响应没回来，不说明请求
+ * 没被执行；盲目重发可能造成第二次执行。
+ */
+const RETRYABLE_METHODS = new Set(['session/list', 'session/page', 'settings/describe']);
+
+/**
  * 调一个网关方法。
  *
- * 重试范围是**任意 fetch 拒绝、任意方法各重试一次**（不只连接级失败）：长时间
- * 运行的探针会经历浏览器阶段的长时间隙，服务端在此期间关闭空闲 keep-alive
- * 连接，undici 复用旧连接就会撞上一次随机 fetch failed。重试发起新连接即成。
- *
- * 重试的副作用要如实说：**fetch 拒绝≠请求未到达**——服务端可能已执行、只是
- * 响应没回来，重试就是**同一请求再发一次**。各方法的重复后果：
- * - 读取类（session/list 等）：无副作用；
- * - `settings/*` 幂等（同值再写一次无害）；
- * - `session/new`：可能多出一个孤儿会话——探针本来就留会话，可接受；
- * - 其余写入类（会话内发词、取消等）：重试可能造成**第二次执行**，本文件的使用
- *   方（探针）要么容忍重复（判据按最终转录收敛），要么在调用点自行去重——需要
- *   严格一次性的请求不该走这里的盲目重试。
+ * 重试范围按方法分级：只有 `RETRYABLE_METHODS` 里的只读方法在任意 fetch 拒绝时
+ * 重试一次（长时间运行的探针会经历浏览器阶段的长时间隙，服务端在此期间关闭空闲
+ * keep-alive 连接，undici 复用旧连接就会撞上一次随机 fetch failed；重试发起新连接
+ * 即成）。写方法不自动重发，失败显式报错并说明「响应丢失不等于未执行」。
  * @param {string} endpoint - 方法名（如 `session/list`）。
  * @param {object} args - 参数。
  * @returns {Promise<object>} `result.value`。
@@ -48,21 +64,24 @@ if (cookie.length === 0) throw new Error('token exchange returned no cookie');
 export async function rpc(endpoint, args) {
   const rpcId = `probe-${Math.random().toString(36).slice(2, 10)}`;
   const body = JSON.stringify({ type: 'client-request', rpcId, method: endpoint, payload: { args } });
+  const once = () => fetch(`${BASE}/api/${endpoint}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie },
+    body,
+    redirect: 'manual'
+  });
   let response;
   try {
-    response = await fetch(`${BASE}/api/${endpoint}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', cookie },
-      body
-    });
+    response = await once();
   } catch (connError) {
-    await fetch(`${BASE}/api/${endpoint}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', cookie },
-      body
-    }).then((retry) => { response = retry; }, (retryError) => { throw retryError; });
-    void connError;
+    if (!RETRYABLE_METHODS.has(endpoint)) {
+      throw new Error(`${endpoint}：请求未获响应（${String(connError instanceof Error ? connError.message : connError)}）。`
+        + '响应丢失不等于未执行——本方法不是只读方法，不自动重发；'
+        + '请按方法语义核对实例侧实际状态后再决定是否重试。');
+    }
+    response = await once();
   }
+  assertNotRedirected(response, endpoint);
   const text = await response.text();
   const parsed = JSON.parse(text);
   if (parsed?.result?.ok !== true) {

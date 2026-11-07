@@ -1133,9 +1133,10 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   // （两语言 + askUiSeat）。预设绑定块的复选框（type=checkbox）不算值字段输入框。
   assert.equal(inputs.length, 12, '十二个值字段必须以官方 input 在场（10 预算 + R30 askTimeoutMs + askExtendMs）');
   assert.equal(selects.length, 3, '三个枚举字段必须以 select 在场（两语言 + R30 askUiSeat；控件本体自绘，裁定 B）');
-  // 四个布尔开关（静默失败防护 + 提问接管 + 两个展示开关）：控件本体是官方 Switch
-  // （可见标签长在壳上），不进 input/select 的 id 清单——按无障碍属性
-  // （role/aria-label/aria-checked）钉在场。
+  // 四个布尔开关（静默失败防护 + 提问接管 + 两个展示开关）：控件本体是自绘
+  // role="switch" 按钮（UI-SETTINGS-AX：官方 P.Switch 收不了 id/aria 关联），
+  // 不进 input/select 的 id 清单——按无障碍属性（role/aria-label/aria-checked）
+  // 钉在场；id/label-for/aria-describedby 由 ② 段的统一循环钉（不再豁免）。
   const switchButtons = collectByType(tree, 'button').filter((node) => node.props.role === 'switch');
   assert.equal(switchButtons.length, 4, '四个布尔开关必须以 role=switch 的按钮在场（silentFailureGuard/askTakeover/workflowProgressLog/fullCommandEcho）');
   assert.equal(switchButtons[0].props['aria-label'], 'silentFailureGuard|',
@@ -1179,13 +1180,14 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
     'askUiSeat 无覆盖时下拉显示生效值 sidebar（需求 §5.2：默认值即 sidebar）');
 
   // ② label↔id 绑定 + 说明行（判据 2 的结构；0.5px 分隔线是计算样式，真机探针验）。
-  // 布尔开关不进此循环：可见标签是壳上的 div + Switch 的 aria-label（偏离 ③；client.js
-  // FlagField 头注——Switch 不收 id/aria-* 摆位，for 绑定与 aria-describedby 不适用），
-  // 其说明行由上面 ① 段的 flagMessage 断言单独钉住。绑定字段同样不进：预设绑定块
-  // 有自己的头注/帮助/读数结构（P18/P19 单独钉），不复用字段壳的 for/id 契约。
-  for (const key of expectedKeys.filter((k) => k !== 'silentFailureGuard' && k !== 'askTakeover'
-    && k !== 'workflowProgressLog' && k !== 'fullCommandEcho' && k !== 'boundPresets')) {
-    const control = inputById(tree, `plugin-config-${key}`);
+  // 布尔开关自绘后（UI-SETTINGS-AX）不再豁免：button[id] 也是控件本体，label
+  // `for`/`aria-describedby` 判据与 select/input 同一条。绑定字段仍不进：预设
+  // 绑定块有自己的头注/帮助/读数结构（P18/P19 单独钉），不复用字段壳的 for/id 契约。
+  const controlById = (aTree, id) => findNode(aTree, (node) =>
+    (node.type === 'input' || node.type === 'select'
+      || (node.type === 'button' && node.props.role === 'switch')) && node.props.id === id);
+  for (const key of expectedKeys.filter((k) => k !== 'boundPresets')) {
+    const control = controlById(tree, `plugin-config-${key}`);
     const label = findNode(tree, (node) =>
       node.type === 'label' && node.props.htmlFor === `plugin-config-${key}`);
     assert.ok(label !== undefined, `字段 ${key} 的 label 必须以 for=<id> 绑定控件`);

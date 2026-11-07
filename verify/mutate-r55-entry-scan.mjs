@@ -20,9 +20,10 @@
  * timeout / didnt-run / incomplete——超时不算 CAUGHT（挂起护栏 250 ms 让真红快过
  * 超时），没跑成（spawn EPERM）与摘要不完整统一 fail-closed，不产生假 CAUGHT。
  *
- * **本脚本会原地改写 `lib/interrupts.js`、`lib/wait.js`**，
- * 跑完在 `finally` 里写回并逐文件核对摘要。受限沙箱会杀 node→node spawn
- * （EPERM）——按"没跑成不算 CAUGHT"fail-closed，换宽松环境或提权重跑。
+ * **本脚本在当前树的隔离副本里改写 `lib/interrupts.js`、`lib/wait.js` 并跑测试**
+ * （`verify/_isolate.mjs`）：运行前核对副本目标与开发树逐字一致，运行后比对开发树
+ * 原始摘要——开发树不再被原地写回（`finally` 的还原只作用于副本）。受限沙箱会杀
+ * node→node spawn（EPERM）——按"没跑成不算 CAUGHT"fail-closed，换宽松环境或提权重跑。
  * **逐文件各跑一次**（不加 `--test-isolation` 旗标）：node v24.x 的 tap reporter 在
  * 多文件成功时输出**平铺无文件归属**（全局连续编号、无文件级条目——实测；文件级
  * `# Subtest: <路径>` 条目只在子进程失败形态出现），同名用例跨文件无法区分；逐文件
@@ -36,10 +37,11 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { prepareIsolatedMutation } from './_isolate.mjs';
 
-// 从模块自身位置推仓根（verify/ 上一级）——变异脚本要在任意 cwd 下都能跑。
-const ROOT = fileURLToPath(new URL('..', import.meta.url));
+// 隔离现场：变异与测试都发生在当前树的隔离副本里；ROOT＝副本根（开发树全程只读）。
+const iso = prepareIsolatedMutation({ script: 'verify/mutate-r55-entry-scan.mjs', targets: ['lib/interrupts.js', 'lib/wait.js'] });
+const ROOT = iso.root;
 const TARGET_FILES = ['lib/interrupts.js', 'lib/wait.js'];
 const TESTS = ['test/interrupt.test.mjs', 'test/wait-delivery.test.mjs'];
 
@@ -164,12 +166,12 @@ function runAll(timeoutMs, baselines = null) {
   return { state, perFile };
 }
 
-/** 写回原文并逐文件核对摘要。 */
+/** 写回原文并逐文件核对摘要（只作用于隔离副本——开发树本来就没被写）。 */
 function restore() {
   for (const { path, content, hash } of originals.values()) {
     writeFileSync(path, content, 'utf8');
     const after = createHash('sha256').update(readFileSync(path, 'utf8'), 'utf8').digest('hex');
-    if (after !== hash) throw new Error(`还原失败：${path} 与变异前不一致，请 git checkout 恢复。`);
+    if (after !== hash) throw new Error(`还原失败：副本里的 ${path} 与变异前不一致（不影响开发树，仅提示副本残留）。`);
   }
 }
 
@@ -300,6 +302,7 @@ const baselineRun = runAll(120000);
 if (baselineRun.state !== 'green') {
   const firstBad = TESTS.map((f) => baselineRun.perFile[f]).find((r) => r.state !== 'green');
   console.log(`BASELINE-${baselineRun.state === 'red' ? 'RED' : baselineRun.state === 'incomplete' ? 'INCOMPLETE' : baselineRun.state === 'timeout' ? 'TIMEOUT' : 'DIDNT-RUN'}  未变异时不是绿的（${firstBad.summary}）——先修基线/换环境。`);
+  iso.cleanup();
   process.exit(2);
 }
 const baselines = Object.fromEntries(TESTS.map((f) => [f, baselineRun.perFile[f].parsed.summary.tests]));
@@ -368,7 +371,9 @@ try {
 } finally {
   restore();
 }
+iso.assertDevTreeUntouched('变异收尾');
+iso.cleanup();
 console.log('');
 console.log(ok ? '变异被抓住且变红范围精确：R55 五判据都有能失败的判据（含两组负面对照与结束优先并存决定）。' : '**变异逃逸、没跑成或变红范围错置**——判据是恒真的，变红范围漂移了，或环境不可用。');
-console.log('还原完成，摘要一致。');
+console.log(`隔离副本已清理；开发树 ${iso.devRoot} 的 lib/interrupts.js 与 lib/wait.js 全程未被写入（起跑摘要与收尾一致）。`);
 process.exitCode = ok ? 0 : 1;

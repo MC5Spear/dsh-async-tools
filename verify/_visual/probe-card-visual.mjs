@@ -5,12 +5,14 @@
  *
  * 1. **控件度量对照官方声明值参考表**（可失败、可复现）：本卡值字段/枚举控件本体
  *    是自绘原生 input/select（client.js 统一字段壳）；官方件在场＝`SettingsForm`
- *    框架、`SettingsFormModel`＋spec、布尔控件的官方 `P.Switch` 与图标——官方
- *    `SettingsValueField` 未用于值字段（枚举/布尔官方没有字段壳，其 help 图标
- *    硬编码带圈 i、不可配置）。度量逐项对照官方 `fields.module.css` 的声明值
- *    常量（34/12/13/12/.5px，写死参考表）；颜色断言走主题变量解析，不写死档位。
- *    **不做官方设置页运行时并排取样**：官方设置对话框控件是另一组件族（灰底药丸
- *    36px），拿它并排只会制造假红——官方同族证据见第 ② 段的主题令牌实证。
+ *    框架、`SettingsFormModel`＋spec 与图标——布尔控件本体自绘（UI-SETTINGS-AX：
+ *    官方 `P.Switch` 收不了 id/aria 关联；自绘开关度量照官方 primitives 药丸＋
+ *    滑块）。官方 `SettingsValueField` 未用于值字段（枚举/布尔官方没有字段壳，
+ *    其 help 图标硬编码带圈 i、不可配置）。度量逐项对照官方 `fields.module.css`
+ *    的声明值常量（34/12/13/12/.5px，写死参考表）；颜色断言走主题变量解析，
+ *    不写死档位。**不做官方设置页运行时并排取样**：官方设置对话框控件是另一
+ *    组件族（灰底药丸 36px），拿它并排只会制造假红——官方同族证据见第 ② 段
+ *    的主题令牌实证。
  * 2. **结构判据**（设计 §5.3 的真机环境）：六组全部字段（`lib/config.js` 的
  *    `SETTING_FIELD_KEYS` 现读，六组全量 20；末行是 boundPresets 绑定块，身份
  *    同样经行内帮助锚读出）各 = label 行（for 绑定）+
@@ -37,7 +39,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { launch, openPage, evaluate, findBrowser, waitFor, screenshot } from './cdp.mjs';
 import { SETTING_FIELD_KEYS, MS_FIELD_KEYS } from '../../lib/config.js';
-import { instanceCredentials, loadLocalPlaneOrSkip } from '../../tools/_local-config.mjs';
+import { instanceCredentials, loadLocalPlaneOrSkip, tokenEntryUrl } from '../../tools/_local-config.mjs';
 
 const localConfig = await loadLocalPlaneOrSkip('verify/_visual/probe-card-visual.mjs');
 const { base: BASE, token } = instanceCredentials(localConfig);
@@ -61,7 +63,7 @@ function check(name, ok, detail = '') {
 }
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
-const url = `${BASE}/?token=${encodeURIComponent(token)}`;
+const url = tokenEntryUrl(BASE, token);
 
 mkdirSync(SHOTS, { recursive: true });
 const browser = findBrowser();
@@ -116,8 +118,8 @@ try {
     // （说明行 p（*-message）同理不收）。
     const controls = [...section.querySelectorAll('input[id^="plugin-config-"]:not([type="checkbox"]), select[id^="plugin-config-"]')];
     // 字段行锚 = 帮助按钮（.ats-help-button）所在的 .ats-enum-field 容器——值字段、
-    // 布尔字段（官方 P.Switch，不吃 id prop——设计 §5.5）与 boundPresets 绑定块
-    // 都有；20 个容器即 20 行（19 个 FieldShell 字段＋绑定块）。
+    // 布尔字段（自绘开关，UI-SETTINGS-AX）与 boundPresets 绑定块都有；20 个容器即
+    // 20 行（19 个 FieldShell 字段＋绑定块）。
     // 布尔字段判定 = 行内有 button[role="switch"]（与 probe-r24 的口径一致）。
     const helpButtons = [...section.querySelectorAll('.ats-help-button')];
     const keyOfHelp = (n) => (n.getAttribute('aria-controls') || '').replace('plugin-config-', '').replace(/-help$/, '');
@@ -135,12 +137,12 @@ try {
       found: true,
       keys: helpButtons.map(keyOfHelp),
       labelFor: [...section.querySelectorAll('label[for^="plugin-config-"]')].map((n) => n.getAttribute('for')),
-      // 布尔字段的可见标签是 .ats-enum-label 文本（P.Switch 不接 label[for]，两种
-      // 写法渲染相同；这里只证明「有可见标签文本」，不要求绑定形态）。
+      // 布尔字段的可见标签是 .ats-enum-label 文本（自绘开关自带 id，label[for]
+      // 绑定成立；这里证明可见标签文本在场，绑定形态由 AX/结构判据承担）。
       booleanLabels: booleanRows.map((row) => (row.querySelector('.ats-enum-label')?.textContent ?? '').trim()),
       booleanKeys,
-      // 布尔行的说明行按 id 全局在场核对（官方 Switch 未接 aria-describedby，
-      // 不能用值字段那条 describedby 通道——那是结构审查登记项，不是视觉判据）。
+      // 布尔行的说明行按 id 全局在场核对（自绘开关已接 aria-describedby，与值字段
+      // 同一条通道；此处保留 id 在场核对作为独立冗余判据）。
       booleanMessages: booleanKeys.map((key) => key !== '' && document.getElementById('plugin-config-' + key + '-message') !== null),
       // 绑定块（boundPresets）专项：说明行 -message 段与恒在的「刷新」按钮在场
       //（error 态另渲染「重试」，合法性由判据 5 的允许清单覆盖）。

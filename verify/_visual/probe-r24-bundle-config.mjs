@@ -10,8 +10,9 @@
  *    排在组件行**之前**，且组件行里**没有** configure 控件；
  * ② 设置区渲染出六组全部字段（`lib/config.js` 的 `SETTING_FIELD_KEYS` 全量；值字段
  *    input/select 按 `id` 前缀取并**排除绑定块复选框**——复选框 id 形如
- *    `plugin-config-boundPresets-<预设id>`；布尔官方 Switch 与 boundPresets 绑定块
- *    按行内帮助锚的 aria-controls 身份读——设计 §5.5：Switch 无障碍名走 label 属性），
+ *    `plugin-config-boundPresets-<预设id>`；布尔自绘开关（button[role="switch"]，
+ *    UI-SETTINGS-AX）同样有 `id`，但按行内帮助锚的 aria-controls 身份读可同时覆盖
+ *    boundPresets 绑定块（无单一控件本体）——行归属即身份），
  *    逐项核对；绑定块另有专项判据（②b：说明行 `-message` 段与「刷新」按钮在场）；
  * ③ 毫秒字段的说明行带秒数读数段（两段口径：生效段恒在；只数个数抓不到"读数挂错字段"）；
  * ④-0 **输入读数实时**：不保存、只在输入框键入 → 输入段当场变（含亚 10 ms 形状）；
@@ -34,7 +35,7 @@ import { join } from 'node:path';
 import { launch, openPage, evaluate, findBrowser, waitFor, screenshot } from './cdp.mjs';
 import { judgeConfigForm, judgeHelpButtons, judgeHelpInteraction, judgePlacement, judgeReadoutFollows, judgeRoundTrip } from '../r24-judgements.mjs';
 import { SETTING_FIELD_KEYS, MS_FIELD_KEYS } from '../../lib/config.js';
-import { instanceCredentials, loadLocalPlaneOrSkip } from '../../tools/_local-config.mjs';
+import { instanceCredentials, loadLocalPlaneOrSkip, tokenEntryUrl } from '../../tools/_local-config.mjs';
 
 const localConfig = await loadLocalPlaneOrSkip('verify/_visual/probe-r24-bundle-config.mjs');
 const { base: BASE, token } = instanceCredentials(localConfig);
@@ -56,7 +57,7 @@ const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 /** 段的标签（`生效：4.32 s` → `生效：`）：从段文本剥掉秒文本尾巴。 */
 const labelOf = (segment) => String(segment).replace(/(< 0\.01 s|[\d.]+ s|—)$/, '');
 
-const url = `${BASE}/?token=${encodeURIComponent(token)}`;
+const url = tokenEntryUrl(BASE, token);
 
 mkdirSync(SHOTS, { recursive: true });
 const browser = findBrowser();
@@ -93,10 +94,9 @@ try {
     // 只收控件本体（input/select）并**排除绑定块复选框**——复选框 id 形如
     // plugin-config-boundPresets-<预设id>，按 id 前缀选会误捞进来（说明行 p
     // （*-message）同理不收）。
-    // 值字段（input/select）按 id 前缀；布尔字段是官方 P.Switch（设计 §5.5：Switch
-    // 不吃 id prop，无障碍名走 label 属性）与 boundPresets 绑定块（无单一控件本体），
-    // 其身份按**同字段容器**里帮助按钮的 aria-controls（plugin-config-<key>-help）
-    // 读出——行归属即身份。
+    // 值字段（input/select）按 id 前缀；布尔字段是自绘开关（button[role="switch"]，
+    // UI-SETTINGS-AX：自带 id；此处仍按同字段容器的帮助锚身份读——同一循环同时
+    // 覆盖无单一控件本体的 boundPresets 绑定块，行归属即身份）。
     const controls = section === null
       ? []
       : [...section.querySelectorAll('input[id^="plugin-config-"]:not([type="checkbox"]), select[id^="plugin-config-"]')];

@@ -222,7 +222,7 @@ try {
   const nsRow = described.namespaces.find((n) => (n.ns ?? n.namespace ?? n.id) === settingsNS);
   if (nsRow?.value?.settings?.askTakeover !== true) fail('askTakeover 前置未生效');
 
-  // 3) 会话＋一批两题（与装置 C 同款的重试与 state RPC 权威门禁）。
+  // 3) 会话＋一批两题（与装置 C 同款的重试与 state RPC 权威代际检查）。
   const BATCH_PROMPT = 'Call the ask_user_question tool with exactly two questions in ONE call: '
     + 'question 1 text "Pick a color", options "red" and "blue", no multiSelect; '
     + 'question 2 text "Pick fruits", options "apple", "banana", "cherry", multiSelect true. '

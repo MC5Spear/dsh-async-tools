@@ -107,33 +107,36 @@ test('RA-BASELINE-LIFECYCLE：全量清理覆盖不同主体的登记', () => {
   assert.equal(b.baseline(), undefined);
 });
 
-test('RA-BASELINE-LIFECYCLE：新写入清扫超过 7 天未触达项，保留边界及读写刷新项', (t) => {
+test('RA-BASELINE-LIFECYCLE：长期静止比较不被无关写入清除——已报 idle 不重复交回', (t) => {
+  // 原发现者假钟反例之一：已报 idle 八天后的无关写入不得把登记清掉——清除会使
+  // 同一静止目标被当「首次确认」再交一次（重复停止说明）。清理只按确证生命周
+  // 期（末行卸载／确认查无），不按龄清扫。
   clearAgentBaselines();
   let now = 1000;
   t.mock.method(Date, 'now', () => now);
-  const week = 7 * 24 * 60 * 60 * 1000;
-  const stale = target({ 'child-a': 'idle' });
-  const touched = target({ 'child-a': 'idle' });
-  const rewritten = target({ 'child-a': 'running' });
-  const boundary = target({ 'child-a': 'idle' });
-  const fresh = target({ 'child-a': 'running' });
-  try {
-    stale.noteReported('idle');
-    touched.noteReported('idle');
-    rewritten.noteReported('idle');
-    now += 1;
-    boundary.noteReported('idle');
-    now += week - 1;
-    assert.equal(touched.baseline(), 'idle', '读取刷新最后触达时间');
-    rewritten.noteReported('running');
-    now += 1;
-    fresh.noteReported('running');
-    assert.equal(stale.baseline(), undefined, '新登记触发清扫，无需读取超龄目标');
-    assert.equal(boundary.baseline(), 'idle', '恰好 7 天仍保留');
-    assert.equal(touched.baseline(), 'idle', '近期读取的登记保留');
-    assert.equal(rewritten.baseline(), 'running', '近期写入的登记保留');
-    assert.equal(fresh.baseline(), 'running');
-  } finally {
-    clearAgentBaselines();
-  }
+  const still = target({ 'child-a': 'idle' });
+  still.noteReported('idle');
+  assert.equal(still.entryCheck().action, 'wait', '已报告静止不重复交回');
+  now += 8 * 24 * 60 * 60 * 1000;
+  target({ 'other-child': 'running' }).noteReported('running');
+  const check = still.entryCheck();
+  assert.equal(check.action, 'wait', '八天后仍是已报告静止——不因无关写入退回首次确认');
+  assert.equal(check.reported, 'idle', '基准仍在，凭据完整');
+  clearAgentBaselines();
+});
+
+test('RA-BASELINE-LIFECYCLE：长期静止后的恢复变化不被吸收——changed-once 照报', (t) => {
+  // 原发现者假钟反例之二：静止基准被清后，恢复 running 会被吸收成「无基准的
+  // 静态」而漏报 changed-once。清理不按龄，比较语义跨任意间隔保持。
+  clearAgentBaselines();
+  let now = 1000;
+  t.mock.method(Date, 'now', () => now);
+  const resumed = target({ 'child-a': 'running' });
+  resumed.noteReported('idle');
+  now += 8 * 24 * 60 * 60 * 1000;
+  target({ 'other-child': 'running' }).noteReported('running');
+  const check = resumed.entryCheck();
+  assert.equal(check.action, 'changed-once', '静止→运行的恢复照报一次变化');
+  assert.equal(check.reported, 'idle');
+  clearAgentBaselines();
 });

@@ -12,8 +12,9 @@
  * - **M3 不排除诊断行**：`kind: 'diagnostic'` 的行被当成可等待的子代理
  *   ⇒ 对一条读不出来的记录进入等待，而不是给出 not_found。
  *
- * **本脚本会原地改写真实的 `lib/wait-agent-target.js`**，跑完在
- * `finally` 里写回并核对摘要。
+ * **本脚本在当前树的隔离副本里改写 `lib/wait-agent-target.js` 并跑测试**
+ * （`verify/_isolate.mjs`）：运行前核对副本目标与开发树逐字一致，运行后比对开发
+ * 树原始摘要——开发树不再被原地写回（`finally` 的还原只作用于副本）。
  *
  * 用法：node verify/mutate-list-children-shape.mjs
  */
@@ -21,10 +22,11 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { prepareIsolatedMutation } from './_isolate.mjs';
 
-// 从模块自身位置推仓根（verify/ 上一级）——变异脚本要在任意 cwd 下都能跑。
-const PKG = fileURLToPath(new URL('..', import.meta.url));
+// 隔离现场：变异与测试都发生在副本里；PKG＝副本根（开发树全程只读）。
+const iso = prepareIsolatedMutation({ script: 'verify/mutate-list-children-shape.mjs', targets: ['lib/wait-agent-target.js'] });
+const PKG = iso.root;
 const TARGET = join(PKG, 'lib', 'wait-agent-target.js');
 const TEST = 'test/wait-delivery.test.mjs';
 
@@ -78,16 +80,17 @@ function runTests() {
   }
 }
 
-/** 写回原文并核对摘要。 */
+/** 写回原文并核对摘要（只作用于隔离副本——开发树本来就没被写）。 */
 function restore() {
   writeFileSync(TARGET, original, 'utf8');
   const after = createHash('sha256').update(readFileSync(TARGET, 'utf8'), 'utf8').digest('hex');
-  if (after !== hashBefore) throw new Error(`还原失败：${TARGET} 与变异前不一致，请手工恢复。`);
+  if (after !== hashBefore) throw new Error(`还原失败：副本里的 ${TARGET} 与变异前不一致（不影响开发树，仅提示副本残留）。`);
 }
 
 const baseline = runTests();
 if (baseline.red) {
   console.log(`BASELINE-RED  未变异时 ${TEST} 就是红的（${baseline.summary}）——先修基线；若括号里是空的、且本脚本以 2 退出，更可能是默认沙箱禁止捕获子进程输出（EPERM）：本脚本要跑测试文件，需带提权运行。规范见 verify/README.md 的「优先默认权限执行；纯函数判断尽量进程内复用」要点。`);
+  iso.cleanup();
   process.exit(2);
 }
 console.log(`基线：未变异时 ${TEST} 全绿（${baseline.summary}）。`);
@@ -112,7 +115,9 @@ try {
 } finally {
   restore();
 }
+iso.assertDevTreeUntouched('变异收尾');
+iso.cleanup();
 console.log('');
 console.log(ok ? '三个变异都被抓住：形状自适应、纠错清单、诊断行排除都有能失败的判据。' : '**有变异逃逸**——判据区分力不足。');
-console.log('还原完成，摘要一致。');
+console.log(`隔离副本已清理；开发树 ${iso.devRoot} 的 lib/wait-agent-target.js 全程未被写入（起跑摘要与收尾一致）。`);
 process.exitCode = ok ? 0 : 1;

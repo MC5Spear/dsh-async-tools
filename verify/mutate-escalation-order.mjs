@@ -10,7 +10,9 @@
  * | M1 | 把审批**挪到** `shell.resolve` 之后（顺序倒置） | `resolveCallsAtApproval[0] === 0` 变红 |
  * | M2 | 把"无 agent"那一步绕过（先判 `exec.agent` 为 undefined 时直接放行） | agent-less 用例变红 |
  *
- * 本脚本会原地改写真实的 `lib/jobs.js`，跑完在 `finally` 里写回并核对摘要。
+ * * 本脚本在**当前树的隔离副本**里改写 `lib/jobs.js` 并跑测试（`verify/_isolate.mjs`）：
+ * * 运行前核对副本目标与开发树逐字一致，运行后比对开发树原始摘要——开发树不再
+ * * 被原地写回（`finally` 的还原只作用于副本）。
  *
  * 用法：node verify/mutate-escalation-order.mjs
  */
@@ -18,10 +20,11 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { prepareIsolatedMutation } from './_isolate.mjs';
 
-// 从模块自身位置推仓根（verify/ 上一级）——变异脚本要在任意 cwd 下都能跑。
-const ROOT = fileURLToPath(new URL('..', import.meta.url));
+// 隔离现场：变异与测试都发生在副本里；ROOT＝副本根（开发树全程只读）。
+const iso = prepareIsolatedMutation({ script: 'verify/mutate-escalation-order.mjs', targets: ['lib/jobs.js'] });
+const ROOT = iso.root;
 const TARGET = join(ROOT, 'lib', 'jobs.js');
 const TEST = 'test/escalation.test.mjs';
 
@@ -50,11 +53,11 @@ function runTests() {
   }
 }
 
-/** 写回原文并核对摘要。 */
+/** 写回原文并核对摘要（只作用于隔离副本——开发树本来就没被写）。 */
 function restore() {
   writeFileSync(TARGET, original, 'utf8');
   const after = createHash('sha256').update(readFileSync(TARGET, 'utf8'), 'utf8').digest('hex');
-  if (after !== hashBefore) throw new Error(`还原失败：${TARGET} 与变异前不一致，请 git checkout 恢复。`);
+  if (after !== hashBefore) throw new Error(`还原失败：副本里的 ${TARGET} 与变异前不一致（不影响开发树，仅提示副本残留）。`);
 }
 
 /** M1：顺序倒置——把审批块挪到 `ctx.shell.resolve` 之后、注册准入之前。 */
@@ -103,6 +106,7 @@ const MUTATIONS = [
 const baseline = runTests();
 if (baseline.red) {
   console.log(`BASELINE-RED  未变异时 ${TEST} 就是红的（${baseline.summary}）——先修基线；若括号里是空的、且本脚本以 2 退出，更可能是默认沙箱禁止捕获子进程输出（EPERM）：本脚本要跑测试文件，需带提权运行。规范见 verify/README.md 的「优先默认权限执行；纯函数判断尽量进程内复用」要点。`);
+  iso.cleanup();
   process.exit(2);
 }
 console.log(`基线：未变异时 ${TEST} 全绿（${baseline.summary}）。`);
@@ -126,7 +130,9 @@ try {
 } finally {
   restore();
 }
+iso.assertDevTreeUntouched('变异收尾');
+iso.cleanup();
 console.log('');
 console.log(ok ? '变异被抓住：顺序断言真的能拦住"审批后置"。' : '**变异逃逸**——顺序断言区分力不足。');
-console.log('还原完成，摘要一致。');
+console.log(`隔离副本已清理；开发树 ${iso.devRoot} 的 lib/jobs.js 全程未被写入（起跑摘要与收尾一致）。`);
 process.exitCode = ok ? 0 : 1;

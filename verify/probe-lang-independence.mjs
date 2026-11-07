@@ -19,7 +19,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { launch, openPage, evaluate, findBrowser, waitFor, screenshot } from './_visual/cdp.mjs';
 import { rpc, transcriptOf, localConfig } from './_rpc.mjs';
-import { instanceCredentials } from '../tools/_local-config.mjs';
+import { instanceCredentials, tokenEntryUrl } from '../tools/_local-config.mjs';
 import { judgeLangIndependence, judgeLangRestored } from './lang-judgements.mjs';
 import { readNs, patchNs } from './_r28-helpers.mjs';
 import { SETTING_FIELD_KEYS } from '../lib/config.js';
@@ -29,7 +29,7 @@ const SHOTS = join(localConfig.evidenceDir, 'shots');
 const PRESET = 'dsh-async';
 const ACK = 'Reply with exactly: ACK. Do not call any tool.';
 
-const url = `${BASE}/?token=${encodeURIComponent(token)}`;
+const url = tokenEntryUrl(BASE, token);
 
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 const results = [];

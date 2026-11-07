@@ -18,10 +18,13 @@
  * 三条都取自**真实请求体 / 真实工具返回值**：零浏览器，全程信封 RPC。
  *
  * 设置读写与恢复一律经 `verify/_r28-helpers.mjs` 的共享助手（嵌套 `settings`
- * 子树契约，设计 §8.3）：起跑先保存原状态（value/user 两层），收尾在 `finally`
- * 里按联合键集恢复原状态并读回核对——探针改的是验证实例的真实配置，留在改过的
- * 状态会污染后续真机判据。另有平铺负向对照（显式绕过助手）与嵌套 replace 语义
- * 两条形状判据。
+ * 子树契约，设计 §8.3）：起跑先保存原状态（value/user 两层）并**落盘快照**（进程
+ * 被强杀、finally 不执行时按快照人工恢复），收尾在 `finally` 里**先检测并发变化**
+ * （revision 比对；revision 缺席按 value/user 深比对）——发现窗口内他方更新就停止
+ * 恢复并报告（不覆盖），无并发才按联合键集恢复原状态并读回核对——探针改的是验证
+ * 实例的真实配置，留在改过的状态会污染后续真机判据。另有平铺负向对照（显式绕过
+ * 助手）与嵌套 replace 语义两条形状判据。**边界：本探针会写真实设置，只在专用
+ * 验证实例上执行**；共享实例上他方更新一旦发生，恢复按上面的冲突语义停止。
  *
  * 用法：
  *   node verify/probe-settings-behavior-full.mjs
@@ -30,7 +33,7 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { instanceCredentials, loadLocalPlaneOrSkip } from '../tools/_local-config.mjs';
+import { instanceCredentials, loadLocalPlaneOrSkip, tokenEntryUrl } from '../tools/_local-config.mjs';
 // 设置读写/恢复一律走共享助手（设计 §8.3：嵌套形状单点封装；本探针自带的 rpc
 // 只服务会话驱动与「显式绕过助手」的平铺负向对照）。
 import { elevateSession, readNs, patchNs, replaceNs, mutateNs, NS } from './_r28-helpers.mjs';
@@ -64,12 +67,16 @@ const TEST_BASELINE = {
   agentLang: 'en'
 };
 
-const indexResponse = await fetch(`${BASE}/?token=${token}`, { redirect: 'manual' });
+// 登录与 `verify/_rpc.mjs` 同款：redirect:'manual'＋3xx 按错误处理（认证请求不
+// 跟随重定向）；令牌编码统一走 tokenEntryUrl（不再裸拼 `?token=`）。
+const indexResponse = await fetch(tokenEntryUrl(BASE, token), { redirect: 'manual' });
+if (indexResponse.status >= 300 && indexResponse.status < 400) {
+  throw new Error(`token exchange：收到 ${String(indexResponse.status)} 重定向（Location=${String(indexResponse.headers.get('location'))}）——不跟随，按错误处理。`);
+}
 const cookie = (indexResponse.headers.getSetCookie?.() ?? []).map((e) => e.split(';', 1)[0]).join('; ');
-if (cookie.length === 0) throw new Error('token exchange returned no cookie');
 
 /**
- * 发一次信封 RPC。
+ * 发一次信封 RPC。重定向按错误处理（不携带凭据跳转）。
  *
  * @param {string} endpoint - RPC 方法名。
  * @param {object} args - 参数。
@@ -80,8 +87,12 @@ async function rpc(endpoint, args) {
   const response = await fetch(`${BASE}/api/${endpoint}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', cookie },
-    body: JSON.stringify({ type: 'client-request', rpcId, method: endpoint, payload: { args } })
+    body: JSON.stringify({ type: 'client-request', rpcId, method: endpoint, payload: { args } }),
+    redirect: 'manual'
   });
+  if (response.status >= 300 && response.status < 400) {
+    throw new Error(`${endpoint}：收到 ${String(response.status)} 重定向（Location=${String(response.headers.get('location'))}）——不跟随，按错误处理。`);
+  }
   const text = await response.text();
   const body = JSON.parse(text);
   if (body?.result?.ok !== true) {
@@ -92,7 +103,40 @@ async function rpc(endpoint, args) {
 
 /** 读当前生效的设置值（嵌套契约经共享助手，严格取 settings 子树，无多形状回退）。 */
 async function readEffective() {
-  return (await readNs()).value;
+  const entry = await readNs();
+  trackState(entry);
+  return entry.value;
+}
+
+/**
+ * 恢复冲突检测的已知状态：本探针每次读／写设置后登记「我们已知的最新状态」。
+ *
+ * 宿主行支持 revision 时按修订号比对（revision 变化＝有新写入）；revision 缺席
+ * （null）时按 value＋user 深比对。finally 恢复前重读一次：与本探针已知的最新
+ * 状态不一致 ⇒ 窗口内有**他方**更新——停止恢复并报告，不覆盖。
+ *
+ * @type {{ revision: number | null, value: object, user: object } | null}
+ */
+let lastKnown = null;
+
+/** 把一次读到的设置状态登记为「本探针已知的最新状态」。 */
+function trackState(entry) {
+  lastKnown = { revision: entry.revision, value: structuredClone(entry.value), user: structuredClone(entry.user) };
+}
+
+/**
+ * 判断「当前状态」与「已知状态」之间是否有窗口内他方更新。
+ *
+ * @param {{ revision: number | null, value: object, user: object }} current - 重读到的状态。
+ * @returns {boolean} 有他方更新为 true。
+ */
+function driftedFromKnown(current) {
+  if (lastKnown === null) return false;
+  if (lastKnown.revision !== null && current.revision !== null) {
+    return current.revision !== lastKnown.revision;
+  }
+  return !isDeepStrictEqual({ value: current.value, user: current.user },
+    { value: lastKnown.value, user: lastKnown.user });
 }
 
 /** 读会话清单行。 */
@@ -239,6 +283,7 @@ async function sessionWith(prompt, timeoutMs = 240000) {
 const evidence = { base: BASE, checks, runs: [] };
 let valueBefore = null;
 let userBefore = null;
+let SNAPSHOT_FILE = '';
 try {
   // ── 起跑：先保存**原状态**（value 与 user 两层），再从 TEST_BASELINE 出发 ──────
   //
@@ -248,11 +293,24 @@ try {
   const entry0 = await readNs();
   valueBefore = structuredClone(entry0.value);
   userBefore = structuredClone(entry0.user);
+  trackState(entry0);
   evidence.before = { value: entry0.value, user: entry0.user, revision: entry0.revision };
+  // 原状快照**落盘**：finally 只覆盖常规退出路径，进程被强杀时不会执行——快照
+  // 写在证据目录里，强杀后按它人工恢复（比「下次开跑抹平」多一条明确出路）。
+  SNAPSHOT_FILE = join(dirname(OUT_FILE), `settings-snapshot-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+  writeFileSync(SNAPSHOT_FILE, `${JSON.stringify({
+    at: new Date().toISOString(),
+    probe: 'verify/probe-settings-behavior-full.mjs',
+    ns: NS,
+    revision: entry0.revision,
+    value: entry0.value,
+    user: entry0.user,
+    note: '起跑时的原状快照（value 与 user 两层）。探针被强杀、finally 未执行时，按此人工恢复。'
+  }, null, 2)}\n`, 'utf8');
   await patchNs(TEST_BASELINE);
   const before = await readEffective();
   evidence.baseline = { maxWaitMs: before.maxWaitMs, maxResultChars: before.maxResultChars };
-  console.log(`原状态已存（user 覆盖 ${String(Object.keys(userBefore).length)} 键）；起跑基线：maxWaitMs=${String(before.maxWaitMs)}  maxResultChars=${String(before.maxResultChars)}`);
+  console.log(`原状态已存（user 覆盖 ${String(Object.keys(userBefore).length)} 键；快照 ${SNAPSHOT_FILE}）；起跑基线：maxWaitMs=${String(before.maxWaitMs)}  maxResultChars=${String(before.maxResultChars)}`);
   console.log('');
 
   // ── 0 形状契约：平铺拒绝（负向对照，显式绕过助手）＋嵌套 update/replace ──────
@@ -267,18 +325,21 @@ try {
     flatError = String(error?.message ?? error);
   }
   const afterFlat = await readNs();
+  trackState(afterFlat);
   check('平铺 patch 被 settings/rejected 拒绝（not volatile）且生效值不变（负向对照）',
     /settings\/rejected/.test(flatError) && /not volatile/.test(flatError) && afterFlat.value.maxResultChars !== 13731,
     flatError.slice(0, 160) || '(未抛错：平铺写被接受＝形状负向对照失败)');
 
   await patchNs({ maxResultChars: 48000 });
   const afterNested = await readNs();
+  trackState(afterNested);
   check('嵌套 update 生效并落在用户覆盖层（value 与 user 同键同值）',
     afterNested.value.maxResultChars === 48000 && afterNested.user.maxResultChars === 48000,
     `value=${String(afterNested.value.maxResultChars)}  user=${String(afterNested.user.maxResultChars)}`);
 
   await replaceNs(structuredClone(entry0.base));
   const afterReplace = await readNs();
+  trackState(afterReplace);
   check('嵌套 replace（完整 base）重建 volatile 生效值（复位语义，不是稀疏更新）',
     isDeepStrictEqual(afterReplace.value, entry0.base),
     `value===base：${String(isDeepStrictEqual(afterReplace.value, entry0.base))}`);
@@ -417,6 +478,9 @@ try {
   // "默认值落在区间外"的组合（`settings/rejected`：`defaultWaitMs (30000) 必须在 250–2000 ms 之内`）。
   // 那条校验本身是 `test/two-planes.test.mjs` T7b 在守的东西，这里撞上它说明它在工作。
   await patchNs({ ...TEST_BASELINE, maxWaitMs: 2000, defaultWaitMs: 2000, minYieldMs: 1500, maxYieldMs: 450000, defaultYieldMs: 7000, agentLang: 'zh' });
+  // 本探针的最后一次写之后没有别的读步骤了——紧跟一次读回并登记，恢复前的
+  // 冲突检测才能把「我们自己的这次写」与「他方在窗口内的更新」区分开。
+  trackState(await readNs());
   const pageYield = await sessionWith('回复一个句号即可，不要调用任何工具。');
   const runYield = (pageYield.records
     .filter((r) => r.event?.type === 'request/header')
@@ -440,30 +504,50 @@ try {
   // 按 `userBefore ∪ userNow` 逐键处理——原有覆盖按原值 set、其余 unset（回继承
   // 值，不把生效值写成新覆盖）；再读回核对 value 与 user **两层**都与原状态一致。
   // 恢复失败单独报错，不被主断言掩盖。
+  //
+  // **恢复前先检测并发变化**：起跑快照没有修订号保护的时代，恢复会直接覆盖窗口
+  // 内他方的更新。现在恢复前重读一次，与本探针已知的最新状态（`lastKnown`）比对
+  // ——发现他方更新就**停止恢复并报告**，把选择权交还操作者；原状快照已落盘
+  // （`SNAPSHOT_FILE`），供人工核对后恢复。
   try {
     if (valueBefore === null) {
       console.log('收尾恢复跳过：未取得起跑快照（本次探针未改过设置）。');
       evidence.restored = true;
     } else {
       const settle = await readNs();
-      const userNow = settle.user ?? {};
-      const ops = [];
-      for (const key of new Set([...Object.keys(userBefore), ...Object.keys(userNow)])) {
-        ops.push(Object.hasOwn(userBefore, key)
-          ? { op: 'set', path: ['settings', key], value: userBefore[key] }
-          : { op: 'unset', path: ['settings', key] });
+      if (driftedFromKnown(settle)) {
+        console.log('');
+        console.log('**停止恢复**：检测到窗口内的并发设置变更（他方更新了本命名空间）。');
+        console.log(`  本探针已知状态：revision=${String(lastKnown?.revision ?? '?')}；当前读到：revision=${String(settle.revision ?? '?')}。`);
+        console.log('  按不覆盖原则不执行恢复写——实例可能停在本探针的测试基线上。');
+        console.log(`  起跑原状快照（人工核对后恢复用）：${SNAPSHOT_FILE}`);
+        evidence.restored = false;
+        evidence.restoreConflict = {
+          expected: lastKnown,
+          actual: { revision: settle.revision, value: settle.value, user: settle.user },
+          snapshotFile: SNAPSHOT_FILE
+        };
+      } else {
+        const userNow = settle.user ?? {};
+        const ops = [];
+        for (const key of new Set([...Object.keys(userBefore), ...Object.keys(userNow)])) {
+          ops.push(Object.hasOwn(userBefore, key)
+            ? { op: 'set', path: ['settings', key], value: userBefore[key] }
+            : { op: 'unset', path: ['settings', key] });
+        }
+        if (ops.length > 0) await mutateNs(ops);
+        const finalEntry = await readNs();
+        const valueSame = isDeepStrictEqual(finalEntry.value, valueBefore);
+        const userSame = isDeepStrictEqual(finalEntry.user, userBefore);
+        console.log('');
+        console.log(`收尾恢复原状态：${valueSame && userSame ? 'value 与 user 两层均回到原状' : '**存在未恢复差异（见 afterRestore）**'}`);
+        evidence.restored = valueSame && userSame;
+        evidence.afterRestore = { value: finalEntry.value, user: finalEntry.user };
       }
-      if (ops.length > 0) await mutateNs(ops);
-      const finalEntry = await readNs();
-      const valueSame = isDeepStrictEqual(finalEntry.value, valueBefore);
-      const userSame = isDeepStrictEqual(finalEntry.user, userBefore);
-      console.log('');
-      console.log(`收尾恢复原状态：${valueSame && userSame ? 'value 与 user 两层均回到原状' : '**存在未恢复差异（见 afterRestore）**'}`);
-      evidence.restored = valueSame && userSame;
-      evidence.afterRestore = { value: finalEntry.value, user: finalEntry.user };
     }
   } catch (error) {
     console.log(`收尾恢复**失败**：${String(error)}——验证实例可能停在被改过的状态。`);
+    console.log(`  起跑原状快照（人工恢复用）：${SNAPSHOT_FILE === '' ? '（未写到）' : SNAPSHOT_FILE}`);
     evidence.restoreError = String(error);
   }
 }

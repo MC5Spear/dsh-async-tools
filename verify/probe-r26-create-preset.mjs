@@ -20,13 +20,13 @@
  * - 证据：本机证据目录 logs/r26-create-<相位>.json（判据逐条 + 关键返回片段 + 会话号）。
  */
 
-import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { instanceCredentials, loadLocalPlaneOrSkip } from '../tools/_local-config.mjs';
+import { instanceCredentials, loadLocalPlaneOrSkip, tokenEntryUrl } from '../tools/_local-config.mjs';
 import { WAIT_INTERRUPTED } from './message-markers.mjs';
 
 const localConfig = await loadLocalPlaneOrSkip('verify/probe-r26-create-preset.mjs');
-const { base: BASE, tokenFile: TOKEN_FILE } = instanceCredentials(localConfig);
+const { base: BASE } = instanceCredentials(localConfig);
 const OUT_DIR = join(localConfig.evidenceDir, 'logs');
 mkdirSync(OUT_DIR, { recursive: true });
 const CWD = localConfig.workspaceDir;
@@ -41,18 +41,16 @@ if (!['face', 'drill', 'both'].includes(PHASE)) {
 let cookie = '';
 
 function readToken() {
-  const raw = readText(TOKEN_FILE);
-  const at = raw.indexOf('http');
-  if (at < 0) throw new Error(`token file has no URL: ${TOKEN_FILE}`);
-  return new URL(raw.slice(at)).searchParams.get('token');
-}
-
-function readText(path) {
-  return readFileSync(path, 'utf8');
+  // 每次重读都经 instanceCredentials：令牌轮换（实例重启）时令牌 URL 的来源
+  // （origin）可能跟着变，绑定校验随读随核，不能只在起跑核一次。
+  return instanceCredentials(localConfig).token;
 }
 
 async function connect() {
-  const indexResponse = await fetch(`${BASE}/?token=${readToken()}`, { redirect: 'manual' });
+  const indexResponse = await fetch(tokenEntryUrl(BASE, readToken()), { redirect: 'manual' });
+  if (indexResponse.status >= 300 && indexResponse.status < 400) {
+    throw new Error(`token exchange：收到 ${String(indexResponse.status)} 重定向（Location=${String(indexResponse.headers.get('location'))}）——不跟随，按错误处理。`);
+  }
   cookie = (indexResponse.headers.getSetCookie?.() ?? []).map((e) => e.split(';', 1)[0]).join('; ');
   if (cookie.length === 0) throw new Error('token exchange returned no cookie（令牌过期：实例可能已重启）');
 }
@@ -62,8 +60,12 @@ async function rpc(endpoint, args = {}) {
   const response = await fetch(`${BASE}/api/${endpoint}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', cookie },
-    body: JSON.stringify({ type: 'client-request', rpcId, method: endpoint, payload: { args } })
+    body: JSON.stringify({ type: 'client-request', rpcId, method: endpoint, payload: { args } }),
+    redirect: 'manual'
   });
+  if (response.status >= 300 && response.status < 400) {
+    throw new Error(`${endpoint}：收到 ${String(response.status)} 重定向（Location=${String(response.headers.get('location'))}）——不跟随，按错误处理。`);
+  }
   const text = await response.text();
   let body;
   try { body = JSON.parse(text); } catch { throw new Error(`${endpoint}: 非 JSON 返回：${text.slice(0, 200)}`); }

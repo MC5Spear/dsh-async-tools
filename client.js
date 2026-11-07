@@ -21,7 +21,10 @@ var module = { exports: {} }; var exports = module.exports;
 //   不用壳——它是复选框块 `PresetBindingBlock`，渲染在表单末尾、走同一模型与
 //   保存链。官方件继续在场：`SettingsForm`／`SettingsFormModel`／
 //   `settingsNumberField`／`settingsTextField`（模型 spec）、
-//   `P.Switch`／`P.Tag`／`P.IconQuestionOutlineRegular`（控件本体与图标）。
+//   `P.Tag`／`P.IconQuestionOutlineRegular`（徽标与图标）。布尔开关自绘
+//   （UI-SETTINGS-AX：官方 `P.Switch` 只收 checked/onChange/label/disabled/
+//   title/className，摆不下 `id`／`aria-describedby`，做不了需求 §5.4 的
+//   label `for`/控件 `id` 绑定与说明关联——见 §5.5 字段壳注）。
 // - 模型的 scope = `ctx.configForms.get(ENTRY)` 的控制器（控制器就是官方
 //   `SettingsFormScope`——`getSnapshot`/`subscribe`/`mutate`）。bundle 槽的 owner props
 //   只有 `{view}`、没有 `form`，所以卡片自取控制器；模型在构造时订阅 scope，
@@ -29,10 +32,14 @@ var module = { exports: {} }; var exports = module.exports;
 // - 枚举字段（uiLang/agentLang/askUiSeat）与布尔字段（silentFailureGuard/
 //   askTakeover/workflowProgressLog/fullCommandEcho——防线总开关、提问接管
 //   与两个展示开关）：语义注册进模型（`enumFieldSpec`/`flagFieldSpec` 形状同
-//   `SettingsFieldSpec`），控件本体分别是原生 select 与官方 `P.Switch`，壳与帮助
-//   由 `FieldShell` 统一承担（设计 §5.5 的两条强制条目：无覆盖时下拉显示**生效值**；
-//   label `for`/控件 `id` 绑定 + `aria-describedby`/`aria-invalid`；布尔开关的
-//   可见标签在壳上，`Switch.label` 只作无障碍名）。
+//   `SettingsFieldSpec`），控件本体分别是原生 select 与**自绘** role="switch"
+//   按钮，壳与帮助由 `FieldShell` 统一承担（设计 §5.5 的两条强制条目：无覆盖
+//   时下拉显示**生效值**；label `for`/控件 `id` 绑定 + `aria-describedby`/
+//   `aria-invalid` 对四形态**全部成立**——UI-SETTINGS-AX 修正：官方
+//   `P.Switch` 收不了 id 与 aria 关联，布尔开关自绘：`id` 供壳上 label `for`
+//   绑定，`aria-label`＝可见标签、`aria-describedby`＝说明/错误/帮助行、
+//   `aria-invalid` 标非法；度量与 token 逐项照官方 primitives 药丸＋滑块，
+//   焦点环同源、键盘激活走原生 button 的 Enter/Space）。
 // - 帮助（需求 5.5/5.6）：每个字段标签旁带圈问号按钮（官方
 //   `IconQuestionOutlineRegular`），点击在字段下方展开 `help.<键>` 正文、再点收起；
 //   开合只存 `FieldShell` 局部 state，不碰草稿/保存/mutate；缺键回退＝按钮/说明行
@@ -97,7 +104,7 @@ var FIELDS = [
   { key: "uiLang", label: "uiLang", ms: false, options: ["auto", "zh", "en"] },
   { key: "agentLang", label: "agentLang", ms: false, options: ["en", "zh"] },
   // 静默失败防线总开关：volatile 布尔（默认 false = 三防线全不存在）。
-  // 壳照统一 FieldShell，控件本体是官方原生 Switch。
+  // 壳照统一 FieldShell，控件本体是自绘开关（见 UI-SETTINGS-AX 注释）。
   { key: "silentFailureGuard", label: "silentFailureGuard", ms: false, flag: true },
   // 提问接管四字段（需求 §5.2/设计 §4.2）：总开关默认关 = 零行为；窗口毫秒带秒读数
   // 与上下界（10000–600000）；延长毫秒带秒读数与上下界（1–2^31-1，设计 §4.2）；
@@ -515,6 +522,27 @@ var ENUM_CSS = ""
   + "cursor:default}"
   + ".ats-enum-select[aria-invalid='true'],.ats-value-input[aria-invalid='true']{"
   + "border-color:var(--dsw-alias-state-error-primary)}"
+  // 自绘开关（UI-SETTINGS-AX／设计 §5.4/§5.5）：度量与 token 逐项照官方
+  // primitives 的药丸＋滑块（36×20、padding 2、thumb 16、位移 16、0.12s）——
+  // 关/开轨道 border-l3/brand-primary、关态滑块 switch-thumb、开态滑块
+  // label-primary-foreground、禁用 opacity .5、focus-visible 外廓与官方同源
+  //（--dsw-focus-ring-* 不是 alias 族，引用处带回退缺省值）。全部引用定义表内
+  //（check-alias-tokens 把关）；corner-shape 是渐进增强，不支持时退回普通圆角。
+  + ".ats-switch{box-sizing:border-box;position:relative;flex:0 0 auto;"
+  + "align-self:flex-start;width:36px;height:20px;padding:2px;border:0;"
+  + "border-radius:999px;corner-shape:round;background:var(--dsw-alias-border-l3);"
+  + "cursor:pointer}"
+  + ".ats-switch[aria-checked='true']{background:var(--dsw-alias-brand-primary)}"
+  + ".ats-switch:disabled{cursor:default;opacity:.5}"
+  + ".ats-switch:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid "
+  + "var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));"
+  + "outline-offset:2px}"
+  + ".ats-switch-thumb{display:block;width:16px;height:16px;border-radius:50%;"
+  + "corner-shape:round;background:var(--dsw-alias-label-primary-foreground);"
+  + "transition:transform .12s ease}"
+  + ".ats-switch[aria-checked='false'] .ats-switch-thumb{"
+  + "background:var(--dsw-alias-switch-thumb)}"
+  + ".ats-switch[aria-checked='true'] .ats-switch-thumb{transform:translate(16px)}"
   + ".ats-help-button{flex:none;display:inline-flex;align-items:center;justify-content:center;"
   + "width:24px;height:24px;padding:0;border:.5px solid var(--dsw-alias-border-l4);"
   + "border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);"
@@ -577,8 +605,10 @@ if (typeof document !== "undefined" && document.getElementById("dsh-async-tools-
 /**
  * 统一字段壳（设计 §5.5）：19 个字段共用——label 行（标签 + 带圈问号帮助按钮 +
  * 覆盖徽标）、控件本体、说明/错误行、展开区（仅展开时渲染）。控件本体四形态：
- * 布尔 = 官方 `P.Switch`；枚举 = 原生 select；数值 = input（`inputMode="numeric"`）；
- * 文本 = input。度量逐项照官方 `fields.module.css`（见 ENUM_CSS 头注）。
+ * 布尔 = 自绘 role="switch" 按钮（UI-SETTINGS-AX：官方 P.Switch 不收
+ * id/aria-describedby，关联自绘）；枚举 = 原生 select；数值 = input
+ * （`inputMode="numeric"`）；文本 = input。度量逐项照官方 `fields.module.css`
+ *（见 ENUM_CSS 头注；开关另照官方 primitives 药丸＋滑块）。
  *
  * 帮助开合是**组件局部 state**（设计 §5.5 状态隔离）：`useState(false)`，按钮
  * `type="button"`、onClick 只调 `setHelpOpen`——不触碰草稿模型、不动保存、不调
@@ -617,12 +647,24 @@ function FieldShell(props) {
   ].filter(function (part) { return part !== null; }).join(" ");
   var control;
   if (props.flag === true) {
-    control = React.createElement(P.Switch, {
-      checked: props.text === "true",
-      label: props.label,
+    // 布尔开关自绘（UI-SETTINGS-AX）：role="switch" 按钮 + `id`（壳上 label
+    // `for` 绑定）+ `aria-label`（＝可见标签，冗余双保险——label 关联与
+    // aria-label 同文不冲突）+ `aria-describedby`（说明/错误/帮助行，与
+    // select/input 同一 described 清单）+ `aria-invalid`（非法草稿态）；
+    // 键盘激活（Enter/Space）走原生 button 的默认 click。官方 P.Switch 收不了
+    // 这些摆位，才改自绘（见文件头注与 ENUM_CSS 的样式来源注）。
+    control = React.createElement("button", {
+      type: "button",
+      role: "switch",
+      id: props.id,
+      className: "ats-switch",
+      "aria-checked": props.text === "true",
+      "aria-label": props.label,
+      "aria-invalid": props.invalid === true ? true : undefined,
+      "aria-describedby": described === "" ? undefined : described,
       disabled: props.disabled,
-      onChange: function (next) { props.onEdit(next ? "true" : "false"); }
-    });
+      onClick: function () { props.onEdit(props.text === "true" ? "false" : "true"); }
+    }, React.createElement("span", { className: "ats-switch-thumb" }));
   } else if (props.options !== undefined) {
     control = React.createElement("select", {
       id: props.id,
@@ -654,9 +696,9 @@ function FieldShell(props) {
   return React.createElement("div", { className: "ats-enum-field" },
     React.createElement("div", { className: "ats-enum-head" },
       React.createElement("div", { className: "ats-enum-labelGroup" },
-        props.flag === true
-          ? React.createElement("div", { className: "ats-enum-label" }, props.label)
-          : React.createElement("label", { className: "ats-enum-label", htmlFor: props.id }, props.label),
+        // 四形态统一 label `for`/控件 `id` 绑定（§5.4）：布尔开关也有 id——
+        // 点击可见标签即聚焦/激活开关（label 关联对 labelable 的 button 生效）。
+        React.createElement("label", { className: "ats-enum-label", htmlFor: props.id }, props.label),
         helpButton),
       props.overridden === true ? React.createElement("span", { className: "ats-enum-badges" },
         React.createElement(P.Tag, { tone: "neutral" }, props.overriddenLabel),
@@ -1022,7 +1064,11 @@ function PresetBindingBlock(props) {
         }, t("preset.retry")))
       : null,
     rows.length > 0 ? React.createElement("ul", {
-      className: "ats-preset-list", role: "group", "aria-labelledby": titleId
+      // UI-SETTINGS-AX：组不只报可及名（labelledby＝标题），还要带上说明行
+      //（describedby＝生效值行——常驻说明与生效名单在读屏上随组可达，需求
+      // §5.4「常驻说明」对非字段控件同样成立）。
+      className: "ats-preset-list", role: "group",
+      "aria-labelledby": titleId, "aria-describedby": messageId
     }, rows.map(function (row) {
       var checked = draftIndex[row.id] === true;
       // RA-BIND-BROKEN：异常项（broken 为 truthy——宿主实测是诊断字符串）未绑定
@@ -2018,13 +2064,11 @@ function createAskModel(ctx, remote) {
  */
 var ASK_CSS = ""
   // VIS-BADGE-01：面板宽度窄视口钳制（390px 侧栏形态下 340px 固定宽会横向溢出）。
-  // sidebar 座位宽度钳制改 calc(100vw - 76px)（flash 视觉盲测缺陷②）：侧栏收起
-  // 列实测约 56px 且 overflow:hidden——仅右锚 16px 时 340px 固定宽在 390 视口
-  // 左缘（x=34）落进列内、裁到列内图标右缘。右锚 16px＋本钳制在一切宽度下
-  // 左缘 ≥60px（列 56＋4px 净空；410px 视口恰取 334px 宽、左缘 60），宽视口
-  // 仍 340px 上限右锚原位（768 下左缘 412，与列横向分离）；overlay 座位维持
-  // 两缘 16px 原位。曾用 left:60px 显式左锚——与基座 right:16px 水平过度约
-  // 束（LTR 下 right 被忽略、面板居左），已删，宽度公式单独承担避让。
+  // sidebar 座位宽度钳制 calc(100vw - 76px)：侧栏收起列实测约 56px 且
+  // overflow:hidden——仅右锚 16px 时 340px 固定宽在 390 视口左缘（x=34）落进
+  // 列内、裁到列内图标右缘。右锚 16px＋本钳制在一切宽度下左缘 ≥60px（列 56
+  // ＋4px 净空；410px 视口恰取 334px 宽、左缘 60），宽视口仍 340px 上限右锚
+  // 原位（768 下左缘 412，与列横向分离）；overlay 座位维持两缘 16px 原位。
   + ".ats-ask-panel{position:fixed;right:16px;bottom:16px;z-index:10000;"
   + "width:min(340px,calc(100vw - 32px));"
   + "max-height:60vh;overflow:auto;box-sizing:border-box;padding:12px;"
@@ -2337,7 +2381,12 @@ function AskItem(props) {
     rerender(function (n) { return n + 1; });
     ask.actions.ignore(item, function () { busyRef.current = false; rerender(function (n) { return n + 1; }); });
   }
-  var questionDomId = "ats-q-" + item.batchId + "-" + item.questionId;
+  // 题号进 DOM id 前先 encodeURIComponent（ASK-QUESTION-ID-AX）：宿主对题号无字符
+  // 限制（含 HTML ASCII 空白 SPACE/TAB/LF/FF/CR，探针证实原串往返），空白直拼会使
+  // aria-labelledby 按 IDREF 分词把 id 拆成多个不存在的引用——选项组失去可及名称。
+  // 编码可逆，不同题号不碰撞（"a b"→a%20b、"a\tb"→a%09b）；不能用「空白统一替
+  // 换成某字符」——那会让两个题号撞同一 DOM id、第二组挂错题干。
+  var questionDomId = "ats-q-" + item.batchId + "-" + encodeURIComponent(item.questionId);
   var optionRole = multi ? "checkbox" : "radio";
   var customOn = function () { dispatch({ type: "customOn", multiSelect: multi }); };
   var options = item.options.map(function (option, index) {
@@ -2621,11 +2670,10 @@ function AskOverlaySeat(props) {
 }
 
 /** sidebar 座位徽标（渲染条件见 askHasFace；徽标＝未处理数入口，点击展开题目）。
- * VIS-BADGE-01（实测返修形）：宿主窄侧栏图标列仅约 52px——徽标按钮只含问号
- * 圆环图标（约 25px，完整容纳），计数作图标右上角叠置泡（绝对定位不占行宽，
- * 见样式段注释）；完整名称走 `aria-label`（屏幕阅读器与无障碍树恒可得，不依
- * 赖悬停），面板标题行（.ats-ask-title）承载可见全名。`aria-expanded` 同步
- * 开合态。 */
+ * VIS-BADGE-01：宿主窄侧栏图标列仅约 52px——徽标盒约 51px（16px 问号圆环图标
+ * 左置＋右侧 30px 净空区承载计数泡，几何见样式段注释），完整名称走
+ * `aria-label`（屏幕阅读器与无障碍树恒可得，不依赖悬停），面板标题行
+ *（.ats-ask-title）承载可见全名。`aria-expanded` 同步开合态。 */
 function AskSidebarSeat(props) {
   var state = React.useSyncExternalStore(props.ask.store.subscribe, props.ask.store.getSnapshot);
   var openRef = React.useRef(false);

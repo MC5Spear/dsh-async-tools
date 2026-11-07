@@ -36,13 +36,13 @@ import { join } from 'node:path';
 import { launch, openPage, evaluate, findBrowser, waitFor, screenshot } from './_visual/cdp.mjs';
 import { readNs, patchNs, newSession, prompt, waitTurnEnd, lastAssistantText, runDescriptionOf, runResultText, approvalOutcomes, PRESET } from './_r28-helpers.mjs';
 import { transcriptOf, localConfig } from './_rpc.mjs';
-import { instanceCredentials } from '../tools/_local-config.mjs';
+import { instanceCredentials, tokenEntryUrl } from '../tools/_local-config.mjs';
 
 const { base: BASE, token } = instanceCredentials(localConfig);
 const SHOTS = join(localConfig.evidenceDir, 'shots');
 const LOGS = join(localConfig.evidenceDir, 'logs');
 const ERRLOG = localConfig.serviceLog;
-const url = `${BASE}/?token=${encodeURIComponent(token)}`;
+const url = tokenEntryUrl(BASE, token);
 
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 const results = [];

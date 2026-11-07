@@ -21,12 +21,15 @@
  * 判据全部来自**真实转录的 tool/result**，不模拟、不空转：拿不到对应结果就
  * 以退出码 2 报"无法判定"，绝不把"没验到"记成"验过且通过"。
  *
- * 副作用：围栏拒绝的写不会创建文件；命令族分支的命令只写标准输出。
+ * 副作用：围栏拒绝的写不会创建文件；命令族分支的命令只写标准输出。靶子是唯一
+ * 随机自建文件（先检查不存在、内容带所有权标记），收尾只清理确认属于本轮的那一个。
  *
  * 用法：node verify/probe-sandbox-marker.mjs
  */
+import { existsSync, readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import { instanceCredentials, loadLocalPlaneOrSkip } from '../tools/_local-config.mjs';
+import { instanceCredentials, loadLocalPlaneOrSkip, tokenEntryUrl } from '../tools/_local-config.mjs';
 
 const localConfig = await loadLocalPlaneOrSkip('verify/probe-sandbox-marker.mjs');
 const { base: BASE, token } = instanceCredentials(localConfig);
@@ -44,16 +47,24 @@ function check(name, ok, detail = '') {
   console.log(`  ${ok ? 'OK    ' : 'WRONG '} ${name}${detail === '' ? '' : `\n          ${detail}`}`);
 }
 
-// 登录与 `verify/_rpc.mjs` 同款：token 换 cookie 一跳（redirect:'manual'），
+// 拒绝重定向：认证请求被 3xx 携带凭据跳转是错误，不跟随。
+function assertNotRedirected(response, what) {
+  if (response.status >= 300 && response.status < 400) {
+    throw new Error(`${what}：收到 ${String(response.status)} 重定向（Location=${String(response.headers.get('location'))}）——不跟随，按错误处理。`);
+  }
+}
+
+// 登录与 `verify/_rpc.mjs` 同款：token 换 cookie 一跳（redirect:'manual'＋3xx 报错），
 // **不追 Location**——相对重定向 `.` 拼进基址会得到 `http://…/./` 形态的坏 URL，
-// 且现行宿主在首跳就下发全部会话 cookie。
-const first = await fetch(`${BASE}/?token=${encodeURIComponent(token)}`, { redirect: 'manual' });
+// 且现行宿主在首跳就下发全部会话 cookie。令牌编码统一走 tokenEntryUrl。
+const first = await fetch(tokenEntryUrl(BASE, token), { redirect: 'manual' });
+assertNotRedirected(first, 'token exchange');
 const cookie = (first.headers.getSetCookie?.() ?? []).map((e) => e.split(';', 1)[0]).join('; ');
 if (cookie.length === 0) throw new Error('token exchange returned no cookie');
 
 let rpcId = 0;
 /**
- * 调一次宿主 RPC。
+ * 调一次宿主 RPC。重定向按错误处理（不携带凭据跳转）。
  *
  * @param {string} method - RPC 方法名。
  * @param {object} args - 参数。
@@ -64,8 +75,10 @@ async function rpc(method, args) {
   const response = await fetch(`${BASE}/api/${method}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', cookie },
-    body: JSON.stringify({ type: 'client-request', rpcId: `m${String(rpcId)}`, method, payload: { args } })
+    body: JSON.stringify({ type: 'client-request', rpcId: `m${String(rpcId)}`, method, payload: { args } }),
+    redirect: 'manual'
   });
+  assertNotRedirected(response, method);
   const body = await response.json();
   if (body.result?.ok !== true) throw new Error(`${method}: ${JSON.stringify(body.result?.error ?? body).slice(0, 200)}`);
   return body.result.value;
@@ -156,7 +169,18 @@ function lastToolResult(records, afterIndex, toolName) {
 
 // 「工作区外」＝仓根的上一级，经配置派生——写死绝对盘符路径会让判据换机就指向
 // 不存在的位置，"围栏拒绝了"与"路径本来就不对"就分不清了。
-const OUTSIDE = join(dirname(localConfig.workspaceDir), 'dsh-sandbox-marker-probe.txt');
+//
+// 靶子是**唯一随机自建**的：文件名带本轮专属 id，使用前先检查不存在（撞上预存
+// 同名文件就放弃，不覆盖）；内容里写所有权标记，收尾只清理「确认是本轮创建」的
+// 那一个文件——固定文件名＋无条件删除的旧形态会覆盖／误删别人的文件。
+const PROBE_ID = `dsh-sandbox-marker-probe-${process.pid.toString(36)}-${randomUUID().slice(0, 8)}`;
+const OUTSIDE = join(dirname(localConfig.workspaceDir), `${PROBE_ID}.txt`);
+/** 靶子文件内容的所有权标记（创建与收尾核对都用它）。 */
+const OWNERSHIP_MARKER = `[${PROBE_ID}] verify/probe-sandbox-marker.mjs 本轮创建的靶子文件，可安全删除。`;
+if (existsSync(OUTSIDE)) {
+  console.log(`**靶子路径已存在：${OUTSIDE}**——随机名撞上预存文件，本轮不覆盖不删除，直接放弃（换一轮重跑即可）。`);
+  process.exit(2);
+}
 
 // 词表断言用的常量：两族共用同一份（`dsh-sandbox` 单一来源），断言不分叉。
 const MARKER_RE = /\[sandbox: file access denied under ([a-z-]+) mode\]/;
@@ -192,7 +216,7 @@ console.log('  会话档位：workspace-write（经 sandbox/mode 事件核验）
 // ── 阶段 A：文件族围栏的真实拒绝（词表 ①② 的载体） ──────────────────────────
 await prompt(sessionId,
   '请严格按下面做，不要质疑、不要改路径、不要换工具、不要带 sandbox_permissions 或 justification 参数：\n'
-  + `用 write 工具创建文件 ${OUTSIDE}，内容为 probe。`
+  + `用 write 工具创建文件 ${OUTSIDE}，内容为一行：${OWNERSHIP_MARKER}`
   + '完成后把 write 工具返回的错误文本原样贴出来，不要重试。');
 
 {
@@ -237,10 +261,11 @@ await prompt(sessionId,
       /\[exit code: \d+\]/.test(text) ? '' : '缺了它，模型拿到一段文本却无从判断命令成功还是失败');
   } else {
     // 命令族 runner 存活的部署（交互实例）：追做命令族外写，断言同一份词表落在
-    // async_run 的结果里（subject=command 的同轮提权提示）。
+    // async_run 的结果里（subject=command 的同轮提权提示）。靶子是本轮随机自建的
+    // 那个（不带 -Force——起跑已确认它不存在，存在即失败而不是覆盖）。
     await prompt(sessionId,
       '请严格按下面做，不要质疑、不要改路径、不要换工具、不要带提权参数：\n'
-      + `用 async_run 执行 New-Item -ItemType File -Path '${OUTSIDE}' -Force。`
+      + `用 async_run 执行 New-Item -ItemType File -Path '${OUTSIDE}'。`
       + '完成后把工具返回原样贴出来，不要重试。');
     const denied = await settleAndRead(sessionId, 240_000);
     const { text: deniedText } = lastToolResult(denied, watermark, 'async_run');
@@ -256,17 +281,35 @@ await prompt(sessionId,
   }
 }
 
-// ── 收尾：清掉靶子文件（围栏失效或命令族存活时它可能真的被创建过）。清理走
-// 本会话升档后的 async_run（命令族在本部署受限档死亡，升档是唯一活路）；
-// `-ErrorAction SilentlyContinue` 让"本来就不存在"也安静通过。
+// ── 收尾：只清理「确认是本轮创建」的靶子文件 ─────────────────────────────────
+// 围栏失效或命令族存活时靶子可能真的被创建过。清理前先本地读内容核对所有权标记：
+// 标记在场 → 让本轮会话删它（升档后的 async_run；本部署命令族受限档死亡，升档是
+// 唯一活路）；标记不在场（预存同名文件极小概率撞上、或中途被替换）→ **不删除**，
+// 留人工判断。清理后本地复核存在性。
 try {
-  await rpc('commands/execute', { agentId: sessionId, line: '/permission danger-full-access', submittedAttachments: [] });
-  await prompt(sessionId,
-    `请用 async_run 执行 Remove-Item -Path '${OUTSIDE}' -Force -ErrorAction SilentlyContinue，完成后只回一个字：完。`);
-  await settleAndRead(sessionId, 120_000);
-  console.log(`\n  收尾：已清理靶子文件 ${OUTSIDE}。`);
+  let ours = false;
+  if (existsSync(OUTSIDE)) {
+    try {
+      ours = readFileSync(OUTSIDE, 'utf8').includes(OWNERSHIP_MARKER);
+    } catch {
+      ours = false;
+    }
+  }
+  if (!existsSync(OUTSIDE)) {
+    console.log(`\n  收尾：靶子文件未被创建（围栏生效），无需清理（${OUTSIDE}）。`);
+  } else if (!ours) {
+    console.log(`\n  收尾**不删除**：${OUTSIDE} 的内容不含本轮所有权标记——不是本轮创建的文件，留人工判断。`);
+  } else {
+    await rpc('commands/execute', { agentId: sessionId, line: '/permission danger-full-access', submittedAttachments: [] });
+    await prompt(sessionId,
+      `请用 async_run 执行 Remove-Item -Path '${OUTSIDE}' -Force，完成后只回一个字：完。`);
+    await settleAndRead(sessionId, 120_000);
+    const gone = !existsSync(OUTSIDE);
+    console.log(`\n  收尾：已让会话删除本轮靶子 ${OUTSIDE}（复核：${gone ? '已不存在' : '**仍在——可能残留**'}）。`);
+    if (!gone) console.log(`           若确认可删，手工执行：Remove-Item -Path '${OUTSIDE}' -Force`);
+  }
 } catch (error) {
-  console.log(`\n  收尾清理失败：${String(error)}——靶子文件可能残留（${OUTSIDE}，内容 probe）。`);
+  console.log(`\n  收尾清理失败：${String(error)}——靶子文件可能残留（${OUTSIDE}，内容为本轮所有权标记）。`);
 }
 
 const failed = results.filter((r) => !r.ok).length;

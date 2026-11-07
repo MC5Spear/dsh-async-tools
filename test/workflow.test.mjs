@@ -542,6 +542,12 @@ hostTest('async_workflow（R34-h）：首直付预算只限正文——状态头
   assert.ok(result.result.endsWith('}'), '正文可见尾部恰为份额 1 的最后一个字符——头部额度不得流入结果尾部');
   const markerless = result.result.slice(head.length).replace(/\[output truncated: \d+ chars omitted\]/, '');
   assert.ok(!/x/.test(markerless), '正文可见字符不得超过份额（markerless 段不得含任何 x）');
+  // RA-WORKFLOW-BODY-BUDGET 的对象面锚（实现盲审 m4）：内部计量 bodyChars 不得
+  // 泄漏进返回对象——宿主层 output.schema 对 completed 载体拒额外键，泄漏即整条
+  // 结果被拒；直接断言对象形状，不依赖宿主层才红。
+  assert.ok(!('bodyChars' in result), 'completed 返回对象不得携带内部计量键 bodyChars');
+  assert.deepEqual(Object.keys(result).sort(), ['result', 'status', 'truncated'],
+    '返回对象键集与 output.schema 的 completed 载体一致（status/result/truncated）');
 });
 
 // ---------------------------------------------------------------------------

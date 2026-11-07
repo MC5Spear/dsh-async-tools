@@ -474,6 +474,28 @@ hostTest('供应商内模型浏览与搜索：忽略大小写包含匹配 ID 与
   const none = await tool.execute({ provider: 'zai', query: 'nothing' }, env.exec);
   assert.deepEqual(none.entries, []);
   assert.match(tool.output.render({}, none)[0].text, /no matches for "nothing"/);
+  // MODEL-QUERY-ECHO 的 render 锚（实现盲审 m3）：供应商内搜索的**可见正文**回显
+  // 供应商＋搜索条件——结构化 value 的 query 字段不能替代可见回显；无搜索词的
+  // 浏览用浏览头，两档互斥。
+  const echoText = tool.output.render({}, byName)[0].text;
+  assert.match(echoText, /Models of zai matching "FLASH"/, '搜索头：回显供应商与搜索条件');
+  assert.doesNotMatch(echoText, /Models of zai \(page/, '有搜索词时不得退回浏览头');
+  const bareText = tool.output.render({}, all)[0].text;
+  assert.match(bareText, /Models of zai \(page 1/, '浏览（无 query）仍用浏览头');
+  assert.doesNotMatch(bareText, /matching/, '无搜索词不得误用搜索头');
+});
+
+hostTest('供应商内搜索的 zh 档回显头（MODEL-QUERY-ECHO）：render 必须取到 zh 词典键——误删后 t() 静默回退 en 的形态由本锚钉红', async () => {
+  // 实现盲审 m3 复审的低危备注：en 双向锚已钉档位选择，zh 档词典键单独钉——
+  // text.js zh 表的 modelsQueryHeader 误删时，t() 按回退规则静默用 en 文案，
+  // 行为不坏但两语等义破损；本用例让该形态必红。
+  const env = listEnv({ agentLang: 'zh' });
+  const tool = checkedTool(createListModelsTool(env.ctx, env.view));
+  const hit = await tool.execute({ provider: 'zai', query: 'FLASH' }, env.exec);
+  const text = tool.output.render({}, hit)[0].text;
+  assert.match(text, /zai 中匹配 "FLASH" 的模型（第 1 页，共 1 个/,
+    'zh 档搜索头：回显供应商与搜索条件（zh 词典键）');
+  assert.doesNotMatch(text, /Models of zai matching/, '不得回退 en 档文案');
 });
 
 hostTest('供应商不在目录：说明前置、条目照常渲染、空态专属承担（R5-F01，§2.3.4）', async () => {

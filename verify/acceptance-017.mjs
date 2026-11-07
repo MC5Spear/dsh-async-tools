@@ -30,7 +30,7 @@
 import { readFileSync, writeFileSync, mkdirSync, openSync, readSync, readdirSync, statSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { instanceCredentials, loadLocalPlaneOrSkip } from '../tools/_local-config.mjs';
+import { instanceCredentials, loadLocalPlaneOrSkip, tokenEntryUrl } from '../tools/_local-config.mjs';
 import { judgeDeliveredBytes } from './r24-judgements.mjs';
 import { judgeAgentRouting, queryVerdictAllowed, queryVerdictDisabled } from './agent-judgements.mjs';
 // async-tools-host 的设置读写经共享助手（嵌套 settings 形状，设计 §8.3）；
@@ -81,16 +81,15 @@ function record(name, passed, detail = '') {
 // ── RPC ────────────────────────────────────────────────────────────────────
 function readToken() {
   if (tokenArg !== undefined) return tokenArg.slice('--token='.length);
-  const raw = readFileSync(TOKEN_FILE, 'utf8').trim();
-  const at = raw.indexOf('http');
-  if (at < 0) throw new Error(`token file has no URL: ${TOKEN_FILE}`);
-  return new URL(raw.slice(at)).searchParams.get('token');
+  // 从文件取令牌一律经 instanceCredentials：令牌轮换（实例重启）时令牌 URL 的来源
+  // （origin）可能跟着变，绑定校验随读随核，不能只在起跑核一次。
+  return instanceCredentials(localConfig).token;
 }
 
 let cookie = '';
 /** token 换 cookie（每次跑现读 token：实例重启会换令牌）。 */
 async function connect() {
-  const indexResponse = await fetch(`${BASE}/?token=${readToken()}`, { redirect: 'manual' });
+  const indexResponse = await fetch(tokenEntryUrl(BASE, readToken()), { redirect: 'manual' });
   cookie = (indexResponse.headers.getSetCookie?.() ?? []).map((e) => e.split(';', 1)[0]).join('; ');
   if (cookie.length === 0) throw new Error('token exchange returned no cookie（令牌过期：实例可能已重启）');
 }

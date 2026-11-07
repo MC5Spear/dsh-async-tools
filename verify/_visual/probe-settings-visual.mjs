@@ -406,7 +406,7 @@ try {
         `expanded=${String(closed?.expanded)} region=${String(closed?.regionPresent)}`);
     }
 
-    // SV-4 尺寸表（两主题各采一遍：值输入/枚举下拉/布尔 Switch 在场/绑定复选框）＋分隔线＋官方圆角对照。
+    // SV-4 尺寸表（两主题各采一遍：值输入/枚举下拉/布尔自绘开关在场/绑定复选框）＋分隔线＋官方圆角对照。
     const metrics = await evaluate(page, `(() => {
       const section = document.querySelector('[data-plugin-config]');
       const pick = (n) => { const s = getComputedStyle(n); return {
@@ -442,7 +442,7 @@ try {
     for (const [label, actual, ok] of REF) {
       check(`SV-4 ${scheme} ${label}`, ok === null ? null : actual !== undefined && actual !== null && ok(actual), `实得 ${String(actual)}`);
     }
-    check(`SV-4 ${scheme} 布尔 Switch 为官方组件本体在场（不比自绘项）`, metrics.switchPresent === true, `rows=${String(metrics.rows)}`);
+    check(`SV-4 ${scheme} 布尔开关为自绘 role=switch 按钮在场（UI-SETTINGS-AX；官方 P.Switch 不再使用）`, metrics.switchPresent === true, `rows=${String(metrics.rows)}`);
     check(`SV-4 ${scheme} 相邻字段分隔线 ${String(metrics.rows - 1)} 条（≤1px 计算取整口径）`,
       metrics.separators.length === metrics.rows - 1 && metrics.separators.every((w) => { const v = Number.parseFloat(w); return v > 0 && v <= 1; }),
       `实得 ${metrics.separators.join(', ')}`);

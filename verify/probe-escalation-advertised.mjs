@@ -12,7 +12,7 @@
  *
  * 用法：node verify/probe-escalation-advertised.mjs
  */
-import { instanceCredentials, loadLocalPlaneOrSkip } from '../tools/_local-config.mjs';
+import { instanceCredentials, loadLocalPlaneOrSkip, tokenEntryUrl } from '../tools/_local-config.mjs';
 
 const localConfig = await loadLocalPlaneOrSkip('verify/probe-escalation-advertised.mjs');
 const { base: BASE, token } = instanceCredentials(localConfig);
@@ -30,10 +30,18 @@ function check(name, ok, detail = '') {
   console.log(`  ${ok ? 'OK    ' : 'WRONG '} ${name}${detail === '' ? '' : `\n          ${detail}`}`);
 }
 
-// 登录与 `verify/_rpc.mjs` 同款：token 换 cookie 一跳（redirect:'manual'），
+// 拒绝重定向：认证请求被 3xx 携带凭据跳转是错误，不跟随。
+function assertNotRedirected(response, what) {
+  if (response.status >= 300 && response.status < 400) {
+    throw new Error(`${what}：收到 ${String(response.status)} 重定向（Location=${String(response.headers.get('location'))}）——不跟随，按错误处理。`);
+  }
+}
+
+// 登录与 `verify/_rpc.mjs` 同款：token 换 cookie 一跳（redirect:'manual'＋3xx 报错），
 // **不追 Location**——相对重定向 `.` 拼进基址会得到 `http://…/./` 形态的坏 URL，
-// 且现行宿主在首跳就下发全部会话 cookie。
-const first = await fetch(`${BASE}/?token=${encodeURIComponent(token)}`, { redirect: 'manual' });
+// 且现行宿主在首跳就下发全部会话 cookie。令牌编码统一走 tokenEntryUrl。
+const first = await fetch(tokenEntryUrl(BASE, token), { redirect: 'manual' });
+assertNotRedirected(first, 'token exchange');
 const cookie = (first.headers.getSetCookie?.() ?? []).map((e) => e.split(';', 1)[0]).join('; ');
 if (cookie.length === 0) throw new Error('token exchange returned no cookie');
 
@@ -50,8 +58,10 @@ async function rpc(method, args) {
   const response = await fetch(`${BASE}/api/${method}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', cookie },
-    body: JSON.stringify({ type: 'client-request', rpcId: `p${String(rpcId)}`, method, payload: { args } })
+    body: JSON.stringify({ type: 'client-request', rpcId: `p${String(rpcId)}`, method, payload: { args } }),
+    redirect: 'manual'
   });
+  assertNotRedirected(response, method);
   const body = await response.json();
   if (body.result?.ok !== true) throw new Error(`${method}: ${JSON.stringify(body.result?.error ?? body)}`);
   return body.result.value;

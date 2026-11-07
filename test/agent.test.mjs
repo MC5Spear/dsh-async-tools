@@ -575,18 +575,27 @@ hostTest('async_agent：后端路由默认参与合并——无请求时默认�
 
 hostTest('async_agent：指定路由但 provider 未声明 agentOptions 能力 → 当场报错且零派生（零容忍）', async () => {
   // 假件形状与宿主注册表保持一致：后端对象带 capabilities 字典；这里造一个不声明的。
+  // UI-SETTINGS-AX-DESCRIPTION：后端不声明 agentOptions 时，路由三键在参数表与
+  // 校验集合同步移除——携带它们首先按未声明键拒绝（supported 清单不含路由键），
+  // 不再等到步 9b 的 agentOptions 文案；描述侧同步换 p4NoRoute 档。
   const env = agentEnv({
     providers: { legacy: { name: 'legacy', prepareContinuable() {}, capabilities: {} } }
   });
   env.setConfig({ subagentProvider: 'legacy' });
   const tool = createAgentTool(env.ctx, env.view);
+  // 构造即按真实能力条件化（agentConditionalKeys 现算，agent.js rebuildText 同源）：
+  assert.equal('provider' in tool.parameters, false, '参数表不含 provider（与执行校验同一条件）');
+  assert.equal('model' in tool.parameters, false, '参数表不含 model');
+  assert.equal('reasoning_effort' in tool.parameters, false, '参数表不含 reasoning_effort');
+  assert.match(tool.description, /does not declare support for agent route options/,
+    '描述换 p4NoRoute 档（不宣告不可用的输入面）');
 
   await assert.rejects(
     tool.execute(
       { description: 'x', prompt: 'y', provider: 'zai', model: 'glm-5.3' },
       EXEC
     ),
-    /"legacy" does not honor agentOptions.*requested route would be silently ignored/
+    /unsupported argument\(s\): provider, model.*supported: description, prompt, cwd/
   );
   assert.deepEqual(env.activations, [], '功能不达标不得派生');
 
