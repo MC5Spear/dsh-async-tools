@@ -100,7 +100,7 @@ export function readSupportSet(manifest) {
     problems.push(`九条 dsh peer 声明不一致：${[...ranges].map((range) => JSON.stringify(range)).join('、')}`);
   }
   if (Object.hasOwn(manifest.engines ?? {}, 'dsh')) {
-    problems.push('包清单声明了 engines.dsh——宿主的兼容判定会改由它单独裁决并忽略 peer，支持集合因此失效');
+    problems.push('包清单声明了 engines.dsh——宿主的兼容决定会改由它单独作出并忽略 peer，支持集合因此失效');
   }
   const range = dshPeers.length > 0 ? peers[dshPeers[0]] : undefined;
   const members = typeof range === 'string'
@@ -221,7 +221,7 @@ export async function checkHostCompat({ root = MODULE_ROOT, hostRoot, hostVersio
   const { evaluatePluginCompatibility } = await import(pathToFileURL(appBoot.entry).href);
 
   // 官方判定的未满足项字段按宿主代际而异：支持集（0.2.1 线）叫 `requirements`
-  //（含 engines.dsh 裁决），集合外的 0.2.0-rc.2 树叫 `peers`。检查器取宿主树自己
+  //（含 engines.dsh 决定），集合外的 0.2.0-rc.2 树叫 `peers`。检查器取宿主树自己
   // 的判定实现，归一两种形态——否则把它指向集合外树时会在「宿主版本不在支持
   // 集合内」这条**正确失败**出现之前先 TypeError 崩溃，可读失败变崩溃。两者都
   // 缺席＝形态再变，同样按可读失败暴露。

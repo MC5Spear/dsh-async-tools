@@ -49,6 +49,7 @@ import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { instanceCredentials, loadLocalPlaneOrSkip, tokenEntryUrl } from '../tools/_local-config.mjs';
+import { authCookieFromFirstHop, assertApiNotRedirected } from './_auth.mjs';
 
 const localConfig = await loadLocalPlaneOrSkip('verify/probe-preset-portability.mjs');
 const { base: BASE, token } = instanceCredentials(localConfig);
@@ -72,16 +73,14 @@ function record(name, ok, detail = '') {
   console.log(`  ${ok ? 'OK    ' : 'WRONG '} ${name}${detail === '' ? '' : `\n          ${detail}`}`);
 }
 
-// 登录与 `verify/_rpc.mjs` 同款：redirect:'manual'＋3xx 按错误处理（认证请求不
-// 跟随重定向）；令牌编码统一走 tokenEntryUrl（不再裸拼 `?token=`）。
+// 登录与 `verify/_rpc.mjs` 同款：判定统一在 `verify/_auth.mjs`——首跳接受
+// 「3xx＋Set-Cookie＋同源/缺席 Location」的正常 cookie 交换，不跟随 Location；
+// API 调用的任何 3xx 仍按错误处理。令牌编码统一走 tokenEntryUrl。
 const indexResponse = await fetch(tokenEntryUrl(BASE, token), { redirect: 'manual' });
-if (indexResponse.status >= 300 && indexResponse.status < 400) {
-  throw new Error(`token exchange：收到 ${String(indexResponse.status)} 重定向（Location=${String(indexResponse.headers.get('location'))}）——不跟随，按错误处理。`);
-}
-const cookie = (indexResponse.headers.getSetCookie?.() ?? []).map((e) => e.split(';', 1)[0]).join('; ');
+const cookie = authCookieFromFirstHop(indexResponse, BASE);
 
 /**
- * 发一次信封 RPC。重定向按错误处理（不携带凭据跳转）。
+ * 发一次信封 RPC。API 的任何 3xx 都按错误处理（不携带凭据跳转）。
  *
  * @param {string} method - 方法名。
  * @param {object} args - 参数。
@@ -95,9 +94,7 @@ async function rpc(method, args) {
     body: JSON.stringify({ type: 'client-request', rpcId, method, payload: { args } }),
     redirect: 'manual'
   });
-  if (response.status >= 300 && response.status < 400) {
-    throw new Error(`${method}：收到 ${String(response.status)} 重定向（Location=${String(response.headers.get('location'))}）——不跟随，按错误处理。`);
-  }
+  assertApiNotRedirected(response, method);
   const body = JSON.parse(await response.text());
   if (body?.result?.ok !== true) throw new Error(`${method}: ${JSON.stringify(body?.result?.error).slice(0, 200)}`);
   return body.result.value;

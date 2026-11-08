@@ -460,7 +460,7 @@ const ANCHORS = {
   targetMessage: [/目标子代理发来一条消息/, /A message from target subagent/],
   arrived: [/静止尚未证实（注册表仍观察到运行或读取失败）/, /not confirmed to have stopped \(the registry still reads running or the read failed\)/],
   pending: [/至本次返回其静止仍未证实/, /stillness remained unconfirmed until this return/],
-  budget: [/等待预算到期，目标条件未满足|等待预算到期，无可处理消息/, /wait budget expired with no target condition met|The wait budget expired with no processable message/],
+  budget: [/等待预算到期（已等待 \d+ ms），目标条件未满足|等待预算到期（已等待 \d+ ms），无可处理消息/, /wait budget expired after \d+ ms with no target condition met|wait budget expired after \d+ ms with no processable message/],
   interrupted: [/等待被打断|等待未开始：一条用户消息/, /Wait interrupted|Wait not started/],
   cancelled: [/被取消/, /was cancelled/],
   targetsSettled: [/维持上次报告的停止态/, /remain settled as last reported/],

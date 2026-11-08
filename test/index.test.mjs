@@ -1034,7 +1034,7 @@ test('T15（R38；R44 换钉）：九个 dsh* peer 共用同一支持集合—�
   assert.deepEqual(pkg.peerDependencies, expected,
     `peerDependencies 必须与需求 §7.3 兼容基准逐键逐值一致（实际：${JSON.stringify(pkg.peerDependencies)}）`);
   assert.equal(pkg.engines?.dsh, undefined,
-    '不得声明 engines.dsh——宿主在场时它会顶替九条 peer 单独裁决，支持集合因此失效');
+    '不得声明 engines.dsh——宿主在场时它会顶替九条 peer 单独决定，支持集合因此失效');
   assert.equal(pkg.dependencies?.['@deepseek-ai/schemastery'], '~3.18.5',
     'schemastery 叶子依赖形态不变（~ 窗随宿主树）');
   assert.equal(pkg.version, '0.2.8+dsh.0.2.1-rc',

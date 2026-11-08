@@ -19,12 +19,16 @@
  *
  * 设置读写与恢复一律经 `verify/_r28-helpers.mjs` 的共享助手（嵌套 `settings`
  * 子树契约，设计 §8.3）：起跑先保存原状态（value/user 两层）并**落盘快照**（进程
- * 被强杀、finally 不执行时按快照人工恢复），收尾在 `finally` 里**先检测并发变化**
- * （revision 比对；revision 缺席按 value/user 深比对）——发现窗口内他方更新就停止
- * 恢复并报告（不覆盖），无并发才按联合键集恢复原状态并读回核对——探针改的是验证
- * 实例的真实配置，留在改过的状态会污染后续真机判据。另有平铺负向对照（显式绕过
- * 助手）与嵌套 replace 语义两条形状判据。**边界：本探针会写真实设置，只在专用
- * 验证实例上执行**；共享实例上他方更新一旦发生，恢复按上面的冲突语义停止。
+ * 被强杀、finally 不执行时按快照人工恢复）。探针自己的每次写入都经**计数写**登记
+ * 「预期的下一状态用户覆盖层」；每次读都走 `trackState`——自写窗口内覆盖层与预测
+ * 不符、或无自写预期而 revision 推进／深比对有变，都**当场**记为窗口内他方写入
+ * （不再等到收尾、也不吸收为已知状态），收尾按记录停止恢复并报告。恢复写本身带
+ * `expectedRevision`（宿主 CAS：读—写窗口内他方写入使落库被拒，而不是被覆盖）；
+ * 宿主不提供修订号（revision 为 null）时退化为深比对检测＋无 CAS 恢复，边界如实
+ * 报告。两条恢复防线各有一次**在探针内演练**：绕过登记层的裸写入必须被下一次读
+ * 检出；过期 `expectedRevision` 必须被服务端拒绝且状态不动。另有平铺负向对照
+ * （显式绕过助手）与嵌套 replace 语义两条形状判据。**边界：本探针会写真实设置，
+ * 只在专用验证实例上执行**；共享实例上他方更新一旦发生，恢复按上面的冲突语义停止。
  *
  * 用法：
  *   node verify/probe-settings-behavior-full.mjs
@@ -34,6 +38,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { instanceCredentials, loadLocalPlaneOrSkip, tokenEntryUrl } from '../tools/_local-config.mjs';
+import { authCookieFromFirstHop, assertApiNotRedirected } from './_auth.mjs';
 // 设置读写/恢复一律走共享助手（设计 §8.3：嵌套形状单点封装；本探针自带的 rpc
 // 只服务会话驱动与「显式绕过助手」的平铺负向对照）。
 import { elevateSession, readNs, patchNs, replaceNs, mutateNs, NS } from './_r28-helpers.mjs';
@@ -67,13 +72,11 @@ const TEST_BASELINE = {
   agentLang: 'en'
 };
 
-// 登录与 `verify/_rpc.mjs` 同款：redirect:'manual'＋3xx 按错误处理（认证请求不
-// 跟随重定向）；令牌编码统一走 tokenEntryUrl（不再裸拼 `?token=`）。
+// 登录与 `verify/_rpc.mjs` 同款：判定统一在 `verify/_auth.mjs`——首跳接受
+// 「3xx＋Set-Cookie＋同源/缺席 Location」的正常 cookie 交换，不跟随 Location；
+// API 调用的任何 3xx 仍按错误处理。令牌编码统一走 tokenEntryUrl。
 const indexResponse = await fetch(tokenEntryUrl(BASE, token), { redirect: 'manual' });
-if (indexResponse.status >= 300 && indexResponse.status < 400) {
-  throw new Error(`token exchange：收到 ${String(indexResponse.status)} 重定向（Location=${String(indexResponse.headers.get('location'))}）——不跟随，按错误处理。`);
-}
-const cookie = (indexResponse.headers.getSetCookie?.() ?? []).map((e) => e.split(';', 1)[0]).join('; ');
+const cookie = authCookieFromFirstHop(indexResponse, BASE);
 
 /**
  * 发一次信封 RPC。重定向按错误处理（不携带凭据跳转）。
@@ -90,9 +93,7 @@ async function rpc(endpoint, args) {
     body: JSON.stringify({ type: 'client-request', rpcId, method: endpoint, payload: { args } }),
     redirect: 'manual'
   });
-  if (response.status >= 300 && response.status < 400) {
-    throw new Error(`${endpoint}：收到 ${String(response.status)} 重定向（Location=${String(response.headers.get('location'))}）——不跟随，按错误处理。`);
-  }
+  assertApiNotRedirected(response, endpoint);
   const text = await response.text();
   const body = JSON.parse(text);
   if (body?.result?.ok !== true) {
@@ -111,32 +112,72 @@ async function readEffective() {
 /**
  * 恢复冲突检测的已知状态：本探针每次读／写设置后登记「我们已知的最新状态」。
  *
- * 宿主行支持 revision 时按修订号比对（revision 变化＝有新写入）；revision 缺席
- * （null）时按 value＋user 深比对。finally 恢复前重读一次：与本探针已知的最新
- * 状态不一致 ⇒ 窗口内有**他方**更新——停止恢复并报告，不覆盖。
+ * 检测分两个窗口（修订号缺席时的降级口径见各分支）：
+ * - **自写窗口**（有未消费的自写预期）：读到的用户覆盖层必须与预测一致——
+ *   不一致 ⇒ 除本探针的写入外还有别的写入，**当场**记入 `foreignChanges`
+ *   （不等收尾；收尾的 revision 比对看不到已被吸收进 lastKnown 的变化）。
+ * - **静默窗口**（无自写预期）：revision 在场时任何推进都是他方写入；缺席时按
+ *   value＋user 深比对。
  *
  * @type {{ revision: number | null, value: object, user: object } | null}
  */
 let lastKnown = null;
 
-/** 把一次读到的设置状态登记为「本探针已知的最新状态」。 */
-function trackState(entry) {
-  lastKnown = { revision: entry.revision, value: structuredClone(entry.value), user: structuredClone(entry.user) };
+/**
+ * 本探针自己发起、尚未被下一次读消费的写入预期。
+ * `overlay`＝按写入语义预测的下一状态用户覆盖层（update 合并、replace 整替）；
+ * `writes`＝累计写入次数（诊断用）。宿主各写入接口的修订号推进数不在预期内假设
+ * ——判定只看覆盖层是否与预测相符（预测按写入语义构造，不依赖修订号节奏）。
+ * @type {{ overlay: object, writes: number } | null}
+ */
+let ownWriteExpectation = null;
+
+/** 窗口内检出的他方写入（含演练条目，`drill:true`；收尾只按非演练条目停止恢复）。 */
+const foreignChanges = [];
+
+/** 计数写（update 语义）：登记预期覆盖层（在已知/预期之上合并本批字段）再写。 */
+async function countedPatch(fields) {
+  const base = ownWriteExpectation?.overlay ?? lastKnown?.user ?? {};
+  ownWriteExpectation = { overlay: { ...structuredClone(base), ...structuredClone(fields) }, writes: (ownWriteExpectation?.writes ?? 0) + 1 };
+  await patchNs(fields);
+}
+
+/** 计数写（replace 语义）：先复位全部 volatile 字段再合并入参——覆盖层＝入参整替。 */
+async function countedReplace(fields) {
+  ownWriteExpectation = { overlay: structuredClone(fields), writes: (ownWriteExpectation?.writes ?? 0) + 1 };
+  await replaceNs(fields);
 }
 
 /**
- * 判断「当前状态」与「已知状态」之间是否有窗口内他方更新。
+ * 把一次读到的设置状态登记为「本探针已知的最新状态」（并按上一窗口判定他方写入）。
  *
- * @param {{ revision: number | null, value: object, user: object }} current - 重读到的状态。
- * @returns {boolean} 有他方更新为 true。
+ * @param {{ revision: number | null, value: object, user: object }} entry - 读到的状态。
  */
-function driftedFromKnown(current) {
-  if (lastKnown === null) return false;
-  if (lastKnown.revision !== null && current.revision !== null) {
-    return current.revision !== lastKnown.revision;
+function trackState(entry) {
+  if (lastKnown !== null) {
+    if (ownWriteExpectation !== null) {
+      if (!isDeepStrictEqual(entry.user ?? {}, ownWriteExpectation.overlay)) {
+        foreignChanges.push({
+          reason: '自写窗口内用户覆盖层与预测不符（窗口内有本探针之外的写入）',
+          expectedUser: ownWriteExpectation.overlay,
+          actualUser: entry.user ?? {}
+        });
+      }
+    } else if (lastKnown.revision !== null && entry.revision !== null) {
+      if (entry.revision !== lastKnown.revision) {
+        foreignChanges.push({
+          reason: '无自写预期而 revision 推进（他方写入）',
+          fromRevision: lastKnown.revision,
+          toRevision: entry.revision
+        });
+      }
+    } else if (!isDeepStrictEqual({ value: entry.value, user: entry.user },
+      { value: lastKnown.value, user: lastKnown.user })) {
+      foreignChanges.push({ reason: 'revision 缺席：深比对发现无自写预期的变化（按他方写入处理）' });
+    }
   }
-  return !isDeepStrictEqual({ value: current.value, user: current.user },
-    { value: lastKnown.value, user: lastKnown.user });
+  lastKnown = { revision: entry.revision, value: structuredClone(entry.value), user: structuredClone(entry.user) };
+  ownWriteExpectation = null;
 }
 
 /** 读会话清单行。 */
@@ -280,7 +321,7 @@ async function sessionWith(prompt, timeoutMs = 240000) {
   return transcriptOf(sessionId);
 }
 
-const evidence = { base: BASE, checks, runs: [] };
+const evidence = { base: BASE, checks, runs: [], foreignChanges };
 let valueBefore = null;
 let userBefore = null;
 let SNAPSHOT_FILE = '';
@@ -307,7 +348,7 @@ try {
     user: entry0.user,
     note: '起跑时的原状快照（value 与 user 两层）。探针被强杀、finally 未执行时，按此人工恢复。'
   }, null, 2)}\n`, 'utf8');
-  await patchNs(TEST_BASELINE);
+  await countedPatch(TEST_BASELINE);
   const before = await readEffective();
   evidence.baseline = { maxWaitMs: before.maxWaitMs, maxResultChars: before.maxResultChars };
   console.log(`原状态已存（user 覆盖 ${String(Object.keys(userBefore).length)} 键；快照 ${SNAPSHOT_FILE}）；起跑基线：maxWaitMs=${String(before.maxWaitMs)}  maxResultChars=${String(before.maxResultChars)}`);
@@ -330,14 +371,14 @@ try {
     /settings\/rejected/.test(flatError) && /not volatile/.test(flatError) && afterFlat.value.maxResultChars !== 13731,
     flatError.slice(0, 160) || '(未抛错：平铺写被接受＝形状负向对照失败)');
 
-  await patchNs({ maxResultChars: 48000 });
+  await countedPatch({ maxResultChars: 48000 });
   const afterNested = await readNs();
   trackState(afterNested);
   check('嵌套 update 生效并落在用户覆盖层（value 与 user 同键同值）',
     afterNested.value.maxResultChars === 48000 && afterNested.user.maxResultChars === 48000,
     `value=${String(afterNested.value.maxResultChars)}  user=${String(afterNested.user.maxResultChars)}`);
 
-  await replaceNs(structuredClone(entry0.base));
+  await countedReplace(structuredClone(entry0.base));
   const afterReplace = await readNs();
   trackState(afterReplace);
   check('嵌套 replace（完整 base）重建 volatile 生效值（复位语义，不是稀疏更新）',
@@ -348,7 +389,7 @@ try {
   //
   // 这是"值变了"与"行为变了"的分界：一个把设置读进内存后再也不看的实现，
   // 会老老实实等满 600 秒（或等到作业结束），而不是 2 秒就返回 running。
-  await patchNs({ ...TEST_BASELINE, maxWaitMs: 2000, defaultWaitMs: 2000, agentLang: 'zh' });
+  await countedPatch({ ...TEST_BASELINE, maxWaitMs: 2000, defaultWaitMs: 2000, agentLang: 'zh' });
   const effectiveClamp = await readEffective();
   check('先把 `maxWaitMs` 写成 2000 并读回确认（区分"没写进去"与"写进去没生效"）',
     effectiveClamp.maxWaitMs === 2000,
@@ -403,7 +444,7 @@ try {
       : `已等待 ${waited[1]} ms（期望 ≥200；若下界失效会约 1，或干脆不进入等待）`);
 
   // ── ② 截断：把 maxResultChars 压到 500，长输出的返回必须变短并带截断说明 ──
-  await patchNs({ ...TEST_BASELINE, maxResultChars: 500, agentLang: 'zh' });
+  await countedPatch({ ...TEST_BASELINE, maxResultChars: 500, agentLang: 'zh' });
   const effectiveCut = await readEffective();
   check('再把 `maxResultChars` 写成 500 并读回确认',
     effectiveCut.maxResultChars === 500,
@@ -477,7 +518,7 @@ try {
   // `defaultWaitMs` 必须跟着 `maxWaitMs` 一起收窄——跨字段校验会拒掉
   // "默认值落在区间外"的组合（`settings/rejected`：`defaultWaitMs (30000) 必须在 250–2000 ms 之内`）。
   // 那条校验本身是 `test/two-planes.test.mjs` T7b 在守的东西，这里撞上它说明它在工作。
-  await patchNs({ ...TEST_BASELINE, maxWaitMs: 2000, defaultWaitMs: 2000, minYieldMs: 1500, maxYieldMs: 450000, defaultYieldMs: 7000, agentLang: 'zh' });
+  await countedPatch({ ...TEST_BASELINE, maxWaitMs: 2000, defaultWaitMs: 2000, minYieldMs: 1500, maxYieldMs: 450000, defaultYieldMs: 7000, agentLang: 'zh' });
   // 本探针的最后一次写之后没有别的读步骤了——紧跟一次读回并登记，恢复前的
   // 冲突检测才能把「我们自己的这次写」与「他方在窗口内的更新」区分开。
   trackState(await readNs());
@@ -499,32 +540,96 @@ try {
   check('(d) 同时等待区间**没有**被首次等待区间污染（两个区间各自对号）',
     /单次等待预算必须显式传入，范围 250–2000 ms/.test(runYield),
     JSON.stringify((/单次等待预算必须显式传入，范围 [\d–]+ ms/.exec(runYield) ?? ['(找不到)'])[0]));
+
+  // ── ⑤ 恢复防线的演练：未登记写入检出 ＋ 过期 expectedRevision 被拒 ──────────
+  //
+  // 收尾恢复的并发安全靠两件东西：写入预期登记（读数与预测不符＝他方写入，当场
+  // 记录，不等收尾）与恢复写的 CAS（expectedRevision）。两条防线没在真机上演练过
+  // 就只是「看起来有」——这里各验一次。演练写入打 `drill` 标记：它检出的「他方
+  // 写入」是我们自己制造的，收尾不按它停手。
+  //
+  // 演练①：绕过计数写直接裸写一个键（检测层无法区分写入者身份，只能区分「有无
+  // 预期」——这正是要验的判定面），下一次读必须把它检出。
+  const drillStart = await readNs();
+  trackState(drillStart);
+  const DRILL_KEY = 'pollIntervalMs';
+  const drillValue = drillStart.value[DRILL_KEY] === 501 ? 502 : 501;
+  await rpc('settings/update', { ns: NS, patch: { settings: { [DRILL_KEY]: drillValue } } });
+  const drillAfter = await readNs();
+  const foreignCountBefore = foreignChanges.length;
+  trackState(drillAfter);
+  const drillHits = foreignChanges.slice(foreignCountBefore);
+  check('演练①：绕过登记层的写入在下一次读时被检出（不吸收为已知状态）',
+    drillHits.length > 0,
+    drillHits.length > 0
+      ? drillHits[0].reason
+      : `未检出（revision ${String(drillStart.revision)}→${String(drillAfter.revision)}）——登记层失效＝收尾恢复的并发检测同样失效`);
+  for (let i = foreignCountBefore; i < foreignChanges.length; i += 1) foreignChanges[i].drill = true;
+  // 演练键的还原是探针自己的写——走计数写（消费一档预期）。
+  await countedPatch({ [DRILL_KEY]: drillStart.value[DRILL_KEY] });
+  trackState(await readNs());
+
+  // 演练②：恢复写带过期修订号（当前减一）必须被服务端拒绝，且状态不被改动。
+  const casBase = await readNs();
+  trackState(casBase);
+  if (casBase.revision === null || casBase.revision < 1) {
+    check('演练②：过期 expectedRevision 被服务端拒绝',
+      false,
+      `宿主未提供可用修订号（revision=${String(casBase.revision)}）——CAS 演练不可执行；本实例收尾恢复按无 CAS 形态运行（边界，如实报告）`);
+  } else {
+    let casError = '';
+    try {
+      await mutateNs([{ op: 'set', path: ['settings', DRILL_KEY], value: casBase.value[DRILL_KEY] }], casBase.revision - 1);
+    } catch (error) {
+      casError = String(error?.message ?? error);
+    }
+    const afterCas = await readNs();
+    trackState(afterCas);
+    check('演练②：过期 expectedRevision 被服务端拒绝且状态未被改动',
+      casError !== '' && afterCas.revision === casBase.revision
+        && isDeepStrictEqual(afterCas.user, casBase.user),
+      casError === ''
+        ? '(未被拒绝——宿主没有执行 CAS，恢复写的读—写窗口无并发保护)'
+        : casError.slice(0, 160));
+  }
 } finally {
   // **无条件恢复原状态**（设计 §8.3）：replace 会给整组字段建用户覆盖，所以恢复
   // 按 `userBefore ∪ userNow` 逐键处理——原有覆盖按原值 set、其余 unset（回继承
   // 值，不把生效值写成新覆盖）；再读回核对 value 与 user **两层**都与原状态一致。
   // 恢复失败单独报错，不被主断言掩盖。
   //
-  // **恢复前先检测并发变化**：起跑快照没有修订号保护的时代，恢复会直接覆盖窗口
-  // 内他方的更新。现在恢复前重读一次，与本探针已知的最新状态（`lastKnown`）比对
-  // ——发现他方更新就**停止恢复并报告**，把选择权交还操作者；原状快照已落盘
-  // （`SNAPSHOT_FILE`），供人工核对后恢复。
+  // **恢复前的并发判定**（两层）：①起跑以来累计的他方写入记录（`foreignChanges`
+  // 里非演练条目非空——写入预期登记在读数现场检出，收尾只汇总）；②恢复前重读一
+  // 次，与已知状态比对（revision；缺席按深比对）。任一命中就**停止恢复并报告**，
+  // 把选择权交还操作者；原状快照已落盘（`SNAPSHOT_FILE`），供人工核对后恢复。
+  // 恢复写本身带 `expectedRevision`（宿主 CAS）：恢复读与恢复写之间再插入他方写入
+  // 时，落库被拒——同样按停手处理，不覆盖。revision 缺席（null）的实例没有 CAS
+  // 可用，恢复写退化为无修订号保护（检测仍靠①②）。
   try {
     if (valueBefore === null) {
       console.log('收尾恢复跳过：未取得起跑快照（本次探针未改过设置）。');
       evidence.restored = true;
     } else {
       const settle = await readNs();
-      if (driftedFromKnown(settle)) {
+      const settleDrifted = lastKnown !== null
+        && (lastKnown.revision !== null && settle.revision !== null
+          ? settle.revision !== lastKnown.revision
+          : !isDeepStrictEqual({ value: settle.value, user: settle.user },
+            { value: lastKnown.value, user: lastKnown.user }));
+      const foreignReal = foreignChanges.filter((c) => c.drill !== true);
+      if (settleDrifted || foreignReal.length > 0) {
         console.log('');
         console.log('**停止恢复**：检测到窗口内的并发设置变更（他方更新了本命名空间）。');
-        console.log(`  本探针已知状态：revision=${String(lastKnown?.revision ?? '?')}；当前读到：revision=${String(settle.revision ?? '?')}。`);
+        console.log(`  本探针已知状态：revision=${String(lastKnown?.revision ?? '?')}；当前读到：revision=${String(settle.revision ?? '?')}；`
+          + `现场检出 ${String(foreignReal.length)} 条（另演练 ${String(foreignChanges.length - foreignReal.length)} 条）。`);
+        for (const c of foreignReal) console.log(`  · ${c.reason}`);
         console.log('  按不覆盖原则不执行恢复写——实例可能停在本探针的测试基线上。');
         console.log(`  起跑原状快照（人工核对后恢复用）：${SNAPSHOT_FILE}`);
         evidence.restored = false;
         evidence.restoreConflict = {
-          expected: lastKnown,
-          actual: { revision: settle.revision, value: settle.value, user: settle.user },
+          settle: { revision: settle.revision, value: settle.value, user: settle.user },
+          known: lastKnown,
+          foreignChanges: foreignReal,
           snapshotFile: SNAPSHOT_FILE
         };
       } else {
@@ -535,14 +640,30 @@ try {
             ? { op: 'set', path: ['settings', key], value: userBefore[key] }
             : { op: 'unset', path: ['settings', key] });
         }
-        if (ops.length > 0) await mutateNs(ops);
-        const finalEntry = await readNs();
-        const valueSame = isDeepStrictEqual(finalEntry.value, valueBefore);
-        const userSame = isDeepStrictEqual(finalEntry.user, userBefore);
-        console.log('');
-        console.log(`收尾恢复原状态：${valueSame && userSame ? 'value 与 user 两层均回到原状' : '**存在未恢复差异（见 afterRestore）**'}`);
-        evidence.restored = valueSame && userSame;
-        evidence.afterRestore = { value: finalEntry.value, user: finalEntry.user };
+        let casConflict = null;
+        if (ops.length > 0) {
+          try {
+            await mutateNs(ops, lastKnown?.revision ?? undefined);
+          } catch (error) {
+            casConflict = String(error?.message ?? error);
+          }
+        }
+        if (casConflict !== null) {
+          console.log('');
+          console.log('**恢复写被拒绝**（expectedRevision 不匹配：恢复读与恢复写之间有他方写入）——按不覆盖原则停手。');
+          console.log(`  服务端拒绝原文：${casConflict.slice(0, 200)}`);
+          console.log(`  起跑原状快照（人工核对后恢复用）：${SNAPSHOT_FILE}`);
+          evidence.restored = false;
+          evidence.restoreConflict = { reason: 'cas-rejected', error: casConflict, snapshotFile: SNAPSHOT_FILE };
+        } else {
+          const finalEntry = await readNs();
+          const valueSame = isDeepStrictEqual(finalEntry.value, valueBefore);
+          const userSame = isDeepStrictEqual(finalEntry.user, userBefore);
+          console.log('');
+          console.log(`收尾恢复原状态：${valueSame && userSame ? 'value 与 user 两层均回到原状' : '**存在未恢复差异（见 afterRestore）**'}`);
+          evidence.restored = valueSame && userSame;
+          evidence.afterRestore = { value: finalEntry.value, user: finalEntry.user };
+        }
       }
     }
   } catch (error) {

@@ -1,8 +1,10 @@
 /**
  * 开发期解析钩子：把宿主包名重新锚定到能真正读到它们的 node_modules。
  *
- * 插件部署到 profile 后，`@deepseek-ai/*` 由共享 node_modules 提供；仓库本地没有
- * node_modules，因此离线单测要用本钩子换锚点：
+ * 插件部署到 profile 后，`@deepseek-ai/*` 由共享 node_modules 提供（DSH 宿主
+ * 安装树形态：全部 `@deepseek-ai/*` 包从同一棵 node_modules 解析——本钩子的
+ * 单锚点假设只覆盖这一形态；部署改成分包隔离的 node_modules 时锚点策略需重议）；
+ * 仓库本地没有 node_modules，因此离线单测要用本钩子换锚点：
  *   node --import ./tools/_host-hooks.mjs --test "test/*.test.mjs"
  *
  * 0.2.1 兼容线：本包的九个 `@deepseek-ai/dsh*` peer 共用同一支持集合

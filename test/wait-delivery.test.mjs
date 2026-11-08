@@ -848,6 +848,40 @@ hostTest('子代理目录行形状：诊断行不进存在屏障；纠错清单�
   }
 });
 
+hostTest('RA-AGENT-RECHECK-DEADLINE：重查睡眠醒后总截止已过 → 不再发起新的目录查询，按未证实交回', async () => {
+  // 受控 40ms 预算＋远大于预算的轮询间隔：首查查无后睡眠被封顶到剩余预算，
+  // setTimeout 只会晚醒不会早醒，醒来时刻必然 ≥ 总截止（验收受控复现为 40ms
+  // 预算、约 96ms 才发起第二查）。判据：任何目录查询的时间戳都必须落在预算窗口
+  // 内——修前过期后的第二查必然越窗，修后按 timeout 交回、不发出过期请求，
+  // 目标以 unconfirmed 口径如实标注（不冒称查无、不冒称仍在运行）。
+  // 测点与容差：start 取在 execute 调用前（产品预算自 execute 内 t0 起算——
+  // 从 buildRig 前取样会把装置耗时错算进窗口，全量套件负载下误红）；＋20ms
+  // 容差吸收「截止复检通过后、查询体执行前」的调度停顿——修前缺陷形态的第二查
+  // 在 ~96ms（≥2.4 倍预算），容差不吞缺陷信号。
+  const { performance } = await import('node:perf_hooks');
+  const queryTimes = [];
+  const rig = await buildRig('recheck-deadline', [], {
+    pollIntervalMs: 500,
+    listChildren: async () => { queryTimes.push(performance.now()); return []; }
+  });
+  try {
+    const start = performance.now();
+    const outcome = await rig.waiter.execute(
+      { wait_ms: 40, targets: [{ kind: 'agent', id: 'ghost-deadline' }] },
+      rig.exec()
+    );
+    assert.ok(queryTimes.length >= 1, '前置：至少发生过一次目录查询（首查）');
+    for (const ts of queryTimes) {
+      assert.ok(ts - start <= 60, `目录查询必须全部落在预算窗口＋容差内（实测查询时刻（ms）：${
+        queryTimes.map((t) => Math.round(t - start)).join(',')}）——过期的重查不得再发出`);
+    }
+    assert.equal(outcome.status, 'unconfirmed', '预算中途到期：三周期重查未完成，按未证实交回');
+    assert.match(outcome.note ?? '', /ghost-deadline/, '未证实说明点名目标');
+  } finally {
+    await rig.dispose();
+  }
+});
+
 hostTest('分隔规则：增量与一次性 result 之间恰一个换行（已换行结尾不补、非换行结尾必补）', async () => {
   const rig = await buildRig('sep');
   try {
@@ -5245,7 +5279,7 @@ hostTest('RC-O：多目标恢复同批单条——单槽末位胜出，其余副
     const first = ledger.collectBatch(owner, { lang: 'en' });
     assert.equal(first.delivered.length, 2, '前置：两作业完整交付（缓冲空、副本未确认）');
     const subject = ledger.subjects.get(owner);
-    // 与 wait.js 零等待主出口同序：逐目标裁决——末位胜出挂起。
+    // 与 wait.js 零等待主出口同序：逐目标决定——末位胜出挂起。
     assert.equal(ledger.stageRecovery('rc-o-a', owner)?.tier, 1, 'A 亦可恢复');
     assert.equal(ledger.stageRecovery('rc-o-b', owner)?.tier, 1, 'B 亦可恢复');
     assert.equal(subject.stagedRecovery?.jobId, 'rc-o-b', '单槽末位胜出');

@@ -60,9 +60,10 @@ function record(name, passed, detail) {
  * ## 写入与恢复的责任划分
  *
  * 本脚本只负责**起跑前**把设置写成这份基线；**跑完之后**的还原由
- * `restore-async-settings.mjs` 承担——它用 `settings/replace` 复位全部 volatile
- * 用户覆盖、让设置回落到 schema 默认（即回到真正的出厂默认）。需要引用当前
- * 出厂默认值时从 `lib/config.js` 取得，不在探针里另抄一份会漂移的手抄副本。
+ * `restore-async-settings.mjs` 承担——它用 `settings/replace` 清除全部 volatile
+ * 用户覆盖、让设置回落到组合层与 schema 默认（一次性验证实例上组合层无别的
+ * 覆盖，等价于回到出厂形态；判据是用户覆盖层清空，不是手抄默认值对照）。
+ * 需要引用当前出厂默认值时从 `lib/config.js` 取得，不在探针里另抄一份会漂移的手抄副本。
  */
 const TEST_BASELINE = {
   defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,

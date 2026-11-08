@@ -23,6 +23,7 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { instanceCredentials, loadLocalPlaneOrSkip, tokenEntryUrl } from '../tools/_local-config.mjs';
+import { authCookieFromFirstHop, assertApiNotRedirected } from './_auth.mjs';
 import { WAIT_INTERRUPTED } from './message-markers.mjs';
 
 const localConfig = await loadLocalPlaneOrSkip('verify/probe-r26-create-preset.mjs');
@@ -47,12 +48,10 @@ function readToken() {
 }
 
 async function connect() {
+  // 判定统一在 verify/_auth.mjs：首跳接受「3xx＋Set-Cookie＋同源/缺席 Location」
+  // 的正常 cookie 交换（不跟随 Location）；API 调用的任何 3xx 仍按错误处理。
   const indexResponse = await fetch(tokenEntryUrl(BASE, readToken()), { redirect: 'manual' });
-  if (indexResponse.status >= 300 && indexResponse.status < 400) {
-    throw new Error(`token exchange：收到 ${String(indexResponse.status)} 重定向（Location=${String(indexResponse.headers.get('location'))}）——不跟随，按错误处理。`);
-  }
-  cookie = (indexResponse.headers.getSetCookie?.() ?? []).map((e) => e.split(';', 1)[0]).join('; ');
-  if (cookie.length === 0) throw new Error('token exchange returned no cookie（令牌过期：实例可能已重启）');
+  cookie = authCookieFromFirstHop(indexResponse, BASE);
 }
 
 async function rpc(endpoint, args = {}) {
@@ -63,9 +62,7 @@ async function rpc(endpoint, args = {}) {
     body: JSON.stringify({ type: 'client-request', rpcId, method: endpoint, payload: { args } }),
     redirect: 'manual'
   });
-  if (response.status >= 300 && response.status < 400) {
-    throw new Error(`${endpoint}：收到 ${String(response.status)} 重定向（Location=${String(response.headers.get('location'))}）——不跟随，按错误处理。`);
-  }
+  assertApiNotRedirected(response, endpoint);
   const text = await response.text();
   let body;
   try { body = JSON.parse(text); } catch { throw new Error(`${endpoint}: 非 JSON 返回：${text.slice(0, 200)}`); }

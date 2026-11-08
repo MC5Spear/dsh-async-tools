@@ -1199,6 +1199,45 @@ hostTest('async_agent：agent_preset 随后端能力变化就地增删——刷�
     '后端换成支持 + execute → 借用 schema 就地补上条件键');
 });
 
+hostTest('async_agent：路由三键随后端 agentOptions 能力双向变化就地增删——刷新与 execute 两个重算点（L-SOL-01 残留反例）', async () => {
+  // 起步：后端不声明 agentOptions → 路由三键不暴露（构造时条件），描述同档。
+  const env = agentEnv({
+    providers: {
+      spawn: { name: 'spawn', prepareContinuable() {}, capabilities: {} }
+    }
+  });
+  const tool = createAgentTool(env.ctx, env.view);
+  const ROUTE_KEYS = ['provider', 'model', 'reasoning_effort'];
+  for (const key of ROUTE_KEYS) {
+    assert.equal(key in tool.parameters.properties, false,
+      `构造时后端不支持 agentOptions → ${key} 不暴露`);
+  }
+  assert.match(tool.description, /not accepted here/, '描述与 schema 同为不支持档');
+
+  // 能力增：刷新（重算点一）→ 三键就地新增，描述同步换支持档。
+  env.registry.spawn.capabilities = { agentOptions: true };
+  refreshToolDescriptions(tool, env.view);
+  for (const key of ROUTE_KEYS) {
+    assert.ok(tool.parameters.properties[key],
+      `后端换成支持 + 刷新 → schema 出现 ${key}`);
+  }
+  assert.match(tool.description, /Optionally supply provider and model/,
+    '刷新后描述与 schema 同为支持档（模型选择不再与 schema 脱节）');
+
+  // 能力撤回：execute（重算点二）→ 一次普通调用就地删键；描述文案经任一刷新点
+  // 跟上（execute 只同步借用 schema 的条件键，描述整段重建在刷新入口——设计
+  // §5.2「执行正确不能证明模型投影已及时刷新」的事件缺失对照同口径）。
+  env.registry.spawn.capabilities = {};
+  await tool.execute({ description: '甲', prompt: '任务。' }, EXEC);
+  for (const key of ROUTE_KEYS) {
+    assert.equal(key in tool.parameters.properties, false,
+      `后端撤回支持 + execute → ${key} 从借用 schema 消失`);
+  }
+  refreshToolDescriptions(tool, env.view);
+  assert.match(tool.description, /not accepted here/,
+    '撤回后经刷新点描述不再宣告路由键可用（旧 schema 诱导输入已拒键的形态关闭）');
+});
+
 hostTest('async_agent：继承上下文后端（fork）的描述与 prompt 说明如实写继承，spawn 保留自包含（A-F06 反例二）', () => {
   // fork 假件声明 inheritsParentContext：描述与 prompt 参数说明切换继承档。
   const envFork = agentEnv({

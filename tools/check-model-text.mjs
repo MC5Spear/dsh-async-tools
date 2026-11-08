@@ -261,7 +261,8 @@ const PROSE_ALLOWLIST = {
     { needle: 'workflow run ended abnormally', why: '宿主同形防御分支（stopReason 封闭联合的未来变体；正常路径不可达，宿主同款英文）' },
     { needle: 'async workflow job killed', why: '内部取消缺省理由（喂给 run.cancel，经注册表 kill-reason 合并；对应宿主后台的 background workflow job killed 同类缺省）' },
     { needle: 'workflow run settled before the outcome arrived', why: '不变量破坏时的 fail-loud 断言（终态到达时 done 链必已映射，正常路径不可达）' },
-    { needle: 'workflow run failed', why: 'failed 支的 detail 缺省回退（宿主 stopReasonError 同款前缀；正常路径 settled.detail 必在）' }
+    { needle: 'workflow run failed', why: 'failed 支的 detail 缺省回退（宿主 stopReasonError 同款前缀；正常路径 settled.detail 必在）' },
+    { needle: 'throw new Error(${JSON.stringify(guardMessage)})', why: '脚本生成模板片段（根值守卫包装 B-SOL-01 拼进脚本的 throw 语句行——生成的代码文本，不是文案；needle 取含守卫变量插值的完整行，别的英文 throw 不沾光；抛错消息本体经 text.js 双语键 error.workflowRootGuard 由调用方传入）' }
   ],
   'config-view.js': [
     { needle: 'the config view is read-only', why: '只读视图的防御性异常（正常路径不会到达模型；英文是它唯一形态）' }

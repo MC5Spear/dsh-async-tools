@@ -27,7 +27,7 @@ import { checkedTool, fakeAgent, fakeCtx, freezeTimers, inboxPayload } from './_
 const workflowModule = await loadOfflineSafe('../lib/workflow.js');
 const waitModule = await loadOfflineSafe('../lib/wait.js');
 const deliveryModule = await loadOfflineSafe('../lib/delivery.js');
-const { createWorkflowTool: buildWorkflowTool } = workflowModule ?? {};
+const { createWorkflowTool: buildWorkflowTool, wrapScriptWithRootGuard: wrapScript } = workflowModule ?? {};
 const { createWaitTool: buildWaitTool } = waitModule ?? {};
 const { ledger } = deliveryModule ?? {};
 const hostTest = await hostTestFor('../lib/workflow.js', '../lib/wait.js');
@@ -204,6 +204,47 @@ hostTest('async_workflow（RA-FIRSTWAIT-LEAK）：终态分支结算构造失败
   const subject = ledger.subjects.get(agent.id);
   assert.ok(subject === undefined || subject.activeWaits.size === 0,
     '结算构造失败出口必须注销等待登记（RA-FIRSTWAIT-LEAK）');
+});
+
+hostTest('async_workflow（B-SOL-01／需求 §2.4.1）：根值守卫——undefined 根（显式／无 return）脚本层抛错，null 与对象原样通过', async () => {
+  // 宿主引擎对根 undefined 有「物化为 null」例外（进程内放行＋跨进程载体折叠），
+  // 显式 return null 与漏写返回值在引擎侧不可区分。守卫在脚本层判定：
+  // 包装产物按引擎同款外层 async 语境直接求值，正反判据都取实际行为。
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  // 守卫文案经 text.js 双语键传入（error.workflowRootGuard）——这里用 en 档原文。
+  const guardMessage = 'workflow script returned no JSON-serializable value (undefined root); '
+    + 'return an explicit value, or null if null is intended';
+  const evalWrapped = async (script) => new AsyncFunction(wrapScript(script, guardMessage))();
+
+  await assert.rejects(() => evalWrapped('return undefined;'), /undefined root/,
+    '显式 return undefined 按运行错误失败（不折成 null 冒充成功）');
+  await assert.rejects(() => evalWrapped('const x = 1;'), /undefined root/,
+    '无 return 的脚本同样失败（漏写返回值不再显示为 null）');
+  await assert.rejects(() => evalWrapped('return await Promise.resolve(undefined);'), /undefined root/,
+    '异步求值得到 undefined 同样失败（顶层 await 语义保留在包装内层）');
+  assert.equal(await evalWrapped('return null;'), null, '合法 null 原样通过（与 undefined 区分开）');
+  assert.deepEqual(await evalWrapped('return { marker: "B-SOL-01", n: 3 };'),
+    { marker: 'B-SOL-01', n: 3 }, '普通 JSON 对象原样通过');
+  assert.equal(await evalWrapped('await Promise.resolve(1); return 5;'), 5,
+    '顶层 await＋返回数字正常');
+  // 引擎注入的钩子在外层作用域（经函数形参可见）：包装不隔离钩子名。
+  const viaHook = await new AsyncFunction('agent', wrapScript('return await agent("p");', guardMessage))(
+    async (prompt) => `done:${prompt}`
+  );
+  assert.equal(viaHook, 'done:p', '包装后的脚本仍能看到外层钩子绑定');
+});
+
+hostTest('async_workflow（B-SOL-01）：engine.start 收到守卫包装后的脚本；completed＋undefined 根按防御支失败', async () => {
+  const { runs, calls, agent, tool } = rig();
+  const exec = { agent, signal: new AbortController().signal };
+  const pending = tool.execute(BASE_ARGS, exec);
+  assert.match(calls[0].script, /__dshAsyncWorkflowRootValue/, '引擎收到守卫包装脚本');
+  assert.match(calls[0].script, /return 1;/, '用户脚本原文完整保留在内层');
+  // 防御闭合：引擎契约若漂移成 completed＋undefined（守卫被绕过或引擎变更），
+  // 结算按需求 §2.4.1 判失败，不渲染字面 undefined、不冒充 null。
+  runs[0]._resolve({ stopReason: 'completed', agentsStarted: 0, value: undefined });
+  await assert.rejects(() => pending, /unserializable root value/,
+    'completed＋undefined 根按防御支失败');
 });
 
 hostTest('async_workflow（R34-a）：无 agent 语境 → 拒绝且零注册零引擎', async () => {

@@ -18,29 +18,16 @@
  * @module verify/_rpc
  */
 import { instanceCredentials, loadLocalPlaneOrSkip, tokenEntryUrl } from '../tools/_local-config.mjs';
+import { authCookieFromFirstHop, assertApiNotRedirected } from './_auth.mjs';
 
 const config = await loadLocalPlaneOrSkip('verify/_rpc.mjs（活体实例 RPC 通道）');
 const { base: BASE, token } = instanceCredentials(config);
 
-// 认证首跳与 API 调用统一 redirect:'manual'：认证 RPC 不应被重定向携带凭据跳转，
-// 3xx 一律按错误处理（见 assertNotRedirected）。
+// 认证首跳与 API 重定向的判定统一在 verify/_auth.mjs：首跳接受
+// 「3xx＋Set-Cookie＋同源/缺席 Location」的正常 cookie 交换（rc.5 实测形态，
+// 不跟随 Location）；API 调用的任何 3xx 仍一律按错误处理（凭据不随跳转重发）。
 const indexResponse = await fetch(tokenEntryUrl(BASE, token), { redirect: 'manual' });
-assertNotRedirected(indexResponse, 'token exchange');
-const cookie = (indexResponse.headers.getSetCookie?.() ?? []).map((e) => e.split(';', 1)[0]).join('; ');
-if (cookie.length === 0) throw new Error('token exchange returned no cookie');
-
-/**
- * 拒绝重定向响应：认证请求被 3xx 携带凭据跳转是错误，不跟随。
- *
- * @param {Response} response - fetch 结果。
- * @param {string} what - 报错时指名哪一步。
- */
-function assertNotRedirected(response, what) {
-  if (response.status >= 300 && response.status < 400) {
-    throw new Error(`${what}：收到 ${String(response.status)} 重定向（Location=${String(response.headers.get('location'))}）`
-      + '——认证 RPC 不跟随重定向，请核对实例地址；这按错误处理。');
-  }
-}
+const cookie = authCookieFromFirstHop(indexResponse, BASE);
 
 /**
  * 可自动重试的方法（只读、无副作用——重发只是再问一遍）。
@@ -81,7 +68,7 @@ export async function rpc(endpoint, args) {
     }
     response = await once();
   }
-  assertNotRedirected(response, endpoint);
+  assertApiNotRedirected(response, endpoint);
   const text = await response.text();
   const parsed = JSON.parse(text);
   if (parsed?.result?.ok !== true) {
