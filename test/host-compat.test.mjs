@@ -62,8 +62,9 @@ test('清单反例：单条 peer 不同串、声明 engines.dsh、peer 条数不
   assert.notDeepEqual(mutate((copy) => { setAll(copy, '^0.2.1-rc.2'); }), []);
   // 同一版本重复列不等于支持集合。
   assert.notDeepEqual(mutate((copy) => { setAll(copy, '0.2.1-rc.2 || 0.2.1-rc.2'); }), []);
-  // optional 标记防回退：整键删除、缺一条、多一条、或任一条不是严格 {"optional":true}，
-  // 开启自动补齐的 profile 都会重新补装宿主依赖树（安装纪律守卫，与准入无关）。
+  // optional 标记防回退：整键删除、缺一条、或任一条取值使 peer 退回必选（如 false、非布尔值），
+  // 开启自动补齐的 profile 会重新补装宿主依赖树（安装纪律守卫，与准入无关）。
+  // 多出无关键不在 peerDependencies 内，pnpm 不会为它补装、不产生该后果；但键集合漂移仍按清单纪律报问题。
   assert.notDeepEqual(mutate((copy) => { delete copy.peerDependenciesMeta; }), []);
   assert.notDeepEqual(mutate((copy) => { delete copy.peerDependenciesMeta['@deepseek-ai/cordis']; }), []);
   assert.notDeepEqual(mutate((copy) => { copy.peerDependenciesMeta['not-a-peer'] = { optional: true }; }), []);
