@@ -25,9 +25,9 @@ For IME, screen-reader, or touch-based answers, and for result recovery after a 
 
 ## Install and confirm loading
 
-The package is not distributed through npm. New profiles (DSH runtime configurations) on supported versions default to a `hoisted` dependency layout with `autoInstallPeers` (automatic peer installation) disabled, allowing direct reuse of host dependencies.
+The package is not distributed through npm. Installation reuses dependencies supplied by DSH; no separate DSH installation is needed. Since 0.2.9, installing or upgrading this package does not require disabling the package manager's `autoInstallPeers` option.
 
-Since 0.2.9 this package marks every peer dependency optional: profiles with `autoInstallPeers` (automatic peer installation) enabled no longer install the host dependency tree on this package's behalf or face its script-approval requests (verified by a four-host isolated installation matrix). Installation scripts introduced by other plugins are still requested by the host through its own approval flow and are unrelated to this package. If installation or an upgrade asks for script approval, first read [script-approval troubleshooting](<docs/user-reference.en.md#installation-script-approval-troubleshooting>).
+The package has no installation scripts of its own. If installation or an upgrade requests script approval, follow [script-approval troubleshooting](<docs/user-reference.en.md#installation-script-approval-troubleshooting>) to check the source and need before deciding whether to allow execution.
 
 Install through the GUI:
 

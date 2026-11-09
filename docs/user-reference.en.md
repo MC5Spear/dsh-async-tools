@@ -22,15 +22,11 @@ Node.js 24 is recommended. Although the package declares Node `>=20`, DSH's comm
 
 ### Prerequisites for reusing host dependencies
 
-The plugin has no `preinstall`, `install`, `postinstall`, or `prepare` installation scripts. Its direct dependencies are `schemastery` and `zod`. DSH and other peer dependencies are supplied by the host at runtime; this plugin does not need a separate host installation.
+At runtime, this package uses dependencies supplied by DSH; no separate host installation is needed. These shared dependencies are declared as peer dependencies in the package manifest. Since 0.2.9, they retain their compatible-version requirements but are marked optional to prevent automatic installation by the package manager. The package also directly depends on `@deepseek-ai/schemastery` and `zod`. It has no `preinstall`, `install`, `postinstall`, or `prepare` installation scripts of its own.
 
-On supported rc.2–rc.5 versions, new profiles (DSH runtime configurations) default to a `hoisted` dependency layout with `autoInstallPeers` (automatic peer installation) disabled. Default new profiles need no configuration change first.
+A profile is a DSH runtime configuration. On supported rc.2–rc.5 versions, new profiles disable `autoInstallPeers` (automatic peer installation) by default; no configuration change is needed before installation. Since 0.2.9, installing or upgrading this package does not require disabling that option in an existing profile either.
 
-In an empty profile, since 0.2.9 both layouts in combination with either automatic-peer-installation setting install and load all five tools without any script approval from this package; this package itself has no installation scripts. Existing dependency copies, lockfiles, and other plugins can change installation behavior in an existing profile, so the same approval-free outcome is not guaranteed there.
-
-**Past limitation and current state:** through 0.2.8, `isolated + autoInstallPeers:true` installed the entire host dependency tree (one observation showed +567 packages) and failed with `ERR_PNPM_IGNORED_BUILDS` when packages carrying installation scripts were blocked; how many scripts are blocked varies with the pnpm version and profile contents (one real environment showed five; the verification machine on pnpm 12.8.1 showed one). Since 0.2.9 all 11 peer dependencies are declared optional, so pnpm no longer auto-installs them: in the four-host isolated matrix this path adds 5 packages on a fresh install and 1 package on an upgrade from an older version, with zero script-approval requests in both cases. Undecided approval entries written by a failed older-version install are removed by the host after a successful 0.2.9 install (observed in the matrix); no manual cleanup is needed.
-
-Disabling `autoInstallPeers` is no longer a workaround this package needs: since 0.2.9 all four combinations behave the same. Before changing an existing profile's configuration, still ask the instance administrator to review its dependency copies, lockfiles, and other plugins; changing that setting alone does not guarantee cleanup of existing copies. Installation scripts belonging to other plugins still go through the host's own approval decisions; if a prompt appears, follow [installation script-approval troubleshooting](<#installation-script-approval-troubleshooting>) to choose the next step.
+Existing profiles can retain old dependency copies, lockfiles, or installation scripts from other plugins. Before changing those items, ask the instance administrator to check their purpose and source; upgrading this package does not clean the entire profile. Follow [installation script-approval troubleshooting](<#installation-script-approval-troubleshooting>) if a script prompt appears.
 
 ### Usage limits and saving results
 
@@ -76,15 +72,19 @@ If source retrieval fails, check the repository address and branch or commit, th
 
 #### Installation script-approval troubleshooting
 
-If installation or an upgrade shows **The plugin could not be installed / Install scripts need permission**:
+Through 0.2.8, profiles with `autoInstallPeers` enabled could install duplicate host dependencies for this package and fail with `ERR_PNPM_IGNORED_BUILDS` when their scripts were blocked. For that older-version problem, select an installation source for 0.2.9 and install again; there is no need to approve those redundant dependency scripts first.
+
+After installation succeeds, check the actual package version, settings, and both presets. Undecided approval entries from the failed attempt may disappear after successful installation. If an approval prompt remains, follow the steps below to check its cause.
+
+If installation or an upgrade shows **The plugin could not be installed / Install scripts need permission**, first consider the effects of approval. Scripts run with the permissions of the local account running DSH. Permission is saved in the current profile and remains applicable to later installations, even if this installation fails. Retrying may run already-allowed scripts again. **Installation-script approval is separate from sandbox approval for Agent commands.**
+
+Then check the details and decide:
 
 1. Select **Show install details** and read the full package names, versions, and error. If the list is incomplete, consult those details rather than approving truncated names. `ERR_PNPM_IGNORED_BUILDS` means installation scripts were blocked.
-2. Establish whether each script comes from this plugin, a host dependency, or another plugin. Then check why the current installation brought it in and whether execution is necessary. This plugin has no installation scripts, and since 0.2.9 enabling automatic peer installation no longer introduces host-dependency scripts either; any host-dependency scripts that still appear come from other plugins or leftover historical state, and they are not inherently required for this plugin's features.
-3. Cancel or defer installation and contact the plugin maintainer or instance administrator to review the profile and existing dependencies. If the full listed package names, versions, and scripts are understood and trusted, and continuing with the current path is the intended choice, select **Allow these scripts and retry**. Continuing this blocked path requires allowing the relevant scripts, but that does not mean all scripts should be allowed. Investigate unknown packages or incomplete names first.
+2. Check which version of this package is actually being installed, then identify the dependency introducing each script and whether execution is needed. This package has no installation scripts of its own; 0.2.9 no longer auto-installs host dependencies. Other plugins or existing dependencies can still need scripts. A package belonging to the host is not, by itself, a reason to approve it.
+3. If the source or need is unclear, cancel or defer installation and contact the plugin maintainer or instance administrator with full package names, versions, and sanitized installation details. When the scripts are understood and trusted and continuing is the intended choice, select **Allow these scripts and retry**. Investigate unknown packages or incomplete names first.
 
-Before approval, note that scripts run with the permissions of the local account running DSH. Permission is saved in the current profile and remains applicable to later installations, even if this installation fails. Retrying may run already-allowed scripts again. **Installation-script approval is separate from sandbox approval for Agent commands.**
-
-These five package versions come from historically observed prompts (from the period when this package pulled in the host dependency tree). Their script purposes help identify the source and need; later versions may differ. This table is neither a safety guarantee nor a requirement to allow all five.
+The table lists packages seen in older installation prompts and what their scripts do, for reference when checking those exact versions. Later versions may differ; use the actual installation details rather than allowing every listed script.
 
 | Package and version | Script purpose |
 | --- | --- |
