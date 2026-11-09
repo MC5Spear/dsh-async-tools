@@ -86,6 +86,9 @@ function normalizeHostRoot(input) {
  *
  * 支持集合的唯一权威是九条 dsh peer 的原文：本函数只核对“九条逐字符相同”，
  * 再把原文拆成精确版本列表。缺一条、多一条、写成范围或重复列同一版本都按失败返回。
+ * 另守卫 peerDependenciesMeta：每条 peer 必须恰为 {"optional":true}——防止
+ * autoInstallPeers:true 的 profile 补装宿主依赖树（安装纪律，需求 7.1.1）；
+ * 宿主准入不读该键，此判据与准入无关。
  *
  * @param {object} manifest - 已解析的 `package.json`。
  * @returns {{ range?: string, members?: string[], dshPeers: string[], problems: string[] }} 支持集合或失败原因。
@@ -101,6 +104,31 @@ export function readSupportSet(manifest) {
   }
   if (Object.hasOwn(manifest.engines ?? {}, 'dsh')) {
     problems.push('包清单声明了 engines.dsh——宿主的兼容决定会改由它单独作出并忽略 peer，支持集合因此失效');
+  }
+  // optional peer 标记（安装纪律守卫）：每条 peer 都必须恰为 {"optional":true}——
+  // pnpm 的 autoInstallPeers 只补装 non-optional peer，缺标记即恢复「安装本包带入
+  // 整套宿主依赖树并要求五项脚本授权」的旧缺陷（需求 7.1.1）。宿主准入（本文件
+  // 下文的官方判定）只读 peerDependencies 原文、不读该键，此判据与准入无关。
+  const meta = manifest.peerDependenciesMeta;
+  if (meta === undefined) {
+    problems.push('包清单缺少 peerDependenciesMeta——每条 peer 都须恰为 {"optional":true}，否则开启自动补齐的 profile 安装会补装宿主依赖树');
+  } else if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) {
+    problems.push(`peerDependenciesMeta 必须是对象（实际：${Array.isArray(meta) ? '数组' : typeof meta}）`);
+  } else {
+    const metaNames = Object.keys(meta);
+    const missing = Object.keys(peers).filter((name) => !metaNames.includes(name));
+    const extra = metaNames.filter((name) => !Object.hasOwn(peers, name));
+    if (missing.length > 0) problems.push(`peerDependenciesMeta 缺少 peer 条目：${missing.join('、')}`);
+    if (extra.length > 0) problems.push(`peerDependenciesMeta 含非 peer 条目：${extra.join('、')}`);
+    for (const name of metaNames.filter((entry) => Object.hasOwn(peers, entry))) {
+      const value = meta[name];
+      const exact = typeof value === 'object' && value !== null && !Array.isArray(value)
+        && Object.keys(value).length === 1 && value.optional === true;
+      if (!exact) {
+        problems.push(`peerDependenciesMeta[${JSON.stringify(name)}] 必须恰为 {"optional":true}`
+          + `（实际：${JSON.stringify(value) ?? String(value)}）`);
+      }
+    }
   }
   const range = dshPeers.length > 0 ? peers[dshPeers[0]] : undefined;
   const members = typeof range === 'string'
@@ -152,6 +180,7 @@ export async function checkHostCompat({ root = MODULE_ROOT, hostRoot, hostVersio
     return done(false, 1);
   }
   say(`OK   支持集合 ${members.join(' / ')}（九条 dsh peer 逐字符相同）`);
+  say(`OK   ${String(Object.keys(manifest.peerDependencies ?? {}).length)} 条 peer 全部标记 optional（开启自动补齐的 profile 不补装宿主依赖树）`);
 
   if (hostRoot === undefined) {
     say('SKIP 宿主根未指定（--host-root）——官方准入判定与解析来源检查都只对给定安装树成立');

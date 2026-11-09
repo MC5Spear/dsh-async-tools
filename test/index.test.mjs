@@ -1033,12 +1033,15 @@ test('T15（R38；R44 换钉）：九个 dsh* peer 共用同一支持集合—�
   };
   assert.deepEqual(pkg.peerDependencies, expected,
     `peerDependencies 必须与需求 §7.3 兼容基准逐键逐值一致（实际：${JSON.stringify(pkg.peerDependencies)}）`);
+  assert.deepEqual(pkg.peerDependenciesMeta,
+    Object.fromEntries(Object.keys(expected).map((name) => [name, { optional: true }])),
+    '11 条 peer 必须全部标记 optional:true 且键集与 peerDependencies 完全一致——防止开启自动补齐（autoInstallPeers:true）的 profile 安装补装宿主依赖树；宿主准入不读该键，集合外拒载不受影响');
   assert.equal(pkg.engines?.dsh, undefined,
     '不得声明 engines.dsh——宿主在场时它会顶替九条 peer 单独决定，支持集合因此失效');
   assert.equal(pkg.dependencies?.['@deepseek-ai/schemastery'], '~3.18.5',
     'schemastery 叶子依赖形态不变（~ 窗随宿主树）');
-  assert.equal(pkg.version, '0.2.8+dsh.0.2.1-rc',
-    '本包 version 必须按需求 §7.3.1 带构建元数据全标识（核心 0.2.8 + 兼容线 dsh.0.2.1-rc）——漏元数据会让用户失去兼容信息');
+  assert.equal(pkg.version, '0.2.9+dsh.0.2.1-rc',
+    '本包 version 必须按需求 §7.3.1 带构建元数据全标识（核心 0.2.9 + 兼容线 dsh.0.2.1-rc）——漏元数据会让用户失去兼容信息');
 });
 
 test('T21：refreshToolDescriptions 递归同步嵌套参数说明——en→zh→en 各层同步、结构／枚举／对象身份不变', async (t) => {

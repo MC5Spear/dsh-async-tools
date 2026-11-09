@@ -13,7 +13,7 @@ Find the task you need:
 
 | Component | Current applicable version |
 | --- | --- |
-| Plugin version | `0.2.8+dsh.0.2.1-rc` |
+| Plugin version | `0.2.9+dsh.0.2.1-rc` |
 | Supported dsh host versions | `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4`, `0.2.1-rc.5` |
 
 “Host” means the DSH instance loading the plugin. Only these four versions can load the package, not the final `0.2.1`, `0.2.0`, `0.2.2`, or an unlisted rc.
@@ -26,11 +26,11 @@ The plugin has no `preinstall`, `install`, `postinstall`, or `prepare` installat
 
 On supported rc.2–rc.5 versions, new profiles (DSH runtime configurations) default to a `hoisted` dependency layout with `autoInstallPeers` (automatic peer installation) disabled. Default new profiles need no configuration change first.
 
-In an empty profile with automatic peer installation disabled, a source-pinned installation of the current commit supports both `hoisted` and `isolated` layouts and can load all five tools without script approval. Existing dependency copies, lockfiles, and other plugins can change installation behavior in an existing profile, so the same approval-free outcome is not guaranteed there.
+In an empty profile, since 0.2.9 both layouts in combination with either automatic-peer-installation setting install and load all five tools without any script approval from this package; this package itself has no installation scripts. Existing dependency copies, lockfiles, and other plugins can change installation behavior in an existing profile, so the same approval-free outcome is not guaranteed there.
 
-**Current known limitation:** `isolated + autoInstallPeers:true` installs additional host peers and their dependencies. On all four supported host versions, this path currently fails with `ERR_PNPM_IGNORED_BUILDS` because five installation scripts are blocked. Upgrading an existing installation can also encounter this. These unnecessary approval requirements are an unresolved problem for this plugin.
+**Past limitation and current state:** through 0.2.8, `isolated + autoInstallPeers:true` installed the entire host dependency tree (one observation showed +567 packages) and failed with `ERR_PNPM_IGNORED_BUILDS` when packages carrying installation scripts were blocked; how many scripts are blocked varies with the pnpm version and profile contents (one real environment showed five; the verification machine on pnpm 12.8.1 showed one). Since 0.2.9 all 11 peer dependencies are declared optional, so pnpm no longer auto-installs them: in the four-host isolated matrix this path adds 5 packages on a fresh install and 1 package on an upgrade from an older version, with zero script-approval requests in both cases. Undecided approval entries written by a failed older-version install are removed by the host after a successful 0.2.9 install (observed in the matrix); no manual cleanup is needed.
 
-Disabling `autoInstallPeers` is the current prerequisite and workaround for reusing host dependencies, not a permanent fix. Before changing an existing profile, ask the instance administrator to review its configuration, dependency copies, lockfiles, and other plugins. Changing that setting alone does not guarantee safe cleanup of existing copies. If a script prompt appears, follow [installation script-approval troubleshooting](<#installation-script-approval-troubleshooting>) to choose the next step.
+Disabling `autoInstallPeers` is no longer a workaround this package needs: since 0.2.9 all four combinations behave the same. Before changing an existing profile's configuration, still ask the instance administrator to review its dependency copies, lockfiles, and other plugins; changing that setting alone does not guarantee cleanup of existing copies. Installation scripts belonging to other plugins still go through the host's own approval decisions; if a prompt appears, follow [installation script-approval troubleshooting](<#installation-script-approval-troubleshooting>) to choose the next step.
 
 ### Usage limits and saving results
 
@@ -79,12 +79,12 @@ If source retrieval fails, check the repository address and branch or commit, th
 If installation or an upgrade shows **The plugin could not be installed / Install scripts need permission**:
 
 1. Select **Show install details** and read the full package names, versions, and error. If the list is incomplete, consult those details rather than approving truncated names. `ERR_PNPM_IGNORED_BUILDS` means installation scripts were blocked.
-2. Establish whether each script comes from this plugin, a host dependency, or another plugin. Then check why the current installation brought it in and whether execution is necessary. This plugin has no installation scripts. The `isolated + autoInstallPeers:true` path above introduces extra host-dependency scripts; they are not inherently required for this plugin's features.
+2. Establish whether each script comes from this plugin, a host dependency, or another plugin. Then check why the current installation brought it in and whether execution is necessary. This plugin has no installation scripts, and since 0.2.9 enabling automatic peer installation no longer introduces host-dependency scripts either; any host-dependency scripts that still appear come from other plugins or leftover historical state, and they are not inherently required for this plugin's features.
 3. Cancel or defer installation and contact the plugin maintainer or instance administrator to review the profile and existing dependencies. If the full listed package names, versions, and scripts are understood and trusted, and continuing with the current path is the intended choice, select **Allow these scripts and retry**. Continuing this blocked path requires allowing the relevant scripts, but that does not mean all scripts should be allowed. Investigate unknown packages or incomplete names first.
 
 Before approval, note that scripts run with the permissions of the local account running DSH. Permission is saved in the current profile and remains applicable to later installations, even if this installation fails. Retrying may run already-allowed scripts again. **Installation-script approval is separate from sandbox approval for Agent commands.**
 
-These five package versions are examples from the currently known prompt. Their script purposes help identify the source and need; later versions may differ. This table is neither a safety guarantee nor a requirement to allow all five.
+These five package versions come from historically observed prompts (from the period when this package pulled in the host dependency tree). Their script purposes help identify the source and need; later versions may differ. This table is neither a safety guarantee nor a requirement to allow all five.
 
 | Package and version | Script purpose |
 | --- | --- |
@@ -535,7 +535,7 @@ To supply defaults for settings in section 2, edit the target profile's overlay 
 
 3. Save the file, arrange for active tasks to finish safely, then reload as required by the host. Check effective values in the settings page and a new session. User overrides saved through the form still take priority over file defaults.
 
-The 0.2.5 flat form, such as `config: { agentLang: zh }`, does not take effect on 0.2.8. Before upgrading, change it to `config: { settings: { agentLang: zh } }` and move other settings likewise. Otherwise the row can load while language, wait durations, and switches fall back to defaults. Removing user overrides cannot fix misplaced values. Load logs may list ignored flat keys; still read values back after migration.
+The 0.2.5 flat form, such as `config: { agentLang: zh }`, does not take effect on 0.2.9. Before upgrading, change it to `config: { settings: { agentLang: zh } }` and move other settings likewise. Otherwise the row can load while language, wait durations, and switches fall back to defaults. Removing user overrides cannot fix misplaced values. Load logs may list ignored flat keys; still read values back after migration.
 
 Tools normally use the host row's shared settings. Only when that row is not connected do tools use valid tool-row settings as fallback and report a warning. If the form saved but tools report disconnected settings, repair the host row rather than duplicating settings across tool rows.
 

@@ -42,7 +42,7 @@ test('支持集合：九条 dsh peer 同串，集合外宿主不在集合内', (
   assert.equal(manifest.engines?.dsh, undefined, '包清单不得声明 engines.dsh——它会顶替九条 peer 单独决定');
 });
 
-test('清单反例：单条 peer 不同串、声明 engines.dsh、peer 条数不足、范围写法、重复成员都要报问题', () => {
+test('清单反例：单条 peer 不同串、声明 engines.dsh、peer 条数不足、范围写法、重复成员、optional 标记缺失/多键/非严格形态都要报问题', () => {
   const mutate = (fn) => {
     const copy = structuredClone(manifest);
     fn(copy);
@@ -62,6 +62,12 @@ test('清单反例：单条 peer 不同串、声明 engines.dsh、peer 条数不
   assert.notDeepEqual(mutate((copy) => { setAll(copy, '^0.2.1-rc.2'); }), []);
   // 同一版本重复列不等于支持集合。
   assert.notDeepEqual(mutate((copy) => { setAll(copy, '0.2.1-rc.2 || 0.2.1-rc.2'); }), []);
+  // optional 标记防回退：整键删除、缺一条、多一条、或任一条不是严格 {"optional":true}，
+  // 开启自动补齐的 profile 都会重新补装宿主依赖树（安装纪律守卫，与准入无关）。
+  assert.notDeepEqual(mutate((copy) => { delete copy.peerDependenciesMeta; }), []);
+  assert.notDeepEqual(mutate((copy) => { delete copy.peerDependenciesMeta['@deepseek-ai/cordis']; }), []);
+  assert.notDeepEqual(mutate((copy) => { copy.peerDependenciesMeta['not-a-peer'] = { optional: true }; }), []);
+  assert.notDeepEqual(mutate((copy) => { copy.peerDependenciesMeta['@deepseek-ai/dsh'] = { optional: false }; }), []);
   assert.deepEqual(mutate(() => {}), []);
 });
 

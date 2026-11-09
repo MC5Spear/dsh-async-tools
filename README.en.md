@@ -14,7 +14,7 @@ This third-party plugin is unaffiliated with DeepSeek. It is personally maintain
 
 | Component | Current applicable version |
 | --- | --- |
-| Plugin version | `0.2.8+dsh.0.2.1-rc` |
+| Plugin version | `0.2.9+dsh.0.2.1-rc` |
 | Supported dsh host versions | `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4`, `0.2.1-rc.5` |
 
 “Host” means the DSH instance loading the plugin. **Only these four DSH versions can load this package**, not the final `0.2.1` or an unlisted rc. Node.js 24 is recommended; see the [runtime prerequisites](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>) before choosing another runtime.
@@ -27,7 +27,7 @@ For IME, screen-reader, or touch-based answers, and for result recovery after a 
 
 The package is not distributed through npm. New profiles (DSH runtime configurations) on supported versions default to a `hoisted` dependency layout with `autoInstallPeers` (automatic peer installation) disabled, allowing direct reuse of host dependencies.
 
-An unresolved plugin issue introduces unnecessary script-approval requirements in profiles using `isolated + autoInstallPeers:true`, causing installation to fail when those scripts are blocked. If installation or an upgrade asks for script approval, first read [script-approval troubleshooting](<docs/user-reference.en.md#installation-script-approval-troubleshooting>).
+Since 0.2.9 this package marks every peer dependency optional: profiles with `autoInstallPeers` (automatic peer installation) enabled no longer install the host dependency tree on this package's behalf or face its script-approval requests (verified by a four-host isolated installation matrix). Installation scripts introduced by other plugins are still requested by the host through its own approval flow and are unrelated to this package. If installation or an upgrade asks for script approval, first read [script-approval troubleshooting](<docs/user-reference.en.md#installation-script-approval-troubleshooting>).
 
 Install through the GUI:
 

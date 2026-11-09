@@ -400,7 +400,7 @@ test('P4 boundPresets 损坏持久值：双层拒绝；降级基线内等值重�
 
 test('P5 boundPresets 升级保留：旧配置无键→两默认；合法显式值原样保留（PRESET-BIND-01 迁移语义）', () => {
   setConfigValidationArmed(false);
-  // 旧配置形态（0.2.8 无该键）：解析回默认两预设——行为与升级前一致。
+  // 旧配置形态（0.2.9 无该键）：解析回默认两预设——行为与升级前一致。
   const upgraded = resolveConfig({ settings: { defaultWaitMs: 40000 } });
   assert.deepEqual(upgraded.boundPresets, ['dsh-async', 'dsh-async-create'], '无键旧配置→默认两预设');
   assert.equal(upgraded.defaultWaitMs, 40000, '其余字段不受影响');
