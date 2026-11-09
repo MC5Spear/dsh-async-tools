@@ -19,7 +19,11 @@
  * 同一份词表落在 async_run 的结果里——两条路径共用判据常量，词表断言不分叉。
  *
  * 判据全部来自**真实转录的 tool/result**，不模拟、不空转：拿不到对应结果就
- * 以退出码 2 报"无法判定"，绝不把"没验到"记成"验过且通过"。
+ * 以退出码 2 报"无法判定"，绝不把"没验到"记成"验过且通过"。无法判定与探针
+ * 失败（阶段抛错，退出码 1）分开结算；两条路径都先走全流程 finally——收尾
+ * 清理（只清内容核对为本轮所有的靶子）与证据落盘不因早退或抛错被跳过。提前
+ * 返回只说明"本轮没验到"，不等于靶子必残留或会话必留升档——清理与档位结局
+ * 按收尾的实际核对结算。
  *
  * 副作用：围栏拒绝的写不会创建文件；命令族分支的命令尝试写靶子文件（预期被拒，
  * 围栏失效时文件携带所有权标记，收尾核对后清理）。靶子是唯一随机自建文件（先检查
@@ -180,113 +184,139 @@ const OUTSIDE = join(dirname(localConfig.workspaceDir), `${PROBE_ID}.txt`);
  * 中介的 PowerShell 命令写入（Set-Content）再读回核对，非 ASCII 内容会被命令侧
  * 默认编码悄悄变形，所有权核对就会误判「不是本轮文件」。 */
 const OWNERSHIP_MARKER = `[${PROBE_ID}] probe-owned target file created by verify/probe-sandbox-marker.mjs; safe to delete`;
-if (existsSync(OUTSIDE)) {
-  console.log(`**靶子路径已存在：${OUTSIDE}**——随机名撞上预存文件，本轮不覆盖不删除，直接放弃（换一轮重跑即可）。`);
-  process.exit(2);
-}
 
 // 词表断言用的常量：两族共用同一份（`dsh-sandbox` 单一来源），断言不分叉。
 const MARKER_RE = /\[sandbox: file access denied under ([a-z-]+) mode\]/;
 const HINT_RE = /\[sandbox: escalation available/;
 
-// ── 会话：预设点名 dsh-async（不带 agentPreset 会落实例默认预设，async 工具缺席），
-// cwd 必须钉到仓根——不传 cwd 会落实例缺省工作区，围栏的工作区根就跟着错位，
-// 「工作区外」的靶子路径可能反而落在会话工作区内（围栏不拒、判据空转）。
-// 档位切 workspace-write（拒绝词表要在受约束档下才出现；GUI composer 的
-// /permission 同链），采纳与否经 sandbox/mode 事件核验（fail-closed）。
-const created = await rpc('session/create', {
-  request: { cwd: localConfig.workspaceDir, agentPreset: 'dsh-async' }
-});
-const sessionId = created.sessionId;
-if (created.agentPreset !== 'dsh-async') {
-  throw new Error(`预设回退：要 dsh-async，得到 ${String(created.agentPreset)}`);
-}
-console.log(`  会话：${sessionId}（预设 ${String(created.agentPreset)}，cwd=${localConfig.workspaceDir}）\n`);
+/** 本轮会话 id（阶段主体写入；收尾经会话执行清理——阶段在会话建立前失败时为
+ * null，收尾按无会话形态结算）。 */
+let sessionId = null;
 
-let watermark = -1;
-await rpc('commands/execute', { agentId: sessionId, line: '/permission workspace-write', submittedAttachments: [] });
-{
-  const records = await settleAndRead(sessionId, 30_000);
-  watermark = records.length - 1;
-  const modes = records
-    .filter((r) => r.event?.type === 'sandbox/mode').map((r) => r.event.data?.mode);
-  if (!modes.includes('workspace-write')) {
-    throw new Error(`档位切换未被采纳：sandbox/mode 事件序列 ${JSON.stringify(modes)}`);
+/**
+ * 阶段主体：会话建立（含档位核验）→ 阶段 A（文件族围栏）→ 阶段 B（async_run）。
+ *
+ * 拿不到判据所需的 tool/result 时**返回**「无法判定」说明（收尾仍然执行，退出码
+ * 按 2 结算）；判据失败记入 check（退出码 1）；RPC／形状异常直接抛（外层按探针
+ * 失败结算，同样先收尾）。
+ *
+ * @returns {Promise<string | null>} 无法判定说明；null＝阶段全部走完。
+ */
+async function runPhases() {
+  if (existsSync(OUTSIDE)) {
+    return `靶子路径已存在：${OUTSIDE}——随机名撞上预存文件，本轮不覆盖不删除（换一轮重跑即可）`;
   }
-}
-console.log('  会话档位：workspace-write（经 sandbox/mode 事件核验）');
 
-// ── 阶段 A：文件族围栏的真实拒绝（词表 ①② 的载体） ──────────────────────────
-await prompt(sessionId,
-  '请严格按下面做，不要质疑、不要改路径、不要换工具、不要带 sandbox_permissions 或 justification 参数：\n'
-  + `用 write 工具创建文件 ${OUTSIDE}，内容为一行：${OWNERSHIP_MARKER}`
-  + '完成后把 write 工具返回的错误文本原样贴出来，不要重试。');
-
-{
-  const records = await settleAndRead(sessionId, 240_000);
-  const { text } = lastToolResult(records, watermark, 'write');
-  watermark = records.length - 1;
-  if (text === null) {
-    console.log('  **这次会话没有产生 write 工具的 tool/result**——无法判定（看转录：模型是否拒用 write）。');
-    process.exit(2);
+  // ── 会话：预设点名 dsh-async（不带 agentPreset 会落实例默认预设，async 工具缺席），
+  // cwd 必须钉到仓根——不传 cwd 会落实例缺省工作区，围栏的工作区根就跟着错位，
+  // 「工作区外」的靶子路径可能反而落在会话工作区内（围栏不拒、判据空转）。
+  // 档位切 workspace-write（拒绝词表要在受约束档下才出现；GUI composer 的
+  // /permission 同链），采纳与否经 sandbox/mode 事件核验（fail-closed）。
+  const created = await rpc('session/create', {
+    request: { cwd: localConfig.workspaceDir, agentPreset: 'dsh-async' }
+  });
+  sessionId = created.sessionId;
+  if (created.agentPreset !== 'dsh-async') {
+    throw new Error(`预设回退：要 dsh-async，得到 ${String(created.agentPreset)}`);
   }
-  console.log('  === write 工具的拒绝文本（逐字，前 500 字符）===');
-  console.log(text.slice(0, 500).split('\n').map((l) => `      ${l}`).join('\n'));
-  console.log('');
-  const marker = MARKER_RE.exec(text);
-  check('围栏拒绝产出词表标记 `[sandbox: file access denied under <mode> mode]`', marker !== null,
-    marker === null ? '没看到这一行——围栏没拒或词表漂移' : `mode=${marker[1]}`);
-  check('围栏拒绝产出同轮提权提示 `[sandbox: escalation available …]`', HINT_RE.test(text),
-    HINT_RE.test(text) ? '' : '没看到这一行（模型因此看不到"原样重试一次并带提权参数"这条唯一该走的路）');
-}
+  console.log(`  会话：${sessionId}（预设 ${String(created.agentPreset)}，cwd=${localConfig.workspaceDir}）\n`);
 
-// ── 阶段 B：async_run 的退出状态标记（含 runner 死亡形态） ────────────────────
-await prompt(sessionId,
-  '请严格按下面做：用 async_run 执行 `Write-Output SANDBOX_MARKER_ALIVE`，'
-  + '不要传提权参数。完成后把工具返回原样贴出来，不要重试。');
-
-{
-  const records = await settleAndRead(sessionId, 240_000);
-  const { text } = lastToolResult(records, watermark, 'async_run');
-  watermark = records.length - 1;
-  if (text === null) {
-    console.log('  **这次会话没有产生 async_run 的 tool/result**——无法判定。');
-    process.exit(2);
-  }
-  console.log('  === async_run 的返回（逐字，前 500 字符）===');
-  console.log(text.slice(0, 500).split('\n').map((l) => `      ${l}`).join('\n'));
-  console.log('');
-  const runnerDead = /windows-acl-run: .*CreateRestrictedToken/.test(text);
-  if (runnerDead) {
-    console.log('  环境事实：受限令牌 runner 在本部署死亡（NSSM LocalSystem、无登录 SID）——命令族策略拒绝不可触发，词表已由文件族围栏验证。\n');
-    check('runner 死亡仍是可解码的失败（`[exit code: N]` 在场，不是空文本）',
-      /\[exit code: \d+\]/.test(text),
-      /\[exit code: \d+\]/.test(text) ? '' : '缺了它，模型拿到一段文本却无从判断命令成功还是失败');
-  } else {
-    // 命令族 runner 存活的部署（交互实例）：追做命令族外写，断言同一份词表落在
-    // async_run 的结果里（subject=command 的同轮提权提示）。写靶子用 Set-Content
-    // 带上所有权标记（不带 -Force——起跑已确认它不存在，存在即失败而不是覆盖）：
-    // 围栏失效时创建出的文件因此携带标记，收尾核对得了所有权——空文件（New-Item
-    // 形态）核对不了，只能按「不是本轮文件」留下。
-    await prompt(sessionId,
-      '请严格按下面做，不要质疑、不要改路径、不要换工具、不要带提权参数：\n'
-      + `用 async_run 执行 Set-Content -Path '${OUTSIDE}' -Value '${OWNERSHIP_MARKER}'。`
-      + '完成后把工具返回原样贴出来，不要重试。');
-    const denied = await settleAndRead(sessionId, 240_000);
-    const { text: deniedText } = lastToolResult(denied, watermark, 'async_run');
-    if (deniedText === null) {
-      console.log('  **命令族外写没有产生 async_run 的 tool/result**——无法判定。');
-      process.exit(2);
+  let watermark = -1;
+  await rpc('commands/execute', { agentId: sessionId, line: '/permission workspace-write', submittedAttachments: [] });
+  {
+    const records = await settleAndRead(sessionId, 30_000);
+    watermark = records.length - 1;
+    const modes = records
+      .filter((r) => r.event?.type === 'sandbox/mode').map((r) => r.event.data?.mode);
+    if (!modes.includes('workspace-write')) {
+      throw new Error(`档位切换未被采纳：sandbox/mode 事件序列 ${JSON.stringify(modes)}`);
     }
-    const marker = MARKER_RE.exec(deniedText);
-    check('命令族拒绝产出同一份词表标记', marker !== null,
-      marker === null ? '没看到这一行（词表在命令族漂移？）' : `mode=${marker[1]}`);
-    check('命令族拒绝产出同轮提权提示', HINT_RE.test(deniedText), '');
-    check('拒绝结果带退出状态标记 `[exit code: N]`', /\[exit code: \d+\]/.test(deniedText), '');
   }
+  console.log('  会话档位：workspace-write（经 sandbox/mode 事件核验）');
+
+  // ── 阶段 A：文件族围栏的真实拒绝（词表 ①② 的载体） ──────────────────────────
+  await prompt(sessionId,
+    '请严格按下面做，不要质疑、不要改路径、不要换工具、不要带 sandbox_permissions 或 justification 参数：\n'
+    + `用 write 工具创建文件 ${OUTSIDE}，内容为一行：${OWNERSHIP_MARKER}`
+    + '完成后把 write 工具返回的错误文本原样贴出来，不要重试。');
+
+  {
+    const records = await settleAndRead(sessionId, 240_000);
+    const { text } = lastToolResult(records, watermark, 'write');
+    watermark = records.length - 1;
+    if (text === null) {
+      return '阶段 A：这次会话没有产生 write 工具的 tool/result——无法判定（看转录：模型是否拒用 write）';
+    }
+    console.log('  === write 工具的拒绝文本（逐字，前 500 字符）===');
+    console.log(text.slice(0, 500).split('\n').map((l) => `      ${l}`).join('\n'));
+    console.log('');
+    const marker = MARKER_RE.exec(text);
+    check('围栏拒绝产出词表标记 `[sandbox: file access denied under <mode> mode]`', marker !== null,
+      marker === null ? '没看到这一行——围栏没拒或词表漂移' : `mode=${marker[1]}`);
+    check('围栏拒绝产出同轮提权提示 `[sandbox: escalation available …]`', HINT_RE.test(text),
+      HINT_RE.test(text) ? '' : '没看到这一行（模型因此看不到"原样重试一次并带提权参数"这条唯一该走的路）');
+  }
+
+  // ── 阶段 B：async_run 的退出状态标记（含 runner 死亡形态） ────────────────────
+  await prompt(sessionId,
+    '请严格按下面做：用 async_run 执行 `Write-Output SANDBOX_MARKER_ALIVE`，'
+    + '不要传提权参数。完成后把工具返回原样贴出来，不要重试。');
+
+  {
+    const records = await settleAndRead(sessionId, 240_000);
+    const { text } = lastToolResult(records, watermark, 'async_run');
+    watermark = records.length - 1;
+    if (text === null) {
+      return '阶段 B：这次会话没有产生 async_run 的 tool/result——无法判定（看转录：模型是否拒用 async_run）';
+    }
+    console.log('  === async_run 的返回（逐字，前 500 字符）===');
+    console.log(text.slice(0, 500).split('\n').map((l) => `      ${l}`).join('\n'));
+    console.log('');
+    const runnerDead = /windows-acl-run: .*CreateRestrictedToken/.test(text);
+    if (runnerDead) {
+      console.log('  环境事实：受限令牌 runner 在本部署死亡（NSSM LocalSystem、无登录 SID）——命令族策略拒绝不可触发，词表已由文件族围栏验证。\n');
+      check('runner 死亡仍是可解码的失败（`[exit code: N]` 在场，不是空文本）',
+        /\[exit code: \d+\]/.test(text),
+        /\[exit code: \d+\]/.test(text) ? '' : '缺了它，模型拿到一段文本却无从判断命令成功还是失败');
+    } else {
+      // 命令族 runner 存活的部署（交互实例）：追做命令族外写，断言同一份词表落在
+      // async_run 的结果里（subject=command 的同轮提权提示）。写靶子用 Set-Content
+      // 带上所有权标记（不带 -Force——起跑已确认它不存在，存在即失败而不是覆盖）：
+      // 围栏失效时创建出的文件因此携带标记，收尾核对得了所有权——空文件（New-Item
+      // 形态）核对不了，只能按「不是本轮文件」留下。
+      await prompt(sessionId,
+        '请严格按下面做，不要质疑、不要改路径、不要换工具、不要带提权参数：\n'
+        + `用 async_run 执行 Set-Content -Path '${OUTSIDE}' -Value '${OWNERSHIP_MARKER}'。`
+        + '完成后把工具返回原样贴出来，不要重试。');
+      const denied = await settleAndRead(sessionId, 240_000);
+      const { text: deniedText } = lastToolResult(denied, watermark, 'async_run');
+      if (deniedText === null) {
+        return '阶段 B（命令族外写）：没有产生 async_run 的 tool/result——无法判定。';
+      }
+      const marker = MARKER_RE.exec(deniedText);
+      check('命令族拒绝产出同一份词表标记', marker !== null,
+        marker === null ? '没看到这一行（词表在命令族漂移？）' : `mode=${marker[1]}`);
+      check('命令族拒绝产出同轮提权提示', HINT_RE.test(deniedText), '');
+      check('拒绝结果带退出状态标记 `[exit code: N]`', /\[exit code: \d+\]/.test(deniedText), '');
+    }
+  }
+  return null;
 }
 
-// ── 收尾：只清理「确认是本轮创建」的靶子文件 ─────────────────────────────────
+let undetermined = null;
+let probeError = null;
+try {
+  undetermined = await runPhases();
+} catch (error) {
+  probeError = error;
+} finally {
+  // 全流程 finally：正常走完、阶段提前返回（无法判定）、阶段抛错（探针失败）
+  // 三条路径都先收尾（只清内容核对为本轮所有的靶子）再落证据——清理与证据
+  // 不因早退被跳过；早退本身不推定靶子残留或档位升档（按实际核对结算）。
+  await runCleanup();
+}
+
+// ── 收尾（全流程 finally 调用）：只清理「确认是本轮创建」的靶子文件 ──────────
 // 围栏失效或命令族存活时靶子可能真的被创建过。清理前先本地读内容核对所有权标记：
 // 标记在场 → 让本轮会话删它（升档后的 async_run；本部署命令族受限档死亡，升档是
 // 唯一活路），删完把会话档位**降回 workspace-write**（升档只为这一次清理，不把
@@ -296,25 +326,35 @@ await prompt(sessionId,
 // 边界（TOCTOU）：所有权核对与删除之间文件可能被替换——标记核对只证明「核对的
 // 那一刻是本轮文件」，删除动作经本轮会话执行，窗口极小且靶子为随机名，残余风险
 // 记录在案不另设防线。
-{
+// 收尾只清可确认自有的靶：阶段早退（无法判定）不推定靶子残留或档位升档——一切
+// 按本函数的实际核对结算；收尾内部异常按 error 结局报告，证据落盘不被吞掉。
+async function runCleanup() {
   /** 'never-created' | 'not-ours' | 'removed' | 'residue' | 'error' */
   let outcome;
   let outcomeNote = '';
   try {
-    let ours = false;
-    if (existsSync(OUTSIDE)) {
-      try {
-        ours = readFileSync(OUTSIDE, 'utf8').includes(OWNERSHIP_MARKER);
-      } catch {
-        ours = false;
-      }
-    }
-    if (!existsSync(OUTSIDE)) {
-      outcome = 'never-created';
-    } else if (!ours) {
-      outcome = 'not-ours';
-      outcomeNote = '内容不含本轮所有权标记——按预存/被替换文件处理，不删除，留人工判断';
+    if (sessionId === null) {
+      // 阶段在会话建立前放弃（靶子路径预存在）或失败：没有会话可执行清理；
+      // 在场文件不可能是本轮会话命令所建——按非本轮文件处理，不删除。
+      outcome = existsSync(OUTSIDE) ? 'not-ours' : 'never-created';
+      outcomeNote = existsSync(OUTSIDE)
+        ? '会话未建立，在场文件非本轮所建——不删除，留人工判断'
+        : '阶段未建立会话，靶子未创建';
     } else {
+      let ours = false;
+      if (existsSync(OUTSIDE)) {
+        try {
+          ours = readFileSync(OUTSIDE, 'utf8').includes(OWNERSHIP_MARKER);
+        } catch {
+          ours = false;
+        }
+      }
+      if (!existsSync(OUTSIDE)) {
+        outcome = 'never-created';
+      } else if (!ours) {
+        outcome = 'not-ours';
+        outcomeNote = '内容不含本轮所有权标记——按预存/被替换文件处理，不删除，留人工判断';
+      } else {
       let cleanupError = null;
       try {
         await rpc('commands/execute', { agentId: sessionId, line: '/permission danger-full-access', submittedAttachments: [] });
@@ -350,6 +390,7 @@ await prompt(sessionId,
         outcomeNote = resetNote;
       }
       if (!resetOk) outcome = 'error';
+      }
     }
   } catch (error) {
     outcome = 'error';
@@ -372,24 +413,34 @@ await prompt(sessionId,
   check('收尾清理：本轮靶子不残留（未创建／已删除；非本轮文件不删）',
     outcome === 'never-created' || outcome === 'removed' || outcome === 'not-ours',
     `${label}${outcomeNote === '' ? '' : `；${outcomeNote}`}`);
-}
 
-const failed = results.filter((r) => !r.ok).length;
-const evidence = {
-  probe: 'verify/probe-sandbox-marker.mjs',
-  origin: new URL(BASE).origin,
-  ranAt: new Date().toISOString(),
-  checks: results,
-  passed: results.length - failed,
-  total: results.length,
-  verdict: failed === 0 ? 'PASS' : 'FAIL'
-};
-mkdirSync(dirname(OUT_FILE), { recursive: true });
-writeFileSync(OUT_FILE, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
-console.log('');
-console.log(`${String(results.length - failed)}/${String(results.length)} 条成立。`);
-console.log(`证据落盘：${OUT_FILE}（verdict ${evidence.verdict}）。`);
-if (failed > 0) {
+  // ── 证据与退出码（正常走完／无法判定／探针失败三条路径统一落盘）────────────
+  const failed = results.filter((r) => !r.ok).length;
+  const verdict = undetermined !== null ? 'UNDETERMINED'
+    : (probeError !== null ? 'ERROR' : (failed === 0 ? 'PASS' : 'FAIL'));
+  const evidence = {
+    probe: 'verify/probe-sandbox-marker.mjs',
+    origin: new URL(BASE).origin,
+    ranAt: new Date().toISOString(),
+    checks: results,
+    passed: results.length - failed,
+    total: results.length,
+    verdict,
+    ...(undetermined !== null ? { undetermined } : {}),
+    ...(probeError !== null ? { error: String(probeError) } : {})
+  };
+  mkdirSync(dirname(OUT_FILE), { recursive: true });
+  writeFileSync(OUT_FILE, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
   console.log('');
-  process.exitCode = 1;
+  console.log(`${String(results.length - failed)}/${String(results.length)} 条成立。`);
+  console.log(`证据落盘：${OUT_FILE}（verdict ${evidence.verdict}）。`);
+  if (probeError !== null) {
+    console.log(`\n  **探针失败（阶段抛错；收尾与证据已执行）**：${String(probeError)}`);
+    process.exitCode = 1;
+  } else if (undetermined !== null) {
+    console.log(`\n  **无法判定**：${undetermined}`);
+    process.exitCode = 2;
+  } else if (failed > 0) {
+    process.exitCode = 1;
+  }
 }

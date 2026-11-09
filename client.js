@@ -1358,8 +1358,9 @@ var DICTIONARIES = {
     "ask.submitting": "提交中…",
     // 面板顶报错按失败动作分键（需求 §4.4 的失败三分）：①明确拒绝（RPC 已达
     // 宿主、宿主回 ok:false——可断定未执行）②未收到确认（RPC 拒绝——执行与否
-    // 未知，不得断定"未送达"）③状态读取失败（轮询自动重试）；丢失答案无自动
-    // 重试通道，允许手动消除。
+    // 未知，不得断定"未送达"）③状态读取失败（轮询自动重试）；丢失答案＝这一次
+    // 投递失败（服务端把题回滚为 open、保持可再投，重交＝重新投递——设计 §4.3），
+    // 面板不自动代用户重交，允许手动消除。
     "ask.callFailed": "提交后没有收到宿主确认——可能已送达，也可能没有；稍候面板自动刷新，若仍显示未作答可再提交一次。",
     "ask.answerRejected": "宿主明确拒绝：本次提交没有生效",
     "ask.rejectUnknownOption": "所选答案不在本题选项内",
@@ -1371,7 +1372,7 @@ var DICTIONARIES = {
     "ask.stateFailed": "待答状态读取失败；面板会自动重试。",
     "ask.extendFailed": "延长请求没有收到宿主确认——可能已生效，也可能没有；按面板刷新后的剩余时间决定是否再点（每次点击都会累加）。",
     "ask.extendRejected": "宿主已收到延长请求但明确拒绝——本次加时没有生效；稍候面板自动刷新。",
-    "ask.lostAnswer": "作答已提交但未能送达 Agent（投递失败，不会自动重试）；如仍需作答，请打开所属会话直接回复。",
+    "ask.lostAnswer": "作答已提交但这一次投递未送达 Agent；题目保持待答，重新提交即重新投递——也可打开所属会话直接回复。",
     "ask.dismissLost": "知道了",
     "ask.windowLeft": "剩 {s}",
     "ask.extend": "增加等待时间",
@@ -1495,8 +1496,9 @@ var DICTIONARIES = {
     "ask.submitting": "Submitting…",
     // 面板顶报错按失败动作分键（需求 §4.4 的失败三分）：①明确拒绝（RPC 已达
     // 宿主、宿主回 ok:false——可断定未执行）②未收到确认（RPC 拒绝——执行与否
-    // 未知，不得断定"未送达"）③状态读取失败（轮询自动重试）；丢失答案无自动
-    // 重试通道。（与 zh 词典区同款说明：文案本身是英文界面文本，注释是中文。）
+    // 未知，不得断定"未送达"）③状态读取失败（轮询自动重试）；丢失答案＝这一次
+    // 投递失败（服务端把题回滚为 open、保持可再投——设计 §4.3），面板不自动代
+    // 用户重交。（与 zh 词典区同款说明：文案本身是英文界面文本，注释是中文。）
     "ask.callFailed": "No confirmation was received from the host after submitting — it may or may not have arrived; the panel refreshes automatically, and if it still shows unanswered, you can submit again.",
     "ask.answerRejected": "The host explicitly refused this submission — it did not take effect",
     "ask.rejectUnknownOption": "the selected options are not offered by this question",
@@ -1508,7 +1510,7 @@ var DICTIONARIES = {
     "ask.stateFailed": "Failed to fetch the pending-questions state; the panel retries automatically.",
     "ask.extendFailed": "No confirmation was received for the extend request — it may or may not have taken effect; decide whether to click again based on the remaining time shown after the panel refreshes (each click adds up).",
     "ask.extendRejected": "The host received the extend request but explicitly refused it — this extension did not take effect; the panel refreshes automatically shortly.",
-    "ask.lostAnswer": "The answer was submitted but could not be delivered to the agent (delivery failed; it will not be retried automatically); to answer again, open the session and reply there directly.",
+    "ask.lostAnswer": "The answer was submitted but this one delivery attempt did not reach the agent; the question stays answerable — submitting again re-delivers it, or open the session and reply there directly.",
     "ask.dismissLost": "Dismiss",
     "ask.windowLeft": "{s} left",
     "ask.extend": "Extend wait",
@@ -1659,9 +1661,11 @@ var ASK_REMOTE = {
   * 结清出列或交还，需求 §4.4）→ 'undelivered' 记入未送达名单（与 lostAnswers 同款逐条「知道了」消除、
    * 计入座位渲染条件——条目随轮询清空后报错仍在场，不随提交成功清除）；他处已落定的
   * 普通 gone 交轮询收敛（题目已有答案，不是未送达）；
- * 宿主回执 `outcome:'failed'`（迟到注入 followup/inject 抛错、条目已
- * 出列）→ 记入 `lostAnswers`（面板顶逐条列出报错——那一条用户的答案没有送达，且
- * 无重试通道，需求 §4.4）。竞态补醒失败（设计 §4.3）经 `state().lost` 名单随轮询并入——
+ * 宿主回执 `outcome:'failed'`（迟到注入 followup/inject 抛错；服务端已把本题状态
+ * 回滚为 open——题保持可再投、重交＝重新投递，设计 §4.3 ASK-LATE-FAILED-RETRY）
+ * → 记入 `lostAnswers`（面板顶逐条列出报错——那一条答案这一次没有送达；面板不
+ * 自动代用户重交，可修改后再交或到所属会话直接回复，需求 §4.4；与「提交后无
+ * 确认」的 callFailed 档分开报）。竞态补醒失败（设计 §4.3）经 `state().lost` 名单随轮询并入——
  * 两个时点共用同一复合键去重与「知道了」消除（消除后服务端名单不回弹）。
  *
  * 新题温和提醒（ASK-ANNOUNCE-01）：成功读取在代数检查后按复合键 batchId/questionId

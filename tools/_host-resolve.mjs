@@ -4,7 +4,9 @@
  * 插件部署到 profile 后，`@deepseek-ai/*` 由共享 node_modules 提供（DSH 宿主
  * 安装树形态：全部 `@deepseek-ai/*` 包从同一棵 node_modules 解析——本钩子的
  * 单锚点假设只覆盖这一形态；部署改成分包隔离的 node_modules 时锚点策略需重议）；
- * 仓库本地没有 node_modules，因此离线单测要用本钩子换锚点：
+ * 安装时 `autoInstallPeers:false`，仓库内安装依赖（本地开发或 CI 的本地安装）不
+ * 会带入 `@deepseek-ai/*` peer——需要真实解析宿主 peer 的运行形态（离线单测、
+ * 直跑宿主树）用本钩子换锚点；已把宿主包整体装进本地 node_modules 的形态不需要：
  *   node --import ./tools/_host-hooks.mjs --test "test/*.test.mjs"
  *
  * 0.2.1 兼容线：本包的九个 `@deepseek-ai/dsh*` peer 共用同一支持集合

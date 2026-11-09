@@ -234,6 +234,52 @@ hostTest('async_workflow（B-SOL-01／需求 §2.4.1）：根值守卫——unde
   assert.equal(viaHook, 'done:p', '包装后的脚本仍能看到外层钩子绑定');
 });
 
+hostTest('async_workflow（B-SOL-02／WORKFLOW-ERROR-SOURCE-LINES）：守卫前缀与脚本首行同行——运行错误行号零偏移，多行错误保持可定位', async () => {
+  // 守卫包装不再给原脚本前插一行：前缀与首行同写一行，原脚本第 K 行仍是包装
+  // 产物第 K 行。判据三层：结构（逐行对照）、行为（第 1／第 3 行运行错误的报
+  // 行号与无包装基线的差恰为「原行号−1」＝守卫贡献零偏移）、边界说明（经
+  // Function 构造器编译的语法错误在本运行时没有 <anonymous> 行号帧——行号
+  // 保真覆盖运行错误栈帧；语法错误的定位本就不走行号，包装不吞错误类别）。
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const guardMessage = 'guard';
+  const firstAnonymousLine = (error) => {
+    const hit = /<anonymous>:(\d+):\d+/.exec(error?.stack ?? '');
+    return hit === null ? null : Number(hit[1]);
+  };
+
+  // 结构：原脚本第 K 行＝包装产物第 K 行（首行带前缀；列偏移不属行号）。
+  const wrapped = wrapScript('let a = 1;\nlet b = 2;\nreturn a + b;\n', guardMessage);
+  const lines = wrapped.split('\n');
+  assert.match(lines[0], /let a = 1;$/, '原第 1 行语句仍在产物第 1 行（守卫前缀同行，不另起行）');
+  assert.match(lines[1], /^let b = 2;/, '原第 2 行位置不变');
+  assert.match(lines[2], /^return a \+ b;/, '原第 3 行位置不变');
+
+  // 行为：先量本机基线（无包装、单行 throw 的报行号——AsyncFunction 函数体自
+  // 第 3 行起，具体数值随运行时，不写死），再对包装产物在第 1／第 3 行植入
+  // 运行错误，报行号差必须恰为 K−1。
+  const baselineError = await new AsyncFunction('throw new Error("baseline");')().catch((e) => e);
+  const baseline = firstAnonymousLine(baselineError);
+  assert.ok(Number.isInteger(baseline), '基线可测（stack 含 <anonymous> 行号帧）');
+  const lineOf = async (script) => firstAnonymousLine(await new AsyncFunction(script)().catch((e) => e));
+  assert.equal(await lineOf(wrapScript('throw new Error("boom-1");', guardMessage)), baseline,
+    '原第 1 行运行错误报行号＝基线（守卫零偏移）');
+  assert.equal(await lineOf(wrapScript('\n\nthrow new Error("boom-3");', guardMessage)), baseline + 2,
+    '原第 3 行运行错误报行号＝基线+2（多行脚本行号原样可定位）');
+
+  // 边界对照：语法错误在构造期抛 SyntaxError（包装不吞、不改变错误类别），
+  // 本运行时的构造器语法错误无 <anonymous> 行号帧——如实记为「不走行号定位」。
+  let syntaxError = null;
+  let syntaxFrame = 'not-thrown';
+  try {
+    new AsyncFunction(wrapScript('let a = 1;\nlet x = ;\nreturn 1;', guardMessage));
+  } catch (error) {
+    syntaxError = error;
+    syntaxFrame = firstAnonymousLine(error);
+  }
+  assert.ok(syntaxError instanceof SyntaxError, '语法错误按 SyntaxError 在构造期抛出（错误类别不被包装改写）');
+  assert.equal(syntaxFrame, null, '构造器语法错误无行号帧（定位不走行号——与包装无关的运行时形态，如实记录）');
+});
+
 hostTest('async_workflow（B-SOL-01）：engine.start 收到守卫包装后的脚本；completed＋undefined 根按防御支失败', async () => {
   const { runs, calls, agent, tool } = rig();
   const exec = { agent, signal: new AbortController().signal };

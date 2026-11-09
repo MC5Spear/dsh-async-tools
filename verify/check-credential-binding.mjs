@@ -14,15 +14,20 @@
  * 5. 非 loopback 的明文 `http:` 目标一律拒绝（同源与映射都不放行，无例外）；
  * 6. loopback（`127.*`／`localhost`／`::1`）的 http 放行；
  * 7. 令牌编码统一走 `tokenEntryUrl`（`URLSearchParams`），特殊字符令牌往返不变形；
- * 8. 重定向策略：`verify/_rpc.mjs` 与五个 instanceCredentials 探针的请求一律
- *    `redirect: 'manual'` 且 3xx 按错误处理。
+ * 8. 认证接线：`verify/_rpc.mjs` 与五个 instanceCredentials 探针统一 import 共享
+ *    判定（`verify/_auth.mjs`——认证首跳 `authCookieFromFirstHop` 接受
+ *    「3xx＋`Set-Cookie`＋同源/缺席 `Location`」的正常交换、不跟随跳转；API 调用
+ *    `assertApiNotRedirected` 把任何 3xx 按错误处理），请求一律 `redirect:'manual'`
+ *    且不出现自动跟随；判据自带反例自检（删助手调用／改自动跟随／退回内联 3xx
+ *    比较三种漂移形态都必须判红）。
  *
  * ## 边界（诚实声明）
  *
  * - **无网络**：本脚本不发起任何 fetch、不连接任何真实实例（本机常驻实例的
  *   端口绝不触碰）、不读取真实令牌文件——令牌一律是自建临时文件里的假 token。
- * - 第 8 条是**源码级断言**（脚本里有没有统一 `redirect:'manual'` 与 3xx 处理）：
- *   重定向行为的真机形态由探针在真机上执行时自然暴露，离线自检不冒充。
+ * - 第 8 条是**源码级断言**（脚本里有没有接共享判定与统一 `redirect:'manual'`）：
+ *   两契约的行为真机形态由探针在真机上执行时自然暴露（判定函数本身的正反例另在
+ *   `test/auth-first-hop.test.mjs`），离线自检不冒充。
  * - 加载器层的字段解析（环境变量优先、文件备用、坏形状按 `LocalConfigInvalid`
  *   报错）用自建临时根目录里的最小 `.local/config.mjs` 验证，不碰真实 `.local/`。
  *
@@ -226,8 +231,26 @@ try {
       `rebuilt=${rebuilt} roundTrip=${String(roundTrip)}`);
   }
 
-  // ── 8. 重定向策略（源码级断言，无网络）────────────────────────────────────
+  // ── 8. 认证首跳与 API 重定向的接线（源码级断言，无网络）───────────────────
+  //
+  // 判据随共享判定（verify/_auth.mjs）的迁移更新：不再认旧的
+  // `assertNotRedirected` 名字或内联 `status >= 300` 比较——消费者必须 import 并
+  // 调用真实助手（首跳 authCookieFromFirstHop＋API assertApiNotRedirected），
+  // fetch 一律 redirect:'manual' 且不出现 redirect:'follow'。判据的检出力由
+  // 下方合成片段的四种反例形态当场自检，不靠改正则消除告警。
   {
+    /** 判定一份消费者源码的认证接线形态（五个读数各自独立可失败）。 */
+    const wiringOf = (source) => ({
+      manual: /redirect:\s*'manual'/.test(source),
+      follow: /redirect:\s*'follow'/.test(source),
+      firstHop: /authCookieFromFirstHop\(/.test(source),
+      apiGuard: /assertApiNotRedirected\(/.test(source),
+      sharedImport: /from\s+['"][./]*_auth\.mjs['"]/.test(source)
+    });
+    const wired = (source) => {
+      const w = wiringOf(source);
+      return w.manual && !w.follow && w.firstHop && w.apiGuard && w.sharedImport;
+    };
     const targets = [
       'verify/_rpc.mjs',
       'verify/probe-escalation-advertised.mjs',
@@ -237,13 +260,29 @@ try {
       'verify/probe-settings-behavior-full.mjs'
     ];
     for (const rel of targets) {
-      const source = readFileSync(join(DEV_ROOT, rel), 'utf8');
-      const manual = /redirect:\s*'manual'/.test(source);
-      const rejects3xx = /status >= 300/.test(source) || /assertNotRedirected/.test(source);
-      check(`${rel} 的请求一律 redirect:'manual' 且 3xx 按错误处理`,
-        manual && rejects3xx,
-        `manual=${String(manual)} 3xx处理=${String(rejects3xx)}`);
+      const w = wiringOf(readFileSync(join(DEV_ROOT, rel), 'utf8'));
+      check(`${rel} 接共享认证判定：首跳 authCookieFromFirstHop＋API assertApiNotRedirected，请求 redirect:'manual' 且无自动跟随`,
+        w.manual && !w.follow && w.firstHop && w.apiGuard && w.sharedImport,
+        `manual=${String(w.manual)} 自动跟随=${String(w.follow)} 首跳=${String(w.firstHop)} API守卫=${String(w.apiGuard)} 共享import=${String(w.sharedImport)}`);
     }
+    // 反例自检：四种漂移形态必须全部判红，否则判据本身失明（fail-closed）。
+    const healthy = "import { authCookieFromFirstHop, assertApiNotRedirected } from './_auth.mjs';\n"
+      + "const first = await fetch(url, { redirect: 'manual' });\n"
+      + "const cookie = authCookieFromFirstHop(first, BASE);\n"
+      + "assertApiNotRedirected(r, method);\n";
+    check('反例自检：健康接线形态（共享 import＋两助手调用＋manual）通过判据',
+      wired(healthy), '判据对合法形态误报时，后续三条反例不可信');
+    check('反例自检：删掉 API 守卫调用（3xx 处理接线消失）被判红',
+      !wired(healthy.replace('assertApiNotRedirected(r, method);\n', '')),
+      '删调用漂移未被检出＝判据失效');
+    check('反例自检：改自动跟随（redirect:\'follow\'）被判红',
+      !wired(healthy.replace("redirect: 'manual'", "redirect: 'follow'")),
+      '自动跟随漂移未被检出＝凭据可能随跳转重发');
+    check('反例自检：退回内联 3xx 比较、绕开共享判定（含旧形态）被判红',
+      !wired(healthy
+        .replace("import { authCookieFromFirstHop, assertApiNotRedirected } from './_auth.mjs';\n", '')
+        .replace('authCookieFromFirstHop(first, BASE);', 'if (first.status >= 300) throw new Error();')),
+      '内联比较漂移未被检出＝判定与共享助手脱钩');
   }
 
   // ── 9. 加载器层：新字段的来源与坏形状（自建临时根，不碰真实 .local/）────────

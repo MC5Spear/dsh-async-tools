@@ -82,11 +82,11 @@ const ALLOWLIST = {
     { needle: '设置快照缺席', why: 'stderr 通告（emitLifecycleNotice），操作者一侧' },
     { needle: '宿主行未装载', why: '同上通告的续行字符串，操作者一侧' }
   ],
-  // 刷新总线的诊断与失败通告：logger.debug / emitLifecycleNotice（stderr）。
+  // 刷新总线的诊断与失败通告：DSH_ASYNC_BUS_DIAG=1 的 stderr 诊断 / emitLifecycleNotice（stderr）。
   'refresh-bus.js': [
-    { needle: '登记监听器', why: 'diag（logger.debug），操作者一侧' },
-    { needle: '注销监听器', why: 'diag（logger.debug），操作者一侧' },
-    { needle: '广播设置变更', why: 'diag（logger.debug），操作者一侧' },
+    { needle: '登记监听器', why: 'diag（DSH_ASYNC_BUS_DIAG=1 时写 stderr），操作者一侧' },
+    { needle: '注销监听器', why: 'diag（DSH_ASYNC_BUS_DIAG=1 时写 stderr），操作者一侧' },
+    { needle: '广播设置变更', why: 'diag（DSH_ASYNC_BUS_DIAG=1 时写 stderr），操作者一侧' },
     { needle: '刷新工具描述失败', why: 'stderr 通告（emitLifecycleNotice），操作者一侧' }
   ],
   // volatile 提交失败的报错与首次装载的降级通告：warn + stderr 通告，操作者一侧。

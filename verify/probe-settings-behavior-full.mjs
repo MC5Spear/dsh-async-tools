@@ -475,7 +475,9 @@ try {
   // `async_agent` 正文无预算区间，只有尾摘要——它与其他三个同组。
   //
   // 两条断言各自能独立失败：
-  //   (a) `async_run` 的**正文**里让出区间仍是现行值（本轮未改的默认，不是被写成等待区间）；
+  //   (a) `async_run` 的**正文**里让出区间仍是本轮未改的测试基线值（TEST_BASELINE
+  //       的 minYieldMs=1000——有意偏离出厂 20000 的显式测试基线，不是出厂默认，
+  //       见 L58 头注），没有被写成等待区间；
   //   (b) 四个工具的**尾摘要**等待区间都是新值。
   const tools = pageClamp.records
     .filter((r) => r.event?.type === 'request/header')
@@ -490,11 +492,11 @@ try {
 
   const runDesc = descOf('async_run') ?? '';
   const yieldBody = /范围 (\d+)–(\d+) ms）；/.exec(runDesc);
-  check('(a) `async_run` 正文里的**让出**区间仍是现行默认，不是被写成等待区间',
+  check('(a) `async_run` 正文里的**让出**区间仍是本轮测试基线，不是被写成等待区间',
     yieldBody !== null && yieldBody[1] === '1000' && yieldBody[2] === '600000',
     yieldBody === null
       ? 'async_run 正文里找不到让出区间'
-      : `实得 ${yieldBody[1]}–${yieldBody[2]}（让出区间本轮未改，应仍是默认 1000–600000）`);
+      : `实得 ${yieldBody[1]}–${yieldBody[2]}（让出区间本轮未改，应仍是测试基线 1000–600000；出厂 minYieldMs 为 20000，非本断言对象）`);
 
   const tailTools = ['async_run', 'async_wait', 'async_agent']
     .map((n) => ({ n, hit: /等待预算必须显式传入，范围 (\d+)–(\d+) ms/.exec(descOf(n) ?? '') }))

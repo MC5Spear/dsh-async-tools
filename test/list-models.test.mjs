@@ -671,6 +671,14 @@ hostTest('目标适用性——async_agent 策略段按现读设置：开／关�
   const threw = await createListModelsTool(envThrows.ctx, envThrows.view).execute({}, envThrows.exec);
   assert.equal(threw.verdict, 'unconfirmed');
   assert.match(threw.basis, /could not be read: enabled with empty allowed list/);
+
+  // ⑤ 契约外形状（MAINT-QUERY-BAD-POLICY）：current() 返回 null → 未确认＋
+  // 可读原因（不裸 TypeError），目录查询不阻断。
+  const envNull = listEnv({ selection: null });
+  const nulled = await createListModelsTool(envNull.ctx, envNull.view).execute({}, envNull.exec);
+  assert.equal(nulled.verdict, 'unconfirmed');
+  assert.match(nulled.basis, /could not be read: current\(\) returned null/);
+  assert.equal(nulled.total, 2, '形状失约不阻断目录查询');
 });
 
 hostTest('目标适用性——async_agent 后端段：未注册／不支持 agentOptions／注册表抛错（§2.3.4）', async () => {
