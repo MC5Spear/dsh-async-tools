@@ -1041,4 +1041,102 @@ test('T15（R38；R44 换钉）：九个 dsh* peer 共用同一支持集合—�
     '本包 version 必须按需求 §7.3.1 带构建元数据全标识（核心 0.2.8 + 兼容线 dsh.0.2.1-rc）——漏元数据会让用户失去兼容信息');
 });
 
+test('T21：refreshToolDescriptions 递归同步嵌套参数说明——en→zh→en 各层同步、结构／枚举／对象身份不变', async (t) => {
+  // 语言切换只改一级 description 时，meta.properties.*、phases.items.* 等嵌套层
+  // 会滞留在旧语言（FUNC-NESTED-DESCRIPTION-REFRESH）。用真 defineTool 固化的
+  // 借用 schema 驱动导出的 refreshToolDescriptions（其存在意义即让这条链可直测，
+  // 见 lib/index.js 导出注释），断言 en→zh→en 全层同步且就地改写不换对象。
+  const host = await loadHost();
+  const Context = await loadCordis();
+  if (host === undefined || Context === undefined) {
+    t.skip(HOST_SKIP_REASON);
+    return;
+  }
+  const workflowModule = await loadOfflineSafe('../lib/workflow.js');
+  const waitModule = await loadOfflineSafe('../lib/wait.js');
+  if (workflowModule === undefined || waitModule === undefined) {
+    t.skip(HOST_SKIP_REASON);
+    return;
+  }
+  const { refreshToolDescriptions } = host;
+  const { resolveConfig } = await import('../lib/config.js');
+  const CJK = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+  const mk = makeContext(Context);
+
+  // ① async_workflow：一级（script/meta）＋meta.properties（name/phases…）＋
+  // phases.items.properties（title/…）三层嵌套。
+  const en = resolveConfig({ toolName: 'async_workflow' });
+  const zh = resolveConfig({ toolName: 'async_workflow', agentLang: 'zh' });
+  const wf = workflowModule.createWorkflowTool(mk.ctx, en);
+  const meta = wf.parameters.properties.meta;
+  const phases = meta.properties.phases;
+  const phaseItem = phases.items;
+  const nodes = {
+    script: wf.parameters.properties.script,
+    meta,
+    metaName: meta.properties.name,
+    metaDescription: meta.properties.description,
+    metaWhenToUse: meta.properties.whenToUse,
+    phases,
+    phaseTitle: phaseItem.properties.title,
+    phaseDetail: phaseItem.properties.detail,
+    phaseModel: phaseItem.properties.model
+  };
+  const enTexts = new Map(Object.entries(nodes).map(([key, node]) => [key, node.description]));
+  for (const [key, text] of enTexts) {
+    assert.ok(typeof text === 'string' && text.length > 0, `前置：${key} 有描述`);
+    assert.ok(!CJK.test(text), `前置：${key} 构造档为 en（无 CJK）`);
+  }
+  const keysBefore = JSON.stringify([
+    Object.keys(wf.parameters.properties),
+    Object.keys(meta.properties),
+    Object.keys(phaseItem.properties)
+  ]);
+  refreshToolDescriptions(wf, zh);
+  for (const [key, node] of Object.entries(nodes)) {
+    assert.ok(CJK.test(node.description), `zh 刷新后 ${key} 的嵌套描述同步换 zh`);
+    assert.notEqual(node.description, enTexts.get(key), `${key} 的 zh 文案与 en 不同（真换语言）`);
+  }
+  // 就地改写：schema 根、各层节点与 items 的对象身份一律不变（工具表按引用借用）。
+  assert.equal(wf.parameters.properties.meta, meta, 'meta 节点身份不变');
+  assert.equal(meta.properties.phases, phases, 'phases 节点身份不变');
+  assert.equal(phases.items, phaseItem, 'phases.items 节点身份不变');
+  assert.equal(phaseItem.properties.title, nodes.phaseTitle, '叶子节点身份不变');
+  assert.equal(JSON.stringify([
+    Object.keys(wf.parameters.properties),
+    Object.keys(meta.properties),
+    Object.keys(phaseItem.properties)
+  ]), keysBefore, '各层参数键集不变（增删只由条件键逻辑负责）');
+  refreshToolDescriptions(wf, en);
+  for (const [key, node] of Object.entries(nodes)) {
+    assert.equal(node.description, enTexts.get(key), `回切 en 后 ${key} 恢复原描述`);
+  }
+
+  // ② async_wait：items 嵌套（targets.items.properties.*）同步且枚举／required
+  // 不被改写——同步只动 description。
+  const waiter = waitModule.createWaitTool(mk.ctx, en);
+  const targets = waiter.parameters.properties.targets;
+  const kind = targets.items.properties.kind;
+  const targetId = targets.items.properties.id;
+  const enumBefore = [...kind.enum];
+  const requiredBefore = structuredClone(targets.items.required);
+  const idEn = targetId.description;
+  assert.ok(Array.isArray(enumBefore) && enumBefore.includes('job'), '前置：kind 枚举在构造档固化');
+  refreshToolDescriptions(waiter, zh);
+  assert.equal(waiter.parameters.properties.targets, targets, 'targets 节点身份不变');
+  assert.ok(CJK.test(targetId.description), 'targets.items.properties.id 的描述换 zh（修前只换一级）');
+  assert.ok(CJK.test(targets.description), 'targets 一级描述照常换 zh（既有行为不回归）');
+  assert.deepEqual(kind.enum, enumBefore, '枚举值不被改写');
+  assert.deepEqual(targets.items.properties, { kind, id: targetId }, 'items.properties 子节点集合不变');
+  assert.strictEqual(targets.items.properties.kind, kind, 'kind 子节点引用不变');
+  assert.strictEqual(targets.items.properties.id, targetId, 'id 子节点引用不变');
+  assert.deepEqual(targets.items.required, requiredBefore, '中文刷新不改 required');
+  refreshToolDescriptions(waiter, en);
+  assert.equal(targetId.description, idEn, '回切 en 恢复原描述');
+  assert.deepEqual(kind.enum, enumBefore, '枚举在回切后仍不变');
+  assert.strictEqual(targets.items.properties.kind, kind, '回切后 kind 子节点引用不变');
+  assert.strictEqual(targets.items.properties.id, targetId, '回切后 id 子节点引用不变');
+  assert.deepEqual(targets.items.required, requiredBefore, '回切后 required 不变');
+});
+
 

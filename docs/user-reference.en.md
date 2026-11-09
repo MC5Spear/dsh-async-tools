@@ -2,6 +2,13 @@
 
 [中文](<user-reference.md>) · [English home](<../README.en.md>)
 
+Find the task you need:
+
+- [Installation and source identity](<#1-installation-identity-and-prerequisites>), [first task and settings](<#2-first-use-and-settings>).
+- [All five tools and their arguments](<#3-tool-arguments-and-results>), [wait states, continued output, and recovery](<#4-wait-states-and-direct-delivery>).
+- [Discover a model, then create a child](<#5-model-catalogs-authorization-and-inheritance>), [answer questions and diagnose missing command results](<#6-question-takeover-and-silent-failures>).
+- [Mount all features in a custom preset](<#7-advanced-composition>), [remove the plugin or report a problem](<#8-disable-recover-and-report-problems>).
+
 ## 1. Installation identity and prerequisites
 
 | Component | Current applicable version |
@@ -9,34 +16,49 @@
 | Plugin version | `0.2.8+dsh.0.2.1-rc` |
 | Supported dsh host versions | `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4`, `0.2.1-rc.5` |
 
-If the installation address does not yield the source, check the repository address and commit, then the network or proxy. If it still fails, contact the maintainer who supplied the installation source about available installation artifacts.
+DSH must be one of these four versions. They share a compatibility line. The final `0.2.1`, `0.2.0`, `0.2.2`, and any new rc outside this set are rejected.
 
-The source repository spec is `github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1`. The branch moves; for a reproducible source, check the source out locally, take the full commit from `git rev-parse HEAD`, replace everything after `#` with that commit, and verify the installed source against the same commit. The package is not distributed through npm. A spec without a branch or commit qualifier (for example a bare `github:MC5Spear/dsh-async-tools`) does not select the right host adaptation — the plugin cannot pick one for you.
+Node.js 24 is recommended. The plugin's `>=20` declaration applies only to the plugin. The host's commander 15 dependency requires `>=22.12.0`, but that is only a known lower bound, not a verified minimum for the whole host. Confirm that the target host's dependencies resolve on the chosen runtime before installing.
 
-Check the runtime before installing. Node.js 24 is recommended. The plugin's `>=20` declaration applies only to the plugin. The host's commander 15 dependency requires `>=22.12.0`, but this is only a known lower bound, not a verified minimum for the complete host. Confirm that the target host's dependencies resolve on the chosen runtime.
+### Verification scope and deployment decisions
 
-The four host versions above share one compatibility line and one peer support set. The final `0.2.1`, `0.2.0`, `0.2.2`, and any new rc not in the set are rejected — that is the install condition. Keep the compatibility declaration apart from what has actually been verified.
+Existing verification is limited to a local Windows machine and isolated instances. The full plugin module suite and static checks passed under each supported host. Real-browser checks covered key settings-page and question-overlay behaviors and accessibility trees. Real model sessions sampled the five tools' core behaviors: background delivery, waiting and user steering, child continuation, and late answers. An installation artifact was also installed through the official CLI into an isolated instance, checking the tool roster, preset patches, and dependency tree. These checks do not establish item-by-item real-host coverage of every feature on every host.
 
-- **Verified for the current deliverable** (this local Windows machine, isolated instances): the full module test suite and the static checks pass under each of the four supported hosts (rc.2–rc.5); settings-page and question-overlay key behaviors and their accessibility tree were checked in a real browser; the five tools' core behaviors were sampled in real model sessions (background delivery, waiting and interruption, subagent continuation, late answers); the distributed package was installed via the official CLI into an isolated instance and its loading verified (tool roster, preset patch, and dependency-tree checks). Item-by-item real-host passes of older artifacts (the earlier rc.2/rc.5 installations) do not automatically cover later mechanism changes; this entry describes the current deliverable's verification record, with per-item records in `docs/design.md` §9.3 at the same commit in the source repository.
-- **Not yet verified** (read before deploying): real-machine Linux behavior, including commands and one-shot escalation; the precise real-host timing of a constructed tool result being rewritten to a cancellation before commit; real OS input methods, screen readers, and touch input; remote CI (configured with a four-version matrix, but remote execution has not happened — that is not verified coverage); the per-item real-machine re-verification on rc.3/rc.4 hosts is still outstanding (installation and loading evidence is tiered — see docs/design.md §9.3 — while suites and static checks cover them); and no verification conclusions for macOS or remote environments. For deployments involving these, arrange isolated verification with the maintainer first.
-- **Materials**: development verification materials (verify/ and the like) are not distributed with the installation package; see the corresponding materials for the same commit in the source repository https://github.com/MC5Spear/dsh-async-tools (the installed version is listed in CHANGELOG.md).
+Consider these remaining gaps before deploying:
 
-After checking these prerequisites, install from a terminal:
+- Real-machine Linux behavior, including commands and one-shot permission escalation, has not been verified. There are no verification conclusions for macOS or remote environments.
+- Real OS input methods, screen readers, and touch input have not been verified.
+- The precise real-host timing in which a constructed tool result is rewritten to a cancellation error before commit remains unverified.
+- Item-by-item real-machine re-verification on rc.3/rc.4 is incomplete, although module suites and static checks cover them.
+- The four-version remote CI matrix is configured but has not run remotely.
+
+Arrange isolated verification with the maintainer when deployment depends on these environments or behaviors. Results from older rc.2/rc.5 installations do not automatically cover later mechanism changes. Per-item records are in `docs/design.md` §9.3 at the matching source commit. Design, changelog, and development verification materials are not shipped with the package; obtain a checkout matching the installed source from the [source repository](<https://github.com/MC5Spear/dsh-async-tools>). Release history is not an installed-version lookup.
+
+### Install, pin a source, and check the version
+
+The package is not distributed through npm. Run this in a terminal, or enter the same GitHub address in DSH's plugin-manager installation dialog:
 
 ```powershell
 dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
 ```
 
-Alternatively, in DSH's plugin manager, open the install dialog and paste the GitHub spec above into the installation address. When installation finishes, open this package's detail page and check that its settings form is visible. Create a session and confirm that `dsh-async` and `dsh-async-create` are available. After selecting either preset, the Agent should have the five tools documented here.
+The address follows a moving branch. An unqualified address such as `github:MC5Spear/dsh-async-tools` does not automatically select the appropriate host adaptation. To pin a source:
 
-If both tools and settings are missing:
+1. Check out the intended revision that is actually available from the repository, then record its full commit ID with `git rev-parse HEAD`.
+2. Replace the branch name after `#` in the installation address with that full commit. A local commit is not necessarily available remotely.
+3. After installation, inspect `package.json` in this package's installation directory for the target profile. Check that `version` matches the selected source, and keep the actual installation address and full commit as the source record. A version number alone does not establish commit identity; the changelog cannot replace checking the installation.
 
-1. Check whether the DSH version is in this section's support set.
-2. Inspect host load logs to see whether a version mismatch caused the package to be skipped.
-3. In the target profile, check both the dependency registration (installed package) and the bundle registration (host-row and preset composition declarations). They serve different purposes; one registration alone does not establish that every entry loaded.
-4. After composition or client-entry changes, reload the instance and reopen the page. Arrange for active sessions to finish safely before restarting, and restart outside the service process tree. Ordinary settings saves need no restart.
+Open this package's detail page and confirm that its settings form is visible. Create a session and check that `dsh-async` and `dsh-async-create` are available. Selecting either should give the Agent all five tools documented here.
 
-Development links are for an explicit development environment. Keep stable deployments separate from the editing tree. Prepare the source as follows:
+### Installation troubleshooting and development links
+
+If source retrieval fails, check the repository address and commit, then the network or proxy. If it still fails, ask the maintainer supplying the source about available artifacts. If settings or tools are missing:
+
+1. Check the host version against the support set and inspect load logs for a version-mismatch rejection.
+2. In the target profile, check the dependency registration (installed package) and bundle registration (host-row and preset composition declarations). Their purposes differ; one registration alone does not confirm that every entry loaded.
+3. After composition or client-entry changes, reload the instance and reopen the page. Arrange for active sessions to finish safely before restarting, and restart outside the service process tree. Ordinary valid settings saves need no restart.
+
+Development links are for explicit development environments. Keep stable deployments separate from the editing tree:
 
 ```powershell
 git clone https://github.com/MC5Spear/dsh-async-tools.git
@@ -46,11 +68,19 @@ npm install
 dsh plugin --profile web add <absolute-clone-directory>
 ```
 
-The linked directory must resolve matching host dependencies. A bare Node import checks only part of module resolution; it does not establish complete host-service, tool, or page integration.
+The linked directory must resolve matching host dependencies. Importing modules with Node checks only part of resolution, not complete host-service, tool, or page integration.
 
 ## 2. First use and settings
 
-Choose `dsh-async` for general coding or `dsh-async-create` to retain plugin and preset authoring tools. Both presets expose all five tools directly. Inspection, messaging, and explicit stopping remain host management operations. Existing presets are unchanged.
+### A first task
+
+Both shipped presets provide all five tools directly without rewriting existing presets. Inspection, messaging, and explicit stopping remain host management operations. Create a session with `dsh-async` for general coding, or `dsh-async-create` to retain plugin and preset authoring tools.
+
+In a Windows PowerShell environment, paste this harmless request to the Agent:
+
+> Demonstrate background execution without modifying files, accessing the network, or creating children. First use async_run to run `Write-Output SHORT_OK`. Then run `Start-Sleep -Seconds 30; Write-Output LONG_DONE` with yield_ms=20000 explicitly. Keep the returned job_id. When waiting is needed, use async_wait targeting that job with wait_ms=30000 explicitly. Report both markers and actual exit information. Do not repeat the command to check progress; if no identifier arrived, recover it with job_list first.
+
+Expect `SHORT_OK` directly, then a `job_id` after the long command's initial wait of at most 20 seconds. The result containing `LONG_DONE` arrives in a wait return or completion message. Still inspect exit information. These are equivalent Agent tool calls, not terminal commands:
 
 ```text
 async_run(command="Write-Output SHORT_OK", description="Print a harmless test marker")
@@ -59,15 +89,17 @@ async_run(command="Start-Sleep -Seconds 30; Write-Output LONG_DONE",
 async_wait(targets=[{kind:"job", id:"<returned job_id>"}], wait_ms=30000)
 ```
 
-These are Agent tool calls, not terminal commands. The short command should return `SHORT_OK` directly. The factory clamping range for `yield_ms` is 20000–600000 milliseconds (values below the floor take effect as the floor); the 30-second command exceeds the 20-second first wait, so it returns a job identifier, `job_id`. Keep it and continue independent work. When the job settles, its result body is delivered directly — attached to an in-flight async_wait return or as a completion message; no separate retrieve call is required. Use `async_wait` when you need to block on a result, explicitly supplying `wait_ms` every time. Even after seeing `LONG_DONE`, inspect exit information. Do not repeat the command to check progress.
+The factory `yield_ms` default is 20000 ms, with request bounds of 20000–600000 ms; out-of-range requests take effect at the nearest boundary. Continue independent work while the job runs, and wait when its result is needed. Every wait requires an explicit `wait_ms`, with no default. See [wait arguments](<#32-async_wait>) for other usages.
 
-Open the plugin list, select this package, and use the form between its description and component rows. Writes require the host's local loopback settings endpoint. If the page is read-only or accessed through a non-loopback address, follow its guidance to a writable endpoint. Editing creates a draft; Save applies it. Restoring defaults also requires Save. Leaving discards unsaved drafts; a failed save retains them. Expanding field help does not submit settings.
+### Edit and save settings
 
-A field's Restore default action stages removal of only that field's user override. Save applies the removal; other fields' overrides are unchanged. The field then uses the host composition's configured value, falling back to the factory default in the table only when the composition has no value. It does not forcibly write the table's default. With a valid configuration, check after saving that the field is no longer marked Overridden and that its value is what you expect. For example, a composition value of `45000` overridden with `90000` returns to `45000`, not `20000`. If a degraded-mode warning remains, follow the recovery guidance after the table; restoring an override is not proof that a damaged configuration is repaired.
+1. Open the plugin list → this package's detail page → the form between its description and component rows.
+2. Edit the required fields and select Save. Edits are drafts until saved. Leaving discards unsaved drafts; failed saves retain them. Help buttons only expand explanations.
+3. Check field values and override indicators after saving. Ordinary valid saves need no restart.
 
-For advanced configuration, put fields under the host row's `config.settings.<field>`, not directly under `config`. The 0.2.5 flat style (`config: { agentLang: zh, … }`) does not take effect on 0.2.8: the row activates but the preset values silently fall back to defaults. The correct form is `config: { settings: { agentLang: zh, … } }` (see the migration section of the repository's `CHANGELOG.md` for a side-by-side example and the load-time warning; that file is not shipped inside the install package — read it from a pinned commit or tag of the source repository). Values are selected in this order: user override, composition configuration, then schema default (the default in the configuration definition). A user-layer field counts as an override even when its value equals the default.
+Writes require the host's local loopback settings endpoint. For a read-only page or non-loopback address, follow the page's guidance to a writable endpoint.
 
-Tools first read the current configuration snapshot published by the host. Only if it is absent do they use valid tool-row fallback values and report that settings are not connected. `toolName`, `owningPreset`, and delegation-row options are fixed row configuration, not part of the 20 UI settings below.
+A field's Restore default action stages removal of just that field's user override and also requires Save. Other overrides remain unchanged. The field then takes its composition value, using the factory default only when the composition has no value. For example, a composition value of `45000` overridden with `90000` returns to `45000`, not `20000`. With a valid configuration, the field should no longer be marked Overridden. If a degraded-mode warning remains, follow [configuration recovery](<#configuration-warnings-and-recovery>); Save success alone does not establish recovery.
 
 ### 2.1 All 20 settings
 
@@ -96,11 +128,33 @@ The Range column describes values that can be saved. If a call's budget falls ou
 | `askUiSeat` | enum | `sidebar` | sidebar / overlay | — | Question panel position; does not reset deadlines |
 | `boundPresets` | string[] | `dsh-async, dsh-async-create` | Array of preset ids; entries non-empty and unique; empty array allowed | — | Matched against each session's current effective preset |
 
-`boundPresets` is the feature-binding list (new in 0.2.8+dsh.0.2.1-rc): for checked presets, sessions under them get this package's execution-discipline section in their composed prompts — operating requirements added for Agents on the chosen preset — and the silent-failure hint and pending-panel question handling apply to sessions on the list. The switch rules differ across the three: the execution-discipline section has no switch of its own — whether it is injected is decided solely by list membership; the silent-failure hint and pending-panel question handling each remain controlled by their own switches, `silentFailureGuard` and `askTakeover`, for listed sessions — the list decides the scope only, it does not replace those two switches. Matching follows each session's current effective preset: when the same tool implementation is reused by several presets, sessions on unchecked presets are unaffected. The factory default binds this package's two presets (upgrades do not change behavior); unchecking every entry and saving unbinds everything; ids bound but absent from the current preset list stay listed and can be unchecked. A preset that failed to load shows the host's diagnostic reason verbatim; it cannot be newly checked while unbound, and a bound one can still be unchecked. On the settings page the list comes from the host preset registry and reloads via "Refresh"; on a read failure the saved bindings are shown and can still be unchecked.
+Cross-field constraints are `minYieldMs <= defaultYieldMs <= maxYieldMs`, `minWaitMs <= defaultWaitMs <= maxWaitMs`, and `pollIntervalMs <= maxWaitMs`. Budget numbers must be finite. The factory maximum for both initial and later waits is 600000 ms. `defaultWaitMs` is an example budget, never a substitute for a missing `wait_ms` argument.
 
-Cross-field constraints are `minYieldMs <= defaultYieldMs <= maxYieldMs`, `minWaitMs <= defaultWaitMs <= maxWaitMs`, and `pollIntervalMs <= maxWaitMs`. Budget numbers must be finite. Factory maximums are 600000. `defaultWaitMs` never supplies a missing `wait_ms` argument.
+### Applicable presets and the two switches
 
-**Which values do tools use while a configuration warning is shown?** Damaged boolean values or broken cross-field constraints at startup can trigger repairable degraded mode. The form still shows the stored configuration, but tools use valid factory defaults. If a new invalid configuration arrives during operation, tools keep the previous valid values. Ordinary new invalid writes are rejected before persistence and do not replace a valid configuration. A numeric or enum schema-validation failure may instead prevent the plugin row from loading; inspect the load log and correct the fields it identifies.
+`boundPresets` scopes the package's operating instructions and auxiliary features by each session's **current effective preset**. If several presets reuse the same tool, sessions on unchecked presets remain unaffected.
+
+| Feature | Required conditions |
+| --- | --- |
+| Asynchronous operating instructions added to the Agent's system prompt | Current preset is listed; no separate switch |
+| Silent-command-failure diagnostics and warnings | Current preset is listed and `silentFailureGuard=true` |
+| Ordinary questions handled by the pending panel | Current preset is listed and `askTakeover=true` |
+
+The list defaults to `dsh-async` and `dsh-async-create`; both switches default to off. Uncheck all entries and save the legal empty array `[]` to unbind everything. **Binding neither adds/removes tools nor rewrites preset composition.** A custom preset still needs the five tools mounted manually and the workflow engine wired correctly; see [advanced composition](<#7-advanced-composition>).
+
+The settings page obtains candidates from the host preset registry; Refresh reads it again. A bound ID absent from the current catalog remains visible and can be unchecked. A failed-to-load preset shows the host's diagnostic reason verbatim: an unbound one cannot be newly checked, while a bound one can still be unchecked. If registry reading fails, saved bindings remain available for removal instead of appearing as an empty list.
+
+### Advanced file configuration and migration
+
+Value precedence is **user override > composition configuration > schema default** (the default in the configuration definition). A user-layer field is an override even when its value equals the default.
+
+Put file-based settings under the host row's `config.settings.<field>`, not at the `config` root. The 0.2.5 flat form, `config: { agentLang: zh, … }`, does not take effect on 0.2.8: the row can activate while composition-provided settings fall back to defaults. Before upgrading, change it to `config: { settings: { agentLang: zh, … } }`. The matching source commit's `CHANGELOG.md` includes the side-by-side migration, symptoms, and load-warning details. That file is not shipped; section 1 explains source access.
+
+Tools first read the host's current configuration snapshot. Only when it is absent do they use valid tool-row fallback values and report that settings are not connected. `toolName`, `owningPreset`, and delegation-row options are fixed row configuration, not among the 20 UI settings.
+
+### Configuration warnings and recovery
+
+**Which values are used in degraded mode?** Damaged boolean values or broken cross-field constraints at startup can trigger repairable degraded mode. The form still shows the stored configuration, but tools use valid factory defaults. If a new invalid configuration arrives during operation, tools keep the previous valid values. Ordinary new invalid writes are rejected before persistence and do not replace a valid configuration. A numeric or enum schema-validation failure may instead prevent the plugin row from loading; inspect the load log and correct the fields it identifies.
 
 **A successful save does not always mean recovery.** Resaving the existing damaged configuration unchanged may receive a success response while degraded mode, its warning, and the fallback values remain in effect. This does not allow other new invalid values to be saved.
 
@@ -134,14 +188,39 @@ The unified wait entry: wait for messages and job results without targets, or wa
 | `wait_ms` | number | Required; no default | Positive values clamped to minWaitMs..maxWaitMs; 0 is legal and means an immediate check |
 | `targets` | array | Optional; defaults to no targets | Elements are `{kind, id}`; kind enumerates job/agent, id nonempty; duplicates deduplicate to one target |
 
-**Choose the usage by task**:
+Choose the call by purpose. These are Agent tool-call illustrations; each explicitly supplies `wait_ms`:
 
-- **Wait for new messages and job results (omit targets)**: the wait may return on processable messages and this package's job results. The entry first collects ready job results into the return and suspends only when wait-worthy work is confirmed (a running background job or a running subagent of yours). While suspended, periodic rechecks follow the `pollIntervalMs` cadence (an early return happens once all work has ended); when the **entry eligibility check** hits failed reads and no running work is proven, the call returns `unconfirmed` (this exit does not apply to rechecks while suspended — those always keep waiting), and on budget expiry a note reports how many reads could not be confirmed.
-- **Wait on specified targets (targets)**: job targets wait until terminal states, subagent targets until changes; non-target messages do not end the wait. With multiple targets, every result carries the other targets' proven states: besides the structured `targets` field, the visible text lists each target's current proven status line by line (read-failed lines marked "read failed"; a job target that has disappeared is annotated `not_found`); the budget-expiry note distinguishes "all still executing / some still executing / none still executing" by proven status and never asserts unconditionally that every target is still running.
-- **Immediate check (wait_ms=0)**: returns current states and any undelivered content immediately, without a wait segment. All checks of a zero-wait call share one short check window (1000 ms): queries that do not finish within it return the affected targets as `unconfirmed` instead of blocking the call, and each query is issued exactly once.
-- **Recover a possibly lost output**: naming an already-delivered job explicitly in a zero-wait call is the recovery exit. An output whose delivery was never confirmed is re-delivered (first line carries a "recovery copy" marker, distinguishable from the first delivery); a confirmed one returns only its status line with an already-delivered note; when the copy has expired or is unavailable, the note states that honestly with the terminal facts and any retained-file clues — no body is fabricated. A recovery copy is not an archive: by default it is retained for at most 30 minutes, and it is also subject to per-session caps of 10 entries and 2×`maxResultChars` characters in total (the oldest is evicted first) and to cleanup when the plugin row is unloaded, so it can lapse before the deadline; save results you need to keep when they arrive.
+| Purpose | Example | Return condition |
+| --- | --- | --- |
+| Wait for messages or job results | `async_wait(wait_ms=30000)` | Delivers ready results first; waits for messages/results only if a running job or child of yours is confirmed |
+| Wait for a job | `async_wait(targets=[{kind:"job", id:"<job_id>"}], wait_ms=30000)` | The job reaches a terminal state, user steering arrives, or the budget expires |
+| Wait for a child change | `async_wait(targets=[{kind:"agent", id:"<agent_id>"}], wait_ms=30000)` | Target change/message, user steering, or budget expiry; the final answer is delivered separately |
+| Check without waiting | `async_wait(wait_ms=0)` | Returns current states and undelivered content; also picks up deferred results |
 
-**Result shapes and how to read them**: a job terminal result is `{status:'completed'|'killed'|'failed', job_id, output, truncated, waited_ms}`. A subagent change is `{status:'changed'|'settled', agent_id, waited_ms, note}`. Wait-shaped results are `{status:'running'|'budget'|'interrupted'|'message'|'cancelled'|'no-work'|'unconfirmed', waited_ms, note}` — `no-work` has two sources: the entry check itself confirms there is no wait-worthy work and the call never suspends (`waited_ms` is the actual time the checks took inside the unified check window, not a suspension), or a periodic recheck while suspended confirms all wait-worthy work has ended and returns early (`waited_ms` is the actual time spent waiting); the `note` text distinguishes the two processes, and `waited_ms` tells which occurred. `unconfirmed` means the waiting condition could not be established (a listing failed or timed out) — its difference from `no-work` is **confirmation, not the presence of work**. Entry validation of a named job target is a **whole-call rejection**, not a status annotation (this also applies when a preexisting settlement notice is present): an id absent from the live listing fails the call with a readable error (suggesting job_list for live ids), while a failed listing produces a different readable error (the job may still exist; retry async_wait later — this is not "unknown job"). Other jobs settling in the same batch are carried in `outputs` entries; `delivered` is batch metadata. See section 4 for consuming reads and delivery.
+Targets may mix jobs and children. Any eligible target can end the wait; non-target notices do not end a targeted wait early. See [section 4](<#4-wait-states-and-direct-delivery>) for continued output and recovery copies.
+
+**Result fields**:
+
+```text
+Job terminal: {status:'completed'|'killed'|'failed', job_id, output, truncated, waited_ms}
+Child change: {status:'changed'|'settled', agent_id, waited_ms, note}
+Wait exit: {status:'running'|'budget'|'interrupted'|'message'|'cancelled'|'no-work'|'unconfirmed',
+            waited_ms, note}
+```
+
+Other jobs ready in the same delivery window appear as `outputs` entries; `delivered` is batch metadata. Multiple-target returns also include structured `targets`. Visible text shows at most 8 target status lines and a count for additional targets. Section 4 explains the states and next actions.
+
+**Timing details:** entry queries, existence checks, retries, and the actual wait share one budget. During an untargeted wait, periodic checks follow `pollIntervalMs`; confirmation that all work has ended returns early. A failed recheck keeps waiting rather than establishing no work, with unconfirmed reads noted at expiry. The actual interval is at least 50 ms; a query overrunning its window defers to the next period. The overall bound is effective `wait_ms+300 ms`.
+
+A zero-wait call still performs checks. They share a 1000 ms window, each query is issued once, and unfinished queries mark affected targets `unconfirmed`. `waited_ms` reports actual checking time rather than always reporting zero merely because the call did not suspend.
+
+**Entry validation failures:** all targets must be validated before returning target notifications or terminal results. An invalid target in a mixed request rejects the whole call, not just one status row, even if a settlement notice is already waiting.
+
+- Job ID absent from the listing: a readable error directs the caller to `job_list` for registered IDs.
+- Job listing failed: a different error says the job may still exist. Retry the same target later; failure is not absence.
+- Child absent from the directory during a positive wait: at most three query periods are retried within the total budget. Continued absence produces an error with known-child diagnostics. If the budget expires before a query completes, return `unconfirmed`. Zero-wait calls do not repeat queries this way.
+
+An untargeted entry returns `unconfirmed` if reads fail and no running work is confirmed; with at least one confirmed running item it can wait. If only child targets are present, some have unknown states such as failed reads, and none is confirmed running (possibly mixed with known static targets), affected targets return `unconfirmed` instead of suspending solely on uncertainty. Targets all confirmed static return immediately with their static states.
 
 ### 3.3 async_agent
 
@@ -150,18 +229,14 @@ The unified wait entry: wait for messages and job results without targets, or wa
 | `description` | string | Required | Provide a 3–5-word display label |
 | `prompt` | string | Required | Provide the complete task; an independent spawn child cannot see the parent conversation |
 | `cwd` | string | Parent's current effective directory | Specify the child's initial working directory; relative paths resolve against the parent's current directory, and later directory changes are independent |
-| `provider` | string | Optional; paired with model | Specify the exact LLM provider ID for this child; when provided it must be paired with model |
-| `model` | string | Optional; paired with provider | Specify the exact model ID for this child; when provided it must be paired with provider — query IDs per section 5 first |
-| `reasoning_effort` | string | Optional | Specify a reasoning-effort ID; may be supplied alone, checked against the effective model |
+| `provider` | string | Conditionally available; paired with model | Available when the backend declares routing-option support; exact LLM provider ID |
+| `model` | string | Conditionally available; paired with provider | Same condition; exact model ID, queried per section 5 |
+| `reasoning_effort` | string | Conditionally available | Same condition; may be supplied alone, checked against the effective model |
 | `agent_preset` | string | Conditionally available | Assign the child an independent preset; appears only when the row-level allowed set is nonempty and the backend supports it, and the value must be in that set |
 
 There is no `run_in_background` argument and no wait for the final answer. Success immediately returns `{status:'started', agent_id, note}`, with the effective route source and wait guidance. Rejection does not invent an ID. The shipped presets do not configure an allowed preset set, so agent_preset is not exposed. A context-inheriting backend can expose the parent conversation to its child; write tasks according to the actual backend.
 
-Usually, a task prompt is sufficient. To choose a model, query exact IDs as described in section 5, then supply `provider` and `model` together; `reasoning_effort` may be supplied alone but is checked against the effective model.
-
-**Advanced merging and preflight:** row configuration `agentOptions`/`agentPreset`/`allowedAgentPresets` is fixed configuration for advanced composition, not call arguments and not part of the 20 UI settings. An explicit route or effort choice, or row `agentOptions` containing `provider`, `model`, or `reasoningEffort`, triggers a support check before creation; non-route options such as `maxTokens` alone do not. Backend `agentRouteDefaults` join the merge only when preflight is triggered. Explicit arguments override row options, row options override backend defaults, and missing route components come from the parent. Allowed-set checks still apply only to explicit choices; a row default triggering preflight does not make the request explicit.
-
-**What creation receives:** if any layer contributes options, the creation request carries the merged `agentOptions`. Otherwise it omits that field and lets the host inherit parent options, without additionally applying backend route defaults. A compatible parent effort or model default used temporarily by preflight is not copied back from the preflight result into the creation request. Actual child inheritance depends on that request and the host merge, not merely on the preflight values. When the route changes without an explicit effort, preflight does not reuse an incompatible effort from the old route.
+A label and complete task prompt are usually enough; the model uses configured defaults or inheritance. `subagentProvider` selects the execution backend (default `spawn`), not the LLM provider. The three model arguments appear only when that backend declares routing-option support. Passing them without support produces a readable rejection rather than silently ignoring them. See [section 5](<#5-model-catalogs-authorization-and-inheritance>) for discovery, creation, waiting, and advanced default merging.
 
 ### 3.4 async_workflow
 
@@ -193,6 +268,8 @@ const results = await pipeline(args.items,
 return results.filter(value => value !== null);
 ```
 
+The script must explicitly return a root value. A missing `return` producing `undefined` is a runtime error; a deliberate `return null` is valid.
+
 Completion returns `{status:'completed', result}`; result is a rendered string, not the original JSON object. A killed run returns `{status:'killed', detail?}`; a background run returns `{status:'running', job_id, elapsed_ms, note}`. A background run's result is delivered through async_wait or a completion message; job_kill requests cancellation. Missing workflow wiring returns a readable error before startup and creates no jobs. See section 7 for composition.
 
 ### 3.5 async_list_subagent_models
@@ -221,43 +298,118 @@ Search matches IDs and display names case-insensitively. If some providers canno
 
 ## 4. Wait states and direct delivery
 
-Read the returned state before choosing the next action. Budget expiry usually returns `running` (with targets) or `budget` (without): this wait ended without stopping the background work. Entry queries, existence checks, retries, and the wait segment all share one `wait_ms` budget, rather than each receiving a fresh budget.
+### Understand why the wait ended
 
-Job results are delivered directly: when a job settles, its result body is attached to an in-flight wait return (`output` and `outputs` entries) or arrives as a completion message; no separate retrieve call is required. Deferred entries are claimed with `async_wait(wait_ms=0)`.
+Ending a wait does not stop background work. Budget expiry is usually `running` for a targeted call or `budget` for an untargeted one. Check the actual target states before deciding to wait again.
 
-Messages can also end a wait early. User steering addressed to the current Agent, claimable notices, relayed Agent messages, and package late answers are checked, including messages already present at entry. Queued messages remain for the next turn and do not interrupt this wait. A targeted wait ends only on target changes, target messages, or user steering; a message means there is new content to process, not that the target completed.
-
-| Result | Next action |
+| State or observation | Meaning and next action |
 | --- | --- |
-| `running`/`budget` or a message wakeup | Handle the message or independent work; wait again on the same targets when blocking is needed |
-| Job `completed` | Read the result and check the exit code; completion does not imply exit zero |
-| Job `failed` / `killed` | Keep the error, signal, and available output before deciding how to proceed |
-| Child `changed` / `settled` | Read the separate settlement message and final answer; do not treat it as proof of success |
-| Query or read failure | Retry the original target as instructed, without restarting the task |
+| `running` / `budget` | This budget expired. Do independent work; wait on the same target again only when the result is needed |
+| `interrupted` / `message` | User steering or a processable message ended the wait early. Handle it without assuming target completion |
+| `cancelled` or a host cancellation error | This wait was canceled; background work was not stopped. Recover a missing identifier from `job_list` or a completion message |
+| `no-work` | Checks confirmed there is no work to wait for, either at entry or during a periodic check after waiting began. `note` distinguishes them; `waited_ms` is actual checking/waiting time |
+| `unconfirmed` | Failed or timed-out queries could not establish the waiting condition. This is not confirmation of no work; recheck the original target as instructed |
+| Job `completed` | Read the result and exit code; completion does not imply exit zero |
+| Job `failed` / `killed` | Preserve the error, signal, and available output before deciding how to proceed |
+| Child `changed` / `settled` | A change, or no longer being observed running, is not proof of success. The final answer arrives separately |
+| Query or read failure | Retry the same target, not the task. A failed read consumes no increment |
 
-Canceling a wait or stopping the current turn ends only the wait, not the background command or workflow. The host may replace the cancellation return with an error. If the model never received job_id, recover it from job_list or the completion message; do not repeat a possibly side-effecting command. Use job_kill to stop a job. Use the host's interrupt_agent/management entry to stop a child, and send_message to continue its conversation.
+User steering, claimable notices, relayed Agent messages, and package late answers trigger message checks, including messages present at entry. Queued messages remain for the next turn and do not interrupt the wait. Non-target messages do not end a targeted wait early.
 
-settled means the child is not currently observed running. It does not mean success, answer delivery, or permanent termination. Read the separate settlement message. If final text has not arrived, do independent work; with nothing else to do, report progress and end the turn, letting the message arrive on its own via host delivery — a settled target is static, so `async_wait` returns immediately instead of suspending, and repeated calls cannot wait the text out. Use a bounded wait only when a running target or job genuinely must be waited on; do not create sleep jobs just to have something to wait for. Child relationship and running state are separate checks; query failure cannot establish not_found or settled.
+Use `job_kill` to actually stop a job, the host's `interrupt_agent` or management entry to stop a child, and `send_message` to continue its conversation. Do not repeat a possibly side-effecting task to inspect progress.
 
-Reads advance the incremental output cursor. The first successful terminal read delivers the final result once, merged into the same response. Later reads do not replay consumed text. A read error requires retrying, not interpreting the result as empty; a failed read during a `wait_ms=0` increment pickup is explicitly annotated with a retry path — the failure consumes no increment, and after recovery the same zero-wait call retrieves all unconsumed content. Inspect exit codes, signals, and failed/killed notices even when execution completed.
+`settled` does not mean a child can never run again. If its final answer has not arrived, do other work; if none remains, report progress and end the turn so host delivery can bring the message. A static target makes `async_wait` return immediately; repeated calls cannot wait the text out. Do not create sleep jobs to keep waiting. Child relationship and running state are checked separately; query failure establishes neither `not_found` nor `settled`.
 
-Long results can lose content in two different ways. `maxResultChars` is a quota **shared by all result content in one delivery batch**: the multiple results reaching the model input in one batch — first-wait direct returns, wait-return batch entries, and completion messages — draw on this single cap, first come first served; a single oversized entry keeps its head and tail with the omitted amount marked, and the omitted middle stays in the ledger buffer, recoverable via later batches or `async_wait(wait_ms=0)` — never lost to truncation. Counting is JavaScript `String.length`. A host `lossy` marker instead means buffered content has already been lost. Status, loss explanations, and temporary-file clues are outside the body budget.
+Multiple-target returns describe only confirmed states. Failed reads are marked separately, absent jobs use `not_found`, and expiry notes distinguish all/some/none still executing rather than counting unknown states as running.
 
-The host may write output to temporary files (spill) and return their absolute system-temporary paths in `spillPaths`. Open them only where authorized and promptly save necessary contents to an appropriate location. Output and files can contain secrets; review and redact before sharing. Temporary files can disappear. Without a returned path, do not assume a complete disk copy exists.
+### Normal results arrive directly
+
+A finished job's body arrives in the initial-wait return, an in-flight `async_wait` return (`output` / `outputs`), or a completion message. There is no separate retrieval tool to call. Reads advance the consumed position: the first successful terminal read includes the final result once, and later reads normally do not replay consumed text. Save anything that must be kept.
+
+A read failure is annotated with a retry path, not presented as empty output. It does not advance the incremental position; after recovery the same zero-wait call can retrieve unread content.
+
+### Shortened output or deferred entries: continue reading
+
+```text
+async_wait(wait_ms=0)
+```
+
+This picks up content not yet delivered. `maxResultChars` is **shared by all result content in one delivery batch**, with a factory default of 12000, measured by JavaScript `String.length`, not bytes. Initial-wait direct returns, wait returns, and completion messages share that batch quota. The target triggering delivery has priority; other entries receive their shares in readiness order. A batch contains at most 10 entries, including empty ones.
+
+An oversized entry keeps its head and tail with the omitted amount marked. Its middle remains buffered for later batches or zero-wait pickup. Excess entries are deferred. Neither case is actual host-buffer loss. Status, necessary terminal explanations, loss notices, and temporary-file clues are outside the body quota.
+
+With `fullCommandEcho=true`, background batches also attach command/script source text within the same quota. Body content has priority; source uses the remainder, keeps head/tail in a 6:4 ratio when shortened, and appears at most once per job per batch. Initial-wait direct results and listing tools do not attach source. A command job is listed under its `description`; a workflow job uses `meta.name`.
+
+### A tool result may not have arrived: request a recovery copy
+
+If the host rewrites a constructed tool result as a cancellation error, its body may never reach the Agent. Recover the original job ID and explicitly name it in a zero-wait call:
+
+```text
+async_wait(targets=[{kind:"job", id:"<original job_id>"}], wait_ms=0)
+```
+
+Unread middle sections or deferred entries are delivered first. Otherwise, portions whose delivery the host has not confirmed can be resent in order, marked “recovery copy / may duplicate.” Large portions continue across batches by character position, without repeatedly sending the same slice. Confirmation is handled by the host; no additional user confirmation action is needed. Confirmed content returns only status and an already-delivered note, not arbitrary historical replay.
+
+Recovery copies are retained **for at most 30 minutes by default**, with per-session caps of 10 records and 2×`maxResultChars` characters in total. Oldest entries are evicted first, and unloading the plugin row clears them. They can therefore expire earlier; recovery is not guaranteed throughout those 30 minutes. An unavailable copy yields terminal facts and known retained-file clues, not an invented body.
+
+### The host reports lost buffering: inspect known retained paths
+
+`lossy` means the host buffer has actually lost content, unlike display shortening. If the host reports `spillPaths`, results include those retained-output paths whether or not `lossy` is set; their location is determined by the host. Open them only where authorized, save required content promptly, and redact before sharing.
+
+Temporary files may be cleaned up and are not guaranteed to contain the complete result. Without a returned path, the plugin has no known recovery route. Do not assume a full disk copy exists or repeat a side-effecting command automatically.
 
 ## 5. Model catalogs, authorization, and inheritance
 
-Use the host's existing subagent model-selection settings. Each later async_agent call requesting a route/effort reads the current switch and allowed set, including in existing sessions, then rechecks permission before launch. Disabling selection rejects explicit choices; fully omitted choices still follow defaults/inheritance. Running children keep their model. Read failures, invalid policies, and withdrawn permission produce a refusal with the real cause, not an automatic model substitution. A contract-external policy shape (the policy value is not an object, or `allowedModels` is missing, not an array, or has non-object elements) and a failing backend provider lookup each have their own error (`policyShapeRejected` / `providerQueryFailed`) carrying the host's original cause, not reworded into switch or allow-list wording.
+### Discover, create, and wait
 
-Discovery creates no child, performs no inference, and does not validate credentials or remote availability. allowed/not-allowed/unconfirmed describe applicability to the selected target, not universal authorization. Native creation tools retain their own session policy; the plugin's live policy does not change them. Workflow agent() also has a separate contract.
+Usually omit model choices to use configured defaults or inheritance. Follow this path only when an explicit choice is needed and the backend declares routing-option support. IDs below are placeholders to replace with exact query results.
 
-Set target_tool to remove ambiguity. With no target, exactly one recognized candidate can be selected automatically; multiple or zero candidates remain unconfirmed. An explicitly named invisible target is not-allowed while catalog browsing can still succeed. Use exact IDs and an effort the target accepts. Do not pass search/pagination arguments to creation. On refusal, query again for the same target rather than changing tools to bypass restrictions.
+1. Query for the intended creation tool using `target_tool` so that different entry points' rules are not confused:
+
+   ```text
+   async_list_subagent_models(query="coding", target_tool="async_agent", page_size=20)
+   async_list_subagent_models(provider="<provider ID>", model="<model ID>", target_tool="async_agent")
+   ```
+
+2. Read `verdict` and `basis`. For another page, reuse the returned `next`; if its version expires, restart on page 1. `allowed` means applicable to this target, not that credentials or remote availability have been verified. Discovery neither creates a child nor runs model inference.
+3. Supply exact provider/model IDs together and a self-contained task. If an effort is needed, use a `reasoning_effort` accepted by that model:
+
+   ```text
+   async_agent(description="Review one isolated item", prompt="<complete task, materials, and completion criteria>",
+               provider="<provider ID>", model="<model ID>")
+   async_wait(targets=[{kind:"agent", id:"<returned agent_id>"}], wait_ms=30000)
+   ```
+
+4. Creation immediately returns `agent_id`. Keep it and do independent work; wait for target changes when the result is needed. The final answer arrives as a separate message, not as the `changed` / `settled` state itself.
+
+### Current policy and refusals
+
+Every `async_agent` creation with an explicit model or effort reads the host's **current policy** switch and allowed set, even in existing sessions, then rechecks permission before launch. Saved policy changes affect later creation, not running children. Disabling selection rejects explicit requests; fully omitted choices still follow defaults/inheritance.
+
+Read failures, invalid allowed sets, or withdrawn permission produce the actual cause, not automatic model substitution. A policy value that is not an object, or `allowedModels` that is missing, not an array, or contains non-object elements, produces `policyShapeRejected`. Backend route-query failures produce `providerQueryFailed`, preserving the host cause rather than misreporting a disabled switch or disallowed model.
+
+Query verdicts `allowed` / `not-allowed` / `unconfirmed` apply only to the chosen target, not universally. Without `target_tool`, exactly one recognized candidate is selected automatically; zero or multiple candidates remain `unconfirmed`. A named but invisible target is `not-allowed`, although catalog results can still be returned. Catalog absence alone does not establish lack of support; partial provider failures count only obtained results.
+
+Do not pass pagination/search arguments to creation. On refusal, query again for the same target instead of changing entry points to bypass limits. Native tools keep their own session policies. Workflow `agent()` has a separate contract, in particular no paired provider/model requirement from `async_agent`.
+
+### Advanced row configuration: merging and preflight
+
+`agentOptions` / `agentPreset` / `allowedAgentPresets` are fixed row configuration, not call arguments or members of the 20 UI settings.
+
+- An explicit route or effort, or row `agentOptions` containing `provider`, `model`, or `reasoningEffort`, triggers a pre-creation support check (preflight). Non-route options such as `maxTokens` alone do not.
+- Backend `agentRouteDefaults` join the merge only when preflight is triggered. Precedence is explicit arguments > row options > backend defaults, with missing route parts from the parent. Allowed-set checks still apply only to explicit choices; row defaults triggering preflight do not make a request explicit.
+- If any layer contributes options, creation receives merged `agentOptions`. Otherwise that field is omitted for host inheritance of parent options, without additionally applying backend route defaults.
+- A compatible parent effort or model default used temporarily during preflight is not copied back into creation. On a changed route without explicit effort, preflight does not reuse an incompatible effort from the old route. Actual inheritance depends on the request and host merge, not merely the preflight values.
 
 ## 6. Question takeover and silent failures
 
-To answer in the pending-question panel, enable `askTakeover` in settings and save; it is off by default. When enabled, ordinary questions from root Agents on the `boundPresets` list enter the panel — the switch decides whether takeover happens, and the list decides the scope. Plan review, approvals, and presets outside the list retain the native host flow. The takeover entry validates the question set: if `questions` is not an array, or a single question carries duplicate options whose labels and descriptions are both identical (or both absent), the whole batch is rejected with a readable error and never reaches the panel — same label with a different description is not a duplicate, and a multi-question batch is never partially taken over because of one bad question.
+### Enable the panel and find questions
 
-With `sidebar`, an unanswered count appears at the sidebar bottom; click to expand. With `overlay`, questions appear at the lower right. The panel lets you open the original session, answer, ignore, or extend the wait.
+Enable `askTakeover` in settings and save; it is off by default. Ordinary questions from root Agents on the `boundPresets` list then enter the pending panel. Plan review, approvals, and presets outside the list keep the host flow.
+
+With `sidebar`, click the unanswered count at the sidebar bottom to expand the panel. With `overlay`, questions appear at the lower right. The panel can open the original session, answer, ignore, or extend the wait. New questions gently announce the added count to assistive technology without moving focus or automatically reading the whole question. Countdown ticks and repeated refreshes do not repeat the announcement.
+
+### Answer or ignore
 
 Check the question type before answering. Single-choice questions accept one preset option or the custom answer. Multiple-choice questions can combine them, with custom text submitted as an independent answer rather than a suffix. Nothing starts selected, and a recommendation is not a selection. Clicking the custom input or entering non-whitespace text selects it; moving keyboard focus alone does not.
 
@@ -265,23 +417,50 @@ The custom answer uses a multi-line input: the first row holds the choice contro
 
 Deselecting the custom answer may retain its draft, but the draft is not submitted. Clicking its input or entering valid text selects it again. Clearing selected custom text does not restore an earlier selection. No selection, or a selected whitespace-only custom answer, prevents submission—even if a multiple-choice question has other selected options. Use the separate Ignore action to leave a question unanswered. The server also validates options and selection relationships.
 
+While an IME composition is active, submission is disabled with a nearby explanation. Drafts and choices remain. After composition ends, validation runs again and an explicit submission is required; no delayed automatic submission occurs.
+
+### Deadlines, extensions, and late answers
+
 Questions from one call share a deadline. At expiry, answered and ignored items retain their state. Unanswered items return `selected=[]` with a timeout explanation in `custom`. The Agent continues the task without choosing an answer for the user. A timeout without a reply is not permission — when a necessary decision lacks an answer, state the blocker instead of treating expiry as consent.
 
 For more time, use the session group's extension action. It adds `askExtendMs` to the existing deadlines of batches still active at click time. New batches are unaffected, and expired batches do not start waiting again. If acknowledgement is missing, refresh and check the actual deadline before retrying, to avoid adding the extension twice.
 
 You can still answer in the panel after expiry. The late notification returns to the original session with the full question, every option and description, multiple-choice relationship, actual answer or ignore status, and timing. Offered options are separate from actual choices; unselected custom drafts are excluded.
 
-If the session is idle with no package delivery waiting to start, the host uses `followup` to start a turn. Otherwise it uses `inject` for the next claim point. The package wakes a wait only after the host accepts delivery.
+If the original session is idle with no package delivery waiting to start, a late answer starts a turn (host `followup`). Otherwise it is delivered when the session next handles messages (`inject`). A wait is awakened only after the host accepts delivery.
 
-Check the submission outcome. On an explicit failure, follow the displayed reason and reply directly in the originating session. Do the same for a missing record marked `undelivered` — the batch is no longer registered or the question id is not in the batch, with answers and ignores judged alike. If acknowledgement is merely missing, let the panel refresh before concluding that delivery failed. Do not resubmit when `gone` means another client already answered.
+### Missing acknowledgement or failed submission
 
-24 hours is a lazy-cleanup threshold: expired records older than 24 hours are removed only when a new batch is intercepted. With no new batch they may last longer, and late submission itself is not rejected just because 24 hours elapsed. Restart or uninstall loses in-memory expired records and returns pending requests to the native flow. Save needed answers in the original session promptly.
+Check the submission outcome. If late-answer delivery explicitly fails, the question returns to an open state and can be resubmitted as the panel instructs; replying directly in the original session is also an option. For a missing record marked `undelivered` — an unregistered batch or a question ID absent from its batch — reply directly in the original session; answers and ignores are treated alike. If acknowledgement is merely missing, let the panel refresh before concluding delivery failed. Do not resubmit when `gone` means another client already answered.
 
-silentFailureGuard defaults to false and applies to sessions on the `boundPresets` list (by default, this package's two presets). It conditionally adds result diagnostics, description warnings, and execution instructions; the description warning is present from a bound session's very first tool-description projection — no prior execution needed. Capturing commands in a restricted environment can fail silently before process creation. If there is no output and no exit marker, confirm execution with a harmless bare invocation and inspect host logs, rather than assuming success. A warning is not proof that every capturing command failed. Wider-permission retries still require the same-turn approval process.
+### Record retention and request validation
+
+24 hours is a cleanup threshold, not a hard late-answer deadline. `expired` records more than 24 hours past expiry are removed only when a new batch is intercepted. With no new batch they may last longer. Late submission is not rejected solely because 24 hours elapsed. Restart or uninstall loses in-memory expired records and returns pending requests to the native flow; save needed answers in the original session promptly.
+
+For callers diagnosing rejected questions: `questions` must be an array. Duplicate options within a question with identical labels and descriptions (or the same label and no description on either) reject the whole batch with a readable error before it reaches the panel. The same label with different descriptions is not a duplicate; a multi-question batch is not partially intercepted.
+
+### A command should have produced output, but did not
+
+`silentFailureGuard` defaults to `false`. When enabled, it conditionally adds diagnostics, tool-description warnings, and extra operating instructions only for sessions on the `boundPresets` list. Eligible sessions see the warning with their first tool descriptions, without any earlier execution. This is separate from asynchronous operating instructions controlled directly by list membership.
+
+In some restricted environments, commands assigning output to variables, using subexpressions, or redirecting output (such as `2>&1`) may fail silently before process creation. **If expected output is missing and there is no actual exit information, check whether execution occurred.** Do not assume success from an empty result, or infer non-execution from a warning alone.
+
+In PowerShell, a harmless invocation without output capture such as `Write-Output EXEC_CHECK` can check the execution channel; also inspect host logs. Do not rerun a possibly side-effecting original command as a test. A one-shot wider-permission retry is possible only if the deployment exposes those parameters, the command was just denied in the same turn, and host approval is obtained. A warning does not create an escalation entry where none exists.
 
 ## 7. Advanced composition
 
-Tools can be mounted independently in custom presets, and discovery can coexist with native discovery. Custom composition does not automatically disable existing synchronous tools. Each config.toolName chooses one tool; a row without it is the host-configuration role. Workflow requires an engine in an isolated delegation group. This example includes all five tools, not the other features of a complete preset.
+### Mount all five tools in a custom preset
+
+Custom presets can use every asynchronous feature without switching to a shipped preset. First mount the tools, then decide which sessions receive instructions and auxiliary features.
+
+1. Manually add the five tool rows below to the custom preset's composition. Each `config.toolName` selects one tool. A package row without it supplies host configuration; it does not mount all five tools automatically.
+2. Put `async_workflow` and a workflow engine in the same group with `isolate: { workflowEngine: true }`, so the tool can obtain that group's engine. The example calls the group `delegation`.
+3. Confirm that the four host services listed below resolve, reload safely, and check that all five tools appear in a session using the custom preset.
+4. For asynchronous operating instructions, add the preset ID to `boundPresets` and save. For silent-failure warnings or the question panel, also enable `silentFailureGuard` or `askTakeover`, respectively.
+
+**Binding does not mount tools; mounting tools does not add a binding.** These steps control availability and the scope of three features separately; see [the list and switches](<#applicable-presets-and-the-two-switches>). Discovery can coexist with native discovery, and custom composition does not automatically disable synchronous tools.
+
+This example mounts all five tools; configure the custom preset's other features as needed:
 
 ```yaml
 - id: async-run
@@ -322,9 +501,9 @@ Disable or remove the package in this order:
 3. Manage the package's dependency registration and bundle composition declaration through the host GUI, then reload as instructed. For CLI operations, use instructions for the exact host version.
 4. Create a session to confirm that an available preset works. Clear or reselect the default if recovery is needed.
 
-Deleting a development link does not unload an already loaded module. Existing sessions may retain the original composition version. The tool-producing row (producer) and initiating session (owner) have different lifecycles: removing a tool row does not automatically cancel session-owned jobs.
+Deleting a development link does not unload an already loaded module, and existing sessions may retain the original composition. Removing tools does not automatically stop jobs started by a session. Read required results and explicitly stop unwanted work before removal.
 
-Commands inherit host permissions, approvals, sandbox, and the environment key set returned by shellEnv.collect(exec). Commands and their output can contain sensitive data. Model-visible registration errors are single-line and limited to 500 characters; full errors go to operator logs. Do not paste tokens, cookies, passwords, private URLs, or secret environment values into issues.
+Commands inherit host permissions, approvals, sandbox, and the host-provided execution environment. Commands, output, and environment information can contain secrets. Model-visible registration errors are single-line and limited to 500 characters; full errors go to operator logs. Do not paste tokens, cookies, passwords, private URLs, or secret environment values into issues.
 
 Report through [project issues](<https://github.com/MC5Spear/dsh-async-tools/issues>). Include full plugin/host/Node versions, OS, preset, relevant sanitized settings, a minimal harmless reproduction, expected and actual states, job_id/agent_id and timing, real exit markers, and sanitized log excerpts. Keep the original task identity for diagnosis rather than repeating destructive commands. This is a personally maintained third-party project: issues are accepted, external PRs are not, and there is no fixed response or repair schedule.
 

@@ -48,7 +48,7 @@ var module = { exports: {} }; var exports = module.exports;
 //   断言循环守；两语键集一致性另由 tools/check-model-text.mjs 的静态键集层检查
 //  （T21 实际核对的是语言选择与缺键回退宿主，见同文件）。
 // - 毫秒字段的秒数读数（需求 §5.4）长在说明行里，
-//   **与字段说明换行**（行首不带点，样式照同机参考插件的读数行）：说明行 =
+//   **与字段说明换行**（行首不带点——设置页读数行统一形态）：说明行 =
 //   字段说明 + 换行 + 「生效：S s」+「 · 」+「输入：T s」。值**只写秒文本**
 //   （`600 s` / `0.5 s` / 亚 10 ms 的 `< 0.01 s` / 空草稿的 `—`；整数秒无小数、
 //   非整数最多两位）——毫秒原值输入框里本来就有；生效段恒显示，输入段未保存就
@@ -416,7 +416,7 @@ function formatSeconds(ms) {
   return String(trimmed) + " s";
 }
 
-/** 读数占位（空草稿/不可换算）：照同机参考插件的读数行用 `—`。 */
+/** 读数占位（空草稿/不可换算）：读数行统一用 `—`。 */
 var READOUT_PLACEHOLDER = "—";
 
 /**
@@ -450,7 +450,7 @@ function resolveCopy(t, key) {
 
 /**
  * 字段说明（毫秒字段带两段秒读数，需求 §5.4）：说明行 =
- * 字段说明**换行**接 `生效：{v} · 输入：{v}`（样式照同机参考插件的读数行：
+ * 字段说明**换行**接 `生效：{v} · 输入：{v}`（设置页读数行统一形态：
  * 行首不带点、与字段说明分行；值只写秒文本——毫秒原值输入框里本来就有）。
  * - 生效段恒显示（值 = 生效值 user ?? 组合 ?? 默认）；
  * - 输入段取**模型当前的暂存文本**（未保存就随键入刷新——模型 `edit → publish` 免费给了
@@ -1907,8 +1907,10 @@ function createAskModel(ctx, remote) {
           }
           var outcome = result.value !== undefined && result.value !== null ? result.value.outcome : undefined;
           if (outcome !== "delivered" && outcome !== "late") {
-            // 两种失败都进名单而非旗标：该题条目随下轮轮询出列/清空，纯旗标会连
-            // 面板一起消隐（座位渲染条件只认 items/名单）。他处已落定的普通 gone 不记
+            // 两种失败都进名单而非旗标：failed 形态题目回滚 open 待重投
+            // （ASK-LATE-FAILED-RETRY，需求 §4.4）——条目仍留在面板；gone＋
+            // undelivered 形态条目随下轮轮询清空。纯旗标会连面板一起消隐（座位
+            // 渲染条件只认 items/名单），报错必须被人看到并手动消除。他处已落定的普通 gone 不记
             // 名——题目已有答案，交轮询收敛，不是未送达。
             if (outcome === "failed") recordLost(item);
             if (outcome === "gone" && result.value !== undefined && result.value !== null
@@ -2565,9 +2567,9 @@ function AskList(props) {
     }),
     state.lostAnswers.map(function (lost) {
       // 逐条「知道了」消除——报错必须被人看到，看到后可手动收走。丢失答案
-      // 用专属键（已到宿主、投递失败——不冒称未到宿主，也不建议无出路的重试）；
-      // 恢复动作＝打开所属会话直接回复（需求 §4.4 失败提示的可行下一步，
-      // 会话 id 在场时给跳转按钮，与组头「打开会话」同款动作）。
+      // 用专属键（已到宿主、投递失败）：题目回滚 open，仍可作答，但不自动重试。
+      // 用户在面板重新提交才会重新投递，也可打开所属会话直接回复；会话 id
+      // 在场时给跳转按钮，与组头「打开会话」同款动作（需求 §4.4）。
       return React.createElement("p", {
         key: "lost-" + lost.batchId + "/" + lost.questionId, className: "ats-ask-failed"
       },
@@ -2627,9 +2629,10 @@ function askTranslator(uiLang, locale) {
 
 /**
  * 座位渲染条件的公共口径：计数 > 0、存在未消除的 lostAnswers 或未送达名单
- * （undelivered——记录缺席的提交）才显示。failed 只发生在 expired 批迟到提交、
- * undelivered 只发生在记录缺席之后——两种形态该题条目随即不再列出，条件若只看
- * 计数，单题批次（最常见形态）的报错永不显示。未读失败不算「处理完」，消除后
+ * （undelivered——记录缺席的提交）才显示。failed（expired 批迟到提交）题目
+ * 回滚 open 留在面板、计数在场；undelivered 在记录缺席后条目随轮询清空、
+ * 计数归零——条件若只看计数，gone＋undelivered 形态（单题批次最常见）的报错
+ * 永不显示。未读失败不算「处理完」，消除后
  * 才回到消隐口径。新题播报（state.announce）不进本条件——播报区域常驻在场，
  * 不是面板显形条件。
  */

@@ -149,6 +149,7 @@ async function buildRig(label, childRows = [], options = {}) {
     //（60–500 ms）测预算到期，不吃出厂下限 20000 的夹紧。
     minWaitMs: 1,
     ...(options.maxResultChars === undefined ? {} : { maxResultChars: options.maxResultChars }),
+    ...(options.agentLang === undefined ? {} : { agentLang: options.agentLang }),
     ...(options.workflowProgressLog === undefined ? {} : { workflowProgressLog: options.workflowProgressLog }),
     ...(options.fullCommandEcho === undefined ? {} : { fullCommandEcho: options.fullCommandEcho }),
     ...(options.pollIntervalMs === undefined ? {} : { pollIntervalMs: options.pollIntervalMs })
@@ -5224,6 +5225,131 @@ hostTest('RC-C：领取前丢弃（agent/inbox/discarded）→ 副本退回未�
       '退回副本经恢复出口重发');
     assert.ok(String(recovery.output ?? '').includes(t('en', 'delivery.recoveryMarker', { jobId })),
       '恢复标记行在场');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+/** 字面量子串计数（split 版，不做正则解释——标记行含 `[]` 等正则元字符）。 */
+const countLiteral = (text, needle) => text.split(needle).length - 1;
+
+hostTest('RC-HDUP-EN：零等待触发恢复的 render 消重——恢复标记与正文各恰一次，触发条目不再重复 recovery_line', async () => {
+  // 触发目标＝恢复条目时，出口 output 把恢复头（标记行＋位置说明行）置于正文
+  // 前；修前触发条目仍带 recovery_line，render 先拼 output 再拼条目会把头呈现
+  // 两次而正文只有一次（FUNC-RECOVERY-HEADER-DUP）。本测走真实 execute＋真实
+  // render（checkedTool 固定覆盖 output.schema 合法）。
+  const rig = await buildRig('rc-hdup-en', []);
+  ledger.attachClaimedListener(rig.ctx);
+  try {
+    const wf = await rig.workflow.execute(WF_ARGS, rig.exec());
+    const jobId = wf.job_id;
+    rig.finisher();
+    await sleep(150); // 完成消息经 inject 接受点登记未确认副本（RC-C 同款）
+    const copies = ledger.subjects.get(rig.parent.id)?.recoveries?.get(jobId) ?? [];
+    assert.equal(copies.length, 1, '前置：未确认份额在册（恢复出口可用）');
+    const recovery = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: jobId }] }, rig.exec()
+    );
+    assert.equal(recovery.status, 'completed', '终态照常交回');
+    const marker = t('en', 'delivery.recoveryMarker', { jobId });
+    assert.ok(String(recovery.output ?? '').startsWith(marker),
+      'output 以恢复头开头——可能重复／作业归属／位置警示先于任何恢复正文');
+    const rendered = visibleText(rig.waiter, recovery);
+    assert.equal(countLiteral(rendered, marker), 1,
+      '恢复标记行在模型可见文本中恰一次（修前：output 头＋条目 recovery_line 双拼成两次）');
+    assert.equal(countLiteral(rendered, 'AT_FINAL_PAYLOAD'), 1, '恢复正文恰一次');
+    const triggerEntry = recovery.outputs.find((item) => item.job_id === jobId);
+    assert.ok(triggerEntry !== undefined, '触发条目仍在批（状态行可见）');
+    assert.ok(!('recovery_line' in triggerEntry), '触发条目不重复携带恢复头（头由 output 承载）');
+    assert.equal(triggerEntry.text, '', '触发条目正文置空（正文由 output 携带，不双拼）');
+    assert.ok(triggerEntry.status_line.includes(jobId), '触发条目状态行在场');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('RC-HDUP-ZH：zh 档零等待触发恢复同样消重——标记恰一次、正文恰一次、位置说明行在场', async () => {
+  const rig = await buildRig('rc-hdup-zh', [], { agentLang: 'zh' });
+  ledger.attachClaimedListener(rig.ctx);
+  try {
+    const wf = await rig.workflow.execute(WF_ARGS, rig.exec());
+    const jobId = wf.job_id;
+    rig.finisher();
+    await sleep(150);
+    const copies = ledger.subjects.get(rig.parent.id)?.recoveries?.get(jobId) ?? [];
+    assert.equal(copies.length, 1, '前置：未确认份额在册');
+    const recovery = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: jobId }] }, rig.exec()
+    );
+    assert.equal(recovery.status, 'completed', '终态照常交回');
+    const marker = t('zh', 'delivery.recoveryMarker', { jobId });
+    assert.ok(String(recovery.output ?? '').startsWith(marker),
+      'output 以 zh 恢复头开头（警示前置不随语言档改变）');
+    const rendered = visibleText(rig.waiter, recovery);
+    assert.equal(countLiteral(rendered, marker), 1, 'zh 恢复标记行恰一次');
+    assert.equal(countLiteral(rendered, 'AT_FINAL_PAYLOAD'), 1, '恢复正文恰一次');
+    assert.ok(rendered.includes('份额 1：字符'),
+      '位置说明行在场（份额序＋字符区间——归属与位置警示完整）');
+    const triggerEntry = recovery.outputs.find((item) => item.job_id === jobId);
+    assert.ok(triggerEntry !== undefined && !('recovery_line' in triggerEntry),
+      '触发条目不重复携带恢复头');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('RC-HDUP-NT：非触发恢复条目完整头随批；窄预算增量恢复逐批各带一次头', async () => {
+  // 触发侧消重不得波及非触发恢复条目：挂起恢复经主零等待出口批次消费时
+  //（B 非触发），条目须保留 recovery_line＋完整正文；窄预算下份额按批切片，
+  // 每批各带自己的头（位置区间推进——增量恢复不丢头）。
+  const rig = await buildRig('rc-hdup-nt', []);
+  try {
+    const owner = rig.parent.id;
+    // 注册表真实行（保持 running——入口存在性校验要过、终态分支不触发，恢复
+    // 消费走主零等待出口）；账本条目另按 RC-P 同款直达置终态与缓冲。cancel
+    // 必须结算 done（rig 卸载的 disposeAll 会等取消结果——空壳 cancel 会挂死）。
+    let finishJob;
+    const jobDone = new Promise((resolve) => { finishJob = resolve; });
+    const jobId = rig.ctx.jobs.start({
+      kind: 'at-rc-hdup-nt',
+      label: 'RC-HDUP-NT recovery source',
+      owner,
+      run() {
+        return {
+          cancel() { finishJob({ status: 'completed', detail: 'cancelled' }); },
+          done: jobDone
+        };
+      }
+    });
+    const body = 'N'.repeat(400);
+    seedTerminalJob(rig.ctx, owner, jobId, { maxResultChars: 400, agentLang: 'en' }, body);
+    ledger.jobs.get(jobId).readyAt = ledger.now();
+    const first = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' });
+    assert.equal(first.delivered.length, 1, '前置：首装交付、份额登记在册');
+    const subject = ledger.subjects.get(owner);
+    subject.batch = null; // 关批（装置内直达置空，同 RC-P）
+    ledger.jobs.get(jobId).config = { maxResultChars: 100, agentLang: 'en' }; // 恢复批窄预算
+    const marker = t('en', 'delivery.recoveryMarker', { jobId });
+    const heads = [];
+    for (let round = 0; round < 2; round += 1) {
+      const pick = await rig.waiter.execute(
+        { wait_ms: 0, targets: [{ kind: 'job', id: jobId }] }, rig.exec()
+      );
+      const entry = pick.outputs.find((item) => item.job_id === jobId);
+      assert.ok(entry !== undefined, `第 ${round + 1} 批：恢复条目在批`);
+      assert.ok(entry.recovery_line !== undefined,
+        `第 ${round + 1} 批：非触发恢复条目保留完整恢复头（触发侧消重不丢头）`);
+      assert.ok(entry.recovery_line.includes(marker), `第 ${round + 1} 批：头含标记行`);
+      assert.equal(entry.text, 'N'.repeat(100), `第 ${round + 1} 批：条目正文＝切片 100 字符`);
+      const rendered = visibleText(rig.waiter, pick);
+      assert.equal(countLiteral(rendered, marker), 1, `第 ${round + 1} 批：标记恰一次`);
+      assert.equal(countLiteral(rendered, 'N'.repeat(100)), 1, `第 ${round + 1} 批：正文恰一次`);
+      heads.push(entry.recovery_line);
+      subject.batch = null; // 关批后再取下一片（装置内直达，同 RC-P）
+    }
+    assert.notEqual(heads[0], heads[1], '两批头不同（位置说明行各自）');
+    assert.ok(heads[0].includes('characters 1–100') && heads[1].includes('characters 101–200'),
+      '位置说明行给出各自字符区间（增量恢复逐批带头）');
   } finally {
     await rig.dispose();
   }

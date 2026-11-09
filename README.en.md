@@ -4,7 +4,9 @@
 
 [![CI](https://github.com/MC5Spear/dsh-async-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/MC5Spear/dsh-async-tools/actions/workflows/ci.yml)
 
-Let a DSH Agent start a long command or a child Agent, then continue other work. Wait when the result is needed; when a wait expires, the background task keeps running. “Host” means the DSH instance loading this plugin.
+A slow command or a task delegated to a child Agent need not keep the DSH Agent waiting. This plugin starts that work in the background so the Agent can continue independent tasks. Wait when a result is needed; results arrive directly in the conversation. Each wait has a time limit, and expiry leaves the background work running.
+
+Install it when long tasks or parallel delegation are common. If short commands cover your needs and you do not delegate background work, keeping your existing preset is reasonable. “Host” means the DSH instance loading the plugin.
 
 This third-party plugin is unaffiliated with DeepSeek. It is personally maintained: issues are accepted, external PRs are not, and there is no fixed response or repair schedule. Report security problems through issues after removing sensitive information.
 
@@ -15,32 +17,63 @@ This third-party plugin is unaffiliated with DeepSeek. It is personally maintain
 | Plugin version | `0.2.8+dsh.0.2.1-rc` |
 | Supported dsh host versions | `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4`, `0.2.1-rc.5` |
 
-- **Install condition: your DSH version must be one of the four listed above.** These four share one compatibility line and one peer support set; hosts outside the set (the final `0.2.1`, `0.2.0`, `0.2.2`, and any new rc not listed) are rejected. Keep the compatibility declaration apart from what has actually been verified.
-- **Verified for the current deliverable** (this local Windows machine, isolated instances): the full module test suite and the static checks pass under each of the four supported hosts (rc.2–rc.5); settings-page and question-overlay key behaviors and their accessibility tree were checked in a real browser; the five tools' core behaviors were sampled in real model sessions (background delivery, waiting and interruption, subagent continuation, late answers); the distributed package was installed via the official CLI into an isolated instance and its loading verified (tool roster, preset patch, and dependency-tree checks). Item-by-item real-host passes of older artifacts (the earlier rc.2/rc.5 installations) do not automatically cover later mechanism changes; this entry describes the current deliverable's verification record, with per-item records in `docs/design.md` §9.3 at the same commit in the source repository.
-- **Not yet verified** (read before deploying): real-machine Linux behavior, including commands and one-shot escalation; the precise real-host timing of a constructed tool result being rewritten to a cancellation before commit; real OS input methods, screen readers, and touch input; remote CI (configured with a four-version matrix, but remote execution has not happened — that is not verified coverage); the per-item real-machine re-verification on rc.3/rc.4 hosts is still outstanding (installation and loading evidence is tiered — see docs/design.md §9.3 — while suites and static checks cover them); and no verification conclusions for macOS or remote environments. For deployments involving these, arrange isolated verification with the maintainer first.
-- **Node.js 24 is recommended.** For other versions, check the [runtime prerequisites](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>). The plugin's declaration is not the minimum for the complete host.
-- **Installation source.** If the installation address does not yield the source, check the repository address and pinned commit, then the network or proxy. If it still fails, ask the maintainer who supplied the source about available installation artifacts.
-- **Materials**: development verification materials (verify/ and the like) are not distributed with the installation package; see the corresponding materials for the same commit in the source repository https://github.com/MC5Spear/dsh-async-tools (the installed version is listed in CHANGELOG.md).
+**DSH must be one of the four versions above.** The final `0.2.1`, `0.2.0`, `0.2.2`, and any new rc not listed are rejected. Node.js 24 is recommended. The plugin's Node declaration is not a minimum for the whole DSH installation; check the [runtime prerequisites](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>) before choosing another runtime.
 
-## Install
+### What has been checked
 
-The package is not distributed through npm. Run in a terminal:
+Verification for this line is limited to a local Windows machine and isolated instances. The checks cover different things:
+
+- The full plugin module test suite and static checks passed under each supported host.
+- A real browser was used to check key settings-page and question-overlay behaviors and their accessibility trees.
+- Real model sessions sampled the five tools' core behaviors, including background delivery, waiting and user steering, child continuation, and late answers. This is not an item-by-item real-host check of every feature.
+- An installation artifact was installed into an isolated instance through the official CLI, checking its tool roster, preset patches, and dependency tree.
+
+Before deploying, note the remaining gaps:
+
+- Real-machine Linux commands and one-shot permission escalation have not been verified. There are no verification conclusions for macOS or remote environments.
+- Real OS input methods, screen readers, and touch input have not been verified; accessibility-tree checks do not replace those checks.
+- The precise real-host timing in which a constructed tool result is rewritten to a cancellation error before commit remains unverified.
+- Item-by-item real-machine re-verification on rc.3/rc.4 is incomplete. Their module suites and static checks do not establish full real-host coverage.
+- The four-version remote CI matrix is configured, but remote execution has not happened.
+
+Arrange isolated verification with the maintainer before deploying in a way that depends on these gaps. Results from older rc.2/rc.5 installations do not automatically cover subsequent mechanism changes. Per-item scope is described in `docs/design.md` §9.3 at the matching source commit; see [Documentation and licensing](<#documentation-and-licensing>) for access.
+
+## Install and confirm loading
+
+The package is not distributed through npm. Choose either the terminal or GUI route:
 
 ```powershell
 dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
 ```
 
-Alternatively, open DSH's plugin manager and enter `github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1` as the installation address in its install dialog.
+For the GUI, open DSH's plugin manager and enter `github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1` as the installation address.
 
-This address follows a moving maintenance branch. To pin the source, check the source out locally, run `git rev-parse HEAD` in that checkout to obtain the full commit, and replace everything after `#` with that commit. After installation, you can verify the installed source against the same commit.
+This address follows a moving maintenance branch, so its contents can change between installations. To pin a source:
 
-After installation, open this package's detail page in the plugin list: its settings form should be visible. In a new session's preset selector, check that `dsh-async` and `dsh-async-create` are available. After selecting one, the Agent should have the five tools listed below. A preset defines which tools an Agent uses; you do not need to create preset directories manually.
+1. Check out the intended source revision that is actually available from the repository. Run `git rev-parse HEAD` in that checkout and record the full commit ID.
+2. Replace the branch name after `#` in the installation address with that full commit. A commit existing only locally is not necessarily available remotely.
+3. After installation, inspect the `version` in `package.json` in the directory where the host installed this package for the target profile. It should match the selected source. Keep the actual installation address and full commit as the source record as well: a version number is not a commit identity, and a changelog does not identify what is installed on this machine.
 
-If settings, presets, or tools are missing, first check whether your host version is in the table above, then follow the [installation troubleshooting steps](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>) to inspect load logs. The reference also covers development links and reloading after installation-composition changes.
+Then confirm loading:
 
-## Start a background task
+1. Open this package's detail page in the plugin list. Its settings form should be visible.
+2. Create a session and check that `dsh-async` and `dsh-async-create` are available in the preset selector.
+3. Choose one and confirm that the Agent has the five tools below. A preset is a configuration defining which tools an Agent uses; no manual preset-directory creation is needed.
 
-Create a session with `dsh-async` for general coding, or `dsh-async-create` to retain plugin and preset authoring tools. Ask the Agent to run a harmless waiting command. The following illustrates **Agent tool calls, not PowerShell functions**:
+If source retrieval fails, check the repository address and pinned commit, then the network or proxy. If it still fails, ask the maintainer supplying the source about available artifacts. If installed entries are missing, check the host version first, then follow [installation troubleshooting](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>) to inspect load logs.
+
+## Try a first background task
+
+This example uses PowerShell and factory wait settings in the Windows environment described above.
+
+1. Create a session with `dsh-async` for general coding, or `dsh-async-create` to retain plugin and preset authoring tools.
+2. Paste this request to the Agent:
+
+   > Demonstrate harmless background execution without modifying files, accessing the network, or creating children. First use async_run to run `Write-Output SHORT_OK` and confirm the short-command result. Then use async_run to run `Start-Sleep -Seconds 30; Write-Output LONG_DONE`, explicitly setting yield_ms=20000. Keep the returned job_id and do not repeat the command. When waiting is needed, use async_wait targeting that job with wait_ms=30000 explicitly. Report both markers and the actual exit information. If no identifier arrived, check job_list first.
+
+3. The short command should display `SHORT_OK` directly. The 30-second command should first return a `job_id` after its initial wait of at most 20 seconds. Its result, including `LONG_DONE`, then arrives in a wait return or completion message. Check the actual exit information: `completed` alone does not mean exit code zero.
+
+Equivalent **Agent tool-call illustration, not functions to execute in a terminal**:
 
 ```text
 async_run(command="Start-Sleep -Seconds 30; Write-Output LONG_DONE",
@@ -48,33 +81,35 @@ async_run(command="Start-Sleep -Seconds 30; Write-Output LONG_DONE",
 async_wait(targets=[{kind:"job", id:"<returned job_id>"}], wait_ms=30000)
 ```
 
-The factory clamping range for `yield_ms` is 20000–600000 milliseconds (values below the floor take effect as the floor); the 30-second command above exceeds the 20-second first wait, so it returns a job identifier, `job_id`. Keep it and continue independent work; when the job settles, its result body is delivered directly — attached to an in-flight async_wait return or as a completion message. Use `async_wait` when you need to block on a result. Every call requires `wait_ms`; it has no default. Look for `LONG_DONE` and the actual exit information. `completed` does not imply exit code zero.
+Omitting `yield_ms` uses a factory default of 20000 ms. Its factory request bounds are 20000–600000 ms; out-of-range requests take effect at the nearest boundary. `wait_ms` is required on every call and has no default. Expiry, canceling a wait, or ending a turn does not stop background work. Use `job_kill` explicitly for unwanted jobs.
 
-Expiry, canceling a wait, or stopping the current turn does not stop background work. Stop unwanted jobs explicitly with `job_kill`. If the identifier did not reach the Agent, recover it with `job_list` rather than repeating the command.
-
-Reads return only text not already read; the task's final result is also delivered once. Save results you need to keep. See [result handling](<docs/user-reference.en.md#4-wait-states-and-direct-delivery>) for truncation, loss, and temporary files.
+Results normally contain only text not already read, so save anything that must be retained. Continuing shortened output, recovering an unconfirmed delivery after cancellation, and actual host-buffer loss are different cases; see [result handling and recovery](<docs/user-reference.en.md#4-wait-states-and-direct-delivery>). Do not repeat the original task to check progress.
 
 ## Tools and presets
 
-Both presets directly provide these five tools. DSH management tools still handle inspection, messages, and stopping. Existing presets are unchanged.
+Both shipped presets directly provide all five tools without rewriting existing presets. Inspection, messaging, and stopping remain DSH management operations.
 
 | Tool | Purpose |
 | --- | --- |
 | `async_run` | Runs a command and returns its result or a background job identifier |
-| `async_wait` | Unified wait entry: collects ready results first, then waits with a bounded budget for messages, job results, or explicit targets — returning at once when no wait-worthy work exists |
-| `async_agent` | Starts a resumable child in the background and immediately returns `agent_id` |
+| `async_wait` | Waits for messages, job results, or explicit targets; delivers ready results first and returns immediately if there is no work to wait for |
+| `async_agent` | Starts a resumable child in the background and immediately returns `agent_id`; the final answer arrives separately |
 | `async_workflow` | Coordinates large multi-agent tasks with a script managed as a background job |
 | `async_list_subagent_models` | Browses or searches model pages and checks applicability to a chosen creation tool |
 
-Each later `async_agent` call with an explicit model or effort choice reads the current DSH switch and allowed set. Saved changes apply even in existing sessions; running children keep their model. Fully omitted choices use configured defaults or inheritance. Native creation tools and workflow `agent()` have their own rules, so specify the target when querying models. The [complete reference](<docs/user-reference.en.md>) covers every argument, all 20 settings, and advanced composition.
+**Custom presets can use all asynchronous features too.** Manually mount the five tools first. `async_workflow` must share a group isolated with `workflowEngine` with a workflow engine, with the required host services available. Then add the custom preset to `boundPresets` if needed. Binding scopes operating instructions and auxiliary features; **it does not install or remove tools**. See the full [custom composition example](<docs/user-reference.en.md#7-advanced-composition>).
+
+Children can usually use the default or inherited model. For explicit selection, follow [model discovery through creation](<docs/user-reference.en.md#5-model-catalogs-authorization-and-inheritance>). Each `async_agent` creation reads the current DSH policy; saved settings affect later creations, not running children. Native creation tools and workflow `agent()` have their own rules.
 
 ## Settings, safety, and removal
 
-Open the plugin list → this package's detail page → the form between its description and component rows. Save applies edits; restoring defaults also requires Save. Ordinary settings saves need no restart. Question takeover and silent-command-failure warnings are off by default; their scope, and that of the execution-discipline section, is decided by the applicable-presets list (`boundPresets`) — it binds this package's two presets by default, and saving an empty array unbinds everything. [Settings and questions](<docs/user-reference.en.md#2-first-use-and-settings>) explains values, answers after timeout, and record cleanup.
+Open the plugin list → this package's detail page → the form between its description and component rows. Save applies edits, including Restore default actions. Ordinary valid settings saves need no restart.
 
-Commands inherit the session's directory, sandbox, approvals, and permissions. The plugin does not itself collect telemetry, initiate network requests, or read/write credentials. Model catalogs come from DSH interfaces without model inference. Commands can still access the network or sensitive data. Output and host-provided temporary files may contain secrets: redact before sharing and save necessary contents where authorized. See the [safety and reporting reference](<docs/user-reference.en.md#8-disable-recover-and-report-problems>) for environment and error-log details.
+The applicable-presets list, `boundPresets`, defaults to the two shipped presets; an empty array unbinds all. Listed sessions receive asynchronous operating instructions. Silent-failure warnings additionally require `silentFailureGuard`, and the pending-question panel requires `askTakeover`; both switches are off by default. Binding replaces neither switch and does not change tool mounting. See [all 20 settings and question behavior](<docs/user-reference.en.md#2-first-use-and-settings>).
 
-**Change the default preset before disabling or uninstalling.** If it still points to `dsh-async` or `dsh-async-create`, new sessions fail with `agent-preset/not-found` after removal. Select an available preset in host settings first. If already removed, clear or reselect the default there, then create a session to confirm recovery. Inspect your active jobs with `job_list` and explicitly stop unwanted work. Removing tool rows does not automatically cancel jobs owned by their initiating session, and restarting can terminate active processes. See [recovery and reporting](<docs/user-reference.en.md#8-disable-recover-and-report-problems>).
+Commands inherit the session's directory, sandbox, approvals, and permissions. The plugin does not itself collect telemetry, initiate network requests, or read/write credentials. Model catalogs come from DSH interfaces without model inference. Commands can still access the network or sensitive data. Output and host temporary files may contain secrets: redact before sharing and save necessary contents where authorized.
+
+**Change the default preset before disabling or uninstalling.** If it still points to `dsh-async` or `dsh-async-create`, new sessions fail with `agent-preset/not-found` after removal. Select an available preset in host settings; if already removed, clear or reselect the default and confirm with a new session. Inspect active jobs with `job_list` and explicitly stop unwanted work. Removing tools does not automatically cancel jobs started by a session, and restarting can terminate active processes. See [removal, recovery, and reporting](<docs/user-reference.en.md#8-disable-recover-and-report-problems>).
 
 ## AI maintainers
 
@@ -87,7 +122,7 @@ AI maintainers include:
 
 ## Documentation and licensing
 
-See the [user reference](<docs/user-reference.en.md>) for operating details. Maintenance documents are in Chinese in the [maintenance branch source](<https://github.com/MC5Spear/dsh-async-tools/tree/adapt/dsh-0.2.1>). The branch moves; use a checkout corresponding to your installed source:
+See the [user reference](<docs/user-reference.en.md>) for operating details. Maintenance documents are in Chinese and are not shipped in the installation package. Read them in the [maintenance branch source](<https://github.com/MC5Spear/dsh-async-tools/tree/adapt/dsh-0.2.1>), using a pinned checkout matching the actual installed source because the branch moves:
 
 ```text
 CONTRIBUTING.md          Development, review, and release

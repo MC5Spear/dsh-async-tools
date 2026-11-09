@@ -138,10 +138,10 @@ if (out !== undefined && out !== '') {
         s: specifier, p: context.parentURL ?? null, ...extra
       }) + '\\n');
       // 跟随解析：插件文件首次发起被观测解析时，以同一 parent 上下文主动解析
-      // 全部目标包（走完整装载器解析链——含宿主对 @deepseek-ai/* 的重定向，
-      // 证据：profile 内的 schemastery 副本在场而实际解析落在宿主树）。结果即
-      // 插件模块装载时将取得的路径；工具模块为懒装载，装载期不一定真实发起
-      // 这些解析，跟随解析把「以插件为起点」的取得补齐为直接证据。
+      // 全部目标包。这是标准 Node 解析链的「裸解析」诊断——不含宿主装载器对
+      // @deepseek-ai/* 的定向，结果不代表插件模块装载时实际取得的路径（直接
+      // 依赖实际就近取 profile 副本、DSH peer 走装载路由，两者都不是裸解析
+      // 结果），仅用于定位解析路径上有哪些副本；不构成装载证据，不参与判定。
       const doFollow = isPluginParent && !followed.has(parent);
       if (doFollow) {
         followed.add(parent);

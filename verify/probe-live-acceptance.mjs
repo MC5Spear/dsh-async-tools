@@ -12,9 +12,11 @@
  * 2. LA-2 后台作业＋等待领取：async_run 后台返回 job_id，async_wait 领取的
  *    正文含固定 token（交付载体之一）；
  * 3. LA-3 取消与名册：job_kill 取消长睡眠作业（终态记录在案），job_list 返回
- *    注册列表（job_output 不出现在模型可见名册）；
- * 4. LA-4 子代理派生与领取：async_agent 派生后台子代理，其最终回答经完成消息
- *    或等待返回到达主代理（不限定载体，与交付设计一致）；
+ *    注册列表（未观察到 job_output 调用——只证本轮 tool/call 记录里没有它，
+ *    不证模型可见名册不含它）；
+ * 4. LA-4 子代理派生与领取：async_agent 派生后台子代理，其最终回答经宿主侧
+ *    载体（完成消息／注入消息／工具返回，不限定具体形态）到达主代理，与
+ *    交付设计一致；
  * 5. LA-5 空闲主体完成消息：主体无活等待时后台作业结算，完成消息
  *    （user/message 且 source.kind=async-tools-job-result）注入到达。
  *
@@ -177,7 +179,8 @@ function toolResultTexts(transcript) {
     .map((r) => (r.event.data?.message?.content ?? [])
       .filter((c) => c.type === 'text').map((c) => String(c.text ?? '')).join('\n'));
 }
-/** 模型可见工具名册：tool/call 记录里出现过的工具名集合。 */
+/** 转录 tool/call 记录里出现过的工具名集合——用于「未观察到某工具被调用」的
+ *  判定；模型未调用某工具不等于该工具对其会话不可见。 */
 function toolCallNames(transcript) {
   const names = new Set();
   for (const r of transcript.records ?? []) {
@@ -312,18 +315,19 @@ await driveStep({
 
 console.log('\n── LA-3 取消与名册 ──');
 await driveStep({
-  name: 'LA-3 job_kill 终态＋job_list 名册（job_output 不在场）',
+  name: 'LA-3 job_kill 终态＋job_list 名册（未观察到 job_output 调用）',
   prompt: 'Run this single step and reply with exactly the token LA3_OK: (1) call async_run with command "Start-Sleep -Seconds 600", description "la3 victim", yield_ms 20000 — note the job_id it returns; (2) call job_kill with that job_id; (3) call job_list and check the killed job is listed in a terminal state; (4) reply LA3_OK. Do NOT call job_output at any point. No questions.',
   judge: (ctx) => {
     const receipt = ctx.modelTexts.some((t) => t.includes('LA3_OK'));
     const killSeen = ctx.toolNames.has('job_kill') && ctx.toolNames.has('job_list');
     const outputAbsent = !ctx.toolNames.has('job_output');
     // 终态的机器证据：存在 status==='killed' 的 job/settled 事件（见
-    // hasKilledSettled 注释）；名册检查以「未出现在 tool/call 记录」反推——
-    // 「未调用」不严格等于「不可见」，此为脚本化抽样的已知边界，离线排查靠快照。
+    // hasKilledSettled 注释）；job_output 侧只断言「未观察到调用」（不在
+    // tool/call 记录）——未调用不等于不可见，此为脚本化抽样的已知边界，
+    // 离线排查靠快照。
     const killedSettled = ctx.killedSettled;
     const ok = receipt && killSeen && outputAbsent && killedSettled;
-    return { ok, detail: ok ? 'job_kill＋job_list 在场、job/settled(killed) 在案、job_output 未出现在模型名册、模型回执' : `回执 ${String(receipt)}／job_kill ${String(ctx.toolNames.has('job_kill'))}／job_list ${String(ctx.toolNames.has('job_list'))}／job_output 缺席 ${String(outputAbsent)}／job/settled(killed) ${String(killedSettled)}` };
+    return { ok, detail: ok ? 'job_kill＋job_list 在场、job/settled(killed) 在案、job_output 未被调用（不在 tool/call 记录）、模型回执' : `回执 ${String(receipt)}／job_kill ${String(ctx.toolNames.has('job_kill'))}／job_list ${String(ctx.toolNames.has('job_list'))}／job_output 未调用 ${String(outputAbsent)}／job/settled(killed) ${String(killedSettled)}` };
   }
 });
 
@@ -354,18 +358,40 @@ await driveStep({
   }
 });
 
-// 6) 收尾：停实例→等句柄释放→留证据→清理。
-killChild();
-await new Promise((r) => { setTimeout(r, 1500); });
-try { rmSync(home, { recursive: true, force: true }); log(`已清理临时 home：${home}`); }
-catch { console.error(`[probe] WARN: 临时目录清理失败，留存现场：${home}`); }
-try { rmSync(tgzPath, { force: true }); } catch { /* 产物清理尽力而为 */ }
+// 6) 收尾：--keep 只保留临时 home；停实例、证据落盘、打包产物清理不受影响。
 mkdirSync(join(repo, '.local'), { recursive: true });
-writeFileSync(join(repo, '.local', 'probe-live-acceptance.json'), JSON.stringify(evidence, null, 2));
-log(`证据落盘：${join('.local', 'probe-live-acceptance.json')}（本机材料目录）`);
+await finalTeardown({
+  keep, home, tgzPath, evidence,
+  evidencePath: join(repo, '.local', 'probe-live-acceptance.json'),
+  evidenceLabel: join('.local', 'probe-live-acceptance.json'),
+  stopInstance: killChild,
+  waitReleased: () => new Promise((r) => { setTimeout(r, 1500); }),
+  rmHome: (p) => rmSync(p, { recursive: true, force: true }),
+  rmArtifact: (p) => rmSync(p, { force: true }),
+  writeEvidence: (p, text) => writeFileSync(p, text),
+  log, warn: (msg) => { console.error(msg); }
+});
 const failures = verdicts.filter((v) => v.ok !== true).length;
 console.log(failures === 0 ? `\n判定：全部通过（${String(verdicts.length)} 项）` : `\n判定：${String(failures)} 项 FAIL（共 ${String(verdicts.length)} 项）`);
 process.exit(failures === 0 ? 0 : 1);
+
+/** 收尾序列：停自有实例→等句柄释放→证据落盘→按 keep 决定临时 home 去留→清
+ *  打包产物。依赖经参数注入（进程内测试以替身执行本函数真实分支，不跑实例）：
+ *  keep=true 只跳过临时 home 删除，其余职责与 keep=false 相同；rmHome 失败仅
+ *  告警留现场，证据已先行落盘、退出状态不受影响。 */
+async function finalTeardown({ keep, home, tgzPath, evidence, evidencePath, evidenceLabel, stopInstance, waitReleased, rmHome, rmArtifact, writeEvidence, log, warn }) {
+  stopInstance();
+  await waitReleased();
+  writeEvidence(evidencePath, JSON.stringify(evidence, null, 2));
+  log(`证据落盘：${evidenceLabel}（本机材料目录）`);
+  if (keep) {
+    log(`--keep：保留临时 home ${home}`);
+  } else {
+    try { rmHome(home); log(`已清理临时 home：${home}`); }
+    catch { warn(`[probe] WARN: 临时目录清理失败，留存现场：${home}`); }
+  }
+  try { rmArtifact(tgzPath); } catch { /* 产物清理尽力而为 */ }
+}
 
 function killChild() {
   if (child.exitCode === null) {
