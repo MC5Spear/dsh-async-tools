@@ -20,6 +20,18 @@ Find the task you need:
 
 Node.js 24 is recommended. Although the package declares Node `>=20`, DSH's commander 15 dependency needs at least `22.12.0`, so Node 20 is not a suitable choice on that basis. Other dependencies may require more. Before choosing a version other than Node.js 24, confirm that all dependencies of the target DSH version work on it.
 
+### Prerequisites for reusing host dependencies
+
+The plugin has no `preinstall`, `install`, `postinstall`, or `prepare` installation scripts. Its direct dependencies are `schemastery` and `zod`. DSH and other peer dependencies are supplied by the host at runtime; this plugin does not need a separate host installation.
+
+On supported rc.2–rc.5 versions, new profiles (DSH runtime configurations) default to a `hoisted` dependency layout with `autoInstallPeers` (automatic peer installation) disabled. Default new profiles need no configuration change first.
+
+In an empty profile with automatic peer installation disabled, a source-pinned installation of the current commit supports both `hoisted` and `isolated` layouts and can load all five tools without script approval. Existing dependency copies, lockfiles, and other plugins can change installation behavior in an existing profile, so the same approval-free outcome is not guaranteed there.
+
+**Current known limitation:** `isolated + autoInstallPeers:true` installs additional host peers and their dependencies. On all four supported host versions, this path currently fails with `ERR_PNPM_IGNORED_BUILDS` because five installation scripts are blocked. Upgrading an existing installation can also encounter this. These unnecessary approval requirements are an unresolved problem for this plugin.
+
+Disabling `autoInstallPeers` is the current prerequisite and workaround for reusing host dependencies, not a permanent fix. Before changing an existing profile, ask the instance administrator to review its configuration, dependency copies, lockfiles, and other plugins. Changing that setting alone does not guarantee safe cleanup of existing copies. If a script prompt appears, follow [installation script-approval troubleshooting](<#installation-script-approval-troubleshooting>) to choose the next step.
+
 ### Usage limits and saving results
 
 Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Full real-host rechecking on rc.3/rc.4 is also incomplete. Before using these environments, check the features needed in a separate test session, particularly command permissions, waiting, and result delivery.
@@ -30,27 +42,61 @@ When a tool call is canceled, DSH can replace its return with a cancellation err
 
 ### Install, pin a source, and check the version
 
-The package is not distributed through npm. Run this in a terminal:
+The package is not distributed through npm. Use the GUI steps below; dependency conditions are covered under [prerequisites for reusing host dependencies](<#prerequisites-for-reusing-host-dependencies>) above.
+
+1. Open **Plugins** in DSH's left sidebar and select **Add plugin**. **Install a third-party plugin** in the adjacent dropdown opens the same flow.
+2. Paste the following into the package name/address field, then select **Install**:
+
+   ```text
+   github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
+   ```
+
+3. Select **Enable now** after installation succeeds. If already enabled, confirm its enabled status instead. If installation requests permission to run scripts, follow [script-approval troubleshooting](<#installation-script-approval-troubleshooting>) first.
+4. If the host requests a reload/restart, deal with active tasks and save needed results before following that prompt. A restart can terminate active processes.
+5. Open the package's detail page in the plugin list and confirm that the settings form is visible.
+6. Create a session and find `dsh-async` and `dsh-async-create` in the preset selector. Choose either and confirm that the Agent has all five tools: `async_run`, `async_wait`, `async_agent`, `async_workflow`, and `async_list_subagent_models`. Both presets are supplied with the package; no separate preset directory is needed.
+
+Alternatively, install from a terminal:
 
 ```powershell
 dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
 ```
 
-`web` is the target DSH configuration profile; substitute the appropriate name for another profile. For GUI installation, enter `github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1` in DSH's plugin-manager installation dialog.
+`web` is the target profile's name; substitute the appropriate name for another profile. After installation, likewise confirm it is enabled and complete the loading checks above.
 
 The address follows a moving maintenance branch. For repeatable installation:
 
 1. Select a commit available from the repository. In an existing checkout of the intended source, run `git rev-parse HEAD` to obtain its full commit ID. A local commit not yet uploaded cannot serve as a remote installation source.
 2. Replace the branch after `#` with that full commit ID and install. Keep the complete installation address for reinstalls and problem reports.
-3. Open the package's detail page after installation. Check the version beside its title or the Current version row under Source information at the bottom. The same area shows the installation source. The version should match the selected source, but several commits may share a version number, so retain the pinned installation address too.
-
-Confirm that the settings form is visible on the detail page. Create a session with `dsh-async` or `dsh-async-create` and confirm that the Agent has the five tools documented here. Both presets are supplied with the package; no separate preset directory is needed.
+3. Open the package's detail page after installation. Check the version beside its title or the **Current version** row under **Source** at the bottom. The same area shows the installation source. The version should match the selected source, but several commits may share a version number, so retain the pinned installation address too.
 
 ### Installation troubleshooting
 
 If source retrieval fails, check the repository address and branch or commit, then the network and proxy. If it still fails, ask the maintainer supplying the installation source about available artifacts. Omitting `#adapt/dsh-0.2.1` does not automatically select the correct host adaptation.
 
-If settings, presets, or tools are missing:
+#### Installation script-approval troubleshooting
+
+If installation or an upgrade shows **The plugin could not be installed / Install scripts need permission**:
+
+1. Select **Show install details** and read the full package names, versions, and error. If the list is incomplete, consult those details rather than approving truncated names. `ERR_PNPM_IGNORED_BUILDS` means installation scripts were blocked.
+2. Establish whether each script comes from this plugin, a host dependency, or another plugin. Then check why the current installation brought it in and whether execution is necessary. This plugin has no installation scripts. The `isolated + autoInstallPeers:true` path above introduces extra host-dependency scripts; they are not inherently required for this plugin's features.
+3. Cancel or defer installation and contact the plugin maintainer or instance administrator to review the profile and existing dependencies. If the full listed package names, versions, and scripts are understood and trusted, and continuing with the current path is the intended choice, select **Allow these scripts and retry**. Continuing this blocked path requires allowing the relevant scripts, but that does not mean all scripts should be allowed. Investigate unknown packages or incomplete names first.
+
+Before approval, note that scripts run with the permissions of the local account running DSH. Permission is saved in the current profile and remains applicable to later installations, even if this installation fails. Retrying may run already-allowed scripts again. **Installation-script approval is separate from sandbox approval for Agent commands.**
+
+These five package versions are examples from the currently known prompt. Their script purposes help identify the source and need; later versions may differ. This table is neither a safety guarantee nor a requirement to allow all five.
+
+| Package and version | Script purpose |
+| --- | --- |
+| `@deepseek-ai/dsh-subprocess-local@0.2.1-rc.5` | `postinstall` only sets mode `0755` on node-pty's Unix `spawn-helper`; that file is usually absent on Windows. |
+| `@google/genai@2.21.0` | `preinstall` only echoes a no-op message; it does not build anything. |
+| `koffi@3.1.1` | Tries loading a precompiled binary first; only falls back to a CMake build if loading fails. |
+| `node-pty@1.2.0-beta.15` | Checks for precompiled files and uses node-gyp if they are missing or a source build is explicitly requested. `postinstall` copies Windows ConPTY files and cleans the build directory. |
+| `protobufjs@7.6.6` | `postinstall` only reads package manifests, checks version symbols, and issues warnings; it does not build anything. |
+
+#### Missing settings, presets, or tools
+
+Check in this order:
 
 1. Confirm that DSH is a supported version. Inspect load logs and resolve version-mismatch or missing-dependency errors.
 2. In the target profile's plugin manager, confirm that the package is installed and its bundle declaration is loaded. The dependency provides the package; the bundle enables its settings row and two presets. Installing the package without loading its composition may leave these entries absent.

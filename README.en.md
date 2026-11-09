@@ -25,21 +25,33 @@ For IME, screen-reader, or touch-based answers, and for result recovery after a 
 
 ## Install and confirm loading
 
-The package is not distributed through npm. Run this in a terminal:
+The package is not distributed through npm. New profiles (DSH runtime configurations) on supported versions default to a `hoisted` dependency layout with `autoInstallPeers` (automatic peer installation) disabled, allowing direct reuse of host dependencies.
+
+An unresolved plugin issue introduces unnecessary script-approval requirements in profiles using `isolated + autoInstallPeers:true`, causing installation to fail when those scripts are blocked. If installation or an upgrade asks for script approval, first read [script-approval troubleshooting](<docs/user-reference.en.md#installation-script-approval-troubleshooting>).
+
+Install through the GUI:
+
+1. Open **Plugins** in the left sidebar and select **Add plugin**. **Install a third-party plugin** in the adjacent dropdown opens the same flow.
+2. Paste this into the package name/address field:
+
+   ```text
+   github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
+   ```
+
+3. Select **Install**, then **Enable now** on the success page. If already enabled, confirm its enabled status instead.
+4. If the host requests a reload/restart, deal with active tasks and save needed results before following that prompt.
+5. Open the package's detail page and confirm that the settings form is visible.
+6. Create a session and find `dsh-async` and `dsh-async-create` in the preset selector. Choose either and confirm that the Agent has the five tools below. A preset configures the Agent's tools and working instructions; both are supplied with the package. Follow [installation troubleshooting](<docs/user-reference.en.md#installation-troubleshooting>) if entries are missing.
+
+Alternatively, install from a terminal:
 
 ```powershell
 dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
 ```
 
-Alternatively, enter `github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1` in DSH's plugin-manager installation dialog. `web` is the target DSH configuration profile in the command; substitute the appropriate name for another profile.
+`web` is the target profile's name; substitute the appropriate name for another profile. After installation, likewise confirm it is enabled and check loading as above.
 
 This address follows a moving maintenance branch. For repeatable installation, replace the branch after `#` with a full commit ID available from the repository, and keep that installation address. See [pinning and checking the installation](<docs/user-reference.en.md#install-pin-a-source-and-check-the-version>) for version checks.
-
-After installation:
-
-1. Open this package's detail page in the plugin list and confirm that the settings form is visible.
-2. Create a session and find `dsh-async` and `dsh-async-create` in the preset selector. A preset configures the Agent's tools and working instructions; the package supplies both automatically.
-3. Choose either preset and confirm that the Agent has the five tools below. Follow [installation troubleshooting](<docs/user-reference.en.md#installation-troubleshooting>) if entries are missing.
 
 ## Try a first background task
 

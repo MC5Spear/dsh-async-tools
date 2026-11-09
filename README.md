@@ -25,21 +25,33 @@ Linux 的命令执行和单次提权尚未实机验证，macOS、远程执行环
 
 ## 安装并确认已加载
 
-本包不从 npm 分发。在终端执行：
+本包不从 npm 分发。支持版本的新 profile（DSH 运行配置）默认采用 `hoisted` 依赖布局并关闭 `autoInstallPeers`（自动补齐 peer 依赖），可直接复用宿主依赖。
+
+本插件仍有未解决的不必要授权问题：采用 `isolated + autoInstallPeers:true` 的 profile 会因安装脚本被阻止而安装失败。安装或升级遇到授权提示时，先看[脚本授权排查](<docs/user-reference.md#安装脚本授权排查>)。
+
+在 GUI 中安装：
+
+1. 打开左侧“插件”，点击“添加插件”；旁边下拉菜单中的“安装第三方插件”也可进入。
+2. 在包名／地址输入框中粘贴：
+
+   ```text
+   github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
+   ```
+
+3. 点击“安装”。成功后点击“立即启用”；已启用时确认启用状态即可。
+4. 若宿主提示 reload／restart，先处理活动任务、保存所需结果，再按提示重新装载或重启。
+5. 打开本包详情页，确认设置表单可见。
+6. 新建会话，确认预设选择器中有 `dsh-async` 和 `dsh-async-create`。选择其中一个，确认 Agent 可用下表中的五工具。预设决定 Agent 的可用工具和工作方式，两份均随包提供。入口缺失时按[安装排查](<docs/user-reference.md#安装排查>)处理。
+
+也可在终端安装：
 
 ```powershell
 dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
 ```
 
-也可以打开 DSH 插件管理页，在安装对话框中填入同一地址：`github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1`。命令中的 `web` 是目标 profile（DSH 运行配置）的名称；使用其他 profile 时换成对应名称。
+命令中的 `web` 是目标 profile 的名称；使用其他 profile 时换成对应名称。安装后同样确认已启用，再按上面步骤核对加载结果。
 
 这个地址跟踪会变化的维护分支。需要重复安装同一份源码时，将 `#` 后的分支名换成仓库中可取得的完整提交号，并保留该安装地址。安装后核对包版本的方法见[固定安装来源](<docs/user-reference.md#安装固定来源与版本核对>)。
-
-安装完成后：
-
-1. 打开插件列表中的本包详情页，确认设置表单可见。
-2. 新建会话，确认预设选择器中有 `dsh-async` 和 `dsh-async-create`。预设是一组决定 Agent 可用工具和工作方式的配置，本包会自动提供这两份预设。
-3. 选择其中一个，确认 Agent 可用下表中的五工具。入口缺失时按[安装排查](<docs/user-reference.md#安装排查>)处理。
 
 ## 第一次后台任务
 

@@ -99,6 +99,8 @@ config: { settings: { agentLang: zh, defaultYieldMs: 30000 } }
 
 安装地址使用维护分支 adapt/dsh-0.2.1，不从 npm 分发。分支会变化，需要固定来源时使用仓库可取得的完整提交号；安装后在插件详情页核对版本并保留安装地址，见[安装说明](<README.md#安装并确认已加载>)。
 
+补充两语 GUI 安装与启用步骤、宿主依赖复用前提和脚本授权排查。当前 `isolated + autoInstallPeers:true` 路径仍会因五个被阻止的安装脚本报 `ERR_PNPM_IGNORED_BUILDS`，安装或升级均可能遇到；不必要授权问题尚未修复，关闭自动补齐仅为当前绕行。
+
 Linux 命令与单次提权、macOS／远程执行环境、真实输入法／读屏／触屏，以及取消调用时的结果恢复，仍有未验证范围；rc.3／rc.4 也未完成全部功能的实机复验。具体使用影响及处理方法见[使用限制](<docs/user-reference.md#使用限制与结果保存>)。
 
 ### 开发验证工具
