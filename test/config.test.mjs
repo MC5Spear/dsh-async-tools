@@ -25,7 +25,7 @@ import {
   Config, TOOL_NAMES, clamp, resolveConfig, resolveWait, resolveYield,
   assertCrossFieldOrder, setConfigValidationArmed, setConfigValidationDegraded,
   isConfigValidationArmed, degradedSettingsCallback, resolveSettingsValue,
-  isOwnConfigCandidate
+  isOwnConfigCandidate, DEFAULT_BOUND_PRESETS
 } from '../lib/config.js';
 import { HOST_SKIP_REASON, loadOfflineSafe } from './_host-gate.mjs';
 import { t } from '../lib/text.js';
@@ -68,26 +68,28 @@ test('resolveConfig：默认值符合需求 §5 的约定', () => {
   const c = resolveConfig({ toolName: 'async_run' });
   assert.equal(c.defaultYieldMs, 20000);
   assert.equal(c.defaultWaitMs, 30000);
-  assert.equal(c.minWaitMs, 250);
+  assert.equal(c.minWaitMs, 20000);
   assert.equal(c.maxWaitMs, 600000);
   assert.equal(c.jobKind, 'async-command');
   assert.ok(Object.isFrozen(c), '生效配置应被冻结');
 });
 
-test('根形态：settings 子树是唯一的 volatile 节点，17 字段默认齐（设计 §5.1）', () => {
+test('根形态：settings 子树是唯一的 volatile 节点，20 字段默认齐（设计 §5.1）', () => {
   setConfigValidationArmed(false);
   const empty = Config({});
   assert.equal(typeof empty?.settings?.get, 'function',
     'settings 固定路径产生一个 Ref（快照解包取该 Ref 再逐字段）');
   const settings = empty.settings.get();
   const expected = {
-    defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
-    defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000, pollIntervalMs: 500,
-    maxResultChars: 30000, jobKind: 'async-command', subagentProvider: 'spawn',
-    uiLang: 'auto', agentLang: 'en', silentFailureGuard: false, askTakeover: false,
-    askTimeoutMs: 60000, askExtendMs: 60000, askUiSeat: 'sidebar'
+    defaultYieldMs: 20000, minYieldMs: 20000, maxYieldMs: 600000,
+    defaultWaitMs: 30000, minWaitMs: 20000, maxWaitMs: 600000, pollIntervalMs: 500,
+    maxResultChars: 12000, jobKind: 'async-command', subagentProvider: 'spawn',
+    uiLang: 'auto', agentLang: 'en', silentFailureGuard: false,
+    workflowProgressLog: false, fullCommandEcho: false,
+    askTakeover: false, askTimeoutMs: 60000, askExtendMs: 60000, askUiSeat: 'sidebar',
+    boundPresets: ['dsh-async', 'dsh-async-create']
   };
-  assert.deepEqual({ ...settings }, expected, '17 字段默认值一项不差');
+  assert.deepEqual({ ...settings }, expected, '20 字段默认值一项不差');
 });
 
 test('双向输入形态：活根（settings 为 Ref）与平铺输入等价（设计 §5.1）', () => {
@@ -170,8 +172,8 @@ test('schemastery 嵌套禁令：volatile 子树内的字段再挂 volatile 在 
   const { default: z } = await import('@deepseek-ai/schemastery');
   // 反面形态：字段逐个 volatile 且整体包 volatile——schemastery 校验
   // "volatile 字段要求无包围 volatile 的固定对象路径"，resolve 整棵根时即抛
-  // （与输入数据无关）。这是 17 字段搬进 settings 子树、字段级摘掉 volatile
-  // 标记的直接原因。
+  // （与输入数据无关）。这是全部可编辑字段搬进 settings 子树、字段级摘掉
+  // volatile 标记的直接原因。
   const nested = z.object({
     settings: z.transform(
       z.object({ minWaitMs: z.number().default(250).volatile() }),
@@ -227,7 +229,7 @@ test('武装态：五条链式不等式在 schema 层拒绝，消息双侧字段
       [{ minYieldMs: 5000, maxYieldMs: 1000 }, /minYieldMs=5000 > maxYieldMs=1000/],
       [{ defaultYieldMs: 1, minYieldMs: 1000 }, /defaultYieldMs=1 outside \[minYieldMs=1000, maxYieldMs=600000\]/],
       [{ minWaitMs: 500, maxWaitMs: 100 }, /minWaitMs=500 > maxWaitMs=100/],
-      [{ defaultWaitMs: 1 }, /defaultWaitMs=1 outside \[minWaitMs=250, maxWaitMs=600000\]/],
+      [{ defaultWaitMs: 1 }, /defaultWaitMs=1 outside \[minWaitMs=20000, maxWaitMs=600000\]/],
       [{ pollIntervalMs: 900, maxWaitMs: 100 }, /pollIntervalMs=900 > maxWaitMs=100/]
     ];
     for (const [value, pattern] of cases) {
@@ -278,7 +280,7 @@ test('降级态（回调三形＋降级基线）：基线等值放行、不同�
   const legal = callback({ ...baseline, defaultWaitMs: 30000 });
   assert.equal(legal.defaultWaitMs, 30000, '不同合法值照常放行');
 
-  // ④ 键集不同（多键/少键）不算基线等值——深度相等按 17 键全集判。
+  // ④ 键集不同（多键/少键）不算基线等值——深度相等按 20 键全集判。
   assert.throws(() => callback({ ...baseline, extra: 1 }), /cross-field violation/,
     '多出未知键不按基线等值放行');
 
@@ -319,6 +321,137 @@ test('降级态切换：setConfigValidationDegraded 置未武装；setConfigVali
     assert.equal(isConfigValidationArmed(), true, '合法修复后重新武装');
     assert.throws(() => Config({ settings: { defaultWaitMs: 1 } }), /cross-field violation: defaultWaitMs=1/,
       '清基线后原样重存不再放行（武装态对一切非法输入拒绝）');
+  } finally {
+    setConfigValidationArmed(false);
+  }
+});
+
+test('P1 boundPresets 缺席＝两默认；输出侧防御性复制＋冻结（PRESET-BIND-01，需求 9.4.3）', () => {
+  setConfigValidationArmed(false);
+  const c = resolveConfig({ toolName: 'async_run' });
+  assert.deepEqual(c.boundPresets, ['dsh-async', 'dsh-async-create'], '缺席键解析为两默认（需求默认）');
+  assert.deepEqual(c.boundPresets, DEFAULT_BOUND_PRESETS, '与 DEFAULT_BOUND_PRESETS 同值（单一来源）');
+  assert.notEqual(c.boundPresets, DEFAULT_BOUND_PRESETS,
+    '输出侧是防御性副本——不共享 schema 默认常量的引用（.default(数组) 的引用语义未核，复制后任何引用语义下行为一致）');
+  assert.ok(Object.isFrozen(c.boundPresets), '名单随生效配置整体冻结（消费者不可经引用改写生效值）');
+  assert.ok(Object.isFrozen(DEFAULT_BOUND_PRESETS), '默认常量自身冻结（不被共享改写）');
+});
+
+test('P2 boundPresets 显式空数组合法保留——与 allowedAgentPresets 空数组被拒形成对照（需求 9.4.3）', () => {
+  setConfigValidationArmed(false);
+  const c = resolveConfig({ settings: { boundPresets: [] } });
+  assert.deepEqual(c.boundPresets, [], '显式 [] 是在场值、原样保留（空数组合法＝解除全部绑定）');
+  // 对照：根层的 allowedAgentPresets 声明 .min(1)——显式空数组在 schema 层即拒。
+  assert.throws(() => Config({ allowedAgentPresets: [] }), /array/i,
+    '同名字段的对照锚：allowedAgentPresets 显式空数组被 schema 拒（两者方向相反、并存不冲突）');
+});
+
+test('P3 boundPresets 重复 ID：武装回调与 resolveConfig 同文拒绝（PRESET-BIND-01）', () => {
+  setConfigValidationArmed(true);
+  try {
+    assert.throws(
+      () => Config({ settings: { boundPresets: ['rwkv', 'rwkv'] } }),
+      (error) => /type violation: boundPresets must be an array of unique non-empty preset ids/.test(error.message)
+        && JSON.stringify(['rwkv', 'rwkv']).length > 0 && error.message.includes(JSON.stringify(['rwkv', 'rwkv'])),
+      '武装回调拒绝重复 ID 且原因含 unique non-empty preset ids 与原值'
+    );
+    assert.throws(
+      () => resolveConfig({ settings: { boundPresets: ['rwkv', 'rwkv'] } }),
+      /type violation: boundPresets must be an array of unique non-empty preset ids, got \["rwkv","rwkv"\]/,
+      'resolveConfig 运行侧第二道防线同文拒绝'
+    );
+  } finally {
+    setConfigValidationArmed(false);
+  }
+});
+
+test('P4 boundPresets 损坏持久值：双层拒绝；降级基线内等值重放放行（数组深比较，修复入口不死）', () => {
+  // 非数组／含空串／含非串：武装回调与 resolveConfig 双层拒绝。
+  setConfigValidationArmed(true);
+  try {
+    for (const bad of ['oops', ['a', ''], ['a', 3], { 0: 'a' }]) {
+      assert.throws(() => Config({ settings: { boundPresets: bad } }),
+        /type violation: boundPresets must be an array of unique non-empty preset ids/,
+        `武装回调拒绝损坏形态 ${JSON.stringify(bad)}`);
+      assert.throws(() => resolveConfig({ settings: { boundPresets: bad } }),
+        /type violation: boundPresets must be an array of unique non-empty preset ids/,
+        `resolveConfig 拒绝损坏形态 ${JSON.stringify(bad)}`);
+    }
+  } finally {
+    setConfigValidationArmed(false);
+  }
+  // 降级路径：损坏持久值活着走到降级基线（resolveSettingsValue 不自检）；
+  // loader 等值重放给回调**内容相等的新数组实例**——模板的数组深比较放行
+  //（若模板仍是严格 ===，此断言红：修复入口死）。
+  const baseline = resolveSettingsValue({ settings: { boundPresets: ['a', 'a'] } });
+  assert.deepEqual(baseline.boundPresets, ['a', 'a'], '降级基线携带损坏原值（any 透传，不改写）');
+  const callback = degradedSettingsCallback(baseline);
+  const replay = { ...baseline, boundPresets: ['a', 'a'] };
+  assert.notEqual(replay.boundPresets, baseline.boundPresets, '前置：重放是新数组实例（引用不等、内容相等）');
+  assert.equal(callback(replay), replay, '内容相等的数组重放按基线放行（深比较命中）');
+  // 原始值键分流：非数组键仍走 ===（对内容相等的原始值重放照常放行）。
+  const primBaseline = resolveSettingsValue({ settings: { defaultWaitMs: 1 } });
+  const primCallback = degradedSettingsCallback(primBaseline);
+  assert.equal(primCallback({ ...primBaseline }).defaultWaitMs, 1, '原始值键的等值重放不受数组分支影响');
+  assert.throws(() => callback({ ...baseline, boundPresets: ['b', 'b'] }),
+    /type violation: boundPresets must be an array of unique non-empty preset ids/,
+    '基线外的新非法名单照常拒绝（降级期间不放行新非法值落盘）');
+});
+
+test('P5 boundPresets 升级保留：旧配置无键→两默认；合法显式值原样保留（PRESET-BIND-01 迁移语义）', () => {
+  setConfigValidationArmed(false);
+  // 引入 boundPresets 前的旧配置缺少该键，解析时采用默认两预设。
+  const upgraded = resolveConfig({ settings: { defaultWaitMs: 40000 } });
+  assert.deepEqual(upgraded.boundPresets, ['dsh-async', 'dsh-async-create'], '无键旧配置→默认两预设');
+  assert.equal(upgraded.defaultWaitMs, 40000, '其余字段不受影响');
+  // 带合法显式值的配置原样保留（不因升级改写用户名单）。
+  const kept = resolveConfig({ settings: { boundPresets: ['rwkv'] } });
+  assert.deepEqual(kept.boundPresets, ['rwkv'], '合法显式名单原样保留');
+  assert.ok(Object.isFrozen(kept.boundPresets), '显式名单同样防御性复制＋冻结');
+});
+
+test('P6 三侧同值对账：武装／降级（非基线）／resolveConfig 对 boundPresets 非法值同判同文案（PRESET-BIND-01）', () => {
+  // 判据三处源码无共享路径（自包含约束），单侧漂移只能靠同值对账红出来。
+  // 基线用全默认合法值：只让 boundPresets 变化，跨字段判据不抢跑。
+  const cases = [
+    { boundPresets: 'oops' },
+    { boundPresets: ['a', ''] },
+    { boundPresets: ['a', 'a'] },
+    { boundPresets: 42 },
+    { boundPresets: [] } // 合法对照：三侧都放行（resolveConfig 保留 []）
+  ];
+  const baseline = resolveSettingsValue({});
+  const degraded = degradedSettingsCallback(baseline);
+  setConfigValidationArmed(true);
+  try {
+    for (const value of cases) {
+      const full = { ...baseline, ...value };
+      const expected = Array.isArray(value.boundPresets) && value.boundPresets.length === 0;
+      let armedRejected = false;
+      let degradedRejected = false;
+      let runtimeRejected = false;
+      try { Config({ settings: full }); } catch { armedRejected = true; }
+      try { degraded(full); } catch { degradedRejected = true; }
+      try { resolveConfig({ settings: full }); } catch { runtimeRejected = true; }
+      assert.equal(armedRejected, !expected, `武装侧判定：${JSON.stringify(value.boundPresets)}`);
+      assert.equal(degradedRejected, !expected, `降级侧判定：${JSON.stringify(value.boundPresets)}`);
+      assert.equal(runtimeRejected, !expected, `resolveConfig 侧判定：${JSON.stringify(value.boundPresets)}`);
+      if (!expected) {
+        // 拒绝文案逐字同（对账用例含数组键——覆盖深比较与原始值 === 的分流）。
+        const capture = (invoke) => {
+          try { invoke(); } catch (error) { return String(error.message); }
+          return '(not thrown)';
+        };
+        const armedMessage = capture(() => Config({ settings: full }));
+        const degradedMessage = capture(() => degraded(full));
+        const runtimeMessage = capture(() => resolveConfig({ settings: full }));
+        assert.ok(armedMessage.includes('unique non-empty preset ids'), `武装文案含判据短语：${armedMessage}`);
+        assert.ok(degradedMessage.includes('unique non-empty preset ids'), `降级文案含判据短语：${degradedMessage}`);
+        assert.ok(runtimeMessage.includes('unique non-empty preset ids'), `运行侧文案含判据短语：${runtimeMessage}`);
+        assert.equal(armedMessage, degradedMessage, '武装与降级文案逐字一致');
+        assert.equal(armedMessage, runtimeMessage, '武装与运行侧文案逐字一致');
+      }
+    }
   } finally {
     setConfigValidationArmed(false);
   }
@@ -382,7 +515,7 @@ test('两形同值对账：武装与降级基线（非基线值）对同一组�
   setConfigValidationArmed(true);
   try {
     for (const value of cases) {
-      // 两形必须吃同一份输入：先在容忍形下把用例解析成完整 17 键值（与武装
+      // 两形必须吃同一份输入：先在容忍形下把用例解析成完整 19 键值（与武装
       // 形经 Config 的确定性解析给回调的输入逐键相同），再分别投给两形——
       // 否则默认值补齐差异会混进消息聚合，对账就不是同值对账。
       const resolved = resolveSettingsValue({ settings: { ...value } });
@@ -567,7 +700,7 @@ test('resolveWait：wait_ms 必填，缺失必须报错而不是静默取默认�
   const c = resolveConfig({ toolName: 'async_run' });
   assert.throws(() => resolveWait(undefined, c), /required and bounded/);
   assert.throws(() => resolveWait(null, c), /required and bounded/);
-  assert.equal(resolveWait(1000, c), 1000);
+  assert.equal(resolveWait(1000, c), c.minWaitMs, '低于下界抬起（出厂下限 20000，WAIT-DEFAULT-01）');
   assert.equal(resolveWait(1, c), c.minWaitMs, '低于下界抬起');
   assert.equal(resolveWait(9e9, c), c.maxWaitMs, '高于上界压下 —— 调用者不能超过我们的上限');
 });
@@ -593,7 +726,7 @@ test('resolveYield：缺省取默认值，超出范围被夹紧', () => {
   assert.equal(resolveYield(1, c), c.minYieldMs);
 });
 
-test('Config schema 暴露 toolName 且只接受登记的全部工具名（六个）', () => {
+test('Config schema 暴露 toolName 且只接受登记的全部工具名（五个）', () => {
   setConfigValidationArmed(false);
   // 遍历 `TOOL_NAMES` 而**不是手抄五个名字**：手抄清单在新增工具名时跟不上，
   // "从登记表里删掉一个工具名"这类变异就**抓不住**（手抄清单里那个名字照样能过 `Config()`）。
@@ -602,9 +735,9 @@ test('Config schema 暴露 toolName 且只接受登记的全部工具名（六�
   for (const toolName of TOOL_NAMES) {
     assert.equal(Config({ toolName }).toolName, toolName);
   }
-  assert.equal(TOOL_NAMES.length, 6,
+  assert.equal(TOOL_NAMES.length, 5,
     '工具名清单变了：同步这条断言、README 的取值列表与预设补丁的行数');
-  assert.throws(() => Config({ toolName: 'nope' }), /async_run.*async_wait_job.*async_wait_agent.*async_agent/s, '错误文案必须列出可选值，便于排查');
+  assert.throws(() => Config({ toolName: 'nope' }), /async_run.*async_wait.*async_agent/s, '错误文案必须列出可选值，便于排查');
 });
 
 test('Config 根接受委托行级键：agentOptions／agentPreset／allowedAgentPresets（§2.3.1，非 volatile）', () => {
@@ -727,7 +860,7 @@ test('toolName 缺省 = 宿主角色：不得抛错，也不得回填默认值�
   assert.equal(empty.toolName, undefined, '缺省 toolName 必须保持缺省，不得回填默认值');
   assert.equal('toolName' in empty, false, '结果里干脆不该有这个键（宿主角色的行没有工具身份）');
   // 反向：显式给了就必须原样保留（证明上面那条不是"什么都吞"）。
-  assert.equal(Config({ toolName: 'async_wait_agent' }).toolName, 'async_wait_agent');
+  assert.equal(Config({ toolName: 'async_wait' }).toolName, 'async_wait');
 });
 
 test('resolveConfig：未知配置键不得进入生效配置——embedBudgetsInDescription 不被读取', () => {
@@ -758,9 +891,9 @@ after(() => {
 });
 
 const BASE_SETTINGS = {
-  defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
-  defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000, pollIntervalMs: 500,
-  maxResultChars: 30000, jobKind: 'async-command', subagentProvider: 'spawn',
+  defaultYieldMs: 20000, minYieldMs: 20000, maxYieldMs: 600000,
+  defaultWaitMs: 30000, minWaitMs: 20000, maxWaitMs: 600000, pollIntervalMs: 500,
+  maxResultChars: 12000, jobKind: 'async-command', subagentProvider: 'spawn',
   uiLang: 'auto', agentLang: 'en', silentFailureGuard: false, askTakeover: false,
   askTimeoutMs: 60000, askExtendMs: 60000, askUiSeat: 'sidebar'
 };
@@ -874,14 +1007,14 @@ test('进程内（真实链）：投影形态、写入拒绝与行身份字段�
     const view = settings.describe().find((row) => row.ns === ns);
     assert.ok(view !== undefined, 'describe 必须含本 ns（宿主行卡片在场）');
 
-    // ② form 投影：根 object 只有 settings 键；settings 为 transform、内层 17 键、无 volatile 残留。
+    // ② form 投影：根 object 只有 settings 键；settings 为 transform、内层 20 键、无 volatile 残留。
     const { default: z } = await import('@deepseek-ai/schemastery');
     const rehydrated = z(view.schema);
     const settingsNode = rehydrated.dict?.settings;
     const innerKeys = Object.keys(settingsNode?.inner?.dict ?? {}).sort();
     assert.equal(rehydrated.type, 'object', 'form 根为普通对象');
     assert.equal(settingsNode?.type, 'transform', 'settings 子树是 transform 节点');
-    assert.equal(innerKeys.length, 17, '内层 17 字段键齐');
+    assert.equal(innerKeys.length, 20, '内层 20 字段键齐');
     assert.equal(Object.keys(rehydrated.dict ?? {}).join(','), 'settings', '根只挂 settings（身份字段不进表单）');
     const volatileResidue = [];
     const walkNode = (node, path) => {
@@ -893,10 +1026,10 @@ test('进程内（真实链）：投影形态、写入拒绝与行身份字段�
     walkNode(rehydrated, '$');
     assert.deepEqual(volatileResidue, [], 'form 无 volatile 残留');
 
-    // ③ 值投影：settings 键下 17 字段、无身份键；客户端 decode 近似可校验。
+    // ③ 值投影：settings 键下 20 字段、无身份键；客户端 decode 近似可校验。
     const valueKeys = Object.keys(view.value ?? {});
     assert.deepEqual(valueKeys, ['settings'], '值投影只有 settings 一键');
-    assert.equal(Object.keys(view.value?.settings ?? {}).length, 17, 'settings 下 17 字段齐');
+    assert.equal(Object.keys(view.value?.settings ?? {}).length, 20, 'settings 下 20 字段齐');
     assert.equal('toolName' in (view.value ?? {}), false, '值投影不带身份键');
     const decode = await clientValidate(view.schema, view.value);
     assert.equal(decode.ok, true, `客户端 decode 近似必须通过：${decode.message ?? ''}`);
@@ -905,7 +1038,7 @@ test('进程内（真实链）：投影形态、写入拒绝与行身份字段�
     const before = existsSync(settings.documentPath) ? readFileSync(settings.documentPath, 'utf8') : null;
     await assert.rejects(
       () => settings.update(ns, { settings: { defaultWaitMs: 1 } }),
-      (error) => /cross-field violation/.test(error.message) && /defaultWaitMs=1/.test(error.message) && /minWaitMs=250/.test(error.message),
+      (error) => /cross-field violation/.test(error.message) && /defaultWaitMs=1/.test(error.message) && /minWaitMs=20000/.test(error.message),
       '武装态非法保存必须被拒且原因双侧字段名齐备'
     );
     const after = existsSync(settings.documentPath) ? readFileSync(settings.documentPath, 'utf8') : null;

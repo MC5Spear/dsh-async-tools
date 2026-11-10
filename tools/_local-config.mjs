@@ -19,7 +19,24 @@
  *    两个例外：`siblingBundles` 以文件数组为准（含空数组 `[]`＝只断言本包自己），
  *    `DSAT_SIBLING_BUNDLES` 仅当文件未提供该字段时作为回退；`evidenceDir` /
  *    `workspaceDir` / `tmpDir` 与普通字段同规则（env→文件→派生缺省），不是固定值。
+ *    `credentialOriginMap`（合法跨源的显式映射）也是数组字段：环境变量
+ *    `DSAT_CREDENTIAL_ORIGIN_MAP`（JSON 数组文本）优先、文件值备用。
  * 3. 两个来源都没有相关字段时留 `undefined`，调用方打印理由并跳过相应本机判据。
+ *
+ * ## 凭据与目标的绑定（`instanceCredentials` 的合同）
+ *
+ * 令牌文件里的 URL 自报来源（origin）。取令牌时**必须**核对它与 `instanceUrl` 的
+ * 协议／主机／端口对应关系，防止部分环境变量覆盖把 A 实例的凭据发给 B 实例：
+ *
+ * - 默认要求两者 origin 一致；不一致按**错误**拒绝（不是警告），错误里写明两者
+ *   各自的取值与来源（复用 `notes` 的来源登记）。
+ * - SSH 隧道／反向代理等合法跨源走**显式、可审计的映射**（`credentialOriginMap`，
+ *   形如 `[{ tokenOrigin, instanceOrigin }]`）：映射两端同时命中才放行，不能只比
+ *   端口、不能 host 不同一律放过。
+ * - 非 loopback 的 `http:` 目标**一律拒绝**（同源与显式映射都不放行；本实现不提供
+ *   `allowInsecure` 之类的例外）——明文远程会让传输路径上的任何观察者读到令牌。
+ *   loopback（`127.*`／`localhost`／`::1`）的 http 与一切 https 照常按上述规则放行。
+ * - 探针构造带令牌的请求 URL 一律用 `tokenEntryUrl`（`URLSearchParams` 统一编码）。
  *
  * ## 缺席与损坏是两件事（这条分开是本模块的关键设计）
  *
@@ -82,6 +99,118 @@ export function localPlanePresent(root = MODULE_ROOT) {
 }
 
 /**
+ * 把来源文本解析成 http(s) URL（凭据绑定的公共入口）。
+ *
+ * @param {string} text - 来源文本（instanceUrl 或令牌文件里的 URL）。
+ * @param {string} what - 报错时指名这份文本是什么。
+ * @returns {URL} 已解析并核过协议的 URL。
+ * @throws {Error} 文本不可解析，或协议不是 http:/https:。
+ */
+function parseHttpUrl(text, what) {
+  let parsed;
+  try {
+    parsed = new URL(text);
+  } catch {
+    throw new Error(`${what} 不是可解析的 URL：${text}`);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`${what} 的协议必须是 http: 或 https:（实得 ${parsed.protocol}）：${text}`);
+  }
+  return parsed;
+}
+
+/** 主机名是否 loopback：`127.*`、`localhost`、`::1`（明文 http 的唯一放行范围；
+ * IPv6 主机名按 WHATWG 序列化带方括号，比较前剥掉）。 */
+function isLoopbackHostname(hostname) {
+  const bare = hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
+  return bare === 'localhost' || bare === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(bare);
+}
+
+/**
+ * 从 `notes` 里找某字段的来源说明（loadLocalConfig 已登记「xx 取自环境变量 YY」）。
+ *
+ * @param {Awaited<ReturnType<typeof loadLocalConfig>>} config - 已装载的配置。
+ * @param {string} field - 字段名（如 `instanceUrl`）。
+ * @returns {string} 来源说明；notes 没登记时说明来自配置文件或调用方直传。
+ */
+function sourceNoteOf(config, field) {
+  const hit = (config.notes ?? []).find((note) => note.startsWith(`${field} 取自环境变量`));
+  return hit ?? `${field} 来自本机配置文件（或调用方直接传入）`;
+}
+
+/**
+ * 归一化一条显式映射：两端必须是可解析的 http(s) origin，按 `origin` 精确比较。
+ *
+ * @param {unknown} entry - 映射条目。
+ * @param {string} where - 报错时指名来源（文件字段或环境变量）。
+ * @returns {{ tokenOrigin: string, instanceOrigin: string }} 归一化条目。
+ * @throws {LocalConfigInvalid} 条目形状不对。
+ */
+function normalizeOriginMapEntry(entry, where) {
+  if (typeof entry !== 'object' || entry === null) {
+    throw new LocalConfigInvalid(`${where} 的条目必须是 { tokenOrigin, instanceOrigin } 对象`);
+  }
+  const { tokenOrigin, instanceOrigin } = entry;
+  if (typeof tokenOrigin !== 'string' || typeof instanceOrigin !== 'string'
+    || tokenOrigin.length === 0 || instanceOrigin.length === 0) {
+    throw new LocalConfigInvalid(`${where} 的映射条目缺少非空 tokenOrigin／instanceOrigin：${JSON.stringify(entry)}`);
+  }
+  return {
+    tokenOrigin: parseHttpUrl(tokenOrigin, `${where} 的 tokenOrigin`).origin,
+    instanceOrigin: parseHttpUrl(instanceOrigin, `${where} 的 instanceOrigin`).origin
+  };
+}
+
+/**
+ * 解析 credentialOriginMap（合法跨源的显式映射）：环境变量 JSON 文本优先、文件数组备用。
+ *
+ * @param {Record<string, unknown>} fromFile - 文件值。
+ * @param {Record<string, string | undefined>} env - 环境。
+ * @param {string[]} notes - 来源登记（就地追加）。
+ * @returns {{ tokenOrigin: string, instanceOrigin: string }[]} 归一化映射（可为空数组）。
+ * @throws {LocalConfigInvalid} 提供了该字段但形状不对（配置坏了按红处理）。
+ */
+function resolveCredentialOriginMap(fromFile, env, notes) {
+  const envRaw = env.DSAT_CREDENTIAL_ORIGIN_MAP;
+  if (typeof envRaw === 'string' && envRaw.length > 0) {
+    let parsed;
+    try {
+      parsed = JSON.parse(envRaw);
+    } catch (error) {
+      throw new LocalConfigInvalid(`环境变量 DSAT_CREDENTIAL_ORIGIN_MAP 不是合法 JSON：${String(error instanceof Error ? error.message : error)}`);
+    }
+    if (!Array.isArray(parsed)) {
+      throw new LocalConfigInvalid('环境变量 DSAT_CREDENTIAL_ORIGIN_MAP 必须是 JSON 数组（形如 [{"tokenOrigin":"…","instanceOrigin":"…"}]）');
+    }
+    const entries = parsed.map((entry, i) => normalizeOriginMapEntry(entry, `环境变量 DSAT_CREDENTIAL_ORIGIN_MAP 第 ${String(i + 1)} 条`));
+    notes.push(`credentialOriginMap 取自环境变量 DSAT_CREDENTIAL_ORIGIN_MAP（${String(entries.length)} 条）`);
+    return entries;
+  }
+  if (fromFile.credentialOriginMap !== undefined) {
+    if (!Array.isArray(fromFile.credentialOriginMap)) {
+      throw new LocalConfigInvalid(`${CONFIG_REL} 的 credentialOriginMap 必须是数组（形如 [{ tokenOrigin, instanceOrigin }]）`);
+    }
+    const entries = fromFile.credentialOriginMap.map((entry, i) => normalizeOriginMapEntry(entry, `${CONFIG_REL} 的 credentialOriginMap 第 ${String(i + 1)} 条`));
+    notes.push(`credentialOriginMap 取自配置文件（${String(entries.length)} 条）`);
+    return entries;
+  }
+  return [];
+}
+
+/**
+ * 在显式映射里找「令牌来源 → 实例目标」两端同时命中的条目。
+ *
+ * @param {Awaited<ReturnType<typeof loadLocalConfig>>} config - 已装载的配置。
+ * @param {string} tokenOrigin - 令牌 URL 的 origin。
+ * @param {string} instanceOrigin - instanceUrl 的 origin。
+ * @returns {{ tokenOrigin: string, instanceOrigin: string } | null} 命中的条目；没有为 null。
+ */
+function findOriginMapEntry(config, tokenOrigin, instanceOrigin) {
+  const map = Array.isArray(config.credentialOriginMap) ? config.credentialOriginMap : [];
+  return map.find((entry) => entry.tokenOrigin === tokenOrigin && entry.instanceOrigin === instanceOrigin) ?? null;
+}
+
+/**
  * `hostModules` → 0.2.1 线证据树根（其下的 `@deepseek-ai` 域目录）。
  *
  * 结构性缺省只此一处：走到显式宿主源（`DSAT_HOST_MODULES` / `--host-file`）的调用方
@@ -104,6 +233,7 @@ export function treeFromHostModules(hostModules) {
  *   hostModules: string | undefined,
  *   evidenceTree: { '021': string | undefined, '020': string | undefined, '017': string | undefined, '015': string | undefined },
  *   instanceUrl: string | undefined, tokenFile: string | undefined,
+ *   credentialOriginMap: Array<{ tokenOrigin: string, instanceOrigin: string }>,
  *   instanceHome: string | undefined, serviceLog: string | undefined,
  *   junctions: Array<{ name: string, link: string, target: string, version: string }> | undefined,
  *   siblingBundles: string[],
@@ -191,6 +321,7 @@ export async function loadLocalConfig({ root = MODULE_ROOT, env = process.env } 
   const evidenceDir = pick('evidenceDir') ?? join(root, LOCAL_DIR, 'evidence');
   const workspaceDir = pick('workspaceDir') ?? root;
   const tmpDir = pick('tmpDir') ?? join(root, LOCAL_DIR, 'tmp');
+  const credentialOriginMap = resolveCredentialOriginMap(fromFile, env, notes);
   const source = envValues.hostModules === undefined && envValues.instanceUrl === undefined
     && envValues.tokenFile === undefined ? 'file' : 'both';
 
@@ -202,6 +333,7 @@ export async function loadLocalConfig({ root = MODULE_ROOT, env = process.env } 
     evidenceTree,
     instanceUrl: pick('instanceUrl'),
     tokenFile: pick('tokenFile'),
+    credentialOriginMap,
     instanceHome: pick('instanceHome'),
     serviceLog: pick('serviceLog'),
     junctions,
@@ -216,10 +348,20 @@ export async function loadLocalConfig({ root = MODULE_ROOT, env = process.env } 
 /**
  * 取验证实例的连接凭据（基址 + 令牌）。探针脚本用它代替"从自身位置推算服务家目录"。
  *
+ * ## 凭据与目标的绑定（防「A 实例的令牌发给 B 实例」）
+ *
+ * 令牌文件里的 URL 自报来源（origin）；本函数取令牌时**必须**核对它与
+ * `instanceUrl` 的协议／主机／端口对应关系（合同详见本模块头注）：
+ *
+ * - 两者 origin 一致 → 放行；
+ * - 命中 `credentialOriginMap` 显式映射（两端同时命中）→ 放行（合法隧道／反向代理）；
+ * - 其余不一致 → **按错误拒绝**（不是警告），错误里写明两者各自的取值与来源；
+ * - 非 loopback 的 `http:` 目标 → 一律拒绝（同源与映射都不放行，无明文远程例外）。
+ *
  * @param {Awaited<ReturnType<typeof loadLocalConfig>>} config - 已装载的配置。
  * @returns {{ base: string, token: string, tokenFile: string }} 基址（形如 `http://127.0.0.1:<port>`）、
  *   令牌、令牌文件路径。
- * @throws {Error} `instanceUrl` / `tokenFile` 缺一，或令牌文件读不出令牌。
+ * @throws {Error} `instanceUrl` / `tokenFile` 缺一、令牌读不出，或来源绑定不成立。
  */
 export function instanceCredentials(config) {
   if (config.instanceUrl === undefined || config.tokenFile === undefined) {
@@ -228,11 +370,56 @@ export function instanceCredentials(config) {
   }
   const raw = readFileSync(config.tokenFile, 'utf8').trim();
   const start = raw.indexOf('http');
-  const token = new URL(start === -1 ? raw : raw.slice(start)).searchParams.get('token');
+  const tokenUrl = parseHttpUrl(start === -1 ? raw : raw.slice(start), `令牌文件里的 URL（${config.tokenFile}）`);
+  const token = tokenUrl.searchParams.get('token');
   if (token === null || token.length === 0) {
     throw new Error(`令牌文件里没有 token 参数：${config.tokenFile}`);
   }
+  const instanceUrl = parseHttpUrl(config.instanceUrl, 'instanceUrl');
+  const tokenOrigin = tokenUrl.origin;
+  const instanceOrigin = instanceUrl.origin;
+  const instanceSource = sourceNoteOf(config, 'instanceUrl');
+
+  // 明文远程不发送令牌——同源与显式映射都不放行；本实现不提供 allowInsecure 例外。
+  if (instanceUrl.protocol === 'http:' && !isLoopbackHostname(instanceUrl.hostname)) {
+    throw new Error([
+      'instanceCredentials 拒绝：目标是非 loopback 的明文 http，不发送令牌。',
+      `  目标：${config.instanceUrl}（${instanceSource}）`,
+      '明文远程会让传输路径上的任何观察者读到令牌，显式映射也不为明文远程放行。',
+      '请改用 https 目标，或使用 loopback 地址（127.*／localhost／::1）。'
+    ].join('\n'));
+  }
+
+  const mapped = findOriginMapEntry(config, tokenOrigin, instanceOrigin);
+  if (instanceOrigin !== tokenOrigin && mapped === null) {
+    throw new Error([
+      'instanceCredentials 拒绝：令牌来源与目标实例不一致。',
+      `  令牌 URL origin：${tokenOrigin}（来自令牌文件 ${config.tokenFile}；${sourceNoteOf(config, 'tokenFile')}）`,
+      `  instanceUrl origin：${instanceOrigin}（${instanceSource}）`,
+      '只覆盖一项环境变量（例如只设 DSAT_INSTANCE_URL）就会造成这种错配——凭据可能发给另一个实例。',
+      '同源或命中显式映射才放行。SSH 隧道／反向代理等合法跨源场景，请在 .local/config.mjs 的',
+      'credentialOriginMap（或环境变量 DSAT_CREDENTIAL_ORIGIN_MAP，JSON 数组）登记',
+      '{ "tokenOrigin": "…", "instanceOrigin": "…" }，两端同时命中才生效。'
+    ].join('\n'));
+  }
   return { base: config.instanceUrl, token, tokenFile: config.tokenFile };
+}
+
+/**
+ * 构造带令牌的实例入口 URL——探针首跳与页面 URL 的**统一编码出口**。
+ *
+ * 令牌从令牌 URL 解析出来后已是解码文本；再拼回 URL 必须重新编码。直接字符串拼接
+ * 会在令牌含 `&`／`=`／`+`／空格等字符时悄悄变形，所以一律经 `URLSearchParams`
+ * 编码，不再各探针自拼 `?token=`。
+ *
+ * @param {string} base - 实例基址（instanceCredentials 的 `base`）。
+ * @param {string} token - 令牌（解码文本）。
+ * @returns {string} 形如 `${base}/?token=<已编码>` 的完整 URL。
+ */
+export function tokenEntryUrl(base, token) {
+  const url = new URL(base);
+  url.searchParams.set('token', token);
+  return url.href;
 }
 
 /**
@@ -255,6 +442,9 @@ export function describeConfig(config) {
     line("evidenceTree015", config.evidenceTree['015']),
     line('instanceUrl', config.instanceUrl),
     line('tokenFile', config.tokenFile),
+    line('credentialOriginMap', (config.credentialOriginMap ?? []).length === 0
+      ? '（无显式映射）'
+      : `${String(config.credentialOriginMap.length)} 条（${config.credentialOriginMap.map((e) => `${e.tokenOrigin}→${e.instanceOrigin}`).join('、')}）`),
     line('instanceHome', config.instanceHome),
     line('serviceLog', config.serviceLog),
     line('evidenceDir', config.evidenceDir),

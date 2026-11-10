@@ -4,8 +4,11 @@
  * 两条最关键的断言：
  * - **执行即注册**：注册先于进程启动，短命令也注册——预算内结算的
  *   等待是活 waiter（awaited），宿主不补发完成通知；
- * - **首次等待＝五信号竞速**：结算/插话/abort/迟到作答/预算，任何
- *   信号只结束等待不终止命令；呈现层 label=命令原文、progress=描述。
+ * - **首次等待＝四信号竞速**：结算/插话/abort/预算，任何
+ *   信号只结束等待不终止命令；迟到作答与非目标消息不提前结束首次等待
+ *   （9.3.1 收窄后已移出竞速，正文按 user/cancelled/budget 三档交回）；
+ *   呈现层 label 恒为 description（ECHO-WORKFLOW-01
+ *   与回显开关解耦）、progress=描述。
  *
  * 后半部分是缺陷防御用例。
  *
@@ -25,8 +28,12 @@ import { resolveConfig } from '../lib/config.js';
 
 // 宿主链动态守卫（lib/jobs.js → dsh-tools/ask-takeover）：离线形态锚缺席时
 // 本文件仍可加载，全部用例自跳过并打印理由（ci.yml offline 作业的契约）。
+// lib/delivery.js 同属宿主链（静态依赖 @deepseek-ai/dsh-llm）——账本经同一
+// 动态守卫装载（判据 C：测试文件不得静态闭包触达宿主链）。
 const jobsModule = await loadOfflineSafe('../lib/jobs.js');
 const { createRunTool: buildRunTool } = jobsModule ?? {};
+const deliveryModule = await loadOfflineSafe('../lib/delivery.js');
+const { ledger } = deliveryModule ?? {};
 const hostTest = await hostTestFor('../lib/jobs.js');
 
 /**
@@ -78,7 +85,7 @@ hostTest('async_run：超出首次等待 → 返回作业编号，命令不被�
 
   assert.equal(result.status, 'running');
   assert.match(result.job_id, /^async-command-/);
-  assert.match(result.note, /async_wait_job\(job_id="/);
+  assert.match(result.note, /async_wait\(targets=\[\{kind:"job", id:"/);
   assert.match(result.note, /was NOT terminated/, '首次等待到期不杀命令（R22 英文口径）');
   assert.match(result.note, /is still running/, 'note 明说命令仍在运行（防误判终止后重跑）');
   assert.equal(isKilled(), false, '让出不得杀死命令 —— 这是与内置 pwsh 的根本区别');
@@ -86,7 +93,7 @@ hostTest('async_run：超出首次等待 → 返回作业编号，命令不被�
   assert.equal(f.startedSpecs.length, 1, '不得重复执行进程');
 });
 
-hostTest('async_run（R32/R33）：注册字段——label=命令原文、progress=描述、owner=SessionId、准入先于进程、execute 带作业私有 signal', async () => {
+hostTest('async_run（R32/R33）：注册字段——label=description（恒定，与回显开关解耦）、progress=描述、owner=SessionId、准入先于进程、execute 带作业私有 signal', async () => {
   const f = fakeCtx();
   immediateTimers(f.ctx);
   const order = [];
@@ -111,8 +118,10 @@ hostTest('async_run（R32/R33）：注册字段——label=命令原文、progre
 
   const spec = f.jobsFake.registeredSpecs[0];
   assert.equal(spec.kind, config.jobKind);
-  // label 是命令原文（不截断、不换用 description； pwsh 先例）。
-  assert.equal(spec.label, 'build --flag with spaces');
+  // label（需求 9.3.4 fullCommandEcho 默认关；ECHO-WORKFLOW-01 解耦）：label
+  // 恒为 description——注册名称与回显开关两态解耦，命令原文只经批次类交付
+  // 载体附上，不经任务列表复制；progress 行同写 description。
+  assert.equal(spec.label, 'long build', 'label 恒取 description（与回显开关解耦）');
   // [0.2.1-rc.2]：owner 是 SessionId（agent.id）。
   assert.equal(spec.owner, exec.agent.id, '作业归属发起 agent 的 SessionId');
   // 通知截断口径：outputLimitBytes 必须还在（字节量纲）。
@@ -140,7 +149,7 @@ hostTest('async_run（R32/R33）：注册字段——label=命令原文、progre
     '正常退出的 detail 不得带退出码标记（前台同口径）');
   const chunks = f.jobsFake.chunksOf(result.job_id);
   assert.ok(chunks.some((chunk) => chunk.text === 'background output' && chunk.channel === 'stdout'),
-    'observed.stdout 的内容必须进环形缓冲（async_wait_job 从这里取输出）');
+    'observed.stdout 的内容必须进环形缓冲（async_wait 从这里取输出）');
 });
 
 hostTest('async_run（R32·prep 窗口）：拉式源在 proc 到位前被泵 → 空增量、游标不动、不误判丢失', async () => {
@@ -413,6 +422,44 @@ function lossyProc({ spillPath, autoResolve = true } = {}) {
   return { proc, settle };
 }
 
+/**
+ * 自造「未丢但宿主报了落盘路径」的句柄：rc.5 的 `OutputCollector` 中 spillPath
+ * 与 lossy 是独立条件（首溢出即开文件、消费式读取跟紧则本侧永不 lossy），
+ * 「有路径未置 lossy」是可达形态——留存线索不能按 lossy 筛选（RA-SPILL-PATH）。
+ * @param {object} [options] - `{ spillPath, autoResolve }`。
+ * @returns {{ proc: object, settle: Function }} 句柄与结算探针。
+ */
+function pathNoLossyProc({ spillPath = 'C:\\spill\\stdout.txt', autoResolve = true } = {}) {
+  let reads = 0;
+  let settled = false;
+  let resolveDone;
+  const done = new Promise((resolve) => { resolveDone = resolve; });
+  const proc = {
+    status: 'running',
+    exitCode: 0,
+    signal: null,
+    done,
+    observed: {
+      stdout: { readFrom: () => ({ text: '', nextOffset: 0, lossy: false }) },
+      stderr: { readFrom: () => ({ text: '', nextOffset: 0, lossy: false }) }
+    },
+    readOutput: () => {
+      if (!settled) return { delta: '', lossy: false };
+      reads += 1;
+      if (reads > 1) return { delta: '', lossy: false };
+      return { delta: 'full body', lossy: false, stdoutSpillPath: spillPath };
+    }
+  };
+  const settle = (override) => {
+    settled = true;
+    proc.status = 'completed';
+    if (override !== undefined) Object.assign(proc, override);
+    resolveDone(proc);
+  };
+  if (autoResolve) queueMicrotask(() => settle());
+  return { proc, settle };
+}
+
 hostTest('async_run：请求必须带 shellEnv.collect(exec) 的 dshEnv', async () => {
   const f = fakeCtx();
   const { proc } = fakeProc({ text: 'ok' });
@@ -431,7 +478,7 @@ hostTest('async_run：请求必须带 shellEnv.collect(exec) 的 dshEnv', async 
   );
 });
 
-hostTest('async_run（R32-d）：插话与结算同拍 → 完成优先，返回结算结果而非句柄', async () => {
+hostTest('async_run（R32-d）：插话与结算同一时刻 → 完成优先，返回结算结果而非句柄', async () => {
   // 让插话先赢竞速、结算紧随其后——撤销后的复查必须承接，返回结算结果
   // （防模型重复等待；与 wait 工具同口径）。次序：emit 同步 resolve 插话成员 →
   // 注册表与进程翻终态 → 竞速由插话定局 → 复查读到终态 → 走结算路径。
@@ -547,10 +594,10 @@ hostTest('async_run：lossy 且有落点 → note 与作业结局都给出 spill
   const result = await createRunTool(f.ctx, config).execute({ command: 'x', description: 'x' }, exec);
 
   assert.equal(result.status, 'completed');
-  assert.match(result.note, /full output is on disk/);
+  assert.match(result.note, /retained at the host-reported path/);
   assert.match(result.note, /stdout: C:\\spill\\stdout\.txt/, 'spill 路径是找回完整输出的唯一线索');
 
-  // 让出分支：作业结局里同样要带路径（async_wait_job 的终态分支把 detail 原样交给模型）。
+  // 让出分支：作业结局里同样要带路径（async_wait 的终态分支把 detail 原样交给模型）。
   const g = fakeCtx();
   immediateTimers(g.ctx);
   const second = lossyProc({ spillPath: 'C:\\spill\\stdout.txt', autoResolve: false });
@@ -562,7 +609,7 @@ hostTest('async_run：lossy 且有落点 → note 与作业结局都给出 spill
   await new Promise((r) => { setTimeout(r, 0); });
   const view = g.jobsFake.views()[0];
   assert.match(view.detail, /output partially dropped from memory/);
-  assert.match(view.detail, /full output at stdout: C:\\spill\\stdout\.txt/);
+  assert.match(view.detail, /retained at the host-reported path\(s\): stdout: C:\\spill\\stdout\.txt/);
 });
 
 hostTest('async_run：lossy 但没有落点 → 必须明说没有落点，不得让模型以为磁盘上还有一份', async () => {
@@ -574,12 +621,12 @@ hostTest('async_run：lossy 但没有落点 → 必须明说没有落点，不�
   const completed = await tool.execute({ command: 'x', description: 'x' }, exec);
   assert.equal(completed.status, 'completed');
   assert.match(completed.note, /no spill file was reported/, '没有落点必须说清楚');
-  assert.doesNotMatch(completed.note, /full output is on disk/);
+  assert.doesNotMatch(completed.note, /host-reported path/);
 
   // 而且**必须到达模型可见文本**——`value.note` 里有不等于模型看得见。
   const completedText = tool.output.render({ command: 'x' }, completed).map((part) => part.text).join('\n');
   assert.match(completedText, /no spill file was reported/, '没有落点必须出现在**模型可见文本**里');
-  assert.doesNotMatch(completedText, /full output is on disk/, '模型可见文本里也不许声称磁盘上有');
+  assert.doesNotMatch(completedText, /host-reported path/, '模型可见文本里也不许声称宿主报告过留存位置');
 
   // 让出分支（作业结局）
   const g = fakeCtx();
@@ -591,7 +638,34 @@ hostTest('async_run：lossy 但没有落点 → 必须明说没有落点，不�
   await new Promise((r) => { setTimeout(r, 0); });
   const view = g.jobsFake.views()[0];
   assert.match(view.detail, /no spill file reported/);
-  assert.doesNotMatch(view.detail, /full output at/);
+  assert.doesNotMatch(view.detail, /host-reported path/);
+});
+
+hostTest('async_run：未置 lossy 但宿主报告落盘路径 → 留存线索照给，不按 lossy 筛选（RA-SPILL-PATH）', async () => {
+  // 完成分支：note 给出落盘路径（spillDisk 对「超内存上限但已落盘」同样成立），
+  // 且不得出现「被丢弃／没有留存文件」类与事实不符的 lossy 断言。
+  const f = fakeCtx();
+  f.installShellExecute(() => Promise.resolve(pathNoLossyProc().proc));
+  const tool = createRunTool(f.ctx, config);
+  const completed = await tool.execute({ command: 'x', description: 'x' }, exec);
+  assert.equal(completed.status, 'completed');
+  assert.match(completed.note, /retained at the host-reported path\(s\): stdout: C:\\spill\\stdout\.txt/);
+  assert.doesNotMatch(completed.note, /was dropped|no spill file was reported/);
+
+  // 让出分支：作业结局 detail 里以独立一行转述（spillHintLine），且不带 lossy 括注。
+  const g = fakeCtx();
+  immediateTimers(g.ctx);
+  const later = pathNoLossyProc({ autoResolve: false });
+  g.installShellExecute(() => Promise.resolve(later.proc));
+  const yieldResult = await createRunTool(g.ctx, config)
+    .execute({ command: 'x', description: 'x', yield_ms: 5 }, exec);
+  assert.equal(yieldResult.status, 'running');
+  later.settle({ exitCode: 0 });
+  await new Promise((r) => { setTimeout(r, 0); });
+  const view = g.jobsFake.views()[0];
+  assert.match(view.detail, /the host reports spill files for this job/);
+  assert.match(view.detail, /stdout: C:\\spill\\stdout\.txt/);
+  assert.doesNotMatch(view.detail, /dropped from memory/);
 });
 
 hostTest('async_run：相对 workdir 按会话工作目录解析；无 cwd 时原样透传', async () => {
@@ -634,7 +708,7 @@ hostTest('async_run（R32-a/设计 §3.1）：无 agent 语境 → 拒绝且零�
 });
 
 hostTest('async_run：描述里写出生效的预算数字（锚②③④都接上了）', async () => {
-  const tool = createRunTool(fakeCtx().ctx, resolveConfig({ toolName: 'async_run', defaultYieldMs: 15000, maxWaitMs: 120000 }));
+  const tool = createRunTool(fakeCtx().ctx, resolveConfig({ toolName: 'async_run', defaultYieldMs: 15000, minYieldMs: 1000, maxWaitMs: 120000 }));
   assert.match(tool.description, /15000 ms/, '首次等待必须来自生效配置');
   assert.match(tool.description, /120000 ms/, '等待上限必须来自生效配置（补缺口）');
   // `async_run` 是**唯一**该看到 yield_ms 与"转后台"的工具。
@@ -842,7 +916,7 @@ hostTest('async_run（T7）：lossy + 无退出码同时出现时，完成分支
 
   assert.equal(completed.status, 'completed');
   assert.equal('exit_code' in completed, false);
-  assert.match(completed.note, /full output is on disk/, 'note 必须与"没有退出码"共存于同一个分支');
+  assert.match(completed.note, /retained at the host-reported path/, 'note 必须与"没有退出码"共存于同一个分支');
 });
 
 hostTest('async_run（T7）：校验器活性证明——`exit_code: null` 确实会被判违规', () => {
@@ -1027,7 +1101,7 @@ hostTest('R29-c（判据 5·守卫触顶）：readOutput 永不排空 → 10000 
   assert.match(JSON.stringify(result), /was dropped/, '守卫触顶必须置 drainLossy 并给模型可见标记');
 });
 
-hostTest('R29-f（判据 11·让出日志单行化）：label=命令原文（R33-a）带 CRLF/TAB → 必须转义，日志一行', async () => {
+hostTest('R29-f（判据 11·让出日志单行化）：命令原文带 CRLF/TAB → 必须转义，日志一行', async () => {
   const f = fakeCtx();
   immediateTimers(f.ctx);
   const { proc } = fakeProc({ text: 'bg', status: 'running', autoResolve: false });
@@ -1039,10 +1113,10 @@ hostTest('R29-f（判据 11·让出日志单行化）：label=命令原文（R33
   const line = f.logs
     .filter(([level]) => level === 'info')
     .map(([, message]) => message)
-    .find((message) => message.includes('label='));
+    .find((message) => message.includes('command='));
   assert.ok(line !== undefined, '让出必须记操作者日志');
   assert.doesNotMatch(line, /[\r\n]/, 'escapeLogValue 必须把 CR/LF 转成字面 \\r\\n——日志注入收成单行');
-  assert.match(line, /label=line1\\r\\nline2\\tend/, 'label= 现在是命令原文（R33-a），转义后的字面序列要在');
+  assert.match(line, /command=line1\\r\\nline2\\tend/, '命令原文（label 解耦后的操作者侧出口）转义后的字面序列要在');
 });
 
 hostTest('R29-f（判据 11·注册失败单行化）：宿主原文多行超长 → 模型侧单行 + 500 截断 + 操作者日志留全文', async () => {
@@ -1072,7 +1146,8 @@ hostTest('R29-f（判据 11·注册失败单行化）：宿主原文多行超长
 });
 
 // ---------------------------------------------------------------------------
-// 首次等待的五信号竞速：结算/插话/abort/迟到作答/预算。
+// 首次等待的三信号竞速：结算/插话/abort/预算（9.3.1 收紧：非目标消息与迟到作答
+// 不再提前结束首次等待——唤醒集合＝作业终态、user 插话、调用取消、预算到期）。
 // 预算与结算路径已有上方用例；这里补插话、迟到、abort、prep 窗口 kill 与
 // 通知计数的判据。预算路径由 yield_ms=600000 的大预算排除（fake
 // jobs.wait 的超时走全局 setTimeout，freezeTimers 只冻结 ctx.timer——它冻结
@@ -1095,7 +1170,7 @@ hostTest('async_run（R32-b·插话）：让出窗口内用户消息到达 → �
   const result = await pending;
   assert.equal(result.status, 'running', '插话 → 转后台句柄（R32-c-b），不是 interrupted（那是 wait 工具的形状）');
   assert.match(result.note, /ended early: a user message arrived/, 'note 注明因用户到达提前让出');
-  assert.match(result.note, /async_wait_job\(job_id="/, '恢复示例照带');
+  assert.match(result.note, /async_wait\(targets=\[\{kind:"job", id:"/, '恢复示例照带');
   assert.equal(isKilled(), false, '插话只结束等待，绝不终止命令');
   assert.equal(f.jobsFake.views()[0].status, 'running', '作业必须存活');
   // 竞速定局即撤销 → waiter 已摘 → 结算时不计 awaited。
@@ -1106,10 +1181,10 @@ hostTest('async_run（R32-b·插话）：让出窗口内用户消息到达 → �
   exec.agent.inbox.nextStep.splice(0);
 });
 
-hostTest('async_run（R32-b·迟到作答）：让出窗口内迟到作答到达 → 句柄 + lateArrived（与 wait 工具同键）', async () => {
+hostTest('async_run（R32-b·迟到作答）：迟到作答不提前结束首次等待（9.3.1 收紧）——正文留收件箱，作业结算才交回', async () => {
   const f = fakeCtx();
   freezeTimers(f.ctx);
-  const { proc } = fakeProc({ text: 'partial', status: 'running', autoResolve: false });
+  const { proc, settle } = fakeProc({ text: 'partial', status: 'running', autoResolve: false });
   f.installShellExecute(() => Promise.resolve(proc));
   const agent = exec.agent;
   const tool = createRunTool(f.ctx, config);
@@ -1119,12 +1194,164 @@ hostTest('async_run（R32-b·迟到作答）：让出窗口内迟到作答到达
   f.emit(LATE_ANSWER_EVENT, {
     agentId: agent.id, questionId: 'color', kind: 'answer', summary: 'Late answer for color: red'
   });
+  // 迟到作答到达后一小段：等待**不得**收敛（非目标消息不提前结束——大预算下
+  // 只有终态/插话/abort 能交回）。
+  let concluded = false;
+  pending.then(() => { concluded = true; }, () => { concluded = true; });
+  await new Promise((r) => { setTimeout(r, 10); });
+  assert.equal(concluded, false, '迟到作答不提前结束首次等待（旧形态：秒回句柄+lateArrived——已按 9.3.1 移除）');
 
+  // 作业终态才是合法交回点：结算（作业终态视图 + 进程流关闭）→ wait 成员
+  // 胜出 → 直接交付（不是句柄）。
+  const views = f.jobsFake.views();
+  f.jobsFake.settleJob(views[0].id, { status: 'completed', detail: 'exit code: 0' });
+  settle({ status: 'completed', exitCode: 0 });
   const result = await pending;
-  assert.equal(result.status, 'running');
-  assert.match(result.note, /A late answer has arrived \(Late answer for color: red\)/, 'lateArrived 键 + summary（题号在册）');
-  assert.match(result.note, /async_wait_job\(job_id="/, '句柄示例照带');
-  assert.equal(f.jobsFake.waitersOf(result.job_id), 0, '同样撤销在先：不残留 waiter');
+  assert.equal(result.status, 'completed', '结算路径直接交付（等待没有被作答提前打断）');
+  assert.ok(!/lateArrived|Late answer/i.test(result.result ?? ''),
+    '作答摘要不进返回——它留在收件箱按宿主节奏领取（§2.1.2 排队消息口径）');
+  assert.equal(f.jobsFake.waitersOf(views[0].id), 0, '结算后不残留 waiter');
+});
+
+hostTest('async_run（R32-b·非目标通知）：等待中 notice 到达不提前结束首次等待（9.3.1 表 2 行）', async () => {
+  const f = fakeCtx();
+  freezeTimers(f.ctx);
+  const { proc, settle } = fakeProc({ text: 'partial', status: 'running', autoResolve: false });
+  f.installShellExecute(() => Promise.resolve(proc));
+  const tool = createRunTool(f.ctx, config);
+
+  const pending = tool.execute({ command: 'build', description: 'long build', yield_ms: 600000 }, exec);
+  await new Promise((r) => { setTimeout(r, 5); });
+  // 等待中到达的非目标 notice（form notice、sender 非任何目标——首等无消息目标
+  // 可言，订阅层空目标过滤只放行 user 插话）：不产生唤醒。
+  f.emit('agent/inbox/inserted', inboxPayload({
+    agent: exec.agent,
+    sourceKind: 'tool-jobs',
+    form: 'notice',
+    summary: 'some other job finished',
+    senderSessionId: 'someone-else',
+    target: 'next-step'
+  }));
+  let concluded = false;
+  pending.then(() => { concluded = true; }, () => { concluded = true; });
+  await new Promise((r) => { setTimeout(r, 10); });
+  assert.equal(concluded, false, '非目标 notice 不提前结束首次等待（到期/终态/插话/abort 才交回）');
+
+  const views = f.jobsFake.views();
+  f.jobsFake.settleJob(views[0].id, { status: 'completed', detail: 'exit code: 0' });
+  settle({ status: 'completed', exitCode: 0 });
+  const result = await pending;
+  assert.equal(result.status, 'completed', '作业终态才是交回点');
+  assert.ok(!/some other job/i.test(result.result ?? ''), '通知摘要不进返回（正文留收件箱按宿主节奏领取）');
+});
+
+hostTest('async_run（R32/R33·开启向）：fullCommandEcho=true → label 仍为 description（ECHO-WORKFLOW-01 解耦）', async () => {
+  const f = fakeCtx();
+  immediateTimers(f.ctx);
+  const { proc, settle } = fakeProc({ text: 'x', status: 'running', autoResolve: false });
+  f.installShellExecute(() => Promise.resolve(proc));
+  const echoConfig = resolveConfig({ toolName: 'async_run', fullCommandEcho: true });
+  const tool = createRunTool(f.ctx, echoConfig);
+
+  const pending = tool.execute({ command: 'deploy --env prod', description: 'deployment step', yield_ms: 5 }, exec);
+  await new Promise((r) => { setTimeout(r, 0); });
+  await pending;
+  const spec = f.jobsFake.registeredSpecs[0];
+  // ECHO-WORKFLOW-01（需求 2.2.4/9.3.4）：注册名称与回显开关解耦——开启后
+  // 原文也不进 label（label 经宿主 job_list 无界复制、无法计量裁剪去重），
+  // 改经批次类交付载体附上；关闭态同一取值（上文默认向用例）。
+  assert.equal(spec.label, 'deployment step',
+    '开启向：注册名称仍取 description（原文经批次交付载体附上，不进任务列表）');
+  assert.equal(f.jobsFake.views()[0].progress, 'deployment step', 'progress 行仍取 description（活动期说明）');
+  settle({ exitCode: 0 });
+});
+
+// ── ECHO-E8/E11（ECHO-WORKFLOW-01，设计 §8）───────────────────────────────
+
+hostTest('ECHO-E8：首次等待直付超限——输出截断但不附命令原文（直付与调用参数同输入）', async () => {
+  const f = fakeCtx();
+  const { proc } = fakeProc({ text: 'x'.repeat(50000) });
+  f.installShellExecute(() => Promise.resolve(proc));
+
+  const result = await createRunTool(f.ctx, resolveConfig({
+    toolName: 'async_run', maxResultChars: 100, fullCommandEcho: true
+  })).execute({ command: 'E8-DIRECT-PAY-COMMAND-ORIGINAL', description: 'e8 direct pay' }, exec);
+  assert.equal(result.status, 'completed', '前置：预算内结算（直付分支）');
+  assert.equal(result.truncated, true, '前置：直付正文被裁');
+  assert.ok(!result.output.includes('E8-DIRECT-PAY-COMMAND-ORIGINAL'),
+    '直付不附原文（同一次模型输入已含调用参数 command——设计 §2.2 载体排除）');
+  assert.ok(!('echo' in result), '完成分支无 echo 键（直付路径不经批次装配）');
+});
+
+hostTest('ECHO-E11：触顶存活清单不含命令原文——label 恒为 description，开启态也不经清单复制原文', async () => {
+  const f = fakeCtx();
+  const { proc, settle } = fakeProc({ text: '', status: 'running', autoResolve: false });
+  f.installShellExecute(() => Promise.resolve(proc));
+  f.ctx.jobs.start = () => {
+    throw new Error('background job limit reached for this owner (limit: 10); use job_kill to stop an unneeded job, wait for it to finish, then retry');
+  };
+  // 清单行 label＝注册名（现读 description）；命令原文若进 label，会随此清单整行进入模型。
+  f.ctx.jobs.list = () => [
+    { id: 'async-command-e11', status: 'running', label: 'E11 live desc' }
+  ];
+
+  let raised;
+  try {
+    await createRunTool(f.ctx, resolveConfig({
+      toolName: 'async_run', defaultYieldMs: 1, minYieldMs: 1, fullCommandEcho: true
+    })).execute({ command: 'E11-SECRET-COMMAND-ORIGINAL', description: 'E11 live desc' }, exec);
+  } catch (error) {
+    raised = error;
+  }
+  settle();
+
+  assert.ok(raised !== undefined);
+  assert.match(raised.message, /async-command-e11/, '存活清单在场（重试出路完整）');
+  assert.ok(!raised.message.includes('E11-SECRET-COMMAND-ORIGINAL'),
+    '清单行不含命令原文（label 恒为 description——开启态原文不经 job_list 复制）');
+});
+
+hostTest('ECHO-E21：让出返回载体（async_run）——同主体他作业就绪条目随批携带：echo 三键、标签行、同批计量截断与一次性状态', async () => {
+  const f = fakeCtx();
+  const { proc, settle } = fakeProc({ text: '', status: 'running', autoResolve: false });
+  f.installShellExecute(() => Promise.resolve(proc));
+  const config = resolveConfig({
+    toolName: 'async_run', defaultYieldMs: 1, minYieldMs: 1, maxResultChars: 40, fullCommandEcho: true
+  });
+  // 同主体他作业就绪（账面定论，R58-n 形态——让出出口 collectBatch 读账面收
+  // 就绪条目）：正文 30＋原文 30，批预算 40 → 剩余 10 → 原文 6:4 截断。
+  const echoB = `${'H'.repeat(12)}MIDY${'T'.repeat(14)}`; // 30 字符
+  ledger.noteJobStarted(f.ctx, config, 'job-ey-b', exec.agent.id, { echoText: echoB, echoKind: 'command' });
+  const readyB = ledger.jobs.get('job-ey-b');
+  readyB.terminal = { status: 'completed' };
+  readyB.buffer = 'B'.repeat(30);
+  readyB.readyAt = ledger.now();
+
+  const tool = checkedTool(createRunTool(f.ctx, config));
+  const result = await tool.execute({ command: 'EY-C-COMMAND', description: 'ey yield c', yield_ms: 1 }, exec);
+  settle();
+
+  assert.equal(result.status, 'running', '前置：让出（句柄返回）');
+  const outputs = result.outputs ?? [];
+  const entryB = outputs.find((item) => item.job_id === 'job-ey-b');
+  assert.ok(entryB !== undefined, '他作业就绪条目随让出返回携带（§2.6 同一领取窗口）');
+  assert.ok(!outputs.some((item) => item.job_id === result.job_id), '让出者自身（running）不入批');
+  // 正文优先（30 ≤ 40 全量）→ 剩余 10 → 原文 30 截断：头 6＋尾 4、省略 20。
+  assert.equal(entryB.text, 'B'.repeat(30), '正文全量在场（正文优先——R4 判据在让出载体复跑）');
+  assert.equal(entryB.echo_kind, 'command', 'echo_kind 供 render 取标签行');
+  assert.equal(entryB.echo_truncated, true, '截断携带 echo_truncated');
+  assert.ok(entryB.echo.includes('H'.repeat(6)) && entryB.echo.includes('T'.repeat(4)),
+    '原文 6:4 首尾在场（附上 10＋省略 20＝原文 30——裁剪量准确）');
+  assert.ok(!entryB.echo.includes('MIDY'), '省略中段不在');
+  assert.ok(entryB.echo.includes('[original text truncated: 20 chars omitted]'),
+    '省略量标注内嵌（原文与正文同批计量的让出载体判据——投影丢 echo 键则本组断言红）');
+  const visible = tool.output.render(undefined, result).map((part) => part.text).join('\n');
+  assert.ok(visible.includes('Command:'), '模型可见文本含命令标签行（让出 render 拼 echo 块）');
+  assert.ok(visible.includes('H'.repeat(6)), '原文头部进可见文本');
+  // 一次性与认领：同窗后续载体不再重复附上（echoAttached 置位、让出载体认领）。
+  const b = ledger.jobs.get('job-ey-b');
+  assert.equal(b.echoAttached, true, '一次性状态置位');
+  assert.equal(b.deliveredFact?.via, 'wait', '让出载体认领（完成消息让位不重复）');
 });
 
 hostTest('async_run（R32-c·abort）：GUI 停止 → 句柄形状返回（宿主改写、模型不可见）、作业存活、结算通知可恢复', async () => {
@@ -1199,6 +1426,47 @@ hostTest('async_run（prep 窗口）：prep 失败——execute 异步拒绝（�
   assert.equal(views.length, 1, '执行即注册：prep 失败也留下作业记录');
   assert.equal(views[0].status, 'failed', '作业按 failed 结算（宿主 done→结算契约，通知侧同 killed 路）');
   assert.match(views[0].detail, /spawn EPERM/);
+});
+
+hostTest('async_run（RA-FIRSTWAIT-LEAK）：终态分支结算构造失败也注销等待登记——残留活等待会压住后续完成消息', async () => {
+  // 缺陷形态（验收 RA-FIRSTWAIT-LEAK）：directWithTail 抛错路径原样重抛，
+  // 但 claimWait 的登记未注销——#deliverIfNoWait 永远视为主体仍有等待，
+  // 同主体后续作业的完成消息全部被压住（四宿主受控反例）。
+  const f = fakeCtx();
+  immediateTimers(f.ctx);
+  f.installShellExecute(() => Promise.reject(new Error('spawn EPERM at process creation')));
+  const tool = createRunTool(f.ctx, config);
+
+  await assert.rejects(
+    () => tool.execute({ command: 'leak-probe', description: 'settle fail', yield_ms: 600000 }, exec)
+  );
+
+  // 直接状态断言：失败出口后该主体不得残留活等待（subject 已整体回收亦合格）。
+  const subject = ledger.subjects.get(exec.agent.id);
+  assert.ok(subject === undefined || subject.activeWaits.size === 0,
+    '结算构造失败出口必须注销等待登记（RA-FIRSTWAIT-LEAK）');
+
+  // 行为断言：同主体随后就绪的条目走完成消息路径——直接经账本定论（noteJobStarted
+  // ＋readSettled：注册表读不到该 id → readFailed 定论 → #settleReady →
+  // #deliverIfNoWait → 冲刷），不依赖 fake 注册表没有的事件通道与 60s 保活窗。
+  // 该路径的「注册表缺席」诊断走模块级 console.warn（delivery.js 的 log()），
+  // 在此临时捕获：修复前被残留活等待短路（#deliverIfNoWait 提前返回，零诊断、
+  // 正文滞留）；修复后「agent registry miss」必现（与 wait-delivery 各用例的
+  // 控制台痕迹同款观测）。
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args.map(String).join(' ')); };
+  try {
+    ledger.noteJobStarted(f.ctx, config, 'leak-followup', exec.agent.id);
+    await ledger.readSettled('leak-followup', { status: 'completed', exitCode: 0 });
+    await new Promise((r) => { setTimeout(r, 10); });
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.ok(
+    warnings.some((text) => text.includes('agent registry miss')),
+    '完成消息路径实际执行（未被残留活等待压住）'
+  );
 });
 
 // ---------------------------------------------------------------------------

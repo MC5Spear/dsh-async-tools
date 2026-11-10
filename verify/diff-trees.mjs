@@ -9,7 +9,9 @@
  *   `+`（新增）/ `-`（删除）清单（各截断至 60/40/20 条）。
  *
  * 树根经 `tools/_local-config.mjs` 从本机侧读（或环境变量 `DSAT_HOST_MODULES`）——
- * 写死本机绝对路径在目录迁走后失效。两档树任一没配置就打 SKIP 退出。
+ * 写死本机绝对路径在目录迁走后失效。退出分两档：本机环境整份不在（CI／外部
+ * clone 的正常形态）→ 打 SKIP、退出码 0；本机配置已装载但 `evidenceTree` 两档
+ * 任一没来源 → 可读报错、退出码 2（开发机配置问题按红处理，不静默跳过）。
  * 非代码文件（map/README 等）计入计数但不占清单篇幅。
  */
 import { readdirSync, readFileSync, existsSync, realpathSync } from 'node:fs';

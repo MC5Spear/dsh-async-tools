@@ -8,12 +8,12 @@
  * 用法：node --import ./tools/_host-hooks.mjs tools/probe-live-description.mjs
  */
 import { createRunTool } from '../lib/jobs.js';
-import { createWaitJobTool } from '../lib/wait-job.js';
-import { createWaitAgentTool } from '../lib/wait-agent.js';
+import { createWaitTool } from '../lib/wait.js';
 import { refreshToolDescriptions } from '../lib/index.js';
 
 let current = {
   toolName: 'async_run',
+  agentLang: 'zh',
   defaultYieldMs: 20000,
   minYieldMs: 1000,
   maxYieldMs: 600000,
@@ -29,8 +29,7 @@ const ctx = { logger: { info() {}, warn() {}, debug() {} }, get: () => undefined
 
 const tools = {
   async_run: { tool: createRunTool(ctx, view), param: 'yield_ms' },
-  async_wait_job: { tool: createWaitJobTool(ctx, view), param: 'wait_ms' },
-  async_wait_agent: { tool: createWaitAgentTool(ctx, view), param: 'wait_ms' }
+  async_wait: { tool: createWaitTool(ctx, view), param: 'wait_ms' }
 };
 
 const checks = [];
@@ -77,13 +76,15 @@ for (const name of Object.keys(tools)) {
     topRange === null ? '没解析到区间' : `解析到 ${topRange[1]}–${topRange[2]}`);
 
   const paramText = after[name].param;
-  const paramRange = /\((\d+)-(\d+)\)/.exec(paramText);
+  // 参数说明的区间形态各档不同（zh「范围 X-Y」/「（毫秒，X-Y）」、en "(X-Y)"）——
+  // 直接取第一组 X-Y 数字对，锚定上下文交给上面的顶层区间判据。
+  const paramRange = /(\d+)-(\d+)/.exec(paramText);
   const expectParam = name === 'async_run' ? ['1000', '120000'] : ['250', '130000'];
   record(`${name}：参数描述里的区间已更新为 ${expectParam.join('-')}`,
     paramRange !== null && paramRange[1] === expectParam[0] && paramRange[2] === expectParam[1],
     paramRange === null ? '没解析到区间' : `解析到 ${paramRange[1]}-${paramRange[2]}`);
   if (name === 'async_run') {
-    record('async_run：参数描述里的默认值已更新为 5000', /Defaults to 5000\b/.test(paramText));
+    record('async_run：参数描述里的默认值已更新为 5000', /默认 5000\b/.test(paramText) || /Defaults to 5000\b/.test(paramText));
   }
 }
 

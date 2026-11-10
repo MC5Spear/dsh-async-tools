@@ -32,13 +32,16 @@ const STEER_MARKER = '插话投递标记';
 const QUEUE_TEXT = `${QUEUE_MARKER}：这条消息是用 queue 模式发进队列的。当它真正到达你时，请只回复一行：QUEUE_DELIVERED_OK`;
 const STEER_TEXT = `${STEER_MARKER}：这是插话（steer）。收到后只做一件事：调用一次 job_list，把其中 async-command 开头且状态是 running 的那一行原样贴出，然后立即结束回合。`;
 
-// 起跑前把设置写回出厂默认（上游残留会让窗口假窄）。
-const DEFAULTS = {
+// 起跑前把设置写成本探针的测试基线（上游残留会让窗口假窄）。基线口径见
+// final-acceptance.mjs 头注：minYieldMs/minWaitMs/maxResultChars 三项有意偏离
+// 出厂默认（指令里的 yield_ms=1500 需要短下限才原样生效）；跑完由
+// restore-async-settings.mjs 还原出厂默认。
+const TEST_BASELINE = {
   maxResultChars: 30000, defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
   defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000, pollIntervalMs: 500, jobKind: 'async-command'
 };
 // 设置写入经共享助手（`_r28-helpers.mjs` 的 NS 单一登记点＋嵌套 settings 形状）。
-await replaceNs(DEFAULTS);
+await replaceNs(TEST_BASELINE);
 
 const created = await rpc('session/create', { request: { cwd: CWD, agentPreset: PRESET } });
 if (created.agentPreset !== PRESET) throw new Error(`session/create fell back: ${String(created.agentPreset)}`);
@@ -89,7 +92,7 @@ async function until(describe, predicate, timeoutMs) {
   }
 }
 
-/** 定位"指定 wait_ms 的等待已经出现在转录里且会话在跑"后再等两拍，返回是否到达发消息的窗口。 */
+/** 定位"指定 wait_ms 的等待已经出现在转录里且会话在跑"后再等两个轮询周期，返回是否到达发消息的窗口。 */
 async function waitForWaitWindow(waitMs, timeoutMs) {
   const startedAt = Date.now();
   let firstSeen = -1;
@@ -99,7 +102,7 @@ async function waitForWaitWindow(waitMs, timeoutMs) {
     const page = await transcriptOf(sessionId);
     const row = await rowOf(sessionId);
     const seen = page.records.some((r) => {
-      if (r.event?.type !== 'tool/call' || r.event.data?.name !== 'async_wait_job') return false;
+      if (r.event?.type !== 'tool/call' || r.event.data?.name !== 'async_wait') return false;
       return new RegExp(`wait_ms"\\s*:\\s*${String(waitMs)}`).test(String(r.event.data.arguments ?? ''));
     });
     if (seen && firstSeen < 0) firstSeen = polls;
@@ -119,8 +122,8 @@ function judge(name, ok, detail = '') {
 console.log('── 阶段 A：queue 消息不应打断等待 ──');
 await prompt([
   '请严格按两步做：',
-  '第 1 步：用 async_run 执行 `Start-Sleep -Seconds 240; Write-Output PATIENCE_A`，传 yield_ms=1500。拿到 job_id 后立刻用 async_wait_job 等它，wait_ms=45000。',
-  '第 2 步：那次 async_wait_job 返回后（无论 status 是什么），不要再调用任何工具，直接用一句话原样引用返回里"等待被打断"或"仍在运行"那句，然后结束回合。'
+  '第 1 步：用 async_run 执行 `Start-Sleep -Seconds 240; Write-Output PATIENCE_A`，传 yield_ms=1500。拿到 job_id 后立刻用 async_wait 等它（targets=[{kind:"job", id:...}]），wait_ms=45000。',
+  '第 2 步：那次 async_wait 返回后（无论 status 是什么），不要再调用任何工具，直接用一句话原样引用返回里"等待被打断"或"仍在运行"那句，然后结束回合。'
 ].join('\n'), 'queue');
 
 const windowA = await waitForWaitWindow(45000, 60000);
@@ -145,7 +148,7 @@ const turnEndBeforeDeliveryA = deliveredA === undefined
 judge('场景A判据1 queue 消息没有打断等待：等待结果不含打断锚，且含预算到期锚（等满预算才返回；两语标记）',
   !textsA.some((t) => WAIT_INTERRUPTED.test(t)) && textsA.some((t) => WAIT_AGAIN.test(t)),
   textsA.filter((t) => WAIT_INTERRUPTED.test(t) || WAIT_AGAIN.test(t)).map((t) => JSON.stringify(t.slice(0, 80))).join(' | '));
-judge('场景A判据2 queue 消息在轮次结束后被投递为 user/message，且模型回应了约定标记（投递的硬证据）',
+judge('场景A判据2 queue 消息在轮次结束后被投递为 user/message，且模型回应了约定标记（投递的直接证据）',
   deliveredA !== undefined && turnEndBeforeDeliveryA === true && replyA === true,
   `user/message=${String(deliveredA !== undefined)} 先有 turn/end=${String(turnEndBeforeDeliveryA)} 回应=${String(replyA)}`);
 judge('场景A判据3 阶段 A 全程没有出现任何打断锚（queue 是本阶段唯一的用户消息；两语标记）',
@@ -156,8 +159,8 @@ judge('场景A判据3 阶段 A 全程没有出现任何打断锚（queue 是本�
 console.log('── 阶段 B：steer 消息应打断等待 ──');
 await prompt([
   '请严格按三步做：',
-  '第 1 步：用 async_run 执行 `Start-Sleep -Seconds 240; Write-Output PATIENCE_B`，传 yield_ms=1500。拿到 job_id 后立刻用 async_wait_job 等它，wait_ms=60000。',
-  '第 2 步：那次 async_wait_job 返回后，若 status 是 interrupted：第 3 步调用一次 job_list，把该作业那一行原样贴出，然后结束回合。若不是 interrupted，直接结束回合并说明。'
+  '第 1 步：用 async_run 执行 `Start-Sleep -Seconds 240; Write-Output PATIENCE_B`，传 yield_ms=1500。拿到 job_id 后立刻用 async_wait 等它（targets=[{kind:"job", id:...}]），wait_ms=60000。',
+  '第 2 步：那次 async_wait 返回后，若 status 是 interrupted：第 3 步调用一次 job_list，把该作业那一行原样贴出，然后结束回合。若不是 interrupted，直接结束回合并说明。'
 ].join('\n'), 'queue');
 
 const windowB = await waitForWaitWindow(60000, 60000);
@@ -184,10 +187,11 @@ judge('场景B判据2 打断的返回里明说作业未受影响（需求 §2.1.
 // B3 只认 **job_list 的工具结果行**（共享锚 `JOB_LIST_RUNNING`＝宿主渲染行
 // `<id> [<kind>] running — <label>`，行首＋列分隔符双边界；编号按不透明字符串对待——
 // 真实形态如 `async-command-29bb2c6b2dff4ad9`，旧数字夹具同认，锚回归见
-// test/message-markers.test.mjs）。`[async-command]` 类型标识的前提＝起跑写回出厂默认。
+// test/message-markers.test.mjs）。`[async-command]` 类型标识的前提＝起跑写入测试基线
+// （jobKind: 'async-command'）。
 // 让出句柄文案（`命令仍在运行：…`）不含 `[async-command]` 标记，不可能误满足；
 // 模型自述不作回退依据——它不是证据。
-judge('场景B判据3 打断后 job_list 的工具结果显示该作业仍在 running（需求 §2.1.2 的硬证据）',
+judge('场景B判据3 打断后 job_list 的工具结果显示该作业仍在 running（需求 §2.1.2 的直接证据）',
   textsB.some((t) => JOB_LIST_RUNNING.test(t)),
   textsB.find((t) => JOB_LIST_RUNNING.test(t))?.slice(0, 160)
     ?? `阶段 B 工具结果里没有 job_list 渲染行（共 ${String(textsB.length)} 条工具结果）`);

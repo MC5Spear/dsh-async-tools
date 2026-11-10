@@ -65,7 +65,7 @@ const POST_CALL_MS = 2000;
  * 设计 §8.3 口径豁免：`HANDLE_ANCHOR` 是 `lib/output.js` 代码构造的调用句式
  * 字面量、`ABORT_ANCHOR` 是宿主 dsh-tools 的改写文本，均非本包词典成句。
  */
-const HANDLE_ANCHOR = /async_wait_job\(job_id="/;
+const HANDLE_ANCHOR = /async_wait\(targets=\[\{kind:"job", id:"/;
 const ABORT_ANCHOR = /Error: tool call aborted/;
 
 /**
@@ -218,7 +218,7 @@ function workflowPrompt(name, description, scriptBody, yieldMs, extra = '') {
     `- yield_ms = ${String(yieldMs)}`,
     extra,
     'While it yields, do nothing else and do not call any other tool — wait.',
-    'If the yield ends early with a handle note, do NOT call async_wait_job and do NOT wait for the job — just reply ack and finish your turn.'
+    'If the yield ends early with a handle note, do NOT call async_wait and do NOT wait for the job — just reply ack and finish your turn.'
   ].join('\n');
 }
 
@@ -368,7 +368,7 @@ async function phaseA() {
   await waitWorkflowCalled(sessionId);
   await sleep(POST_CALL_MS);
   const t0 = Date.now();
-  await steer(sessionId, 'Status check: reply with just the word "ack" and end your turn. Do not call async_wait_job or any other tool; do not wait for the job.');
+  await steer(sessionId, 'Status check: reply with just the word "ack" and end your turn. Do not call async_wait or any other tool; do not wait for the job.');
   const { transcript } = await pollUntil(sessionId,
     (t) => toolResultTexts(t, 'async_workflow').length > 0, { maxMs: 30000, t0 });
   const elapsed = Date.now() - t0;

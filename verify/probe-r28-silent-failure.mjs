@@ -39,7 +39,7 @@
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { launch, openPage, evaluate, findBrowser, waitFor, screenshot } from './_visual/cdp.mjs';
-import { instanceCredentials } from '../tools/_local-config.mjs';
+import { instanceCredentials, tokenEntryUrl } from '../tools/_local-config.mjs';
 import { localConfig } from './_rpc.mjs';
 import {
   B_EN, B_ZH, NOTE_EN, ANCHOR_FAIL, ANCHOR_DENIED, AVKILL_CODE, ACL_FAIL,
@@ -52,7 +52,7 @@ const GIT_COMMAND = 'git --version | Select-String git';
 const { base: BASE, token } = instanceCredentials(localConfig);
 const SHOTS = join(localConfig.evidenceDir, 'shots');
 const LOGS = join(localConfig.evidenceDir, 'logs');
-const url = `${BASE}/?token=${encodeURIComponent(token)}`;
+const url = tokenEntryUrl(BASE, token);
 
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 const results = [];
@@ -96,7 +96,7 @@ try {
     await clickBy(`[...document.querySelectorAll('*')].find((n) => (n.getAttribute('aria-label') || '') === '查看 dsh-async-tools')`, '查看 dsh-async-tools');
     await sleep(2500);
   };
-  /** 读设置表单的开关（`silentFailureGuard` 不是 input/select，控件本体是官方 Switch）。 */
+  /** 读设置表单的开关（`silentFailureGuard` 不是 input/select，控件本体是自绘 role=switch 按钮——UI-SETTINGS-AX）。 */
   const readForm = () => evaluate(page, `(() => {
     const section = document.querySelector('[data-plugin-config]');
     if (section === null) return { names: [], switches: [] };
@@ -125,7 +125,7 @@ try {
   console.log('· 1/6 真机 1：默认关——三项都不在场');
   await openPluginPage();
   const form0 = await readForm();
-  check('真机 1a 设置卡含静默失败开关（官方 Switch，aria-checked=false）',
+  check('真机 1a 设置卡含静默失败开关（自绘 role=switch，aria-checked=false）',
     form0.switches.some((s) => s.label === '命令静默失败提示' && s.checked === 'false'),
     `switches=${JSON.stringify(form0.switches)} 值/枚举字段数=${String(form0.names.length)}`);
   await screenshot(page, join(SHOTS, 'r28-01-off.png'));

@@ -190,7 +190,7 @@ hostTest('async_agent：立返 started + agent_id，note 含可复制的等待�
   assert.equal(result.status, 'started');
   assert.equal(result.agent_id, 'child-1');
   // note 里的数字现读现取（默认 defaultWaitMs=30000）；改设置后必须跟着变（下一条用例）。
-  assert.match(result.note, /async_wait_agent\(agent_id="child-1", wait_ms=30000\)/,
+  assert.match(result.note, /async_wait\(targets=\[\{kind:"agent", id:"child-1"\}\], wait_ms=30000\)/,
     'note 必须给出可复制的下一步调用，数字取自生效配置');
   assert.match(result.note, /arrives as its own message in the conversation/);
   // 模型只看得见 render——agent_id 必须出现在 render 文本里。
@@ -202,7 +202,9 @@ hostTest('async_agent：note 示例数字随 defaultWaitMs 设置变化（现读
   const env = agentEnv();
   const tool = checkedTool(createAgentTool(env.ctx, env.view));
 
-  env.setConfig({ defaultWaitMs: 1234 });
+  // 显式 minWaitMs：保留合法显式下限的同时给出合法组合（出厂 20000 会把
+  // 1234 顶爆配对校验——本用例测的是示例数字现读现取，不是下限行为）。
+  env.setConfig({ defaultWaitMs: 1234, minWaitMs: 250 });
   const result = await tool.execute({ description: '调研乙', prompt: '报告。' }, EXEC);
   assert.match(result.note, /wait_ms=1234/);
 });
@@ -573,18 +575,27 @@ hostTest('async_agent：后端路由默认参与合并——无请求时默认�
 
 hostTest('async_agent：指定路由但 provider 未声明 agentOptions 能力 → 当场报错且零派生（零容忍）', async () => {
   // 假件形状与宿主注册表保持一致：后端对象带 capabilities 字典；这里造一个不声明的。
+  // UI-SETTINGS-AX-DESCRIPTION：后端不声明 agentOptions 时，路由三键在参数表与
+  // 校验集合同步移除——携带它们首先按未声明键拒绝（supported 清单不含路由键），
+  // 不再等到步 9b 的 agentOptions 文案；描述侧同步换 p4NoRoute 档。
   const env = agentEnv({
     providers: { legacy: { name: 'legacy', prepareContinuable() {}, capabilities: {} } }
   });
   env.setConfig({ subagentProvider: 'legacy' });
   const tool = createAgentTool(env.ctx, env.view);
+  // 构造即按真实能力条件化（agentConditionalKeys 现算，agent.js rebuildText 同源）：
+  assert.equal('provider' in tool.parameters, false, '参数表不含 provider（与执行校验同一条件）');
+  assert.equal('model' in tool.parameters, false, '参数表不含 model');
+  assert.equal('reasoning_effort' in tool.parameters, false, '参数表不含 reasoning_effort');
+  assert.match(tool.description, /does not declare support for agent route options/,
+    '描述换 p4NoRoute 档（不宣告不可用的输入面）');
 
   await assert.rejects(
     tool.execute(
       { description: 'x', prompt: 'y', provider: 'zai', model: 'glm-5.3' },
       EXEC
     ),
-    /"legacy" does not honor agentOptions.*requested route would be silently ignored/
+    /unsupported argument\(s\): provider, model.*supported: description, prompt, cwd/
   );
   assert.deepEqual(env.activations, [], '功能不达标不得派生');
 
@@ -675,6 +686,106 @@ hostTest('async_agent：实时口径的四种拒绝形态互可区分且零派�
   assert.ok(envFlip.selectionReads.length >= 3, '第二次调用现读＋启动前重读（实时读，无会话冻结）');
 });
 
+hostTest('async_agent：策略服务契约外坏形状 → policyShapeRejected 可读拒绝、形状原错挂 rawReason 且零派生（RA-ROBUSTNESS）', async () => {
+  // 坏形状原先在名单校验的属性读取处崩成裸 TypeError；承接后错误说明实际形状
+  // （无空格紧凑记号进 reason），不改写成开关关闭或名单拒绝的正常宿主口径，
+  // 也不把各形状统一成同一句措辞——每类形状保留各自的真实原因。
+  const shapes = [
+    ['nope', 'string'],
+    [null, 'null'],
+    [[['zai/glm-5.3']], 'array'],
+    [{ enabled: true }, 'allowedModels=missing'],
+    [{ enabled: true, allowedModels: 'zai/glm-5.3' }, 'allowedModels=string'],
+    [{ enabled: true, allowedModels: [{ provider: 'zai', model: 'glm-5.3' }, null] }, 'allowedModels[1]=null']
+  ];
+  for (const [snapshot, shape] of shapes) {
+    const env = agentEnv({ selection: snapshot });
+    let caught;
+    try {
+      await createAgentTool(env.ctx, env.view).execute(
+        { description: 'x', prompt: 'y', provider: 'zai', model: 'glm-5.3' }, EXEC
+      );
+    } catch (error) {
+      caught = error;
+    }
+    assert.ok(caught instanceof Error && !(caught instanceof TypeError),
+      `${shape}：可读错误拒绝（非裸 TypeError）`);
+    assert.ok(caught.message.includes(shape), `${shape}：错误说明实际形状`);
+    assert.ok(caught.message.includes('instead of a policy object with an allowedModels array'),
+      `${shape}：policyShapeRejected 口径`);
+    assert.ok(!caught.message.includes('currently disabled'), `${shape}：不改写成开关关闭口径`);
+    assert.ok(!caught.message.includes('not allowed by the current model-selection'), `${shape}：不改写成名单拒绝口径`);
+    assert.equal(caught.rawReason?.message, `subagentModelSelection.current():${shape}`,
+      `${shape}：形状 TypeError 作为原错挂 rawReason`);
+    assert.deepEqual(env.activations, [], `${shape}：零派生`);
+  }
+  // zh 档两语齐（词典键进 zh 表）：
+  const envZh = agentEnv({ selection: { enabled: true } });
+  envZh.setConfig({ agentLang: 'zh' });
+  await assert.rejects(
+    createAgentTool(envZh.ctx, envZh.view).execute(
+      { description: 'x', prompt: 'y', provider: 'zai', model: 'glm-5.3' }, EXEC
+    ),
+    (error) => error.message.includes('不是带 allowedModels 数组的策略对象') && error.message.includes('allowedModels=missing'),
+    'zh 档承接文案'
+  );
+});
+
+hostTest('async_agent：启动前重读遇到坏形状 → routeRecheckReadFailed 承载形状原错（诊断①口径，不误报名单撤销）', async () => {
+  const env = agentEnv({
+    selection: [
+      { enabled: true, allowedModels: [{ provider: 'zai', model: 'glm-5.3' }] },
+      { enabled: true }
+    ]
+  });
+  await assert.rejects(
+    createAgentTool(env.ctx, env.view).execute(
+      { description: 'x', prompt: 'y', provider: 'zai', model: 'glm-5.3' }, EXEC
+    ),
+    (error) => error.message.includes('re-reading the model-selection settings right before the start failed')
+      && error.message.includes('subagentModelSelection.current():allowedModels=missing')
+      && !error.message.includes('no longer contains the selected route'),
+    '重读坏形状 → 读取失败诊断带形状原错'
+  );
+  assert.deepEqual(env.activations, [], '零派生（预检已过、启动前拒绝）');
+});
+
+hostTest('async_agent：getProvider 抛错 → providerQueryFailed 承载原始错误文本、完整原文进 stderr、零派生（RA-ROBUSTNESS）', async () => {
+  // 后端查询的契约外故障不裸抛、也不改写成「未注册」的正常宿主口径；{reason}
+  // 承载原始错误文本（单行化截断），完整原文进操作者日志（与预检拒绝同通道）。
+  const env = agentEnv();
+  env.ctx.subagents.getProvider = () => {
+    throw new Error('provider registry exploded\nwith a second line');
+  };
+  let caught;
+  const captured = await captureStderr(async () => {
+    try {
+      await createAgentTool(env.ctx, env.view).execute({ description: 'x', prompt: 'y' }, EXEC);
+    } catch (error) {
+      caught = error;
+    }
+  });
+  assert.ok(caught instanceof Error, '可读错误拒绝');
+  assert.ok(caught.message.includes('looking up subagent provider "spawn" failed'), 'providerQueryFailed 口径');
+  assert.ok(caught.message.includes('provider registry exploded'), '{reason} 承载原始错误文本');
+  assert.ok(!caught.message.includes('is not registered'), '不改写成「未注册」的正常宿主口径');
+  assert.ok(!/[\r\n\t]/.test(caught.message), '模型侧单行化');
+  assert.deepEqual(env.activations, [], '零派生');
+  const notice = captured.split('\n').find((line) => line.includes('subagent provider lookup failed'));
+  assert.ok(notice !== undefined, '操作者日志有一行承接通告');
+  assert.ok(notice.includes('with a second line'), 'stderr 携带完整原文（转义后仍在同一行）');
+
+  // zh 档两语齐：
+  const envZh = agentEnv();
+  envZh.ctx.subagents.getProvider = () => { throw new Error('boom-zh'); };
+  envZh.setConfig({ agentLang: 'zh' });
+  await assert.rejects(
+    createAgentTool(envZh.ctx, envZh.view).execute({ description: 'x', prompt: 'y' }, EXEC),
+    (error) => error.message.includes('查询子代理后端 "spawn" 失败：boom-zh'),
+    'zh 档承接文案'
+  );
+});
+
 hostTest('async_agent：预检拒绝保留单行化原因＋查询指引（含目标工具条件），完整原因进 stderr（A-F07）', async () => {
   const env = agentEnv({ llmMode: 'reject' });
   // 覆盖拒绝原文：多行宿主原文验证单行化（需求 §6.2——模型侧不进 CR/LF/TAB）。
@@ -757,7 +868,7 @@ hostTest('async_agent：零前台（哨兵不动）+ 零等待原语（timer/on 
   // 实现约束"不注册任何定时器、监听器、作业"：删掉这层保护（实现里加个定时器）
   // 会让这里变红。
   assert.deepEqual(env.timerUses, [], 'async_agent 不得使用任何定时器（不等待就没有打断问题）');
-  assert.deepEqual(env.onUses, [], 'async_agent 不得注册任何监听器（等待交给 async_wait_agent）');
+  assert.deepEqual(env.onUses, [], 'async_agent 不得注册任何监听器（等待交给 async_wait）');
 });
 
 hostTest('async_agent：三种基础错误态互相可区分，且一个子代理都不派生（R13）', async () => {
@@ -1086,6 +1197,45 @@ hostTest('async_agent：agent_preset 随后端能力变化就地增删——刷�
   await tool.execute({ description: '甲', prompt: '任务。' }, EXEC);
   assert.ok(tool.parameters.properties.agent_preset,
     '后端换成支持 + execute → 借用 schema 就地补上条件键');
+});
+
+hostTest('async_agent：路由三键随后端 agentOptions 能力双向变化就地增删——刷新与 execute 两个重算点（L-SOL-01 残留反例）', async () => {
+  // 起步：后端不声明 agentOptions → 路由三键不暴露（构造时条件），描述同档。
+  const env = agentEnv({
+    providers: {
+      spawn: { name: 'spawn', prepareContinuable() {}, capabilities: {} }
+    }
+  });
+  const tool = createAgentTool(env.ctx, env.view);
+  const ROUTE_KEYS = ['provider', 'model', 'reasoning_effort'];
+  for (const key of ROUTE_KEYS) {
+    assert.equal(key in tool.parameters.properties, false,
+      `构造时后端不支持 agentOptions → ${key} 不暴露`);
+  }
+  assert.match(tool.description, /not accepted here/, '描述与 schema 同为不支持档');
+
+  // 能力增：刷新（重算点一）→ 三键就地新增，描述同步换支持档。
+  env.registry.spawn.capabilities = { agentOptions: true };
+  refreshToolDescriptions(tool, env.view);
+  for (const key of ROUTE_KEYS) {
+    assert.ok(tool.parameters.properties[key],
+      `后端换成支持 + 刷新 → schema 出现 ${key}`);
+  }
+  assert.match(tool.description, /Optionally supply provider and model/,
+    '刷新后描述与 schema 同为支持档（模型选择不再与 schema 脱节）');
+
+  // 能力撤回：execute（重算点二）→ 一次普通调用就地删键；描述文案经任一刷新点
+  // 跟上（execute 只同步借用 schema 的条件键，描述整段重建在刷新入口——设计
+  // §5.2「执行正确不能证明模型投影已及时刷新」的事件缺失对照同口径）。
+  env.registry.spawn.capabilities = {};
+  await tool.execute({ description: '甲', prompt: '任务。' }, EXEC);
+  for (const key of ROUTE_KEYS) {
+    assert.equal(key in tool.parameters.properties, false,
+      `后端撤回支持 + execute → ${key} 从借用 schema 消失`);
+  }
+  refreshToolDescriptions(tool, env.view);
+  assert.match(tool.description, /not accepted here/,
+    '撤回后经刷新点描述不再宣告路由键可用（旧 schema 诱导输入已拒键的形态关闭）');
 });
 
 hostTest('async_agent：继承上下文后端（fork）的描述与 prompt 说明如实写继承，spawn 保留自包含（A-F06 反例二）', () => {

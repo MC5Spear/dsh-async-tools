@@ -19,7 +19,7 @@ const ROOT = join(HERE, '..');
 
 // 宿主源位置：树根经配置加载器读，不写死。变异看守打的是宿主源文本，
 // 所以它必须在场——缺席按红处理（与 check-agent-policy 同一口径）。
-const config = await loadLocalPlaneOrSkip('verify/mutate-agent-policy.mjs（钉版看守的变异证明）');
+const config = await loadLocalPlaneOrSkip('verify/mutate-agent-policy.mjs（逐行互锚检查的变异证明）');
 const tree021 = config.evidenceTree['021'];
 if (tree021 === undefined) {
   console.error('宿主锚无来源：配置里既没有 evidenceTree[\'021\']，也没有 hostModules。'

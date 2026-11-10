@@ -1,13 +1,18 @@
 /**
  * 开发期解析钩子：把宿主包名重新锚定到能真正读到它们的 node_modules。
  *
- * 插件部署到 profile 后，`@deepseek-ai/*` 由共享 node_modules 提供；仓库本地没有
- * node_modules，因此离线单测要用本钩子换锚点：
+ * 插件部署到 profile 后，`@deepseek-ai/*` 由共享 node_modules 提供（DSH 宿主
+ * 安装树形态：全部 `@deepseek-ai/*` 包从同一棵 node_modules 解析——本钩子的
+ * 单锚点假设只覆盖这一形态；部署改成分包隔离的 node_modules 时锚点策略需重议）；
+ * 安装时 `autoInstallPeers:false`，仓库内安装依赖（本地开发或 CI 的本地安装）不
+ * 会带入 `@deepseek-ai/*` peer——需要真实解析宿主 peer 的运行形态（离线单测、
+ * 直跑宿主树）用本钩子换锚点；已把宿主包整体装进本地 node_modules 的形态不需要：
  *   node --import ./tools/_host-hooks.mjs --test "test/*.test.mjs"
  *
- * 0.2.1 线适配：本包的九个 `@deepseek-ai/dsh*` peer 已锁 `0.2.1-rc.4`，
+ * 0.2.1 兼容线：本包的九个 `@deepseek-ai/dsh*` peer 共用同一支持集合
+ * （`0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5`，以包清单原文为准），
  * `@deepseek-ai/schemastery` 需要 `~3.18.5` 的 `.volatile()`——把
- * `DSAT_HOST_MODULES` 指向任一 0.2.1-rc.4 宿主安装树的 node_modules 即可。
+ * `DSAT_HOST_MODULES` 指向集合内任一宿主安装树的 node_modules 即可。
  * 落到旧版本运行树时 `.volatile is not a function` 就是「锚点错了」的
  * 诚实信号，而不是静默用错版本。
  *

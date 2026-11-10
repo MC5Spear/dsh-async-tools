@@ -27,12 +27,14 @@ export default {
   // ── 证据树四档 ────────────────────────────────────────────────────────────
   //
   // 事实登记簿里的 `包/文件:行号` 引用按前缀选树：`[0.2.1]` → `'021'`、
-  // `[0.1.7]` → `'017'`、`PKGS/` 与未标前缀 → `'015'`。
+  // `[0.2.0]` → `'020'`、`[0.1.7]` → `'017'`、`PKGS/` 与未标前缀 → `'015'`。
   //
   // `'021'` **可以不写**：它的缺省值是 `<hostModules>/@deepseek-ai`，这条缺省让
-  // "宿主锚"与"证据锚"在构造上不可能指向两棵不同的树。
+  // "宿主锚"与"证据锚"在构造上不可能指向两棵不同的树。`'020'` 是历史线，
+  // **没有派生缺省**——要用 `[0.2.0]` 引用时必须显式写。
   evidenceTree: {
     // '021': 'C:\\path\\to\\dsh-install\\node_modules\\@deepseek-ai',
+    // '020': 'C:\\path\\to\\dsh-020-install\\node_modules\\@deepseek-ai',
     '017': 'C:\\path\\to\\dsh-017-install\\node_modules\\@deepseek-ai',
     '015': 'C:\\Users\\<you>\\AppData\\Roaming\\npm\\node_modules\\@deepseek-ai\\dsh\\node_modules\\@deepseek-ai'
   },
@@ -44,7 +46,25 @@ export default {
 
   // 文件内容是托管方提供的 URL，每行一条、带 `?token=`；探针取令牌后换 cookie。
   // 常见来源是服务进程的 stdout 重定向文件。
+  //
+  // **令牌与目标的绑定**：令牌 URL 自报来源（origin），加载器取令牌时会核对它与
+  // `instanceUrl` 的协议／主机／端口——默认要求两者 origin 一致；不一致按错误拒绝
+  // （防止只覆盖一项环境变量时把 A 实例的凭据发给 B）。非 loopback 的明文 `http:`
+  // 目标一律拒绝；loopback http 与一切 https 照常。SSH 隧道／反向代理等合法跨源
+  // 走下面的 `credentialOriginMap` 显式映射。
   tokenFile: 'C:\\path\\to\\service\\current-url.txt',
+
+  // ── 凭据来源显式映射（仅合法跨源需要；默认不写）──────────────────────────
+  //
+  // `instanceUrl` 与令牌 URL 的 origin 不同、且这确实是预期部署（例如实例经反向
+  // 代理以 https 对外、令牌文件里却是内部 http 地址）时，在这里登记映射：
+  // **两端同时命中才放行**，不能只比端口、不能 host 不同一律放过。明文远程目标
+  // 不因映射放行（没有 allowInsecure 例外）。
+  //
+  // 等价环境变量：`DSAT_CREDENTIAL_ORIGIN_MAP`（JSON 数组文本，优先于本文件）。
+  // credentialOriginMap: [
+  //   { tokenOrigin: 'http://127.0.0.1:44991', instanceOrigin: 'https://dsh.example.invalid' }
+  // ],
 
   // 验证实例的家目录（探针要读它的 profile 目录与 `cordis.patch.yml`）。
   // 缺省不填 → 依赖它的那几条判据记「无来源」跳过。

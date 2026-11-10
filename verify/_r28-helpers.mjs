@@ -89,9 +89,20 @@ export async function replaceNs(fields) {
  * 按路径恢复用户覆盖层（settings/mutate）。unset 路径回到继承值（继承层无该键则
  * 移除覆盖），避免把生效值写成新的用户覆盖；ops 形如
  * `{ op: 'set', path: ['settings', 键], value }` 或 `{ op: 'unset', path: ['settings', 键] }`。
+ *
+ * `expectedRevision`（可选）：宿主的 CAS 语义——落库时修订号与传入值不匹配即拒绝
+ * （恢复类写带上读到的修订号，可在「读—写」窗口内拦下他方并发写入，而不是覆盖）。
+ * 省略＝不设条件（普通写）。
+ *
+ * @param {Array<{op: string, path: string[], value?: unknown}>} ops - 变更序列。
+ * @param {number} [expectedRevision] - 期望的当前修订号（省略不校验）。
  */
-export async function mutateNs(ops) {
-  await rpc('settings/mutate', { ns: NS, ops });
+export async function mutateNs(ops, expectedRevision) {
+  await rpc('settings/mutate', {
+    ns: NS,
+    ops,
+    ...(expectedRevision === undefined ? {} : { expectedRevision })
+  });
 }
 
 /**
@@ -187,7 +198,7 @@ export function runDescriptionOf(transcript) {
  *
  * 形状（验证实例实测定案）：`tool/result` 的 `message.toolCallId` 与 `tool/call`
  * 的 `callId` 配对；文本在 `message.content` 的 `type:'text'` 块里。同时兼容旧
- * `tool-result` 块嵌套形（`async_wait_job` 通道用过），两种形状都收。
+ * `tool-result` 块嵌套形（旧等待通道用过），两种形状都收。
  */
 export function runResultText(transcript) {
   const records = transcript.records ?? [];

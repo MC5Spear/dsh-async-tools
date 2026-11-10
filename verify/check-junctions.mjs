@@ -1,11 +1,15 @@
 /**
  * 开发树 node_modules 七条 junction 的重锚核验。
  *
- * 判据：六条 `@deepseek-ai` junction（cordis / dsh-jobs / dsh-sandbox / dsh-subagent /
- * dsh-tools / schemastery）必须逐条存在、逐条指向 0.2.1 线树的 `@deepseek-ai` 目录，
- * 且目标的版本串符合线（dsh* = 0.2.1-rc.4；cordis 4.0.5；schemastery 3.18.5）；
- * 第七条 zod（**顶层平铺**，非 `@deepseek-ai` 域）锚树顶层 `node_modules\zod`，
- * 版本 4.6.7——投影 stateSchema 的注册表契约是 zod，与宿主同一物理实例、零版本漂移。
+ * 判据（按支持集合，支持集合的唯一权威是[包清单](<../package.json>)里九条 dsh peer 的原文）：
+ *
+ * - 六条 `@deepseek-ai` junction（cordis / dsh-jobs / dsh-sandbox / dsh-subagent /
+ *   dsh-tools / schemastery）逐条存在、逐条指向**同一棵**宿主树的 `@deepseek-ai` 目录；
+ * - dsh* 四条接受集合内**任一** rc，但四条必须**同 rc 版本**（同树同代，不许 rc.2 与
+ *   rc.4 混接）；dsh* 的版本串必须落在支持集合内，集合外版本即红；
+ * - cordis、schemastery 按各自预期版本判（`4.0.5` / `3.18.5`），它们不随宿主 rc 改号；
+ * - 第七条 zod（**顶层平铺**，非 `@deepseek-ai` 域）锚同一棵树的顶层 `node_modules\zod`，
+ *   版本 `4.6.7`——投影 stateSchema 的注册表契约是 zod，与宿主同一物理实例、零版本漂移。
  *
  * ## 树根从哪来
  *
@@ -29,20 +33,30 @@
  * 本机环境缺席（CI、外部 clone）时打一行 `SKIP` 放过。本机上**没有跳过态**：
  * junction 是开发机接线状态，缺席就是红（那份七条清单是交付物本身）。
  *
- * 用法：`node verify/check-junctions.mjs [--tree <0.2.1 线树的 @deepseek-ai 目录>]`
+ * 用法：`node verify/check-junctions.mjs [--tree <受支持宿主树的 @deepseek-ai 目录>]`
  */
 import { readFileSync, readlinkSync, lstatSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LOCAL_DIR, loadLocalPlaneOrSkip } from '../tools/_local-config.mjs';
+import { readSupportSet } from '../tools/check-host-compat.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
 const NM = join(ROOT, 'node_modules', '@deepseek-ai');
 
+const MANIFEST = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+const support = readSupportSet(MANIFEST);
+if (support.problems.length > 0) {
+  for (const item of support.problems) console.log(`BAD-MANIFEST ${item}`);
+  process.exit(1);
+}
+const SUPPORT = new Set(support.members);
+const SUPPORT_TEXT = support.members.join(' / ');
+
 const TREE_ARG = process.argv.includes('--tree') ? process.argv[process.argv.indexOf('--tree') + 1] : undefined;
 if (process.argv.includes('--tree') && (TREE_ARG === undefined || TREE_ARG.startsWith('--'))) {
-  console.error('用法：node verify/check-junctions.mjs [--tree <0.2.1 线树的 @deepseek-ai 目录>]');
+  console.error('用法：node verify/check-junctions.mjs [--tree <受支持宿主树的 @deepseek-ai 目录>]');
   process.exit(2);
 }
 
@@ -55,15 +69,14 @@ if (TREE === undefined) {
   process.exit(2);
 }
 
-/** 期望表：junction 名 → 目标版本串（dsh* 精确锁 0.2.1-rc.4；平台包随上游）。 */
+/** 配套依赖的期望版本：不随宿主 rc 改号，按上游各自版本判。 */
 const EXPECTED = {
   cordis: '4.0.5',
-  'dsh-jobs': '0.2.1-rc.4',
-  'dsh-sandbox': '0.2.1-rc.4',
-  'dsh-subagent': '0.2.1-rc.4',
-  'dsh-tools': '0.2.1-rc.4',
   schemastery: '3.18.5'
 };
+
+/** dsh* junction：接受集合内任一 rc，但四条必须同 rc（同树同代）。 */
+const DSH_JUNCTIONS = ['dsh-jobs', 'dsh-sandbox', 'dsh-subagent', 'dsh-tools'];
 
 /** zod 在**顶层平铺**（非 `@deepseek-ai` 域）——junction 落在 `node_modules\zod`。 */
 const ZOD = { name: 'zod', wantVersion: '4.6.7' };
@@ -93,8 +106,17 @@ const TREE_CONSUMERS = [
 let bad = 0;
 let checked = 0;
 
-/** 单条 junction 的四段核验（存在 / 形态 / 指树 / 版本）。 */
-function checkOne({ label, link, wantTarget, wantVersion }) {
+/**
+ * 单条 junction 的四段核验（存在 / 形态 / 指树 / 版本），返回目标版本。
+ *
+ * @param {object} entry - 核验项。
+ * @param {string} entry.label - 展示名。
+ * @param {string} entry.link - junction 路径。
+ * @param {string} entry.wantTarget - 期望目标（同一棵宿主树下的同名目录）。
+ * @param {(version: string) => string | undefined} entry.verdict - 版本判定；返回原因即失败。
+ * @returns {string | undefined} 通过时的目标版本；失败时 `undefined`。
+ */
+function checkOne({ label, link, wantTarget, verdict }) {
   checked += 1;
   let st;
   try {
@@ -102,18 +124,18 @@ function checkOne({ label, link, wantTarget, wantVersion }) {
   } catch {
     console.log(`MISSING  ${label}：${link} 不存在（junction 缺席就是红——那份七条清单是交付物）`);
     bad += 1;
-    return;
+    return undefined;
   }
   if (!st.isSymbolicLink()) {
     console.log(`NOT-LINK ${label}：不是 junction/符号链接（开发树接线形态走 junction）`);
     bad += 1;
-    return;
+    return undefined;
   }
   const target = readlinkSync(link);
   if (target.toLowerCase() !== wantTarget.toLowerCase()) {
     console.log(`WRONG-TREE ${label}：指向 ${target}，期望 ${wantTarget}`);
     bad += 1;
-    return;
+    return undefined;
   }
   let version;
   try {
@@ -121,14 +143,16 @@ function checkOne({ label, link, wantTarget, wantVersion }) {
   } catch (error) {
     console.log(`BAD-TARGET ${label}：目标不可读（${error.code}）`);
     bad += 1;
-    return;
+    return undefined;
   }
-  if (version !== wantVersion) {
-    console.log(`VERSION   ${label}：目标版本 ${version}，期望 ${wantVersion}`);
+  const reason = verdict(version);
+  if (reason !== undefined) {
+    console.log(`VERSION   ${label}：目标版本 ${version}，${reason}`);
     bad += 1;
-    return;
+    return undefined;
   }
   console.log(`OK       ${label} -> ${target}（${version}）`);
+  return version;
 }
 
 for (const [name, wantVersion] of Object.entries(EXPECTED)) {
@@ -136,8 +160,31 @@ for (const [name, wantVersion] of Object.entries(EXPECTED)) {
     label: name,
     link: join(NM, name),
     wantTarget: join(TREE, name),
-    wantVersion
+    verdict: (version) => (version === wantVersion ? undefined : `期望 ${wantVersion}（配套依赖按自身版本，不随宿主 rc 改号）`)
   });
+}
+
+// dsh* 四条：接受集合内任一 rc，但必须同 rc——同一条兼容线的宿主树不会被两次安装
+// 拼成两代实现。
+const dshVersions = new Map();
+for (const name of DSH_JUNCTIONS) {
+  const version = checkOne({
+    label: name,
+    link: join(NM, name),
+    wantTarget: join(TREE, name),
+    verdict: (value) => (SUPPORT.has(value) ? undefined : `不在支持集合 ${SUPPORT_TEXT} 内`)
+  });
+  if (version !== undefined) dshVersions.set(name, version);
+}
+if (dshVersions.size > 0) {
+  const distinct = new Set(dshVersions.values());
+  if (distinct.size > 1) {
+    bad += 1;
+    console.log(`MIXED-RC ${[...dshVersions].map(([name, version]) => `${name}=${version}`).join(' ')}`
+      + `——dsh* junction 必须同 rc 版本（支持集合 ${SUPPORT_TEXT}）`);
+  } else {
+    console.log(`OK       dsh* junction 同 rc：${[...distinct][0]}（支持集合 ${SUPPORT_TEXT}）`);
+  }
 }
 
 // zod 顶层平铺（node_modules\zod → 运行树顶层 node_modules\zod）。
@@ -145,7 +192,7 @@ checkOne({
   label: `${ZOD.name}（顶层）`,
   link: join(ROOT, 'node_modules', ZOD.name),
   wantTarget: join(TREE_TOP, ZOD.name),
-  wantVersion: ZOD.wantVersion
+  verdict: (version) => (version === ZOD.wantVersion ? undefined : `期望 ${ZOD.wantVersion}（与宿主同一物理实例）`)
 });
 
 // ── 树根唯一来源的对账段 ────────────────────────────────────────────────────

@@ -69,7 +69,7 @@ const POST_CALL_MS = 2000;
  * - `HANDLE_ANCHOR`：`lib/output.js` 代码构造的调用句式字面量，非词典成句；
  * - `ABORT_ANCHOR`：宿主 dsh-tools 对中止调用的改写文本，非本包词典。
  */
-const HANDLE_ANCHOR = /async_wait_job\(job_id="/;
+const HANDLE_ANCHOR = /async_wait\(targets=\[\{kind:"job", id:"/;
 const ABORT_ANCHOR = /Error: tool call aborted/;
 
 const results = [];
@@ -135,7 +135,7 @@ async function waitRunCalled(sessionId) {
  * 完成通知计数：只认**通知注入侧**——`user/message` 且 `source.kind === 'tool-jobs'`、
  * `form === 'notice'`（实测形状；按消息 id 去重，splice 镜像不重复计）。
  * 不匹配 assistant/tool 记录（模型复述不算通知，r34-O6），也不匹配 request/header
- * 与 system/message——工具描述自带 `async_wait_job(job_id="async-command-…")` 示例与
+ * 与 system/message——工具描述自带 `async_wait(targets=[{kind:"job", id:"async-command-…"}]` 示例与
  * 「完成」字样，正文级匹配会把请求头当成通知（(e) 实读的误报形态）。
  */
 function completionNotices(transcript) {
@@ -305,13 +305,13 @@ async function criterionA(sessionId) {
     NO_RETRY
     + `Run this exact command with async_run (yield_ms=${String(YIELD_MS)}): Start-Sleep -Seconds ${String(LONG_RUN_SECONDS)}. `
     + 'While it yields, do nothing else and do not call any other tool — wait. '
-    + 'If the yield ever ends early with a handle note, do NOT call async_wait_job and do NOT wait for the job — just reply ack and finish your turn.');
+    + 'If the yield ever ends early with a handle note, do NOT call async_wait and do NOT wait for the job — just reply ack and finish your turn.');
   // 时序锚：等调用落转录（注册与让出窗口在此之后才开始）。
   await waitRunCalled(sessionId);
   await sleep(POST_CALL_MS);
 
   const steerT0 = Date.now();
-  await steer(sessionId, 'Status check: reply with just the word "ack" and end your turn. Do not call async_wait_job or any other tool; do not wait for the job.');
+  await steer(sessionId, 'Status check: reply with just the word "ack" and end your turn. Do not call async_wait or any other tool; do not wait for the job.');
   const { elapsedMs, transcript } = await pollUntil(sessionId,
     (t) => runResultTexts(t).length >= 1,
     { t0: steerT0, maxMs: 30000 });
@@ -470,7 +470,7 @@ try {
     const notice = await waitForNoticeCount(sid, 1, (LONG_RUN_SECONDS + 30) * 1000);
     summary.criteria.a = { sessionId: sid, noticeCount: notice.count, ...reading };
     record('f-a-one-notice', notice.count === 1,
-      `插话路径结算后完成通知 ${String(notice.count)} 条（判据恰 1——撤销在先、结算照发；若模型自建 async_wait_job 等到结算，则按 (e) 相同的活 waiter 语义应为 0——提示词已明令禁止，见头注）`);
+      `插话路径结算后完成通知 ${String(notice.count)} 条（判据恰 1——撤销在先、结算照发；若模型自建 async_wait 等到结算，则按 (e) 相同的活 waiter 语义应为 0——提示词已明令禁止，见头注）`);
   }
   if (want('d')) {
     const sid = await newSession(PRESET);

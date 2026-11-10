@@ -55,7 +55,8 @@ import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
 // 其余用例（纯文本判据、客户端模型装载）离线照常跑。
 const askModule = await loadOfflineSafe('../lib/ask-takeover.js');
 const hostModule = await loadOfflineSafe('../lib/host.js');
-const { AskBatchRegistry, AskTakeoverService, shouldTakeover, inOwnPreset } = askModule ?? {};
+const { AskBatchRegistry, AskTakeoverService, shouldTakeover, readSessionPreset } = askModule ?? {};
+const { isPresetBound } = await loadOfflineSafe('../lib/descriptions.js');
 const { applyHostHalf } = hostModule ?? {};
 const hostTest = await hostTestFor('../lib/ask-takeover.js', '../lib/host.js');
 
@@ -235,22 +236,61 @@ function mountListener({ timer, clock, config, services }) {
 
 // ── 判定序（J1–J5，经真实接线观察 next() 语义）────────────────────────────
 
-hostTest('inOwnPreset（F3 范围判定基件）：三态读取路径 + 失效安全方向＝关', () => {
+hostTest('readSessionPreset＋isPresetBound（F3 范围判定基件，PRESET-BIND-01）：三态读取路径 + 名单匹配 + 失效安全方向＝关', () => {
   // 与 shouldTakeover 判定②同一条读取路径（sessions.get → stateOf('agentPreset')），
-  // 供 lib/jobs.js 的结果诊断范围判定复用——两处口径必须一致。
+  // 供 lib/jobs.js 的 guardPresetFor／组稿纪律复用——三处口径必须一致。
   const scope = (preset, session = { id: 's1' }) => ({
     sessions: { get: (id) => (id === 's1' ? session : undefined) },
     sessionProjections: { stateOf: () => preset }
   });
-  assert.equal(inOwnPreset(scope('dsh-async'), 's1'), true, '本包主预设 ⇒ 归属');
-  assert.equal(inOwnPreset(scope('dsh-async-create'), 's1'), true, 'create 预设同样归属');
-  assert.equal(inOwnPreset(scope('standard'), 's1'), false, '其他预设 ⇒ 不归属');
-  assert.equal(inOwnPreset(scope('dsh-async'), 's-other'), false, '会话查无 ⇒ 不归属');
-  assert.equal(inOwnPreset({}, 's1'), false, '服务缺席 ⇒ 不归属（失效安全＝关）');
+  assert.equal(readSessionPreset(scope('dsh-async'), 's1'), 'dsh-async', '读得会话实际预设 id');
+  assert.equal(readSessionPreset(scope('standard'), 's1'), 'standard', '非本包预设照常读得（匹配交名单）');
+  assert.equal(readSessionPreset(scope('dsh-async'), 's-other'), undefined, '会话查无 ⇒ undefined');
+  assert.equal(readSessionPreset({}, 's1'), undefined, '服务缺席 ⇒ undefined（失效安全＝关）');
   assert.equal(
-    inOwnPreset({ sessions: { get: () => { throw new Error('boom'); } }, sessionProjections: {} }, 's1'),
-    false, '读取抛错 ⇒ 不归属（不把异常泄给诊断路径）'
+    readSessionPreset({ sessions: { get: () => { throw new Error('boom'); } }, sessionProjections: {} }, 's1'),
+    undefined, '读取抛错 ⇒ undefined（不把异常泄给诊断路径）'
   );
+  // 名单匹配（需求 9.4.1：按会话当前实际预设 ID 匹配）：缺席配置 → 默认两名单；
+  // 显式名单决定归属；快照缺席回退默认（boundList 的缺席分支）。
+  assert.equal(isPresetBound(undefined, 'dsh-async'), true, '快照缺席 → 默认名单含主预设');
+  assert.equal(isPresetBound(undefined, 'rwkv'), false, '快照缺席 → 默认名单不含自建预设');
+  assert.equal(isPresetBound({ boundPresets: ['rwkv'] }, 'rwkv'), true, '显式名单匹配自建预设');
+  assert.equal(isPresetBound({ boundPresets: ['rwkv'] }, 'dsh-async'), false, '显式名单不再含内置主预设（未选预设天然隔离）');
+  assert.equal(isPresetBound({ boundPresets: [] }, 'dsh-async'), false, '空名单＝解除全部绑定');
+  assert.equal(isPresetBound({ boundPresets: [] }, 'rwkv'), false, '空名单对任何预设都不匹配');
+  assert.equal(isPresetBound({ boundPresets: 'oops' }, 'dsh-async'), true, '非数组名单折回默认（快照在场恒为数组的回退形态）');
+});
+
+hostTest('P12（PRESET-BIND-01）：shouldTakeover 按名单匹配——无预设/读取失败不误匹配', () => {
+  const agent = fakeAgent();
+  // 名单内自建预设（rwkv）→ 接管；名单外预设 → 原生；null/抛错 → 原生（不误匹配）。
+  assert.equal(shouldTakeover(
+    makeRequest(agent, [Q('q1')]), fakeServices(agent, { preset: 'rwkv' }), { askTakeover: true, boundPresets: ['rwkv'] }
+  ).takeover, true, '名单内自建预设 → 接管（无须行声明）');
+  for (const preset of ['dsh-standard', 'code-review', null]) {
+    assert.equal(shouldTakeover(
+      makeRequest(agent, [Q('q1')]), fakeServices(agent, { preset }), { askTakeover: true, boundPresets: ['rwkv'] }
+    ).takeover, false, `名单外预设 ${String(preset)} → 原生`);
+  }
+  assert.equal(shouldTakeover(
+    makeRequest(agent, [Q('q1')]), fakeServices(agent, { presetThrows: true }), { askTakeover: true, boundPresets: ['rwkv'] }
+  ).takeover, false, '投影读取抛错 → 原生（不猜）');
+  // 名单移除内置预设后，内置预设会话交还原生（取消绑定的语义）。
+  assert.equal(shouldTakeover(
+    makeRequest(agent, [Q('q1')]), fakeServices(agent, { preset: 'dsh-async' }), { askTakeover: true, boundPresets: ['rwkv'] }
+  ).takeover, false, '名单不含 dsh-async → 该预设会话走原生');
+});
+
+hostTest('P10（PRESET-BIND-01）：绑定名单与 askTakeover 开关正交——名单在、开关关仍零接管', () => {
+  const agent = fakeAgent();
+  // 名单含会话预设，但总开关关（判定①先于预设判定）→ 原生：名单只定范围，不代替开关。
+  assert.equal(shouldTakeover(
+    makeRequest(agent, [Q('q1')]), fakeServices(agent, { preset: 'rwkv' }), { askTakeover: false, boundPresets: ['rwkv'] }
+  ).takeover, false, '开关关 → 原生（名单不越权开启）');
+  assert.equal(shouldTakeover(
+    makeRequest(agent, [Q('q1')]), fakeServices(agent, { preset: 'rwkv' }), { boundPresets: ['rwkv'] }
+  ).takeover, false, '开关缺席（非字面 true）→ 原生');
 });
 
 hostTest('J1：总开关关 → next() 被调、零接管（默认关 = 零行为的接线侧证据）', () => {
@@ -329,7 +369,7 @@ hostTest('J6：窗口内作答 → answers 逐字段原样回流（selected/cust
   assert.equal(state.items.length, 1, '接管即入列');
   const delivered = registry.submitAnswer({
     batchId: state.items[0].batchId, questionId: 'q1',
-    selected: ['选项二'], custom: '补充说明'
+    selected: [1], custom: '补充说明'
   });
   assert.equal(delivered, 'delivered');
   const answers = await pending;
@@ -345,7 +385,7 @@ hostTest('J10：多题齐答提前结清 → 定时器撤销、混合形状、�
   const pending = registry.take(makeRequest(agent, [Q('q1'), Q('q2')]), agent);
   const { items } = registry.stateItems();
   const byQ = Object.fromEntries(items.map((item) => [item.questionId, item.batchId]));
-  registry.submitAnswer({ batchId: byQ.q1, questionId: 'q1', selected: ['选项一'] });
+  registry.submitAnswer({ batchId: byQ.q1, questionId: 'q1', selected: [0] });
   // J13：窗口内忽略 → windowSkip 文案进 answers（本批第二题）。
   registry.submitIgnore({ batchId: byQ.q2, questionId: 'q2' });
   assert.equal(timer.armed.length, 1, '接管武装恰一个定时器');
@@ -383,7 +423,7 @@ hostTest('J14：state() 载荷形状 + 作答递减 + 清零出列 + expired 批
   assert.equal(first.phase, 'open');
   assert.equal(typeof state.serverNow, 'number', 'serverNow 在场（客户端时差校准）');
 
-  registry.submitAnswer({ batchId: first.batchId, questionId: 'q1', selected: ['选项一'] });
+  registry.submitAnswer({ batchId: first.batchId, questionId: 'q1', selected: [0] });
   state = registry.stateItems();
   assert.equal(state.items.length, 1, '作答即递减（open 题才上屏）');
   assert.equal(state.items[0].questionId, 'q2');
@@ -409,7 +449,7 @@ hostTest('F4：到期后回调未及的提交必须复查真期限——按 gone
 
   clockNow = 1_005_001; // 真钟越过窗口；到期回调全程不 fire（竞态窗口敞开）
   assert.equal(
-    registry.submitAnswer({ batchId, questionId: 'q1', selected: ['选项一'] }),
+    registry.submitAnswer({ batchId, questionId: 'q1', selected: [0] }),
     'gone',
     '过期批的提交按 gone 退回——不得冒充 delivered 用迟到答案翻案'
   );
@@ -439,7 +479,7 @@ hostTest('J7：超时 → 合成 answers 逐字段（en/zh 两档；不代答）
     const pending = registry.take(makeRequest(agent, [Q('q1'), Q('q2')]), agent);
     const { items } = registry.stateItems();
     // 窗口内答掉 q1：超时合成必须保留用户形状、只对 open 题合成。
-    registry.submitAnswer({ batchId: items[0].batchId, questionId: 'q1', selected: ['选项二'] });
+    registry.submitAnswer({ batchId: items[0].batchId, questionId: 'q1', selected: [1] });
     timer.fire(0);
     const settled = await pending;
     const byId = Object.fromEntries(settled.answers.map((a) => [a.id, a]));
@@ -503,7 +543,7 @@ hostTest('J11-a：运行中投递 → inject 恰一次、通知形（自声明 k
 
   const outcome = registry.submitLate({
     batchId: items[0].batchId, questionId: 'q1', kind: 'answer',
-    selected: ['选项一', '选项二'], custom: '注意顺序'
+    selected: [0, 1], custom: '注意顺序'
   });
   assert.equal(outcome, 'late');
   // 方法名断言（可失败判据，通道选择）：运行中 → inject——折入下一领取点，
@@ -551,7 +591,7 @@ hostTest('J11-a：运行中投递 → inject 恰一次、通知形（自声明 k
   assert.equal(emitted.length, 1, '事件恰一次');
   // 同一题二次提交 → gone，不重复注入：
   assert.equal(
-    registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: ['选项一'] }),
+    registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: [0] }),
     'gone'
   );
   assert.equal(agent.injectCalls.length, 1, '同一题二次提交 → gone，不重复注入');
@@ -563,13 +603,14 @@ hostTest('J11-a：运行中投递 → inject 恰一次、通知形（自声明 k
   const items2 = registry2.stateItems().items;
   timer2.fire(0);
   await pending2;
-  registry2.submitLate({ batchId: items2[0].batchId, questionId: 'q9', kind: 'answer', selected: ['a', 'b'] });
-  assert.match(agent2.injectCalls[0].content[0].text, /a, b/, 'en 标签以逗号空格相接');
+  registry2.submitLate({ batchId: items2[0].batchId, questionId: 'q9', kind: 'answer', selected: [0, 1] });
+  assert.match(agent2.injectCalls[0].content[0].text, /选项一, 选项二/, 'en 标签以逗号空格相接');
 });
 
 hostTest('J24（A10）：选项说明进通知正文——同标签异说明不丢差异；无说明选项不拼空', async () => {
   // 互异标签配不同操作/风险说明：只拼 label 会让「重建/重启」这类近似标签的
-  // 真实区别消失（通知自含完整题目，不依赖旧工具调用记忆——用户裁定）。
+  // 真实区别消失（通知自含完整题目，不依赖旧工具调用记忆——用户裁定）。同标签
+  // 异说明按联合唯一（产品 2026-11-07 改判）放行，通知保留两条说明不合并。
   const agent = fakeAgent();
   const { registry, timer } = makeRegistry({ agentLang: 'zh' });
   const q = Q('qd', {
@@ -586,17 +627,23 @@ hostTest('J24（A10）：选项说明进通知正文——同标签异说明不�
   await pending;
   const outcome = registry.submitLate({
     batchId: items[0].batchId, questionId: 'qd', kind: 'answer',
-    selected: ['执行', '跳过'], custom: '选第二个执行'
+    selected: [0, 2]
   });
   assert.equal(outcome, 'late');
-  const text = agent.injectCalls[0].content[0].text;
+  const message = agent.injectCalls[0];
+  const text = message.content[0].text;
   // 两条同标签的说明都在场（丢了任一条就无法区分用户选的是哪种「执行」）。
   assert.ok(text.includes('执行：立即运行，不可撤销'), '说明一在场（zh 冒号连接）');
   assert.ok(text.includes('执行：先出计划，等待批准'), '说明二在场——同标签异说明不合并');
   assert.ok(text.includes('跳过、') || text.includes('跳过\n'), '无说明选项照常拼入（不残留空说明连接符）');
   assert.doesNotMatch(text, /跳过：/, '无 description 的选项不拼「：」');
   assert.ok(text.includes('multiSelect=true'), '多选属性在场');
-  assert.ok(text.includes('选第二个执行'), '自定义补充在场');
+  // RA-OPTION-IDENTITY：selected=[0,2]（第一个「执行」＋「跳过」）；答案行用
+  // 「标签＋说明」复合串逐字对照选项行——同标签差异不靠猜，与 summary 同一组。
+  const expectedAnswer = '执行：立即运行，不可撤销、跳过';
+  assert.ok(text.includes(expectedAnswer), '答案行复合串定位第一个「执行」（与选项行逐字对照）');
+  assert.equal(message.source.summary, t('zh', 'ask.lateSummary', { qid: 'qd', answer: expectedAnswer }),
+    'summary 与正文表达同一组实际答案（复合串）');
   assert.match(text, /时延/, '时间信息在场');
 
   // en 档：说明用 ": " 连接，选项间仍是 ", "。
@@ -612,7 +659,7 @@ hostTest('J24（A10）：选项说明进通知正文——同标签异说明不�
   const itemsEn = regEn.stateItems().items;
   timEn.fire(0);
   await pendingEn;
-  regEn.submitLate({ batchId: itemsEn[0].batchId, questionId: 'qe', kind: 'answer', selected: ['Run'] });
+  regEn.submitLate({ batchId: itemsEn[0].batchId, questionId: 'qe', kind: 'answer', selected: [0] });
   const textEn = agentEn.injectCalls[0].content[0].text;
   assert.ok(textEn.includes('Run: executes immediately'), 'en 说明用冒号空格连接');
   assert.ok(textEn.includes('Skip,') || textEn.includes('Skip\n'), '无说明选项照常拼入');
@@ -627,7 +674,7 @@ hostTest('J11-b：空闲且无未领取的本包投递 → followup 恰一次（
   timer.fire(0);
   await pending;
 
-  const outcome = registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: ['x'] });
+  const outcome = registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: [0] });
   assert.equal(outcome, 'late');
   assert.equal(agent.followupCalls.length, 1, '空闲 → followup 恰一次（立即唤醒）');
   assert.equal(agent.injectCalls.length, 0, '空闲零 inject（不滞留到别人开回合）');
@@ -635,7 +682,7 @@ hostTest('J11-b：空闲且无未领取的本包投递 → followup 恰一次（
   assert.equal(agent.status, 'running', 'followup 已开跑（假 agent 镜像 wakeDriver 同步分支）');
   // 同批第二题此时已"运行中"→ 并入该回合下一领取点（inject）：
   assert.equal(
-    registry.submitLate({ batchId: items[0].batchId, questionId: 'q2', kind: 'answer', selected: ['y'] }),
+    registry.submitLate({ batchId: items[0].batchId, questionId: 'q2', kind: 'answer', selected: [0] }),
     'gone', '（单题批出列即删——gone）'
   );
 });
@@ -648,7 +695,7 @@ hostTest('J11-c：同窗口多条（运行中）→ 全部 inject 同落 next-st
   timer.fire(0);
   await pending;
   for (const qid of ['q3', 'q1', 'q2']) { // 乱序到达
-    assert.equal(registry.submitLate({ batchId: items[0].batchId, questionId: qid, kind: 'answer', selected: ['x'] }), 'late');
+    assert.equal(registry.submitLate({ batchId: items[0].batchId, questionId: qid, kind: 'answer', selected: [0] }), 'late');
   }
   assert.equal(agent.injectCalls.length, 3, '三条全 inject');
   assert.equal(agent.followupCalls.length, 0, '零 followup（不串行开三个回合）');
@@ -667,7 +714,7 @@ hostTest('J11-d：空闲但自家 followup 尚未开跑（收件箱有未领取�
   const { items } = registry.stateItems();
   timer.fire(0);
   await pending;
-  assert.equal(registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: ['x'] }), 'late');
+  assert.equal(registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: [0] }), 'late');
   assert.equal(agent.injectCalls.length, 1, '空窗口后到者 → inject（由闩住的那个回合首次领取顺走）');
   assert.equal(agent.followupCalls.length, 0, '不再叠加 followup（不设去抖定时，设计 §4.4）');
   // 真机语义：闩住的回合结束时**先**整批领取滞留件、再结算
@@ -680,7 +727,7 @@ hostTest('J11-d：空闲但自家 followup 尚未开跑（收件箱有未领取�
     '闩住回合顺走滞留件后转空闲：补醒观察对账为空，不补提醒（真机 870-875 do-while 语义）');
 });
 
-hostTest('J12：迟到忽略 → 通知形正文 = ask.lateIgnore 模板；两通道同步抛错 → failed 仍出列', async () => {
+hostTest('J12：迟到忽略 → 通知形正文 = ask.lateIgnore 模板；两通道同步抛错 → failed 且题回滚可再投', async () => {
   const agent = fakeAgent();
   const { registry, timer } = makeRegistry({ agentLang: 'en' });
   const pending = registry.take(makeRequest(agent, [Q('q1'), Q('q2')]), agent);
@@ -697,7 +744,8 @@ hostTest('J12：迟到忽略 → 通知形正文 = ask.lateIgnore 模板；两�
     qid: 'q1', question: '问题文本 q1', options: '选项一, 选项二', multiSelect: 'false', delay: 5
   }), '迟到忽略正文 = 词典模板逐字（自含题目内容：id/题干/选项/multiSelect/时延——自走钟下时延=窗口 5 s）');
 
-  // inject 抛错（运行中通道，agent 引用失效的最坏形态）：审计 + 仍出列 + failed。
+  // inject 抛错（运行中通道，agent 引用失效的最坏形态）：审计 + 回滚为 open +
+  // failed（ASK-LATE-FAILED-RETRY：未送达的题保持可再投，不伪装成「已有答案」）。
   const broken = fakeAgent('s-broken');
   broken.inject = () => { throw new Error('agent gone'); };
   const pending2 = registry.take(makeRequest(broken, [Q('q3')]), broken);
@@ -706,8 +754,12 @@ hostTest('J12：迟到忽略 → 通知形正文 = ask.lateIgnore 模板；两�
   timer.fire(1);
   await pending2;
   assert.equal(
-    registry.submitLate({ batchId: q3Item.batchId, questionId: 'q3', kind: 'answer', selected: ['x'] }),
-    'failed', 'inject 失败返回 failed（调用方可上屏重试语义——本批无重试通道，设计 §4.4）'
+    registry.submitLate({ batchId: q3Item.batchId, questionId: 'q3', kind: 'answer', selected: [0] }),
+    'failed', 'inject 失败返回 failed（调用方可上屏重试语义——重试即重新投递，设计 §4.4）'
+  );
+  assert.ok(
+    registry.stateItems().items.some((item) => item.questionId === 'q3'),
+    'failed 后 q3 仍 open（回轮询列表——失败不等于出列）'
   );
 
   // followup 抛错（空闲通道）同样 failed：
@@ -718,8 +770,12 @@ hostTest('J12：迟到忽略 → 通知形正文 = ask.lateIgnore 模板；两�
   timer.fire(2);
   await pending3;
   assert.equal(
-    registry.submitLate({ batchId: q4Item.batchId, questionId: 'q4', kind: 'answer', selected: ['x'] }),
+    registry.submitLate({ batchId: q4Item.batchId, questionId: 'q4', kind: 'answer', selected: [0] }),
     'failed', 'followup 失败返回 failed（设计 §4.4：任一通道同步抛错）'
+  );
+  assert.ok(
+    registry.stateItems().items.some((item) => item.questionId === 'q4'),
+    'failed 后 q4 仍 open（两通道同一回滚口径）'
   );
 });
 
@@ -739,7 +795,7 @@ hostTest('注入时刻活读 agentLang + 时延非零（假钟前进 37 s）', a
   setSnapshot({ askTakeover: true, askTimeoutMs: 5000, agentLang: 'zh' });
 
   const outcome = registry.submitLate({
-    batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: ['选项一', '选项二']
+    batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: [0, 1]
   });
   assert.equal(outcome, 'late');
   const message = agent.injectCalls[0];
@@ -768,7 +824,7 @@ hostTest('注入时刻活读 agentLang + 时延非零（假钟前进 37 s）', a
   await pendingFb;
   snapshotBroken = true;
   assert.equal(
-    registryFb.submitLate({ batchId: fbItem.batchId, questionId: 'q7', kind: 'answer', selected: ['选项一'] }),
+    registryFb.submitLate({ batchId: fbItem.batchId, questionId: 'q7', kind: 'answer', selected: [0] }),
     'late', '活读抛错不丢注入（outcome=late）'
   );
   assert.match(agentFb.injectCalls[0].content[0].text, /\[迟到作答\]/,
@@ -820,7 +876,7 @@ hostTest('J15：wire 核对——参数名/描述符/单层包裹三项', async 
 
   // ③ 假 RPC 单层包裹：prepareInvocation 按 wire 把位置参数组装成 {submission: 载荷}——
   //    宿主收到的就是载荷本身。
-  const payload = { batchId: 'ask-1-abc', questionId: 'q1', selected: ['选项一'], custom: '注' };
+  const payload = { batchId: 'ask-1-abc', questionId: 'q1', selected: [0], custom: '注' };
   const positional = [payload];
   const invocation = Object.fromEntries(
     methods.answer.parameters.map((parameter, index) => [parameter.wire, positional[index]])
@@ -836,11 +892,11 @@ hostTest('J15：wire 核对——参数名/描述符/单层包裹三项', async 
   new AskTakeoverService(fakeReflectCtx, registry);
   const pending = registry.take(makeRequest(agent, [Q('q1')]), agent);
   const { items } = registry.stateItems();
-  const result = await service.answer({ batchId: items[0].batchId, questionId: 'q1', selected: ['选项一'] });
+  const result = await service.answer({ batchId: items[0].batchId, questionId: 'q1', selected: [0] });
   assert.deepEqual(result, { outcome: 'delivered' }, '窗口内作答回执');
   const answers = await pending;
   assert.deepEqual(answers.answers[0].selected, ['选项一'], '服务接口进本批记录');
-  const lateResult = await service.answer({ batchId: items[0].batchId, questionId: 'q1', selected: ['x'] });
+  const lateResult = await service.answer({ batchId: items[0].batchId, questionId: 'q1', selected: [0] });
   assert.deepEqual(lateResult, { outcome: 'gone', undelivered: true },
     '批次已结清出列 → gone＋undelivered（记录缺席口径，界面显示未送达）');
   // 迟到通道经 ignore 走一遍：
@@ -867,13 +923,20 @@ hostTest('作答有效性校验——非法作答可见拒绝、不记已答、�
   const openOf = () => registry.stateItems().items
     .filter((entry) => entry.batchId === batchId).map((entry) => entry.questionId).sort();
 
-  // 窗口内五类非法形态：未作答 / 空白自定义 / 未知选项 / 单选多项 / 单选预设+自定义。
+  // 窗口内非法形态（序号校验，RA-OPTION-IDENTITY）：未作答 / 空白自定义 /
+  // 未知选项（旧 wire 字符串残留——真实标签的字符串同样不认、非整数、负下标、
+  // 越界）/ 单选多项（含重复序号——按原始数组判）/ 单选预设+自定义。
   const bad = [
     { questionId: 'q2', selected: [], custom: undefined },
     { questionId: 'q2', selected: [], custom: '   ' },
     { questionId: 'q2', selected: ['不在选项里'], custom: undefined },
-    { questionId: 'q2', selected: ['选项一', '选项二'], custom: undefined },
-    { questionId: 'q2', selected: ['选项一'], custom: '还要补充' }
+    { questionId: 'q2', selected: ['选项一'], custom: undefined },
+    { questionId: 'q2', selected: [0.5], custom: undefined },
+    { questionId: 'q2', selected: [-1], custom: undefined },
+    { questionId: 'q2', selected: [9], custom: undefined },
+    { questionId: 'q2', selected: [0, 1], custom: undefined },
+    { questionId: 'q2', selected: [0, 0], custom: undefined },
+    { questionId: 'q2', selected: [0], custom: '还要补充' }
   ];
   for (const submission of bad) {
     await assert.rejects(
@@ -881,17 +944,17 @@ hostTest('作答有效性校验——非法作答可见拒绝、不记已答、�
       (error) => error.message.startsWith(t('zh', 'ask.answerRejectedError', { reason: '' })),
       `非法作答可见拒绝：${JSON.stringify(submission)}`);
   }
-  assert.deepEqual(openOf(), ['q1', 'q2'], '五次拒绝全部不记已答（两题仍开放）');
+  assert.deepEqual(openOf(), ['q1', 'q2'], `${bad.length} 次拒绝全部不记已答（两题仍开放）`);
   assert.equal(agent.injectCalls.length + agent.followupCalls.length, 0, '拒绝路径零投递');
 
   // 合法多选组合放行：已选预设与自定义并列。
-  const ok = await service.answer({ batchId, questionId: 'q1', selected: ['选项一', '选项二'], custom: '注意顺序' });
+  const ok = await service.answer({ batchId, questionId: 'q1', selected: [0, 1], custom: '注意顺序' });
   assert.deepEqual(ok, { outcome: 'delivered' }, '合法组合：窗口内 delivered');
   assert.deepEqual(openOf(), ['q2'], 'q1 落定、q2 仍开放（批次未结清）');
 
   // gone 两口径（需求 §4.4）：q1 已落定而批次仍在 → 普通 gone（不带 undelivered，
   // 题目已有答案，界面交轮询收敛）。
-  const decided = await service.answer({ batchId, questionId: 'q1', selected: ['选项一'] });
+  const decided = await service.answer({ batchId, questionId: 'q1', selected: [0] });
   assert.deepEqual(decided, { outcome: 'gone' }, '已落定题：普通 gone，不报未送达');
 
   // 迟到路径同样校验（§4.2.4 不因迟到放松）：到期后空白自定义 → 拒绝、不投递。
@@ -916,11 +979,304 @@ hostTest('作答有效性校验——非法作答可见拒绝、不记已答、�
 
   // 记录缺席（需求 §4.4）：两题落定、批次结清出列后再提交 → gone＋undelivered
   // （区分字段，outcome 枚举不变；界面据此显示未送达）。
-  const missing = await service.answer({ batchId, questionId: 'q2', selected: ['选项一'] });
+  const missing = await service.answer({ batchId, questionId: 'q2', selected: [0] });
   assert.deepEqual(missing, { outcome: 'gone', undelivered: true }, '记录缺席：undelivered 区分字段');
   // 忽略提交同口径（需求 §4.4）：命中缺席批次 → 同 undelivered 区分。
   const missingIgnore = await service.ignore({ batchId, questionId: 'q2' });
   assert.deepEqual(missingIgnore, { outcome: 'gone', undelivered: true }, '忽略命中记录缺席：同口径 undelivered');
+});
+
+// ── RA-OPTION-IDENTITY：选项身份与答案表达（题内序号＋冻结副本＋干净判据）──────
+
+hostTest('身份：selected 为题内序号——同标签异说明各自独立；answers 按冻结题映射表达串', async () => {
+  // 同标签异说明（en，单选）：两个「Run」按序号各自可选、答案复合串互异。
+  const agent = fakeAgent('s-ident');
+  const { registry } = makeRegistry({ agentLang: 'en' });
+  const pending = registry.take(makeRequest(agent, [Q('q1', {
+    options: [
+      { label: 'Run', description: 'immediately' },
+      { label: 'Run', description: 'after a plan' }
+    ]
+  })]), agent);
+  const { items } = registry.stateItems();
+  registry.submitAnswer({ batchId: items[0].batchId, questionId: 'q1', selected: [1] });
+  const answers = await pending;
+  assert.deepEqual(answers.answers[0].selected, ['Run: after a plan'],
+    '窗口 answers：重复标签按「标签＋说明」复合串表达（选中的是第二个 Run）');
+
+  // 两批同标签不同说明、同一序号 → answers 表达串互异（映射各自成立）；唯一
+  // 标签题答案仍纯标签（无重复标签时与历史逐字节一致——正常题零回归）。
+  const agentB = fakeAgent('s-ident2');
+  const { registry: regB } = makeRegistry({ agentLang: 'zh' });
+  const p1 = regB.take(makeRequest(agentB, [Q('q1', {
+    options: [{ label: '执行', description: '先出计划，等待批准' }, { label: '执行', description: '立即执行' }]
+  })]), agentB);
+  const p2 = regB.take(makeRequest(agentB, [Q('q2', {
+    options: [{ label: '执行', description: '先出计划，等待批准' }, { label: '跳过' }]
+  })]), agentB);
+  const its = regB.stateItems().items;
+  regB.submitAnswer({ batchId: its[0].batchId, questionId: 'q1', selected: [0] });
+  regB.submitAnswer({ batchId: its[1].batchId, questionId: 'q2', selected: [0] });
+  const [a1, a2] = await Promise.all([p1, p2]);
+  assert.deepEqual(a1.answers[0].selected, ['执行：先出计划，等待批准'],
+    '批一 [0] → 复合串（同标签项）');
+  assert.deepEqual(a2.answers[0].selected, ['执行'],
+    '批二 [0] → 纯标签（「执行」在批二唯一——不同批次同序号可分辨）');
+
+  // 冻结副本：接管后宿主侧改原载荷不改变映射基准（state 与表达都读接单抄录）。
+  const agentC = fakeAgent('s-ident3');
+  const { registry: regC, timer: timC } = makeRegistry({ agentLang: 'zh' });
+  const req = makeRequest(agentC, [Q('q3', { options: [{ label: '甲' }, { label: '乙' }] })]);
+  const pendingC = regC.take(req, agentC);
+  req.questions[0].options.push({ label: '丙' });   // 原载荷事后追加
+  req.questions[0].options[0] = { label: '掉包' };  // 原载荷事后改写
+  const itemC = regC.stateItems().items[0];
+  assert.equal(itemC.options.length, 2, 'state 读接单冻结副本（追加不进面板）');
+  assert.equal(itemC.options[0].label, '甲', '改写不影响冻结副本（序号基准不漂移）');
+  timC.fire(0);
+  await pendingC;
+  regC.submitLate({ batchId: itemC.batchId, questionId: 'q3', kind: 'answer', selected: [1] });
+  assert.ok(agentC.injectCalls[0].content[0].text.includes('乙'),
+    '迟到表达按冻结题映射（序号 [1]＝冻结副本的「乙」，不含「掉包/丙」）');
+});
+
+hostTest('序号规范化：多选重复/乱序序号首现去重后放行，answers 表达不重复', async () => {
+  const agent = fakeAgent('s-norm');
+  const { registry } = makeRegistry({ agentLang: 'zh' });
+  const pending = registry.take(makeRequest(agent, [Q('q1', { multiSelect: true })]), agent);
+  const item = registry.stateItems().items[0];
+  registry.submitAnswer({ batchId: item.batchId, questionId: 'q1', selected: [1, 0, 1] });
+  const answers = await pending;
+  assert.deepEqual(answers.answers[0].selected, ['选项二', '选项一'],
+    '首现顺序去重（不排序、不重复；重复序号不产生重复表达串）');
+});
+
+hostTest('表达干净判据：任一判据不满足 → 整题 #序号 回退（选项行带同款前缀）；干净题保持现状', async () => {
+  // 全部为合法输入（接单不拒）——表达层判据见 ask-takeover.js 的干净判据注释：
+  // 标签含任何结构分隔符（含 descSep）、说明含 join/并列/模板前缀/换行回车、
+  // 重复标签复合串含模板前缀，任一命中即整题 ordinal。历史攻击（join 歧义、
+  // 拼接 customMark、行重复、跨集合同文、前缀切分歧义 F7/F8）逐案在列。
+  const attacks = [
+    { lang: 'zh', options: [{ label: '甲、乙' }, { label: '甲' }], selected: [1], row: '#2 甲' },
+    { lang: 'en', options: [{ label: 'Run' }, { label: 'Yes, do it' }], selected: [0], row: '#1 Run' },
+    { lang: 'zh', options: [{ label: '乙' }, { label: '甲', description: '乙、继续' }], selected: [1], row: '#2 甲：乙、继续' },
+    { lang: 'zh', options: [{ label: '甲', description: '先备份；再执行' }], selected: [0], row: '#1 甲：先备份；再执行' },
+    { lang: 'zh', options: [{ label: '甲', description: '两行\n说明' }], selected: [0], row: '#1 甲：两行' },
+    { lang: 'en', options: [{ label: 'Go' }, { label: 'Skip; all' }], selected: [1], row: '#2 Skip; all' },
+    { lang: 'zh', options: [{ label: '自定义回答', description: '甲' }, { label: '自定义回答', description: '乙' }], selected: [0], row: '#1 自定义回答：甲' },
+    { lang: 'en', options: [{ label: 'Run', description: 'custom answer: now' }], selected: [0], row: '#1 Run: custom answer: now' },
+    { lang: 'zh', options: [{ label: '甲', description: '自定义回答：伪装' }], selected: [0], row: '#1 甲：自定义回答：伪装' },
+    { lang: 'zh', options: [{ label: '执行：先备份' }, { label: '执行', description: '先备份' }], selected: [0], row: '#1 执行：先备份' },
+    { lang: 'zh', options: [{ label: 'A', description: 'B' }, { label: 'A：B', description: 'C' }], selected: [1], row: '#2 A：B：C' },
+    { lang: 'en', options: [{ label: 'A: B' }, { label: 'A', description: 'B: C' }], selected: [0], row: '#1 A: B' },
+    { lang: 'zh', options: [{ label: '执：行' }, { label: '执', description: '行书' }], selected: [1], row: '#2 执：行书' },
+    { lang: 'en', options: [{ label: 'run: backup' }, { label: 'run', description: 'backup plan' }], selected: [1], row: '#2 run: backup plan' }
+  ];
+  for (const [index, attack] of attacks.entries()) {
+    const agent = fakeAgent(`s-ordinal-${index}`);
+    const { registry, timer } = makeRegistry({ agentLang: attack.lang });
+    const pending = registry.take(
+      makeRequest(agent, [Q('q1', { multiSelect: true, options: attack.options })]), agent);
+    const item = registry.stateItems().items[0];
+    timer.fire(0);
+    await pending;
+    const outcome = registry.submitLate({
+      batchId: item.batchId, questionId: 'q1', kind: 'answer', selected: attack.selected
+    });
+    assert.equal(outcome, 'late', `attack ${index}：late`);
+    const text = agent.injectCalls[0].content[0].text;
+    const ordinal = `#${attack.selected[0] + 1}`;
+    assert.equal(agent.injectCalls[0].source.summary,
+      t(attack.lang, 'ask.lateSummary', { qid: 'q1', answer: ordinal }),
+      `attack ${index}：答案行＝纯序号（不含任何标签/说明内容，不同选择集必然互异）`);
+    assert.ok(text.includes(attack.row), `attack ${index}：选项行带同款前缀（说明信息不丢）`);
+  }
+
+  // 正向对照：说明含 descSep（标签干净）、同标签一空一非空说明——判据放行，
+  // 表达保持现状形状（首个 descSep 切分仍唯一还原标签；空说明退化纯标签）。
+  const positives = [
+    { lang: 'zh', options: [{ label: '执行', description: '风险：不可撤销' }], selected: [0], answer: '执行', row: '执行：风险：不可撤销' },
+    { lang: 'en', options: [{ label: 'Proceed', description: 'risk: irreversible' }], selected: [0], answer: 'Proceed', row: 'Proceed: risk: irreversible' },
+    { lang: 'zh', options: [{ label: '执行', description: '先备份' }, { label: '执行' }], selected: [1], answer: '执行', row: '执行：先备份' }
+  ];
+  for (const [index, positive] of positives.entries()) {
+    const agent = fakeAgent(`s-content-${index}`);
+    const { registry, timer } = makeRegistry({ agentLang: positive.lang });
+    const pending = registry.take(
+      makeRequest(agent, [Q('q1', { options: positive.options })]), agent);
+    const item = registry.stateItems().items[0];
+    timer.fire(0);
+    await pending;
+    const outcome = registry.submitLate({
+      batchId: item.batchId, questionId: 'q1', kind: 'answer', selected: positive.selected
+    });
+    assert.equal(outcome, 'late', `positive ${index}：late`);
+    const message = agent.injectCalls[0];
+    assert.equal(message.source.summary,
+      t(positive.lang, 'ask.lateSummary', { qid: 'q1', answer: positive.answer }),
+      `positive ${index}：答案＝${positive.answer}（content 模式，无 #序号）`);
+    assert.ok(message.content[0].text.includes(positive.row),
+      `positive ${index}：选项行保持现状构造`);
+    assert.ok(!message.content[0].text.includes(`#${positive.selected[0] + 1} `),
+      `positive ${index}：无序号前缀（干净题零回归）`);
+  }
+});
+
+// ── 接单入口校验（ASK-DUPLICATE-01 产品决定 + RA-ROBUSTNESS 契约外防御）──────
+
+hostTest('接单入口拒绝——同标签同说明或均无说明整批拒绝并指明重复项；同标签异说明与跨题同标签放行', async () => {
+  // ASK-DUPLICATE-01（产品 2026-11-07 改判：label＋description 联合唯一）：
+  // 「标签＋说明」完全相同、或标签相同且均无说明的两条选项无法区分，接单即
+  // 拒绝整次载荷并说明重复的是哪些（重复项带说明摘要）；同标签异说明放行
+  // （通知语义见证 J24）；跨题同标签不跨题拒绝。
+  const agent = fakeAgent();
+  const dupNoDesc = Q('q1', { options: [{ label: '执行' }, { label: '执行' }, { label: '跳过' }] });
+  const { registry, timer } = makeRegistry({ agentLang: 'zh' });
+  await assert.rejects(
+    registry.take(makeRequest(agent, [dupNoDesc]), agent),
+    (error) => error instanceof Error
+      && error.message.includes(t('zh', 'ask.rejectDuplicateOptionLabels', { qid: 'q1', labels: '执行' })),
+    '同标签且均无说明 → 整批拒绝（重复项只写标签，zh 档词典逐字）'
+  );
+  assert.equal(registry.batches.size, 0, '拒绝发生在进注册表之前（零批次记录）');
+  assert.equal(timer.armed.length, 0, '定时器零武装');
+  // 同标签且说明相同 → 同判拒绝，重复项带说明摘要：
+  await assert.rejects(
+    registry.take(makeRequest(agent, [Q('q2', {
+      options: [
+        { label: '执行', description: '立即运行，不可撤销' },
+        { label: '跳过' },
+        { label: '执行', description: '立即运行，不可撤销' }
+      ]
+    })]), agent),
+    (error) => error.message.includes(
+      t('zh', 'ask.rejectDuplicateOptionLabels', { qid: 'q2', labels: '执行(立即运行，不可撤销)' })
+    ),
+    '同标签且说明相同 → 整批拒绝（重复项带说明摘要）'
+  );
+  // 任一题命中即整批拒绝（第二题重复同样拒）：
+  await assert.rejects(
+    registry.take(makeRequest(agent, [Q('ok1'), dupNoDesc]), agent),
+    () => true,
+    '多题载荷中任一题重复 → 整批拒绝'
+  );
+  // 同标签异说明 → 放行（联合唯一：说明区分真实差别；通知语义见证 J24）：
+  const agentTwins = fakeAgent('s-twin-labels');
+  const { registry: regTwins } = makeRegistry({ agentLang: 'en' });
+  const pendingQ3 = regTwins.take(makeRequest(agentTwins, [Q('q3', {
+    options: [
+      { label: 'Run', description: 'immediately' },
+      { label: 'Run', description: 'after a plan' },
+      { label: 'Skip' }
+    ]
+  })]), agentTwins);
+  assert.equal(regTwins.stateItems().items.length, 1, '同标签异说明放行（批次入列）');
+  // 标签相同、一条有说明一条无说明：两条不同选项，同样放行：
+  const pendingQ4 = regTwins.take(makeRequest(agentTwins, [Q('q4', {
+    options: [{ label: 'Go' }, { label: 'Go', description: 'with backup' }]
+  })]), agentTwins);
+  assert.equal(regTwins.stateItems().items.length, 2, '同标签一有一无说明也放行（不同选项）');
+  const twinItems = regTwins.stateItems().items;
+  regTwins.submitAnswer({ batchId: twinItems[0].batchId, questionId: 'q3', selected: [0] });
+  regTwins.submitAnswer({ batchId: twinItems[1].batchId, questionId: 'q4', selected: [0] });
+  await Promise.all([pendingQ3, pendingQ4]);
+  // en 档两语齐（均无说明的重复）：
+  const agentEn = fakeAgent('s-dup-en');
+  const { registry: regEn } = makeRegistry({ agentLang: 'en' });
+  await assert.rejects(
+    regEn.take(makeRequest(agentEn, [Q('q9', { options: [{ label: 'a' }, { label: 'b' }, { label: 'a' }] })]), agentEn),
+    (error) => error.message.includes(t('en', 'ask.rejectDuplicateOptionLabels', { qid: 'q9', labels: 'a' })),
+    'en 档拒绝文案 = 词典逐字'
+  );
+  // 跨题同标签不拒绝（唯一性只按题内判定）：
+  const agentOk = fakeAgent('s-cross');
+  const { registry: regOk } = makeRegistry({ agentLang: 'en' });
+  const pending = regOk.take(makeRequest(agentOk, [
+    Q('q1', { options: [{ label: '继续' }, { label: '停止' }] }),
+    Q('q2', { options: [{ label: '继续' }, { label: '取消' }] })
+  ]), agentOk);
+  assert.equal(regOk.stateItems().items.length, 2, '跨题同标签不受影响（两题都入列）');
+  const { items } = regOk.stateItems();
+  regOk.submitAnswer({ batchId: items[0].batchId, questionId: 'q1', selected: [0] });
+  regOk.submitAnswer({ batchId: items[0].batchId, questionId: 'q2', selected: [1] });
+  const settled = await pending;
+  assert.equal(settled.answers.length, 2, '合法路径齐答结清（不回归）');
+});
+
+hostTest('接单入口防御——契约外非数组 questions 可读拒绝而非 TypeError（RA-ROBUSTNESS）', async () => {
+  const agent = fakeAgent();
+  // 前置：判定序把非数组 questions 按「无题」放行（③ 强转空集不命中），接管
+  // 可达——宿主契约恒数组、没有合法反例，防线只能在 take 的接单入口，纯防御。
+  const { registry, timer } = makeRegistry({ agentLang: 'zh' });
+  for (const bad of [undefined, 'oops', { 0: Q('q1') }]) {
+    await assert.rejects(
+      registry.take(makeRequest(agent, bad), agent),
+      (error) => error instanceof Error
+        && !(error instanceof TypeError)
+        && error.message.includes(t('zh', 'ask.rejectQuestionsShape')),
+      `契约外 questions=${JSON.stringify(bad) ?? 'undefined'} → 可读拒绝（非 TypeError）`
+    );
+  }
+  assert.equal(registry.batches.size, 0, '零批次登记');
+  assert.equal(timer.armed.length, 0, '定时器零武装');
+  assert.equal(registry.seq, 0, '批次序号未消耗（拒绝在任何登记之前）');
+});
+
+hostTest('忽略入口题级缺席（ASK-IGNORE-MISSING）——批次在册而题号不在批内 → gone＋undelivered（与作答一致）；真实题号不回归', async () => {
+  const fakeReflectCtx = { reflect: { provide() {} } };
+  const agent = fakeAgent();
+  const { registry, timer } = makeRegistry();
+  const service = new AskTakeoverService(fakeReflectCtx, registry);
+  const pending = registry.take(makeRequest(agent, [Q('q1'), Q('q2')]), agent);
+  const { items } = registry.stateItems();
+  const batchId = items[0].batchId;
+
+  // 批次在册、题号不在批内：与作答入口 validateAnswer 的 'missing' 同口径，
+  // 不把不明送达状态写成成功。
+  assert.deepEqual(
+    await service.ignore({ batchId, questionId: 'nope' }),
+    { outcome: 'gone', undelivered: true },
+    '批次在册而题号不在批内 → gone＋undelivered'
+  );
+  assert.deepEqual(
+    await service.answer({ batchId, questionId: 'nope', selected: [0] }),
+    { outcome: 'gone', undelivered: true },
+    '作答入口同载荷同口径（既有行为对照）'
+  );
+
+  // 正常客户端从 state() 取真实题号：忽略照常 delivered；已落定题普通 gone。
+  assert.deepEqual(
+    await service.ignore({ batchId, questionId: 'q1' }),
+    { outcome: 'delivered' },
+    '真实题号忽略 → delivered（正常路径不回归）'
+  );
+  assert.deepEqual(
+    await service.ignore({ batchId, questionId: 'q1' }),
+    { outcome: 'gone' },
+    '已落定题 → 普通 gone（不带 undelivered，交轮询收敛）'
+  );
+
+  // 批次缺席（清扫/结清出列/交还）保持既有未送达回执：
+  assert.deepEqual(
+    await service.ignore({ batchId: 'ask-9-none', questionId: 'q1' }),
+    { outcome: 'gone', undelivered: true },
+    '批次缺席 → undelivered（既有）'
+  );
+
+  // expired 批上：错误题号同样题级缺席；真实题号照常迟到注入。
+  timer.fire(0);
+  await pending;
+  assert.deepEqual(
+    await service.ignore({ batchId, questionId: 'nope' }),
+    { outcome: 'gone', undelivered: true },
+    'expired 批上错误题号 → undelivered（与作答一致，原实现只回普通 gone）'
+  );
+  assert.deepEqual(
+    await service.ignore({ batchId, questionId: 'q2' }),
+    { outcome: 'late' },
+    'expired 批上真实题号 → 迟到注入不受影响'
+  );
+  assert.equal(agent.injectCalls.length, 1, '恰一次迟到投递');
 });
 
 // ── 座位与快照活性（J16 + 变异：开关活读）─────────────────────────────────
@@ -1051,7 +1407,7 @@ hostTest('J20：expired 批 TTL——超龄清扫、龄内保留', async () => {
   assert.equal(registry.batches.size, 1, '新批次接管时超龄 expired 批被清扫（只剩新批）');
   assert.equal(registry.batches.has(oldBatchId), false, '被清的就是那一个超龄批');
   const items = registry.stateItems().items;
-  registry.submitAnswer({ batchId: items[0].batchId, questionId: 'q2', selected: ['x'] });
+  registry.submitAnswer({ batchId: items[0].batchId, questionId: 'q2', selected: [0] });
   await pendingNew;
   assert.equal(registry.batches.size, 0, '新批齐答出列');
   // 龄内（< 24 h）不受影响：放一个 expired 批，2 h 后再接管，清扫不得动它。
@@ -1197,18 +1553,18 @@ test('J18：客户端模型行为——准入控制/轮询/裸传/失败路径�
     const item = model.store.getSnapshot().items[0];
     assert.equal(item.questionId, 'q1', '轮询结果进快照');
     let doneFlag = null;
-    model.actions.answer(item, ['a'], '注', (ok) => { doneFlag = ok; });
+    model.actions.answer(item, [0], '注', (ok) => { doneFlag = ok; });
     await Promise.resolve();
     await Promise.resolve();
     assert.equal(remoteCalls.answer.length, 1, 'answer 恰一次');
-    assert.deepEqual(remoteCalls.answer[0], [{ batchId: 'ask-1-x', questionId: 'q1', selected: ['a'], custom: '注' }],
+    assert.deepEqual(remoteCalls.answer[0], [{ batchId: 'ask-1-x', questionId: 'q1', selected: [0], custom: '注' }],
       '载荷裸传（位置参数 = 载荷本身，无 {submission:…} 包裹）');
     assert.equal(doneFlag, true, 'delivered → onDone(true)');
 
     // ④ 失败路径：outcome:'failed' → onDone(false) + lostAnswers 记名。
     answerResult = { ok: true, value: { outcome: 'failed' } };
     let doneFlag2 = null;
-    model.actions.answer(item, ['a'], undefined, (ok) => { doneFlag2 = ok; });
+    model.actions.answer(item, [0], undefined, (ok) => { doneFlag2 = ok; });
     await Promise.resolve();
     await Promise.resolve();
     assert.equal(doneFlag2, false, 'failed → onDone(false)（不冒充成功）');
@@ -1534,10 +1890,18 @@ test('J19：座位渲染门——关/计数 0/座位不匹配三态渲染 null�
   assert.equal(renderComp(() => product.AskOverlaySeat(seatProps)), null, 'sidebar 态下 overlay 座位 → null');
   const badgeNode = renderComp(() => product.AskSidebarSeat(seatProps));
   assert.ok(badgeNode !== null, 'sidebar 匹配态渲染本体（徽标）');
-  // 徽标文案走词典（ask.title），不是硬编码英文。
+  // 徽标＝紧凑图标＋计数（VIS-BADGE-01：底栏窄图标槽不再放文字标签）；完整
+  // 名称走 aria-label（无障碍树恒可得，不依赖悬停），可见全名在面板标题行。
   const badgeButton = badgeNode.children.find((child) => child !== null && typeof child === 'object');
-  assert.ok(String(badgeButton.children[0]).includes(product.DICTIONARIES.en['ask.title']),
-    '徽标文本 = 词典标题（auto 档回退 en）');
+  assert.ok(String(badgeButton.props['aria-label']).includes(product.DICTIONARIES.en['ask.title']),
+    '徽标 aria-label = 词典标题（auto 档回退 en）');
+  const badgeIcon = badgeButton.children.find((child) => child?.type === 'svg');
+  assert.ok(badgeIcon !== undefined && badgeIcon.props['aria-hidden'] === 'true',
+    '紧凑图标在场且对辅助技术隐藏（名称由 aria-label 承载）');
+  const badgeCount = badgeButton.children.find((child) => child?.props?.className === 'ats-ask-count');
+  assert.ok(badgeCount !== undefined && String(badgeCount.children).includes('1'),
+    '紧凑计数在场（1 条未处理）');
+  assert.equal(badgeButton.props['aria-expanded'], 'false', '开合态经 aria-expanded 同步');
   // 徽标 auto 档跟宿主语言：locale 服务在场（宿主 zh）时徽标读 zh 词典——侧栏座位
   // 的翻译器必须传 ask.locale（与面板标题、重渲染取值两处同款；漏传会恒英文）。
   const zhLocale = { getSnapshot: () => ({ active: 'zh', revision: 1 }), getLocale: () => ({ active: 'zh', revision: 1 }), subscribe(fn) { return () => {}; } };
@@ -1551,7 +1915,7 @@ test('J19：座位渲染门——关/计数 0/座位不匹配三态渲染 null�
   zhModel.store.getSnapshot().items = [{ batchId: 'b2', sessionId: 's2', questionId: 'q2', question: 'q', options: [], multiSelect: false, receivedAt: 0, expiresAt: 1, phase: 'open' }];
   const zhBadge = renderComp(() => product.AskSidebarSeat({ ask: zhModel, ctx: zhCtx }));
   const zhBadgeButton = zhBadge.children.find((child) => child !== null && typeof child === 'object');
-  assert.ok(String(zhBadgeButton.children[0]).includes(product.DICTIONARIES.zh['ask.title']),
+  assert.ok(String(zhBadgeButton.props['aria-label']).includes(product.DICTIONARIES.zh['ask.title']),
     '徽标 auto + 宿主 zh → zh 词典（侧栏座位翻译器传 ask.locale）');
 
   // ⑤  渲染条件：条目全部出列、只剩未消除的 lostAnswers → 两座位**仍渲染**
@@ -1669,20 +2033,21 @@ test('AskItem 作答选择与提交（需求 §4.2.1–§4.2.4）——单选互
   assert.deepEqual(optionStates(), [false, false], '不自动恢复预设选择');
   assert.equal(submitBtn().props.disabled, true, '选中的自定义空白：禁用提交');
   assert.equal(reason()?.children[0], 'ask.needCustom', '就近说明换档：自定义空白');
-  // Enter 快捷键与按钮同规则（§4.2.4）：无效状态下 Enter 不提交。
-  customInput().props.onKeyDown({ key: 'Enter', preventDefault() {} });
-  assert.equal(submitted.length, 0, '空白自定义：Enter 不提交');
+  // 多行输入（§4.2.2）：Enter 是换行、不是提交快捷键（提交走按钮）；输入法
+  // 组合期确认不误提交由 textarea/IME 默认行为承担。无效状态下提交仍被禁。
+  assert.equal(customInput().props.onKeyDown, undefined, 'Enter 不再绑定为提交快捷键（换行语义）');
+  assert.equal(submitted.length, 0, '空白自定义：不可提交');
   // 填回文本：载荷只含自定义原文（空白检查不改写用户文本）。
   customInput().props.onChange({ target: { value: ' 前后空白 ' } });
-  customInput().props.onKeyDown({ key: 'Enter', preventDefault() {} });
+  submitBtn().props.onClick();
   assert.deepEqual(submitted[submitted.length - 1], { selected: [], custom: ' 前后空白 ' },
-    'Enter 提交：自定义原文照发（未选中草稿不存在）');
+    '按钮提交：自定义原文照发（未选中草稿不存在）');
 
   // 草稿排除（§4.2.2）：取消自定义、改选预设 a → 未选中草稿不进载荷。
   customCtl().props.onClick();
   opts()[0].props.onClick();
   submitBtn().props.onClick();
-  assert.deepEqual(submitted[submitted.length - 1], { selected: ['a'], custom: undefined },
+  assert.deepEqual(submitted[submitted.length - 1], { selected: [0], custom: undefined },
     '未选中的自定义草稿不进提交载荷');
 
   // ── 多选（multiSelect=true）─────────────────────────────────────────────
@@ -1704,7 +2069,7 @@ test('AskItem 作答选择与提交（需求 §4.2.1–§4.2.4）——单选互
   customInput().props.onChange({ target: { value: '又一条' } });
   assert.equal(submitBtn().props.disabled, false, '填回有效文本可提交');
   submitBtn().props.onClick();
-  assert.deepEqual(submitted[submitted.length - 1], { selected: ['b'], custom: '又一条' },
+  assert.deepEqual(submitted[submitted.length - 1], { selected: [1], custom: '又一条' },
     '多选组合载荷：已选预设与自定义并列');
 
   // ── 无预设项（§4.2.1：没有预设项时同样可自定义作答）────────────────────
@@ -1759,7 +2124,7 @@ test('恢复可见即刻本地重算——同步 notify 先于 poll 往返，重
 });
 
 test('AskItem 本地走秒——轮询挂起时读数照走，不冻结在最后一次成功轮询的值（V2-1）', async () => {  const react = makeMiniReact();
-  // 假 window：捕获 AskItem 挂的本地秒拍（1 s 间隔），与模型层轮询间隔无关。
+  // 假 window：捕获 AskItem 挂的本地秒级定时器（1 s 间隔），与模型层轮询间隔无关。
   const localTicks = [];
   const clearIntervalSeen = [];
   const product = await loadClientProduct(react, {
@@ -1783,19 +2148,19 @@ test('AskItem 本地走秒——轮询挂起时读数照走，不冻结在最后
       return String(span.children);
     };
     assert.match(leftSeconds(), /60 s/, '初始读数 60 s');
-    // 「轮询挂起」模拟：之后**只有**本地秒拍驱动重渲（无任何 store notify / poll 返回）。
+    // 「轮询挂起」模拟：之后**只有**本地秒级定时器驱动重渲（无任何 store notify / poll 返回）。
     const tick = localTicks.find((entry) => entry.ms === 1000);
-    assert.ok(tick !== undefined, 'AskItem 挂本地秒拍（1000 ms）');
+    assert.ok(tick !== undefined, 'AskItem 挂本地秒级定时器（1000 ms）');
     fakeNow += 1000; tick.fn();
-    assert.match(leftSeconds(), /59 s/, '+1 s：读数走秒（本地拍驱动倒计时刷新）');
+    assert.match(leftSeconds(), /59 s/, '+1 s：读数走秒（本地定时器驱动倒计时刷新）');
     fakeNow += 4000; tick.fn();
     assert.match(leftSeconds(), /55 s/, '+5 s 累计：继续走');
-    // 出窗：读数翻「已超时」同样由本地拍驱动（键名即 t 的回显）。
+    // 出窗：读数翻「已超时」同样由本地定时器驱动（键名即 t 的回显）。
     fakeNow += 60000; tick.fn();
-    assert.match(leftSeconds(), /ask\.expired/, '越过期限后本地拍也能翻到超时态');
-    // 卸载清理：重渲染同组件不重复挂拍（run-once effect）；清理函数在位。
+    assert.match(leftSeconds(), /ask\.expired/, '越过期限后本地定时器也能翻到超时态');
+    // 卸载清理：重渲染同组件不重复挂定时器（run-once effect）；清理函数在位。
     const disposers = react.__lastTree; // 树本身不含 disposer——清理走 effect 槽
-    assert.equal(localTicks.filter((entry) => entry.ms === 1000).length, 1, '本地秒拍只挂一次');
+    assert.equal(localTicks.filter((entry) => entry.ms === 1000).length, 1, '本地秒级定时器只挂一次');
     void disposers;
   } finally {
     Date.now = realNow;
@@ -1815,6 +2180,9 @@ test('sidebar 注册 label 闭包——经 apply 产品路径，随快照语言�
   };
   const registrations = [];
   const askRemoteNs = { state: () => Promise.resolve({ ok: true, value: { serverNow: 0, items: [] } }) };
+  // 预设目录服务的替身（apply 的动态 inject 会取 remote.agentPresets）：
+  // 空目录即可——本用例只锚 seats 的 label 闭包。
+  const fakeAgentPresets = { list: () => Promise.resolve({ ok: true, value: { presets: [] } }) };
   const ctx = {
     configForms: {
       get: () => scope,
@@ -1825,15 +2193,18 @@ test('sidebar 注册 label 闭包——经 apply 产品路径，随快照语言�
       register: (meta, renderFn) => { registrations.push({ meta, renderFn }); return () => {}; }
     },
     // 真机同款路径：seats 经**动态** ctx.inject(['remote.async-tools-ask'])
-    // 拿命名空间代理（自 mount 的 ns 不能直接读 ctx.remote[ns]）。
-    inject: (list, fn) => fn({ remote: { 'async-tools-ask': askRemoteNs } }),
+    // 拿命名空间代理（自 mount 的 ns 不能直接读 ctx.remote[ns]）；预设目录
+    // 服务（remote.agentPresets）经同一动态 inject 形态注入。
+    inject: (list, fn) => fn({ remote: { 'async-tools-ask': askRemoteNs, agentPresets: fakeAgentPresets } }),
     locale: { register: () => () => {} },
-    remote: { $mount: () => Promise.resolve(() => {}) },
+    // $on/on 是目录变更通知的宿主接口（settings/document-updated、connection/reset）。
+    remote: { $mount: () => Promise.resolve(() => {}), $on: () => () => {} },
+    on: () => () => {},
     effect: (fn) => { const off = fn(); return () => off?.(); },
     uiWorkspace: { openSession() {} }
   };
   product.apply(ctx);
-  // seats 在 $mount promise 的微任务之后才装（真机同款顺序）——冲两拍微任务。
+  // seats 在 $mount promise 的微任务之后才装（真机同款顺序）——冲两轮微任务。
   await Promise.resolve();
   await Promise.resolve();
   const sidebarReg = registrations.find((reg) => reg.meta.name === 'sidebar.footer.action' && reg.meta.id === 'async-tools-ask');
@@ -1935,7 +2306,7 @@ hostTest('J22-①：作答/忽略投递接受后发本包事件恰一次，作�
   const { items } = registry.stateItems();
   timer.fire(0);
   await pending;
-  registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: ['x'] });
+  registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: [0] });
   registry.submitLate({ batchId: items[0].batchId, questionId: 'q2', kind: 'ignore' });
   assert.equal(emitted.length, 2, '每条到达恰一次事件');
   const [answerEvent, ignoreEvent] = emitted;
@@ -1943,7 +2314,7 @@ hostTest('J22-①：作答/忽略投递接受后发本包事件恰一次，作�
   assert.equal(answerEvent.payload.agentId, 's-evt', '载荷含 agent 标识');
   assert.equal(answerEvent.payload.questionId, 'q1', '载荷含题号');
   assert.equal(answerEvent.payload.kind, 'answer', '作答 kind');
-  assert.equal(answerEvent.payload.summary, t('en', 'ask.lateSummary', { qid: 'q1', answer: 'x' }), '载荷含摘要');
+  assert.equal(answerEvent.payload.summary, t('en', 'ask.lateSummary', { qid: 'q1', answer: '选项一' }), '载荷含摘要');
   assert.deepEqual(
     Object.keys(ignoreEvent.payload).sort(),
     Object.keys(answerEvent.payload).sort(),
@@ -1955,7 +2326,7 @@ hostTest('J22-①：作答/忽略投递接受后发本包事件恰一次，作�
   const { registry: r2, emitted: emitted2 } = makeRegistry({ agentLang: 'en' });
   const pending2 = r2.take(makeRequest(agent2, [Q('q1')]), agent2);
   const item2 = r2.stateItems().items[0];
-  r2.submitAnswer({ batchId: item2.batchId, questionId: 'q1', selected: ['y'] });
+  r2.submitAnswer({ batchId: item2.batchId, questionId: 'q1', selected: [0] });
   await pending2;
   assert.equal(emitted2.length, 0, '窗口内作答零事件（直达工具结果，无迟到通道）');
 });
@@ -1967,8 +2338,8 @@ hostTest('J22-②：末步竞态防护——inject 后回合收尾再无领取�
   const { items } = registry.stateItems();
   timer.fire(0);
   await pending;
-  registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: ['x'] });
-  registry.submitLate({ batchId: items[0].batchId, questionId: 'q2', kind: 'answer', selected: ['y'] });
+  registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: [0] });
+  registry.submitLate({ batchId: items[0].batchId, questionId: 'q2', kind: 'answer', selected: [0] });
   assert.equal(agent.followupCalls.length, 0, '投递时零补醒（还在回合里）');
   // 末步竞态：回合的最后一次领取已过 → 两通知滞留 next-step，回合收尾转 idle。
   agent.finishTurn({ claim: false }); // 模拟回合结束（不再有领取点）
@@ -1993,7 +2364,7 @@ hostTest('J22-③：滞留件已被领取 → 空闲观察不补醒（账本懒�
   const { items } = registry.stateItems();
   timer.fire(0);
   await pending;
-  registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: ['x'] });
+  registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: [0] });
   // 正常路径：下一领取点把 next-step 整批领走，回合收尾转 idle。
   agent.finishTurn();
   await flush();
@@ -2009,7 +2380,7 @@ hostTest('J22-④：补醒失败 → 滞留条目转 lost 名单（复合键去�
   const { items } = registry.stateItems();
   timer.fire(0);
   await pending;
-  registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: ['x'] });
+  registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: [0] });
   // 补醒时 agent 引用失效：followup 抛错。
   agent.followup = () => { throw new Error('agent gone before sweep'); };
   agent.finishTurn({ claim: false });
@@ -2028,7 +2399,7 @@ hostTest('J22-⑤：空闲通道（followup）不武装补醒；dispose 后不�
   const { items } = registry.stateItems();
   timer.fire(0);
   await pending;
-  registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: ['x'] });
+  registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: [0] });
   assert.equal(agent.followupCalls.length, 1, '空闲 → followup 自开回合');
   // 该回合开跑后立刻结束（无其他滞留）→ 不应有第二条 followup。
   agent.finishTurn();
@@ -2042,7 +2413,7 @@ hostTest('J22-⑤：空闲通道（followup）不武装补醒；dispose 后不�
   const items2 = r2.stateItems().items;
   t2.fire(0);
   await pending2;
-  r2.submitLate({ batchId: items2[0].batchId, questionId: 'q1', kind: 'answer', selected: ['x'] });
+  r2.submitLate({ batchId: items2[0].batchId, questionId: 'q1', kind: 'answer', selected: [0] });
   r2.disposeAll();
   agent2.finishTurn();
   await flush();
@@ -2057,13 +2428,13 @@ hostTest('J22-⑥：投递核对——注册表投递后，等待方的起始检
   const { items } = registry.stateItems();
   timer.fire(0);
   await pending;
-  registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: ['x'] });
+  registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: [0] });
   // 作答先到、等待后开：watchLateAnswer 起始检查从 agent.inbox 命中滞留通知。
   const watcher = watchLateAnswer(ctx, agent);
   const signal = await watcher.promise;
   assert.equal(signal.kind, 'late-answer');
   assert.equal(signal.qid, 'q1', '起始检查透传题号（source.questionId）');
-  assert.equal(signal.summary, t('en', 'ask.lateSummary', { qid: 'q1', answer: 'x' }), 'summary 与投递同源');
+  assert.equal(signal.summary, t('en', 'ask.lateSummary', { qid: 'q1', answer: '选项一' }), 'summary 与投递同源');
   watcher.dispose();
 });
 
@@ -2085,7 +2456,7 @@ hostTest('J22-⑦：投递侧 inbox 不可读（getter 抛错）→ 按「有未
     configurable: true,
     get() { throw new Error('projection registration is not active'); }
   });
-  assert.equal(registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: ['x'] }), 'late');
+  assert.equal(registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: [0] }), 'late');
   assert.equal(agent.injectCalls.length, 1, 'inbox 不可读 → inject（保守方向）');
   assert.equal(agent.followupCalls.length, 0, '不开 followup（不可读不等于无未领取）');
   Object.defineProperty(agent, 'inbox', { configurable: true, value: realInbox });
@@ -2098,7 +2469,7 @@ hostTest('J22-⑧：补醒观察期 inbox 不可读 → 观察失败防护（不
   const { items } = registry.stateItems();
   timer.fire(0);
   await pending;
-  registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: ['x'] });
+  registry.submitLate({ batchId: items[0].batchId, questionId: 'q1', kind: 'answer', selected: [0] });
   assert.equal(agent.injectCalls.length, 1, '运行中 → inject + 武装观察');
   // 观察在途时 inbox getter 抛错（projection 注销形态）。旧病灶：observe 的
   // 账本读裸奔在 try 外 → reject 被 void 丢弃 → unhandledRejection，
@@ -2118,7 +2489,7 @@ hostTest('J22-⑧：补醒观察期 inbox 不可读 → 观察失败防护（不
   timer.fire(1);
   await pending2;
   const q2Item = registry.stateItems().items.find((item) => item.questionId === 'q2');
-  registry.submitLate({ batchId: q2Item.batchId, questionId: 'q2', kind: 'answer', selected: ['y'] });
+  registry.submitLate({ batchId: q2Item.batchId, questionId: 'q2', kind: 'answer', selected: [0] });
   agent.finishTurn({ claim: false });
   await flush();
   assert.equal(agent.followupCalls.length, 1, '恢复可读后重新武装：补醒提醒恰一条（两滞留条都还在账上）');
@@ -2153,14 +2524,14 @@ hostTest('J25（A-F08）：投递次序先于唤醒判定——投递抛错不�
   // 等待方先挂（收件箱为空——起始检查不命中），再迟到提交：
   const waiting = watchLateAnswer(ctx, broken);
   assert.equal(
-    registry.submitLate({ batchId: badItem.batchId, questionId: 'q1', kind: 'answer', selected: ['x'] }),
+    registry.submitLate({ batchId: badItem.batchId, questionId: 'q1', kind: 'answer', selected: [0] }),
     'failed', '投递抛错 → outcome=failed（既有回执路径）'
   );
   assert.equal(emitted.length, 0, '零 LATE_ANSWER_EVENT——宿主没收下，不制造到达事实');
   assert.equal(registry.lateLedger.length, 0, '待领账本零登记');
   assert.equal(registry.sweeps.size, 0, '空闲观察零武装');
   assert.equal(registry.stateItems().lost.length, 0, '投递失败不进 lost（那是补醒失败名单）');
-  assert.equal(registry.batches.size, 0, 'failed 仍出列（J12 口径不变）');
+  assert.equal(registry.batches.size, 1, 'failed 回滚为 open——题保持可再投、批次留驻（ASK-LATE-FAILED-RETRY，替代旧「仍出列」口径）');
   // 等待方不被「答案已到」打断：事件没发、收件箱为空（事件与起始检查两路都
   // 不命中），等待保持原预算继续、到期照常交回。已 resolve 的 promise 在微任务
   // 里先于 flush（宏任务）胜出——quiet ＝ 确实没醒（旧次序此处必得 woken）。
@@ -2200,7 +2571,7 @@ hostTest('J25（A-F08）：投递次序先于唤醒判定——投递抛错不�
   await pendingOk;
   const waitingOk = watchLateAnswer(ctx, agent);
   assert.equal(
-    registry.submitLate({ batchId: okItem.batchId, questionId: 'q3', kind: 'answer', selected: ['y'] }),
+    registry.submitLate({ batchId: okItem.batchId, questionId: 'q3', kind: 'answer', selected: [0] }),
     'late', '投递接受 → late'
   );
   assert.equal(emitted.length, 1, '事件恰一次');
@@ -2215,6 +2586,78 @@ hostTest('J25（A-F08）：投递次序先于唤醒判定——投递抛错不�
   assert.ok(signal !== null, '等待方被唤醒（投递接受后事件即达）');
   assert.equal(signal.qid, 'q3', '唤醒信号透传题号');
   waitingOk.dispose();
+
+  // ── ASK-LATE-FAILED-RETRY（探针 M1 双故障形态回归）：q1 首投 failed（回执可
+  // 能丢失——主体侧只看到题仍在列表）后，通道恢复、重试同一提交＝重新投递，
+  // 不落进「已有答案」的无说明 gone。
+  assert.ok(
+    registry.stateItems().items.some((item) => item.questionId === 'q1'),
+    'q1 投递失败后回滚为 open——仍在轮询列表（「从未投出」与「已投递」可区分）'
+  );
+  const healedDeliveries = [];
+  broken.inject = (message) => { healedDeliveries.push(message); };
+  assert.equal(
+    registry.submitLate({ batchId: badItem.batchId, questionId: 'q1', kind: 'answer', selected: [0] }),
+    'late', '通道恢复后重试同一提交 → 重新投递成功（不是 gone）'
+  );
+  assert.equal(healedDeliveries.length, 1, '重试真投递恰一次');
+  assert.equal(
+    emitted.filter((e) => e.name === LATE_ANSWER_EVENT && e.payload.questionId === 'q1').length, 1,
+    '重试成功后 q1 事件恰一次'
+  );
+  assert.ok(
+    !registry.stateItems().items.some((item) => item.questionId === 'q1'),
+    '重试成功后 q1 正常出列'
+  );
+});
+
+hostTest('J26（ASK-PENDING-IDENTITY）：待领账本按批次＋题号对账——同摘要不同批次领取其一后，账本只留未领取项', async () => {
+  // 同批题号、同答案的两条迟到通知 summary 逐字相同：按字符串相等推定身份时，
+  // 领取其一后收件箱仍留同串摘要，两条都判「未领取」——已领取项滞留账本，
+  // 补醒与 lost 名单随之多算。对账必须按稳定批次标识＋题号逐条区分。
+  const agent = fakeAgent('s-twins');
+  const { registry, timer } = makeRegistry({ agentLang: 'en' });
+  const pendingA = registry.take(makeRequest(agent, [Q('q1')]), agent);
+  const pendingB = registry.take(makeRequest(agent, [Q('q1')]), agent);
+  const [a, b] = registry.stateItems().items;
+  assert.notEqual(a.batchId, b.batchId, '前置：两批批次标识不同');
+  timer.fire(0);
+  await pendingA;
+  timer.fire(1);
+  await pendingB;
+  assert.equal(registry.submitLate({ batchId: a.batchId, questionId: 'q1', kind: 'answer', selected: [0] }), 'late');
+  assert.equal(registry.submitLate({ batchId: b.batchId, questionId: 'q1', kind: 'answer', selected: [0] }), 'late');
+  const [msgA, msgB] = agent.injectCalls;
+  assert.equal(msgA.source.summary, msgB.source.summary, '前置：两通知摘要逐字相同（字符串相等不可区分身份）');
+  assert.equal(msgA.source.batchId, a.batchId, '通知 source 携带批次标识（甲）');
+  assert.equal(msgB.source.batchId, b.batchId, '通知 source 携带批次标识（乙）');
+  assert.equal(registry.lateLedger.length, 2, '两条都在待领账本');
+  // 宿主只领取第一条（claim 移出收件箱）；第二条滞留（末步竞态形态）。
+  agent.inbox.nextStep.splice(0, 1);
+  agent.finishTurn({ claim: false });
+  await flush();
+  assert.equal(agent.followupCalls.length, 1, '滞留一条 → 补醒提醒恰一条');
+  assert.equal(registry.lateLedger.length, 1, '账本剪除已领取条目（按批次＋题号对账）');
+  assert.equal(registry.lateLedger[0].batchId, b.batchId, '保留的是未领取的那条（批次可逐条区分）');
+  assert.deepEqual(registry.stateItems().lost, [], '补醒成功 → 无 lost 名单');
+
+  // 正常领取（两情形之全部领取）：同摘要两批都被领走 → 账本清空、不补醒。
+  const agent2 = fakeAgent('s-twins-both');
+  const { registry: reg2, timer: tim2 } = makeRegistry({ agentLang: 'en' });
+  const pA = reg2.take(makeRequest(agent2, [Q('q1')]), agent2);
+  const pB = reg2.take(makeRequest(agent2, [Q('q1')]), agent2);
+  const [iA, iB] = reg2.stateItems().items;
+  tim2.fire(0);
+  await pA;
+  tim2.fire(1);
+  await pB;
+  assert.equal(reg2.submitLate({ batchId: iA.batchId, questionId: 'q1', kind: 'answer', selected: [0] }), 'late');
+  assert.equal(reg2.submitLate({ batchId: iB.batchId, questionId: 'q1', kind: 'answer', selected: [0] }), 'late');
+  assert.equal(agent2.injectCalls[0].source.summary, agent2.injectCalls[1].source.summary, '前置：摘要仍逐字相同');
+  agent2.finishTurn(); // 正常收尾：先整批领取再转空闲
+  await flush();
+  assert.equal(agent2.followupCalls.length, 0, '全部已领取 → 不补醒');
+  assert.equal(reg2.lateLedger.length, 0, '账本清空（两条都剪除）');
 });
 
 // ═══════════════════ 延长等待（需求 §4.3，判据 E1–E8）═════════════════════
@@ -2244,7 +2687,7 @@ function makeClock(start = 1_000_000) {
 }
 
 /**
- * 时钟调度替身：armed 项记 `dueAt = now + ms`，`advance()` 按到期序（同拍按
+ * 时钟调度替身：armed 项记 `dueAt = now + ms`，`advance()` 按到期序（同一时刻按
  * 武装序）触发**未撤销**项——「到期前不结、到期恰一次合成」两边界判据靠它
  * 可失败：把 take/extend 的武装 delay 改错（缩短/重置全窗口）而保留
  * expiresAt 元数据时，手动 fire 推不红，按到期序推进才红。`fakeTimer` +
@@ -2417,7 +2860,7 @@ hostTest('E6：出窗批 extend 返 0（不复活）；随后新批照常全额�
   const pending = registry_take(rig, agent, 'q1');
   const batch = [...rig.registry.batches.values()][0];
 
-  // 窗口耗尽后（真实形态：到期回调与点击同拍竞态）→ expired 相不可复活。
+  // 窗口耗尽后（真实形态：到期回调与点击同一时刻竞态）→ expired 相不可复活。
   clock.advance(6000);
   rig.timer.fire(0);
   await Promise.resolve();
@@ -2433,7 +2876,7 @@ hostTest('E6：出窗批 extend 返 0（不复活）；随后新批照常全额�
   assert.equal(rig.timer.armed[rig.timer.armed.length - 1].ms, 5000, '新批 timer.ms=全额窗口');
   assert.equal(batch2.phase, 'open');
   assert.equal(rig.timer.armed.length, armedBefore + 1);
-  assert.equal(rig.registry.submitAnswer({ batchId: batch2.batchId, questionId: 'q2', selected: ['选项一'] }), 'delivered');
+  assert.equal(rig.registry.submitAnswer({ batchId: batch2.batchId, questionId: 'q2', selected: [0] }), 'delivered');
   await pending2;
 });
 
@@ -2711,4 +3154,600 @@ test('J41：状态读取代际——关闭／重开／卸载：迟到成功与�
   assert.equal(s.serverNow, 0, '卸载后的迟到成功回执零写入（保持关闭清零后的基线）');
   assert.equal(s.items.length, 0, '题目不被卸载后的回执改写');
   assert.equal(s.callFailed, null, '卸载后的回执不立失败旗标');
+});
+
+// ---------------------------------------------------------------------------
+// 新题温和提醒（ASK-ANNOUNCE-01，设计 .local/design/a2/design-ask-ui.md §1/§4.1
+// J1-J8）：复合键集合差的播报、代际配合、失败恢复、生命周期、两语冻结、
+// AskAnnouncer 树形状与 wireAskSeats 接线。
+// ---------------------------------------------------------------------------
+
+test('J50：新题温和提醒——首查合并计数、增量、乱序/旧代、失败恢复、生命周期、两语冻结', async () => {
+  const react = makeMiniReact();
+  const intervals = [];
+  const product = await loadClientProduct(react, {
+    setInterval: (fn, ms) => { intervals.push({ fn, ms }); return intervals.length; },
+    clearInterval: () => {}
+  });
+  const pending = [];
+  const remoteNs = { state: () => new Promise((res) => { pending.push(res); }) };
+  const scopeListeners = [];
+  let snap = { status: 'ready', value: { askTakeover: true, askUiSeat: 'sidebar', uiLang: 'zh' }, user: {} };
+  const scope = {
+    getSnapshot: () => snap,
+    subscribe: (fn) => { scopeListeners.push(fn); return () => {}; },
+    mutate: async () => true
+  };
+  const ctx = { configForms: { get: () => scope }, uiWorkspace: { openSession() {} } };
+  const flush = async () => { for (let i = 0; i < 4; i += 1) await Promise.resolve(); };
+  const setSnap = (value) => { snap = value; scopeListeners.forEach((fn) => fn()); };
+  const it = (batchId, questionId) => ({
+    batchId, questionId, sessionId: 's1', question: `题 ${questionId}`, options: [],
+    multiSelect: false, receivedAt: 0, expiresAt: 20_000, phase: 'open'
+  });
+  const zhText = product.DICTIONARIES.zh['ask.announceNew'];
+  const enText = product.DICTIONARIES.en['ask.announceNew'];
+
+  const model = product.createAskModel(ctx, remoteNs);
+  await flush();
+
+  // J1 首查合并：3 题合成一条数量播报（zh 档）；同 items 再读 announce 引用不变。
+  pending[0]({ ok: true, value: { serverNow: 10_000, items: [it('b1', 'q1'), it('b1', 'q2'), it('b1', 'q3')] } });
+  await flush();
+  let announce = model.store.getSnapshot().announce;
+  assert.ok(announce !== null, '首查生成播报（重载/重开视角：在场待答都是新事实）');
+  assert.equal(announce.text, zhText.replace('{n}', '3'), '3 题合并成一条（zh 词典值）');
+  assert.equal(announce.seq, 1, '播报序号从 1 起');
+  await intervals[0].fn();
+  await flush();
+  pending[1]({ ok: true, value: { serverNow: 10_500, items: [it('b1', 'q1'), it('b1', 'q2'), it('b1', 'q3')] } });
+  await flush();
+  assert.equal(model.store.getSnapshot().announce, announce, '同 items 重复轮询：announce 引用不变（DOM 文本不变，不重播）');
+
+  // J2 增量：新 batchId 两题到达→只播增量 2，旧题不重播。
+  await intervals[0].fn();
+  await flush();
+  pending[2]({ ok: true, value: { serverNow: 11_000, items: [it('b1', 'q1'), it('b2', 'q4'), it('b2', 'q5')] } });
+  await flush();
+  announce = model.store.getSnapshot().announce;
+  assert.equal(announce.text, zhText.replace('{n}', '2'), '增量只计新键（2），已播旧题不重播');
+  assert.equal(announce.seq, 2, '播报序号递增');
+
+  // J3 乱序：同代较旧回执后到→代际检查丢弃，不产生播报、不把旧键漏进已播集合。
+  await intervals[0].fn();
+  await flush(); // pending[3]（seq 较旧）在途
+  await intervals[0].fn();
+  await flush(); // pending[4]（seq 较新）发出——后发先回，先兑现较新回执
+  pending[4]({ ok: true, value: { serverNow: 12_000, items: [it('b1', 'q1'), it('b2', 'q4'), it('b2', 'q5')] } });
+  await flush();
+  const beforeStale = model.store.getSnapshot().announce;
+  pending[3]({ ok: true, value: { serverNow: 11_500, items: [it('b0', 'q0'), it('b2', 'q4'), it('b2', 'q5')] } });
+  await flush();
+  assert.equal(model.store.getSnapshot().announce, beforeStale, '较旧回执被代际检查丢弃：无新播报');
+  // 旧键 b0/q0 未被旧回执漏进已播集合——下一次合法读取仍会把它当新题播报。
+  await intervals[0].fn();
+  await flush();
+  pending[5]({ ok: true, value: { serverNow: 12_500, items: [it('b0', 'q0'), it('b2', 'q4'), it('b2', 'q5')] } });
+  await flush();
+  assert.equal(model.store.getSnapshot().announce.text, zhText.replace('{n}', '1'), '旧键未被乱序回执吞掉（漏进已播集合会这里少播）');
+
+  // J4 读失败恢复：失败夹在两次成功之间→已播集合保留，恢复读取只播新增。
+  await intervals[0].fn();
+  await flush();
+  pending[6](undefined); // 读取失败：不播报、不动已播集合
+  await flush();
+  assert.equal(model.store.getSnapshot().callFailed, 'state', '读取失败立 state 旗标（重连窗口）');
+  await intervals[0].fn();
+  await flush();
+  pending[7]({ ok: true, value: { serverNow: 13_000, items: [it('b0', 'q0'), it('b2', 'q4'), it('b2', 'q5'), it('b3', 'q6')] } });
+  await flush();
+  announce = model.store.getSnapshot().announce;
+  assert.equal(announce.text, zhText.replace('{n}', '1'), '恢复后只播断线期间新增（b3/q6），断线前旧题不重播');
+
+  // J6 两语与冻结：切 en 后已冻结 text 不重写；下一次新键才用新语言。
+  setSnap({ status: 'ready', value: { askTakeover: true, askUiSeat: 'sidebar', uiLang: 'en' }, user: {} });
+  const frozen = model.store.getSnapshot().announce;
+  assert.equal(frozen.text, zhText.replace('{n}', '1'), '语言切换不重写已冻结文本（不触发旧消息重播）');
+  await intervals[0].fn();
+  await flush();
+  pending[8]({ ok: true, value: { serverNow: 14_000, items: [it('b0', 'q0'), it('b2', 'q4'), it('b2', 'q5'), it('b3', 'q6'), it('b4', 'q7')] } });
+  await flush();
+  announce = model.store.getSnapshot().announce;
+  assert.equal(announce.text, enText.replace('{n}', '1'), '新键播报用切换后的语言（en 词典值）');
+
+  // J5 生命周期：关闭→announce 置空、已播集合清空；重开首查重新播报；旧代迟到回执不播。
+  const openPending = pending.length;
+  await intervals[0].fn();
+  await flush(); // 旧代在途回执（关闭后到达）
+  setSnap({ status: 'ready', value: { askTakeover: false }, user: {} });
+  assert.equal(model.store.getSnapshot().announce, null, '关闭清空播报（区域文本不残留失效消息）');
+  pending[openPending]({ ok: true, value: { serverNow: 15_000, items: [it('b9', 'q9')] } });
+  await flush();
+  assert.equal(model.store.getSnapshot().announce, null, '旧代迟到成功回执不产生播报（代际检查先拒）');
+  setSnap({ status: 'ready', value: { askTakeover: true, askUiSeat: 'sidebar', uiLang: 'zh' }, user: {} });
+  await flush();
+  pending[openPending + 1]({ ok: true, value: { serverNow: 16_000, items: [it('b1', 'q1'), it('b2', 'q4')] } });
+  await flush();
+  announce = model.store.getSnapshot().announce;
+  assert.equal(announce.text, zhText.replace('{n}', '2'), '重开首查按首查口径重新播报（已播集合已清空）');
+  assert.ok(announce.seq > 4, '播报序号跨生命周期单调递增');
+  model.dispose();
+});
+
+test('J51：AskAnnouncer 树形状——role=status＋polite＋atomic＋视觉隐藏类、零宽空格交替、无渲染门槛', async () => {
+  const react = makeMiniReact();
+  const product = await loadClientProduct(react, { setInterval: () => 0, clearInterval: () => {} });
+  // 手工快照模型：Announcer 只读 store（subscribe/getSnapshot），不碰 actions。
+  const makeModel = (announce) => ({
+    store: {
+      subscribe: () => () => {},
+      getSnapshot: () => ({
+        enabled: false, seat: 'sidebar', uiLang: 'auto', serverNow: 0, fetchedAt: 0,
+        items: [], callFailed: null, answerRejectReason: null,
+        lostAnswers: [], undelivered: [], announce
+      })
+    },
+    locale: null
+  });
+  const spanOf = (model) => react.render(() => product.AskAnnouncer({ ask: model }));
+
+  // 关态（enabled=false、无题目——askHasFace=false）仍渲染本体：区域不设门槛。
+  const empty = spanOf(makeModel(null));
+  assert.ok(empty !== null && empty.type === 'span', '关/无题态：播报区域仍在场（不设渲染门槛）');
+  assert.equal(empty.props.className, 'ats-ask-sr', '视觉隐藏类在身');
+  assert.equal(empty.props.role, 'status', 'role=status（隐含 polite/atomic）');
+  assert.equal(empty.props['aria-live'], 'polite', '显式 polite（温和提醒：不打断当前朗读）');
+  assert.equal(empty.props['aria-atomic'], 'true', '显式 atomic（整条朗读，不半句拼接）');
+  assert.equal(String(empty.children), '', 'announce=null 时 children 为空');
+
+  const a1 = spanOf(makeModel({ text: '待答问题新增 1 题', seq: 1 }));
+  const a2 = spanOf(makeModel({ text: '待答问题新增 1 题', seq: 2 }));
+  assert.equal(String(a1.children), '待答问题新增 1 题', 'text 进 children');
+  assert.equal(String(a2.children), '待答问题新增 1 题\u200B', '连续同文按 seq 奇偶交替追加零宽空格（文本恒有差异）');
+  assert.notEqual(String(a1.children), String(a2.children), '两次同文播报的 DOM 文本不同（部分读屏才重播）');
+});
+
+test('J52：wireAskSeats 接线——overlay 槽注册返回 Fragment[AskAnnouncer, AskOverlaySeat]，与座位态解耦', async () => {
+  const react = makeMiniReact();
+  const product = await loadClientProduct(react, { setInterval: () => 0, clearInterval: () => {} });
+  let snap = { status: 'ready', value: { askTakeover: true, askUiSeat: 'sidebar' }, user: {} };
+  const scopeListeners = [];
+  const scope = {
+    getSnapshot: () => snap,
+    subscribe: (fn) => { scopeListeners.push(fn); return () => {}; },
+    mutate: async () => true
+  };
+  const registrations = [];
+  const askRemoteNs = { state: () => Promise.resolve({ ok: true, value: { serverNow: 0, items: [] } }) };
+  const fakeAgentPresets = { list: () => Promise.resolve({ ok: true, value: { presets: [] } }) };
+  const ctx = {
+    configForms: {
+      get: () => scope,
+      whileServed: (entries, fn) => { const off = fn(); return () => off?.(); }
+    },
+    slots: {
+      inject: (slot, factory) => { const off = factory(); return () => off?.(); },
+      register: (meta, renderFn) => { registrations.push({ meta, renderFn }); return () => {}; }
+    },
+    inject: (list, fn) => fn({ remote: { 'async-tools-ask': askRemoteNs, agentPresets: fakeAgentPresets } }),
+    locale: { register: () => () => {} },
+    remote: { $mount: () => Promise.resolve(() => {}), $on: () => () => {} },
+    on: () => () => {},
+    effect: (fn) => { const off = fn(); return () => off?.(); },
+    uiWorkspace: { openSession() {} }
+  };
+  product.apply(ctx);
+  await Promise.resolve();
+  await Promise.resolve();
+  const overlayReg = registrations.find((reg) => reg.meta.name === 'shell.overlay' && reg.meta.id === 'async-tools-ask');
+  assert.ok(overlayReg !== undefined, 'overlay 槽注册经 apply 生效');
+  // sidebar 座位态（面板不渲染的收起形态）下取注册渲染函数：Fragment 首子即播报区域。
+  const frag = overlayReg.renderFn();
+  assert.equal(frag.type, react.Fragment, 'overlay 注册返回 Fragment');
+  assert.equal(frag.children[0].type, product.AskAnnouncer, 'Fragment 首子＝AskAnnouncer（不设座位/收起门槛）');
+  assert.equal(frag.children[1].type, product.AskOverlaySeat, 'Fragment 次子＝AskOverlaySeat（座位本体照旧）');
+  // sidebar.footer.action 注册不受影响（label 闭包 + 座位本体）。
+  const sidebarReg = registrations.find((reg) => reg.meta.name === 'sidebar.footer.action' && reg.meta.id === 'async-tools-ask');
+  assert.ok(sidebarReg !== undefined && typeof sidebarReg.meta.label === 'function', 'sidebar 座位注册并存且 label 闭包不变');
+  assert.equal(sidebarReg.renderFn().type, product.AskSidebarSeat, 'sidebar 注册仍渲染座位本体');
+});
+
+// ---------------------------------------------------------------------------
+// 组合期提交限制（ASK-IME-SUBMIT-01，设计 .local/design/a2/design-ask-ui.md §2/§4.1
+// J9-J16）：每题组合状态、平台层 disabled、submit 复查、compositionend/onBlur
+// 复位与重校验、不答隔离、多题隔离、多选组合期（评审 M2）、blur 单独复位（M3）。
+// ---------------------------------------------------------------------------
+
+test('J53：组合期提交限制——置位/拦截/复查/复位/重校验/不答隔离/多选组合期/blur 复位', async () => {
+  const react = makeMiniReact();
+  const product = await loadClientProduct(react, { setInterval: () => 0, clearInterval: () => {} });
+  const t = (key) => key;
+  const submitted = [];
+  const ignored = [];
+  const ask = {
+    actions: {
+      answer(item, selected, custom, onDone) {
+        submitted.push({ selected, custom });
+        if (typeof onDone === 'function') onDone(true);
+      },
+      ignore(item, onDone) { ignored.push(item.questionId); if (typeof onDone === 'function') onDone(true); },
+      jump() {}, dismissLost() {}
+    },
+    store: null
+  };
+  const base = { batchId: 'b', sessionId: 's', question: 'q', receivedAt: 0,
+    expiresAt: Date.now() + 60000, phase: 'open' };
+  const opts = () => react.__lastTree.children.find((c) => c?.props?.className === 'ats-ask-opts').children;
+  const customInput = () => opts()[opts().length - 1].children[1];
+  const row = () => react.__lastTree.children.find((c) => c?.props?.className === 'ats-ask-row');
+  const submitBtn = () => row().children[0];
+  const skipBtn = () => row().children[1];
+  const reason = () => react.__lastTree.children.find((c) => c?.props?.className === 'ats-ask-reason');
+  const root = () => react.__lastTree;
+
+  // ── J9/J10/J11：单选自定义项的主线 ──────────────────────────────────────
+  const single = { ...base, questionId: 'q1', multiSelect: false, options: [{ label: 'a' }] };
+  react.render(() => product.AskItem({ item: single, t, ask, serverNow: 0, fetchedAt: 0 }));
+  // 前置：自定义有效文本→可提交；组合开始→平台层禁用＋就近原因＋探针锚点。
+  customInput().props.onChange({ target: { value: '拼音组合中' } });
+  assert.equal(submitBtn().props.disabled, false, '前置：有效自定义可提交');
+  customInput().props.onCompositionStart();
+  assert.equal(submitBtn().props.disabled, true, '组合开始：平台层 disabled（鼠标/触屏/键盘三入口同拦）');
+  assert.equal(reason()?.children[0], 'ask.composing', '就近原因=组合中（优先于有效性档）');
+  assert.equal(root().props['data-composing'], 'true', 'data-composing=true（探针锚点）');
+  // 组合中 onChange 输入非空白：自定义保持选中，仍禁用。
+  customInput().props.onChange({ target: { value: '拼音组合中续' } });
+  assert.equal(submitBtn().props.disabled, true, '组合中输入照进草稿，但提交仍禁用');
+  // J10 复查：组合中直接调 submit 的 onClick（绕过 disabled 的合成点击）→零调用。
+  submitBtn().props.onClick();
+  assert.equal(submitted.length, 0, '组合中被拒动作当场终结（提交入口复查读 ref）');
+  // J11 compositionend→按有效性恢复：有效（非空白自定义）→enabled、原因行退场。
+  customInput().props.onCompositionEnd();
+  assert.equal(submitBtn().props.disabled, false, '组合结束：有效性现算恢复启用');
+  assert.equal(reason(), undefined, '有效态无就近原因');
+  assert.equal(root().props['data-composing'], 'false', '组合结束复位探针锚点');
+  // 组合结束后同一 onClick→恰一次（须再次明确动作；不自动补发被拒动作）。
+  submitBtn().props.onClick();
+  assert.equal(submitted.length, 1, '组合结束后显式提交成功一次');
+  assert.deepEqual(submitted[0], { selected: [], custom: '拼音组合中续' }, '载荷＝组合确认后的草稿原文');
+  // J11b 无效恢复档：组合结束后空白自定义→disabled＋needCustom；无选择→needAnswer。
+  customInput().props.onChange({ target: { value: ' ' } });
+  assert.equal(submitBtn().props.disabled, true, '组合结束后空白自定义：按有效性禁用');
+  assert.equal(reason()?.children[0], 'ask.needCustom', '就近原因回到有效性档：自定义空白');
+  customInput().props.onClick(); // 重新选中后清空
+  customInput().props.onChange({ target: { value: '' } });
+  react.render(() => product.AskItem({ item: single, t, ask, serverNow: 0, fetchedAt: 0 }));
+  assert.equal(submitBtn().props.disabled, true, '新实例无选择：禁用');
+  assert.equal(reason()?.children[0], 'ask.needAnswer', '就近原因：需要选择答案');
+
+  // ── J12 不答隔离 ───────────────────────────────────────────────────────
+  const skipCase = { ...base, questionId: 'q2', multiSelect: false, options: [{ label: 'a' }] };
+  react.render(() => product.AskItem({ item: skipCase, t, ask, serverNow: 0, fetchedAt: 0 }));
+  customInput().props.onChange({ target: { value: '组合中不答' } });
+  customInput().props.onCompositionStart();
+  assert.notEqual(skipBtn().props.disabled, true, '「不答」不受组合位置 disabled（仅既有 busy 拦截）');
+  skipBtn().props.onClick();
+  assert.deepEqual(ignored, ['q2'], '组合中可直接不答该题（提交限制不管忽略入口）');
+
+  // ── J15 多选（预设＋自定义）组合期（评审 M2 补）────────────────────────
+  const multi = { ...base, questionId: 'q3', multiSelect: true, options: [{ label: 'a' }, { label: 'b' }] };
+  react.render(() => product.AskItem({ item: multi, t, ask, serverNow: 0, fetchedAt: 0 }));
+  opts()[0].props.onClick(); // 已选预设 a
+  customInput().props.onChange({ target: { value: '多选自定义' } });
+  assert.equal(submitBtn().props.disabled, false, '前置：预设＋有效自定义可提交');
+  customInput().props.onCompositionStart();
+  assert.equal(submitBtn().props.disabled, true, '多选组合期：整题禁提交（disabled 是题级判定）');
+  assert.equal(reason()?.children[0], 'ask.composing', '多选组合期就近原因');
+  submitBtn().props.onClick();
+  assert.equal(submitted.filter((s) => s.custom === '多选自定义').length, 0, '多选组合中被拒动作零调用');
+  customInput().props.onCompositionEnd();
+  assert.equal(submitBtn().props.disabled, false, '组合结束：「预设＋有效自定义」恢复可提交');
+  submitBtn().props.onClick();
+  assert.deepEqual(submitted[submitted.length - 1], { selected: [0], custom: '多选自定义' },
+    '多选组合结束后提交：预设与自定义并列进载荷');
+
+  // ── J16 blur 单独复位（评审 M3 补：历史引擎失焦不派发 compositionend）──
+  const blurCase = { ...base, questionId: 'q4', multiSelect: false, options: [{ label: 'a' }] };
+  react.render(() => product.AskItem({ item: blurCase, t, ask, serverNow: 0, fetchedAt: 0 }));
+  customInput().props.onChange({ target: { value: '失焦复位' } });
+  customInput().props.onCompositionStart();
+  assert.equal(submitBtn().props.disabled, true, '前置：组合中禁用');
+  customInput().props.onBlur(); // 只有 blur、没有 compositionend
+  assert.equal(submitBtn().props.disabled, false, 'blur 同步复位组合位（提交限制不卡死）');
+  assert.equal(root().props['data-composing'], 'false', 'blur 后探针锚点复位');
+  const countAfterBlur = submitted.length;
+  customInput().props.onCompositionEnd(); // 迟到的 compositionend：幂等复位、无补发
+  assert.equal(submitted.length, countAfterBlur, '迟到 compositionend 不自动提交（无存储意图可补发）');
+  assert.equal(submitBtn().props.disabled, false, '幂等复位不改变按有效性恢复的结果');
+
+  // ── J13 多题隔离：A 组合不改 B 的提交可用性（两实例共用一次渲染会话）──
+  const itemA = { ...base, questionId: 'qa', multiSelect: false, options: [{ label: 'a' }] };
+  const itemB = { ...base, questionId: 'qb', multiSelect: false, options: [{ label: 'b' }] };
+  react.render(() => [
+    product.AskItem({ item: itemA, t, ask, serverNow: 0, fetchedAt: 0 }),
+    product.AskItem({ item: itemB, t, ask, serverNow: 0, fetchedAt: 0 })
+  ]);
+  const treeOf = (i) => react.__lastTree[i];
+  const inputOf = (i) => {
+    const o = treeOf(i).children.find((c) => c?.props?.className === 'ats-ask-opts').children;
+    return o[o.length - 1].children[1];
+  };
+  const submitOf = (i) => treeOf(i).children.find((c) => c?.props?.className === 'ats-ask-row').children[0];
+  inputOf(0).props.onChange({ target: { value: 'A 组合' } });
+  inputOf(1).props.onChange({ target: { value: 'B 有效' } });
+  assert.equal(submitOf(1).props.disabled, false, '前置：两题各自有效');
+  inputOf(0).props.onCompositionStart();
+  assert.equal(submitOf(0).props.disabled, true, '题 A 组合中：A 禁用');
+  assert.equal(submitOf(1).props.disabled, false, '题 B 不受题 A 组合影响（每题状态独立）');
+  inputOf(1).props.onCompositionStart();
+  assert.equal(submitOf(1).props.disabled, true, '题 B 自己的组合同样生效');
+  inputOf(0).props.onCompositionEnd();
+  assert.equal(submitOf(0).props.disabled, false, 'A 结束组合恢复，B 仍处自己的组合期');
+
+  // ── J14 词典两语值 ─────────────────────────────────────────────────────
+  const zh = product.DICTIONARIES.zh, en = product.DICTIONARIES.en;
+  assert.match(zh['ask.composing'], /组词/, 'zh ask.composing 含组合语义');
+  assert.doesNotMatch(zh['ask.composing'], /compos|ref|state/i, 'zh 不含内部术语');
+  assert.match(en['ask.composing'], /composition/i, 'en ask.composing 含 composition 语义');
+  assert.match(zh['ask.announceNew'], /新增 \{n\} 题/, 'zh ask.announceNew 数量句式（与 ask.count 同风格）');
+  assert.match(en['ask.announceNew'], /\{n\} new/, 'en ask.announceNew 数量句式');
+});
+
+// ASK-UI-REJECTION-LANG：真实服务拒绝 → gateway 错误字段 → 客户端模型 → 面板。
+// 传输替身遵循宿主 rpcFailure / rebuiltFailure 契约；JSON 往返避免误用 Error
+// 未序列化的附加属性。原因来自真实 answer()，不由界面替身预设。
+for (const [uiLang, agentLang] of [['zh', 'en'], ['en', 'zh']]) {
+  hostTest(`ASK-UI-REJECTION-LANG：uiLang=${uiLang} / agentLang=${agentLang} 两条语言通道独立`, async () => {
+    const { RemoteError, remoteErrorOf } = await import('@deepseek-ai/dsh-typert-protocol');
+    const react = makeMiniReact();
+    const product = await loadClientProduct(react, { setInterval: () => 0, clearInterval() {} });
+    const { registry } = makeRegistry({ agentLang });
+    const agent = fakeAgent();
+    const pending = registry.take(makeRequest(agent, [Q('q-lang')]), agent);
+    const service = new AskTakeoverService({ reflect: { provide() {} } }, registry);
+    let receipt;
+    const remote = {
+      state: async () => ({ ok: true, value: await service.state() }),
+      answer: async (submission) => {
+        try {
+          return { ok: true, value: await service.answer(submission) };
+        } catch (error) {
+          const failure = remoteErrorOf(error);
+          assert.ok(failure, '真实 answer() 必须抛出可携带 details 的 RemoteError');
+          const wire = JSON.parse(JSON.stringify({
+            code: failure.code, message: failure.message, details: failure.details
+          }));
+          receipt = { ok: false, error: new RemoteError(wire.code, wire.message, wire.details) };
+          return receipt;
+        }
+      }
+    };
+    const scope = {
+      getSnapshot: () => ({ status: 'ready', value: { askTakeover: true, uiLang }, user: {} }),
+      subscribe: () => () => {}
+    };
+    const model = product.createAskModel({ configForms: { get: () => scope }, uiWorkspace: {} }, remote);
+    const banner = () => {
+      const tree = react.render(() => product.AskList({ ask: model }));
+      return tree.children.find((node) => node?.props?.className === 'ats-ask-failed')?.children.join('');
+    };
+    const submit = (item, selected, custom) => new Promise((resolve) => {
+      model.actions.answer(item, selected, custom, resolve);
+    });
+    try {
+      await flush();
+      const item = model.store.getSnapshot().items[0];
+      const cases = [
+        ['ask.rejectUnknownOption', ['不存在的选项'], undefined],
+        ['ask.rejectUnknownOption', [9], undefined],
+        ['ask.rejectSingleMultiple', [0, 1], undefined],
+        ['ask.rejectBlankCustom', [], '  '],
+        ['ask.rejectSingleBoth', [0], '补充'],
+        ['ask.rejectNothing', [], undefined]
+      ];
+      for (const [reasonKey, selected, custom] of cases) {
+        assert.equal(await submit(item, selected, custom), false);
+        assert.equal(receipt.error.code, 'async-tools/answer-rejected');
+        assert.equal(receipt.error.details.reasonKey, reasonKey);
+        assert.equal(receipt.error.message, t(agentLang, 'ask.answerRejectedError', { reason: t(agentLang, reasonKey) }),
+          '同一回执的模型侧错误文案仍由 agentLang 管理');
+        assert.equal(model.store.getSnapshot().answerRejectReasonKey, reasonKey);
+        assert.equal(model.store.getSnapshot().answerRejectReason, receipt.error.message, '原串同时保留');
+        assert.equal(product.DICTIONARIES[uiLang][reasonKey], t(uiLang, reasonKey), '两套词典语义一致');
+        assert.equal(banner(), product.DICTIONARIES[uiLang]['ask.answerRejected'] + ' · ' + t(uiLang, reasonKey));
+        assert.ok(!banner().includes(t(agentLang, reasonKey)), '界面不混入另一语言的原因句');
+      }
+      assert.equal(registry.stateItems().items.length, 1, '所有拒绝均不记已答');
+      assert.equal(await submit(item, [0], undefined), true, '正常作答仍成功');
+      assert.deepEqual((await pending).answers[0].selected, ['选项一']);
+      assert.equal(model.store.getSnapshot().answerRejectReason, null);
+      assert.equal(model.store.getSnapshot().answerRejectReasonKey, null, '成功清除原因键');
+      assert.equal(banner(), undefined, '成功清除拒绝横幅');
+    } finally {
+      model.dispose();
+      registry.disposeAll();
+    }
+  });
+}
+
+test('ASK-UI-REJECTION-LANG：无键或未知键保留原串，忽略拒绝不沿用旧原因键', async () => {
+  const react = makeMiniReact();
+  const product = await loadClientProduct(react, { setInterval: () => 0, clearInterval() {} });
+  const item = { batchId: 'b', questionId: 'q', sessionId: 's', question: 'q', options: [] };
+  let result = { ok: false, error: { message: 'unchanged diagnostic', details: {} } };
+  const scope = {
+    getSnapshot: () => ({ status: 'ready', value: { askTakeover: true, uiLang: 'zh' }, user: {} }),
+    subscribe: () => () => {}
+  };
+  const model = product.createAskModel({ configForms: { get: () => scope }, uiWorkspace: {} }, {
+    state: async () => ({ ok: true, value: { serverNow: 0, items: [item] } }),
+    answer: async () => result,
+    ignore: async () => result
+  });
+  const banner = () => react.render(() => product.AskList({ ask: model })).children
+    .find((node) => node?.props?.className === 'ats-ask-failed')?.children.join('');
+  const submit = () => new Promise((resolve) => model.actions.answer(item, [], undefined, resolve));
+  try {
+    await flush();
+    await submit();
+    assert.equal(banner(), product.DICTIONARIES.zh['ask.answerRejected'] + ' · unchanged diagnostic');
+    result.error.details.reasonKey = 'ask.futureReason';
+    await submit();
+    assert.equal(banner(), product.DICTIONARIES.zh['ask.answerRejected'] + ' · unchanged diagnostic');
+    result.error.details.reasonKey = 'ask.rejectNothing';
+    await submit();
+    assert.ok(banner().includes(product.DICTIONARIES.zh['ask.rejectNothing']));
+    result = { ok: false, error: { message: 'ignore diagnostic' } };
+    await new Promise((resolve) => model.actions.ignore(item, resolve));
+    assert.equal(model.store.getSnapshot().answerRejectReasonKey, null);
+    assert.equal(banner(), product.DICTIONARIES.zh['ask.answerRejected'] + ' · ignore diagnostic');
+  } finally {
+    model.dispose();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 手势组合位（ASK-COMPOSITION-GESTURE，需求 §4.2.4 组合期行）：组合期按下提交按
+// 钮 → 按下使输入框失焦 → blur 复位当前组合位、按钮重新可用 → 同一手势抬起才派
+// 发 click——该 click 必须被当场拒绝（手势开始时的组合状态决定该次拒绝，blur/end
+// 不让同一手势获准），草稿与已选项保留、不排队补发。残余清理：被中断的手势（按
+// 下后拖离、无 click）经 document 级 pointerup/pointercancel 捕获监听＋宏任务清
+// 位，不残留影响键盘 Enter 提交；键盘路径的 click（无指针按下）不查手势位。
+// ---------------------------------------------------------------------------
+
+test('J54：手势组合位——组合中开始的提交手势迟到 click 被拒；中断手势清位后键盘提交不受残留影响', async () => {
+  const react = makeMiniReact();
+  // 假 window 的宏任务队列：清位定时器进 Map、由测试按序放行——钉住「清位必须排
+  // 在 click 之后」的次序（pointerup 已到、定时器未跑时的 click 仍被拒）。
+  const pendingTimers = new Map();
+  let timerSeq = 0;
+  const product = await loadClientProduct(react, {
+    setInterval: () => 0, clearInterval: () => {},
+    setTimeout: (fn) => { timerSeq += 1; pendingTimers.set(timerSeq, fn); return timerSeq; },
+    clearTimeout: (id) => { pendingTimers.delete(id); }
+  });
+  // 假 document（裸 `document` 经 globalThis 动态解析，v3 用例同款）：捕获 AskItem
+  // 挂的 document 级 pointerup/pointercancel 捕获监听。
+  const docListeners = [];
+  globalThis.document = {
+    addEventListener: (event, fn, opts) => { docListeners.push({ event, fn, opts }); },
+    removeEventListener: () => {},
+    getElementById: () => null,
+    createElement: () => ({ textContent: '' }),
+    head: { appendChild() {} }
+  };
+  try {
+    const t = (key) => key;
+    const submitted = [];
+    const ask = {
+      actions: {
+        answer(item, selected, custom, onDone) {
+          submitted.push({ selected, custom });
+          if (typeof onDone === 'function') onDone(true);
+        },
+        ignore() {}, jump() {}, dismissLost() {}
+      },
+      store: null
+    };
+    const base = { batchId: 'b', sessionId: 's', question: 'q', receivedAt: 0,
+      expiresAt: Date.now() + 60000, phase: 'open' };
+    const opts = () => react.__lastTree.children.find((c) => c?.props?.className === 'ats-ask-opts').children;
+    const customInput = () => opts()[opts().length - 1].children[1];
+    const row = () => react.__lastTree.children.find((c) => c?.props?.className === 'ats-ask-row');
+    const submitBtn = () => row().children[0];
+    const pointerUp = (event) => {
+      for (const entry of docListeners.filter((l) => l.event === 'pointerup')) entry.fn(event);
+    };
+    const runTimeouts = () => {
+      const fns = [...pendingTimers.values()];
+      pendingTimers.clear();
+      for (const fn of fns) fn();
+    };
+
+    // ── 1. 组合中按下提交按钮 → blur → compositionend → click：被拒，草稿与选择保留 ──
+    const gesture = { ...base, questionId: 'q1', multiSelect: true, options: [{ label: 'a' }] };
+    react.render(() => product.AskItem({ item: gesture, t, ask, serverNow: 0, fetchedAt: 0 }));
+    // 挂载即注册 document 级捕获监听（中断手势的清位通道）。
+    assert.ok(docListeners.some((l) => l.event === 'pointerup' && l.opts === true),
+      'document 级 pointerup 捕获监听在挂载时注册（capture）');
+    assert.ok(docListeners.some((l) => l.event === 'pointercancel' && l.opts === true),
+      'pointercancel 捕获监听同注册（手势被取消也走清位）');
+    opts()[0].props.onClick();                                      // 预设 a 已选
+    customInput().props.onChange({ target: { value: '组合草稿' } }); // 多选：自定义与预设并存
+    assert.equal(submitBtn().props.disabled, false, '前置：有效答案可提交');
+    customInput().props.onCompositionStart();                       // 组合中
+    submitBtn().props.onPointerDown();                              // 手势开始：抄录组合位（组合中）
+    customInput().props.onBlur();                                   // 按下使输入框失焦：当前组合位复位
+    customInput().props.onCompositionEnd();                         // 组合随后正式结束
+    assert.equal(submitBtn().props.disabled, false, 'blur/end 后按钮按有效性重新可用（同一手势仍不得获准）');
+    submitBtn().props.onClick();                                    // 同一手势抬起的 click
+    assert.equal(submitted.length, 0, '组合中开始的手势：迟到 click 被当场拒绝，不排队补发');
+    assert.equal(customInput().props.value, '组合草稿', '被拒后草稿保留');
+    assert.equal(opts()[0].props['aria-checked'], 'true', '被拒后预设选择保留');
+    assert.equal(submitBtn().props.disabled, false, '被拒后仍处可提交态（等待新的明确操作）');
+    // 新手势（pointerdown 时非组合）→ click 正常提交。
+    pointerUp();                                                    // 上一手势结束
+    runTimeouts();
+    submitBtn().props.onPointerDown();                              // 新手势：非组合中开始
+    submitBtn().props.onClick();
+    assert.equal(submitted.length, 1, '新手势（非组合中开始）的 click 正常提交');
+    assert.deepEqual(submitted[0], { selected: [0], custom: '组合草稿' },
+      '载荷＝被拒手势保留下的草稿与选择（新的明确操作才可提交）');
+
+    // ── 2. 键盘路径：无指针按下时的 click（模拟 Enter 激活按钮）不受手势位影响 ──
+    const keyboard = { ...base, questionId: 'q2', multiSelect: false, options: [{ label: 'a' }] };
+    react.render(() => product.AskItem({ item: keyboard, t, ask, serverNow: 0, fetchedAt: 0 }));
+    customInput().props.onChange({ target: { value: '键盘提交' } });
+    customInput().props.onCompositionStart();
+    customInput().props.onCompositionEnd();                         // 组合结束，全程无 pointerdown
+    submitBtn().props.onClick();
+    assert.equal(submitted.length, 2, '无指针手势的 click 不查手势位（实现若把「无手势记录」当拒绝形态，这里必红）');
+
+    // ── 3. 被中断手势：pointerdown（组合中）→ 拖离无 click → 宏任务清位后键盘 click 可提交 ──
+    const interrupted = { ...base, questionId: 'q3', multiSelect: false, options: [{ label: 'a' }] };
+    react.render(() => product.AskItem({ item: interrupted, t, ask, serverNow: 0, fetchedAt: 0 }));
+    customInput().props.onChange({ target: { value: '拖离草稿' } });
+    customInput().props.onCompositionStart();
+    submitBtn().props.onPointerDown();                              // 组合中按下
+    customInput().props.onBlur();                                   // 按下即失焦（拖离不改这一步）
+    pointerUp();                                                    // 拖离后抬起：无 click
+    // 次序探针：click 在 pointerup 之后同步派发、清位定时器尚未运行——同一手势的
+    // click 仍被拒（清位若提前到该手势 click 之前，这里必红）。
+    submitBtn().props.onClick();
+    assert.equal(submitted.length, 2, 'pointerup 已到、清位未跑：手势位在场，click 仍被拒');
+    runTimeouts();                                                  // 宏任务清位
+    submitBtn().props.onClick();                                    // 键盘 Enter 激活（无新手势）
+    assert.equal(submitted.length, 3, '中断手势清位后：键盘 click 不被残留手势位挡住');
+    assert.deepEqual(submitted[2], { selected: [], custom: '拖离草稿' }, '清位后的键盘提交照常送出草稿原文');
+
+    // ── 3b. 多指针（返修追加）：组合手势仍按住时，另一指针的抬起不得清位 ──
+    //   攻击形状：指针 7 组合中按下提交（位＝true）→ 他指针 9 抬起（若清位不限
+    //   pointerId，位被误清）→ 指针 7 的组合已被失焦结束 → 指针 7 抬起派发
+    //   click——修复后该 click 仍被拒；只有指针 7 自己的结束才清位。
+    const multiPointer = { ...base, questionId: 'q4', multiSelect: true, options: [{ label: 'a' }] };
+    react.render(() => product.AskItem({ item: multiPointer, t, ask, serverNow: 0, fetchedAt: 0 }));
+    opts()[0].props.onClick();
+    customInput().props.onChange({ target: { value: '两指草稿' } });
+    customInput().props.onCompositionStart();
+    submitBtn().props.onPointerDown({ pointerId: 7 });                // 组合手势：指针 7 按下
+    customInput().props.onBlur();                                     // 失焦结束组合
+    pointerUp({ pointerId: 9 });                                      // 他指针抬起：不得清位
+    runTimeouts();
+    submitBtn().props.onClick();                                      // 指针 7 抬起派发的 click
+    assert.equal(submitted.filter((s) => s.custom === '两指草稿').length, 0,
+      '他指针的 pointerup 不清仍按住的手势位——组合中开始的 click 仍被拒');
+    pointerUp({ pointerId: 7 });                                      // 同一指针结束：清位
+    runTimeouts();
+    submitBtn().props.onClick();                                      // 清位后的键盘/新动作提交
+    assert.equal(submitted.filter((s) => s.custom === '两指草稿').length, 1,
+      '同一指针的 pointerup 清位后：后续提交恢复正常');
+
+    // 泄漏看守（源级）：卸载清理必须成对摘除两类监听并撤销未触发的清位定时器。
+    const source = readFileSync(resolve(ROOT, 'client.js'), 'utf8');
+    assert.match(source, /removeEventListener\("pointerup"/, '卸载清理摘除 pointerup 监听');
+    assert.match(source, /removeEventListener\("pointercancel"/, '卸载清理摘除 pointercancel 监听');
+    assert.match(source, /clearTimeout\(gestureClearTimerRef\.current\)/, '卸载清理撤销未触发的清位定时器');
+  } finally {
+    delete globalThis.document;
+  }
 });

@@ -68,6 +68,28 @@ mutation('M10 宿主副本豁免类改锚必红：串被改字（needle 不再�
   + `}`,
   { allowNeedles: ['subagent model selection requires an array of routes'] });
 
+// AGENT-LANG-01 的三条新变异（先否后是的条目各做两向）：
+// - M11＝原失败形态——收集句留在词典外当英文字面量（不在任何白名单）——
+//   仍被本层拦住，这是「入口通过且仍能检出真正散落文案」的直接证明；
+// - M12/M12b＝新豁免针的改锚专项（M10 同机制）：effect 标签与遮蔽段宿主前缀
+//   的豁免都是 needle 精确匹配，改一字即失去豁免、重新命中。
+mutation('M11 收集句散落词典外（原失败形态，不在任何白名单）必须命中', true,
+  `const collect = 'Before giving a final answer, collect every still-relevant job with async_wait (wait_ms=0 returns immediately with any settled results), and job_kill jobs that stopped mattering.';`);
+
+mutation('M12① effect 标签豁免（新 needle 精确覆盖）不命中', false,
+  `agent.ctx.effect(() => disposePrompt, 'async-tools: tool:jobs prompt shadow');`,
+  { allowNeedles: ['async-tools: tool:jobs prompt shadow'] });
+mutation('M12② 同一标签改字（shadow→cover，needle 不再覆盖）必须重新命中', true,
+  `agent.ctx.effect(() => disposePrompt, 'async-tools: tool:jobs prompt cover');`,
+  { allowNeedles: ['async-tools: tool:jobs prompt shadow'] });
+
+mutation('M12b① 宿主前缀字面量（新 needle 精确覆盖）不命中', false,
+  `export const PREFIX = 'Track every background job id you start. You are notified in-session when a job finishes.';`,
+  { allowNeedles: ['Track every background job id you start.'] });
+mutation('M12b② 前缀改字（Track→Record，needle 不再覆盖）必须重新命中——副本豁免不吞真改写', true,
+  `export const PREFIX = 'Record every background job id you start. You are notified in-session when a job finishes.';`,
+  { allowNeedles: ['Track every background job id you start.'] });
+
 const uncaught = results.filter((ok) => !ok).length;
 console.log(`\n${uncaught === 0 ? `全部变异都被抓住（${String(results.length)}/${String(results.length)}）` : `${String(uncaught)} 处没被抓住`}`);
 process.exitCode = uncaught === 0 ? 0 : 1;

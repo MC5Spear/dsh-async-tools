@@ -4,9 +4,9 @@
  * 为什么必须有这个文件：其余测试文件的 `ctx` 都是 `test/_helpers.mjs` 自己捏的替身，
  * **替身要什么有什么**，所以"`inject` 漏声明某个服务"这类缺陷在假件测试里永远绿。
  * 真实 cordis 上下文上，漏声明的服务访问会以 `cannot get property "<svc>"
- * without inject` 在插件树加载期暴露——例如 `timer` 只被 `async_wait_job` 与
- * `async_wait_agent` 消费（`async_run` 的让出走宿主 `jobs.wait`、请求显式
- * `onExpiry: 'none'`，不经 `ctx.timer`），漏声明它时红的正是那两个等待工具。
+ * without inject` 在插件树加载期暴露——例如 `timer` 只被 `async_wait` 消费
+ * （`async_run` 的让出走宿主 `jobs.wait`、请求显式 `onExpiry: 'none'`，
+ * 不经 `ctx.timer`），漏声明它时红的正是等待入口。
  *
  * 本文件做两件事，缺一不可：
  * 1. **静态扫描** `lib/` 下所有 `.js` 里的 `ctx.<服务>` 访问，断言它们是 `inject` 的子集
@@ -21,13 +21,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { HOST_SKIP_REASON, loadOfflineSafe } from './_host-gate.mjs';
 
 /** `lib/` 目录的绝对路径。 */
 const LIB_DIR = fileURLToPath(new URL('../lib/', import.meta.url));
 
-/** cordis 的 `FiberState.ACTIVE`（`@deepseek-ai/cordis` 4.0.4，`lib/types/fiber.d.ts:67-74` 的 const enum，ACTIVE = 2）。 */
+/** cordis 的 `FiberState.ACTIVE`（`@deepseek-ai/cordis` 4.0.5，`lib/types/fiber.d.ts:67-74` 的 const enum，ACTIVE = 2）。 */
 const ACTIVE = 2;
 
 /** 加载宿主入口（守卫式动态 import，判据见 `_host-gate.mjs`）。 */
@@ -231,7 +233,7 @@ function ctxGetLiterals(text) {
  *   `{enabled, allowedModels}`（启动前重读防撤回），`async_list_subagent_models`
  *   的目标适用性判断同读。缺席或读取失败只影响这两条路径（可读拒绝／未确认），
  *   工具照常注册——写进 `inject` 会让未挂 model-selection-settings 的部署
- *   整行不激活（六个工具陪葬）。
+ *   整行不激活（五个工具陪葬）。
  *
  * - `llm`：LLM 目录与调用配置服务（预检 `resolveCallConfig`；查询工具的
  *   `listProviders`／`listModels`／`resolveModelInfo`，需求 §2.3.1/§2.3.4）。
@@ -259,6 +261,8 @@ const BUILTIN_CTX_MEMBERS = new Set(['effect', 'on', 'emit', 'get', 'logger', 'i
  */
 function makeContext(Context) {
   const registered = [];
+  const restrictCalls = [];
+  const restrictDisposed = [];
   const ctx = new Context();
   ctx.provide('tools', {
     register(definition) {
@@ -267,6 +271,12 @@ function makeContext(Context) {
         const index = registered.indexOf(definition);
         if (index >= 0) registered.splice(index, 1);
       };
+    },
+    // `restrict`（宿主 dsh-tools 的工具隐藏服务）记录器：断言 job_output 隐藏
+    // 的调用参数与 disposer 接线（T19）——不是真隐藏，只验证本包的调用形态。
+    restrict(policy) {
+      restrictCalls.push(policy);
+      return () => { restrictDisposed.push(policy); };
     }
   });
   ctx.provide('jobs', {
@@ -293,12 +303,12 @@ function makeContext(Context) {
   // 第九服务：会话当前有效目录（async_run 启动前 ensure；挂载级假件只需
   // 返回固定目录——目录解析行为由 test/jobs.test.mjs 专测）。
   ctx.provide('workingDirectory', { ensure: async () => 'D:\\work' });
-  return { ctx, registered };
+  return { ctx, registered, restrictCalls, restrictDisposed };
 }
 
 /**
  * 等插件 fiber 进入 ACTIVE：cordis 的 `_reload()` 先 `await Promise.resolve()`
- * 才执行 `apply`（`@deepseek-ai/cordis` 4.0.4 `lib/index.js:1349-1358` 的
+ * 才执行 `apply`（`@deepseek-ai/cordis` 4.0.5 `lib/index.js:1349-1358` 的
  * `_reload` 链），因此推有限的微任务轮次就够，
  * 不是靠时间蒙。超限直接断言失败，不会静默放过一个没跑起来的插件。
  * @param {object} fork - `ctx.plugin()` 的返回值。
@@ -353,7 +363,7 @@ test('T6：lib/ 里访问的每个 ctx.<服务> 都必须在 inject 里声明', 
 });
 
 test('T8：作废措辞"唯一途径"只许出现在标注其作废的上下文里', () => {
-  // 需求 §2.1.3：`async_wait_job` 是本包规定的后台结果读取途径，但不能宣称它
+  // 需求 §2.1.3：`async_wait` 是本包规定的后台结果读取途径，但不能宣称它
   // 排除宿主的其他读取工具——"唯一途径"把规定途径夸大成排他断言。`lib/` 里若有
   // 注释把它当作**生效口径**引用，照注释改代码的人会把现行口径理解错。
   //
@@ -416,7 +426,7 @@ test('T3：inject 恰为九项服务；apply 按 config.toolName 注册工具；
   // 工具行分派判据——真 cordis 上下文里按名注册成功、卸载后注销。构造时不查
   // provider 注册表（描述里的名字取自配置），所以 makeContext 的假 subagents
   // 不需要 getProvider；查询行也不查 llm（按调用可选读取）。
-  for (const toolName of ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent', 'async_list_subagent_models']) {
+  for (const toolName of ['async_run', 'async_wait', 'async_agent', 'async_list_subagent_models']) {
     const { ctx, registered } = makeContext(Context);
     const fork = ctx.plugin(
       { name: host.name, inject: host.inject, Config: host.Config, apply: host.apply },
@@ -435,6 +445,339 @@ test('T3：inject 恰为九项服务；apply 按 config.toolName 注册工具；
     await fork.dispose();
     assert.deepEqual(registered, [], 'ctx.effect 的 disposer 必须在 fiber 卸载时注销工具（R4 可逆性）');
   }
+});
+
+test('T19：job_output 隐藏——agent/created 挂 agent 作用域 restrict，查询行不挂；去重与回收（9.3.5）', async (t) => {
+  const host = await loadHost();
+  if (host === undefined || Context === undefined) {
+    t.skip(HOST_SKIP_REASON);
+    return;
+  }
+  // 四个交付类工具行（async_run/async_wait/async_agent/async_workflow）装载后监听
+  // `agent/created`，在 **Agent 作用域**上调 agent.ctx.tools.restrict({deny:['job_output']})
+  // ——曾实证「行装载 ctx 上 restrict 必报 unknown global tool」（同层注册不进
+  // 本层可限制名单，与行序无关），宿主语义要求挂在 Agent 继承面上（installJobOutputHide
+  // 文档串）；查询行（async_list_subagent_models）不挂——9.3.5 末条「查询类工具不受影响」。
+  const deliveryRows = ['async_run', 'async_wait', 'async_agent', 'async_workflow'];
+  for (const toolName of [...deliveryRows, 'async_list_subagent_models']) {
+    const { ctx } = makeContext(Context);
+    const fork = ctx.plugin(
+      { name: host.name, inject: host.inject, Config: host.Config, apply: host.apply },
+      { toolName }
+    );
+    await activate(fork);
+    // 假 Agent：agent.ctx.tools.restrict 与 agent.ctx.effect 都是 per-agent 记录器
+    //（effect 记录器锚定句柄归属——挂行 ctx 则行卸载会连带摘在世 Agent 的
+    // 隐藏，曾实证的缺陷形态）。
+    const agentRestrictCalls = [];
+    const agentEffectDisposers = [];
+    // 生效边界（BA-02）：隐藏判据＝Agent 名册中 async_wait 可见——假 Agent 的
+    // tools.view 提供带 async_wait 的名册（反例锚见下方 noWait/throwView/noView）。
+    const fakeAgent = {
+      id: `agent-${toolName}`,
+      ctx: {
+        tools: {
+          view() { return { visible: new Map([['async_wait', {}], [toolName, {}]]) }; },
+          restrict(policy) { agentRestrictCalls.push(policy); return () => {}; }
+        },
+        effect(fn) { agentEffectDisposers.push(fn); }
+      }
+    };
+    ctx.emit('agent/created', { agent: fakeAgent });
+    if (deliveryRows.includes(toolName)) {
+      assert.deepEqual(
+        agentRestrictCalls,
+        [{ deny: ['job_output'] }],
+        `${toolName} 行应在 agent/created 后对 agent.ctx 恰一次 restrict({deny:['job_output']})（装载期不再直接 restrict——真机 unknown-tool 失败形态即红）`
+      );
+      assert.equal(agentEffectDisposers.length, 1, '句柄必须挂 agent.ctx.effect（随 Agent 世代回收；挂行 ctx 则行单独卸载摘除在世 Agent 的隐藏——L-1）');
+      // 同一 Agent 再次 created（多行监听/重复事件）：模块级去重，只挂一次。
+      ctx.emit('agent/created', { agent: fakeAgent });
+      assert.equal(agentRestrictCalls.length, 1, '同一 Agent 重复 created 不重复挂（WeakSet 去重）');
+      // 故障形态：agent.ctx 缺席或 restrict 抛错——监听器不外抛（dsh-agent 对
+      // created 监听器失败按 reject 处理，会阻断 Agent 创建）、降级 warn、不挡
+      // 后续 Agent。
+      const bare = { id: 'agent-bare' };
+      ctx.emit('agent/created', { agent: bare });
+      const throwing = {
+        id: 'agent-throw',
+        ctx: {
+          tools: {
+            view() { return { visible: new Map([['async_wait', {}]]) }; },
+            restrict() { throw new Error('boom'); }
+          }
+        }
+      };
+      ctx.emit('agent/created', { agent: throwing });
+      const afterFault = [];
+      ctx.emit('agent/created', {
+        agent: { id: 'agent-after-fault', ctx: { tools: {
+          view() { return { visible: new Map([['async_wait', {}]]) }; },
+          restrict(p) { afterFault.push(p); return () => {}; }
+        } } }
+      });
+      assert.equal(afterFault.length, 1, '故障 Agent 不阻断后续 Agent 的隐藏登记（3.5.1 故障注入语义）');
+      // 生效边界反例（BA-02，9.3.5 第 3 条）：名册无 async_wait／view 抛错／
+      // view 缺席——保守不隐藏（restrict 零调用，原生 job_output 照常可见）。
+      const noWaitProbe = [];
+      ctx.emit('agent/created', {
+        agent: { id: 'agent-no-wait', ctx: { tools: {
+          view() { return { visible: new Map([['async_run', {}]]) }; },
+          restrict(p) { noWaitProbe.push(p); return () => {}; }
+        }, effect() {} } }
+      });
+      assert.equal(noWaitProbe.length, 0, '名册无 async_wait 不隐藏（单挂创建行的组合不剥夺原生读取入口）');
+      const throwViewProbe = [];
+      ctx.emit('agent/created', {
+        agent: { id: 'agent-view-throw', ctx: { tools: {
+          view() { throw new Error('view boom'); },
+          restrict(p) { throwViewProbe.push(p); return () => {}; }
+        }, effect() {} } }
+      });
+      assert.equal(throwViewProbe.length, 0, '名册读取抛错不隐藏（保守方向）');
+      const noViewProbe = [];
+      ctx.emit('agent/created', {
+        agent: { id: 'agent-no-view', ctx: { tools: {
+          restrict(p) { noViewProbe.push(p); return () => {}; }
+        }, effect() {} } }
+      });
+      assert.equal(noViewProbe.length, 0, 'tools.view 缺席不隐藏（保守方向）');
+    } else {
+      assert.equal(agentRestrictCalls.length, 0, '查询行不挂隐藏（9.3.5：查询类工具不受影响）');
+    }
+    await fork.dispose();
+    // 行卸载后监听器摘除：新 Agent 的 created 不再触发。
+    const lateCalls = [];
+    ctx.emit('agent/created', {
+      agent: { id: 'agent-late', ctx: { tools: { restrict(p) { lateCalls.push(p); return () => {}; } } } }
+    });
+    assert.equal(lateCalls.length, 0, '行卸载后不再对新 Agent 挂隐藏（可逆性）');
+  }
+});
+
+test('T20：tool:jobs 提示遮蔽——隐藏 job_output 的同一 Agent ctx 注册同名 scoped 段，指路改 async_wait（RA-HIDDEN-READER-PROMPT）', async (t) => {
+  const host = await loadHost();
+  if (host === undefined || Context === undefined) {
+    t.skip(HOST_SKIP_REASON);
+    return;
+  }
+  // 宿主 tool-jobs 行的 `tool:jobs` 系统提示段固定指路 job_output 收集结果；
+  // 本包隐藏该工具后指路即矛盾。修复＝在隐藏生效的同一 Agent ctx 上注册
+  // **同名** `tool:jobs` 段（dsh-system-prompt ScopedLayers 的 scoped 遮蔽
+  // 语义）——宿主前缀逐字保留（恒英文），收集句改指 async_wait 且随
+  // agentLang 换语言：text 注册为**函数文本**，宿主每次组稿现求值、经行
+  // 配置视图现读生效语言（AGENT-LANG-01）。
+  const deliveryRows = ['async_run', 'async_wait', 'async_agent', 'async_workflow'];
+  for (const toolName of [...deliveryRows, 'async_list_subagent_models']) {
+    const { ctx } = makeContext(Context);
+    const fork = ctx.plugin(
+      { name: host.name, inject: host.inject, Config: host.Config, apply: host.apply },
+      { toolName }
+    );
+    await activate(fork);
+    const sectionCalls = [];
+    const effects = [];
+    const fakeAgent = {
+      id: `agent-shadow-${toolName}`,
+      ctx: {
+        tools: {
+          view() { return { visible: new Map([['async_wait', {}]]) }; },
+          restrict() { return () => {}; }
+        },
+        effect(fn) { effects.push(fn); },
+        systemPrompt: {
+          section(spec) { sectionCalls.push(spec); return () => {}; },
+          getSectionOrder(name) { return name === 'TOOL_JOBS' ? 777 : NaN; }
+        }
+      }
+    };
+    ctx.emit('agent/created', { agent: fakeAgent });
+    if (deliveryRows.includes(toolName)) {
+      assert.equal(sectionCalls.length, 1, `${toolName}：恰注册一个遮蔽段`);
+      const spec = sectionCalls[0];
+      assert.equal(spec.name, 'tool:jobs', '同名段才构成 scoped 遮蔽（宿主 shadow 语义）');
+      assert.equal(spec.order, 777, '段序取宿主 TOOL_JOBS 档值（落位不变）');
+      assert.equal(typeof spec.text, 'function', '段文注册为函数文本（每次组稿现求值、现读 agentLang；静态串会把语言固化在登记时刻）');
+      const text = spec.text();
+      assert.ok(text.includes('async_wait'), '收集动作改指 async_wait 零等待领取');
+      assert.ok(text.includes('job_kill'), '终止纪律逐字保留');
+      assert.ok(!text.includes('job_output'), '遮蔽段不得再指路被隐藏的工具（RA-HIDDEN-READER-PROMPT 本体）');
+      assert.equal(effects.length, 2, 'restrict 与遮蔽段的处置句柄都挂 agent.ctx.effect（同生存期，随 Agent 回收）');
+      ctx.emit('agent/created', { agent: fakeAgent });
+      assert.equal(sectionCalls.length, 1, '同一 Agent 重复 created 不重复注册（与隐藏共用去重）');
+      // 降级①：agent.ctx 无 systemPrompt——监听器不外抛，隐藏不受影响。
+      const barePrompt = {
+        id: 'agent-no-prompt',
+        ctx: {
+          tools: {
+            view() { return { visible: new Map([['async_wait', {}]]) }; },
+            restrict() { return () => {}; }
+          },
+          effect() {}
+        }
+      };
+      ctx.emit('agent/created', { agent: barePrompt });
+      // 降级②：section 抛错——独立降级只记 warn，隐藏不被连坐（restrict 照挂）。
+      const restrictProbe = [];
+      ctx.emit('agent/created', {
+        agent: {
+          id: 'agent-prompt-throw',
+          ctx: {
+            tools: {
+              view() { return { visible: new Map([['async_wait', {}]]) }; },
+              restrict(p) { restrictProbe.push(p); return () => {}; }
+            },
+            effect() {},
+            systemPrompt: { section() { throw new Error('layer conflict'); }, getSectionOrder() { return 1; } }
+          }
+        }
+      });
+      assert.equal(restrictProbe.length, 1, '提示遮蔽失败不连坐隐藏（两件事独立降级）');
+    } else {
+      assert.equal(sectionCalls.length, 0, '查询行不挂遮蔽段（与隐藏同口径，9.3.5 末条）');
+    }
+    await fork.dispose();
+  }
+
+  // zh 行配置档（settings.agentLang='zh'；快照缺席→行默认值）：收集句随
+  // agentLang 换语言——该行 spec.text() 含 CJK 且与 en 档不同。混合段形态
+  //（英文前缀＋中文收集句）与「zh 档含 F1 英文前缀锚」的判据归 T20b。
+  const { jobsShadowText } = await import('../lib/jobs-shadow.js');
+  const CJK_RE = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+  const { ctx: zhCtx } = makeContext(Context);
+  const zhFork = zhCtx.plugin(
+    { name: host.name, inject: host.inject, Config: host.Config, apply: host.apply },
+    { toolName: 'async_run', settings: { agentLang: 'zh' } }
+  );
+  await activate(zhFork);
+  const zhSections = [];
+  zhCtx.emit('agent/created', {
+    agent: {
+      id: 'agent-shadow-zh',
+      ctx: {
+        tools: {
+          view() { return { visible: new Map([['async_wait', {}]]) }; },
+          restrict() { return () => {}; }
+        },
+        effect() {},
+        systemPrompt: {
+          section(spec) { zhSections.push(spec); return () => {}; },
+          getSectionOrder() { return 777; }
+        }
+      }
+    }
+  });
+  assert.equal(zhSections.length, 1, 'zh 行档照常注册遮蔽段');
+  const zhText = zhSections[0].text();
+  assert.ok(CJK_RE.test(zhText), 'zh 行档的组稿文本含中文收集句');
+  assert.notEqual(zhText, jobsShadowText('en'), 'zh 行档与 en 档组稿文本不同（语言开关真的换到收集句）');
+  await zhFork.dispose();
+
+  // 活读断言（「已有会话后续组稿刷新」的单元级判据，沿用 T3c 的 settings
+  // 助手形态）：对已登记的 spec，快照挂载 zh 档后再求值得 zh、清除快照回退
+  // 行默认 en——语言取自每次求值时的生效配置，不是登记时刻的快照。
+  const { attachSnapshotSource, clearSnapshot } = await import('../lib/settings.js');
+  clearSnapshot();
+  const { ctx: liveCtx } = makeContext(Context);
+  const liveFork = liveCtx.plugin(
+    { name: host.name, inject: host.inject, Config: host.Config, apply: host.apply },
+    { toolName: 'async_wait' }
+  );
+  await activate(liveFork);
+  const liveSections = [];
+  liveCtx.emit('agent/created', {
+    agent: {
+      id: 'agent-shadow-live',
+      ctx: {
+        tools: {
+          view() { return { visible: new Map([['async_wait', {}]]) }; },
+          restrict() { return () => {}; }
+        },
+        effect() {},
+        systemPrompt: {
+          section(spec) { liveSections.push(spec); return () => {}; },
+          getSectionOrder() { return 777; }
+        }
+      }
+    }
+  });
+  const liveSpec = liveSections[0];
+  const beforeAttach = liveSpec.text();
+  assert.ok(!CJK_RE.test(beforeAttach), '前置：快照缺席时按行默认 en 档组稿');
+  const wiring = attachSnapshotSource({ on: () => () => {}, logger: { warn() {} } }, { agentLang: 'zh' });
+  try {
+    assert.ok(CJK_RE.test(liveSpec.text()), '快照挂 zh 档后同一 spec 的下一次求值即 zh（组稿活读）');
+    assert.notEqual(liveSpec.text(), beforeAttach, '快照挂载前后组稿文本不同');
+  } finally {
+    wiring.dispose();
+    clearSnapshot();
+  }
+  assert.equal(liveSpec.text(), beforeAttach, '快照清除后回退行默认 en 档');
+  await liveFork.dispose();
+});
+
+test('T20b：遮蔽段与宿主 tool:jobs 原文同步——前缀逐字互锚＋收集句收窄判据（宿主改版必红）', async (t) => {
+  // 宿主 dsh-tool-jobs 的全局 tool:jobs 段源文（守卫式读取：真离线形态自跳过
+  // ——独立盲审风险点③的对策：遮蔽段静态复制宿主文案，宿主改版不会自动跟进）。
+  // 取材直接从 lib/jobs-shadow.js 导入（不 loadHost 整个入口模块——那会拖入
+  // 五工具与宿主半边的依赖图）。
+  // 解析基点（BA-07/T-HOST）：本包 ESM 解析钩子（tools/_host-hooks.mjs）只改
+  // ESM import 的锚点，CJS 的 require.resolve 不经它——显式设置 DSAT_HOST_MODULES
+  // 时以宿主 node_modules 下的合成 CJS 基点解析（'__dsat_host_probe__.cjs' 是
+  // 虚拟文件名，只作解析起点，不要求在盘），宿主源进入判据、不误报离线；未设
+  // 置时按仓库本地解析（本地装了 peer 的开发形态）。两种基点都解析不到才按
+  // 离线形态跳过（纯公开快照＋无 env＝真离线）。
+  let hostSource;
+  try {
+    const hostModules = process.env.DSAT_HOST_MODULES;
+    const require = hostModules === undefined || hostModules === ''
+      ? createRequire(import.meta.url)
+      : createRequire(join(hostModules, '__dsat_host_probe__.cjs'));
+    hostSource = readFileSync(require.resolve('@deepseek-ai/dsh-tool-jobs'), 'utf8');
+  } catch (error) {
+    if (['ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND', 'ENOENT'].includes(error?.code)) {
+      t.skip('宿主 dsh-tool-jobs 源不在本环境（离线形态）');
+      return;
+    }
+    throw error;
+  }
+  const { JOBS_SHADOW_HOST_PREFIX, jobsShadowText } = await import('../lib/jobs-shadow.js');
+  const F1 = 'Track every background job id you start.';
+  const F2 = "You are notified in-session when a job finishes — do not busy-poll or sleep on one; keep working on independent steps and do not duplicate a running job's work.";
+  const TAIL = 'and job_kill jobs that stopped mattering';
+  const includes = (fragment) =>
+    hostSource.includes(fragment) || hostSource.includes(fragment.replaceAll("'", "\\'"));
+
+  // ① 宿主源判据（全部保留）：前缀两句与收集句尾段在宿主源码逐字在场（宿主
+  // 改措辞即红，人工同步前缀常量与词典 en 档收集句后再绿——遮蔽段与宿主
+  // 原文的差异被限定在收集指路）。
+  assert.ok(includes(F1), '追踪纪律句逐字同源');
+  assert.ok(includes(F2), '通知与不重复纪律句逐字同源');
+  assert.ok(includes(TAIL), 'job_kill 终止尾段逐字同源');
+  // 收集句的宿主原形（job_output 指路）仍在场——替换锚未失效；宿主改写收集
+  // 句时不适用本遮蔽形态，必须重审（本断言与上面三段共同构成漂移报警）。
+  assert.ok(/collect every still-relevant job with job_output/.test(hostSource), '宿主收集句原形在场（job_output 指路）——锚失效即重审遮蔽段');
+
+  // ② 组稿文本判据（新增）：两档实际组装结果。前缀保真——en/zh 都以前缀
+  // 常量开头且含 F1/F2 逐字子串（zh 档含 F1 英文前缀锚：前缀不随 agentLang
+  // 翻译，zh 侧译掉或组装丢段即红）；en 尾段锚在场；两档都不指路 job_output；
+  // 换语言真的发生（zh 含 CJK、en 零 CJK、两档不同）。
+  const en = jobsShadowText('en');
+  const zh = jobsShadowText('zh');
+  const CJK_RE = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+  assert.ok(en.startsWith(JOBS_SHADOW_HOST_PREFIX) && zh.startsWith(JOBS_SHADOW_HOST_PREFIX), '两档组稿都以宿主前缀常量开头（组装不丢段、zh 不译前缀）');
+  assert.ok(en.includes(F1) && zh.includes(F1), 'zh 档含 F1 英文前缀锚（前缀恒宿主语言）');
+  assert.ok(en.includes(F2) && zh.includes(F2), '两档前缀第二句逐字子串在场');
+  assert.ok(en.includes(TAIL), 'en 档收集句内嵌的宿主尾段锚逐字在场');
+  assert.ok(!en.includes('job_output') && !zh.includes('job_output'), '两档遮蔽段都不指路被隐藏工具');
+  assert.ok(CJK_RE.test(zh) && !CJK_RE.test(en), '换语言真的发生（zh 含 CJK、en 零 CJK）');
+  assert.notEqual(zh, en, '两档组稿文本不同');
+
+  // ③ 收窄反锚：被批准决定移除的过宽措辞不回潮（负向锚只钉这一短语）；zh 档
+  // 收窄事实正向锚（只领取尚未交付的内容、已交付不必再领）——内容审查承接
+  // 其余措辞，不做更多关键词冻结。
+  assert.ok(!en.includes('every still-relevant job'), 'en 档不再引导「领取每个仍相关作业」（收窄语义，回潮即红）');
+  assert.ok(zh.includes('尚未交付') && zh.includes('不必再次领取'), 'zh 档收窄事实在场');
 });
 
 test('T3c：快照在场时行级委托键不丢——agent_preset 照常暴露（§2.3.1，P1 回归锁）', async (t) => {
@@ -517,8 +860,8 @@ test('T12：设置快照链的三种故障姿态——首播降级、刷新保�
   assert.equal(degradedWiring.seeded, true);
   assert.equal(degradedWiring.degraded, true, '降级状态必须可观察');
   assert.ok(/minWaitMs(=\d+)? > maxWaitMs(=\d+)?/.test(String(readDegraded())), '首播降级同样登记（模型可见侧；detail 带日志前缀原文；两态错误文本——裸名或带值——都必须命中）');
-  assert.equal(readSnapshot().minWaitMs, 250, '降级快照 = 出厂默认（minWaitMs）');
-  assert.equal(readSnapshot().maxResultChars, 30000, '降级快照 = 出厂默认（maxResultChars）');
+  assert.equal(readSnapshot().minWaitMs, 20000, '降级快照 = 出厂默认（minWaitMs）');
+  assert.equal(readSnapshot().maxResultChars, 12000, '降级快照 = 出厂默认（maxResultChars）');
   assert.ok(degradeEvents.some((message) => /宿主行配置自检失败/.test(String(message)) && /按出厂默认运行/.test(String(message))),
     '必须 warn 说明"忽略了什么、正在按什么运行"');
   assert.ok(stderrChunks.some((line) => line.includes('宿主行忽略持久化的非法设置') && /minWaitMs(=\d+)? > maxWaitMs(=\d+)?/.test(line)),
@@ -609,9 +952,9 @@ test('T12b：降级登记的模型可见侧——seedDegraded/readDegraded/clear
     // 缺任一半边即红，钉住警示段不回退为单一来源断言。
     assert.ok(enDesc.includes('factory defaults') && enDesc.includes('the last valid values'),
       'en 警示段两态来源并列：factory defaults ＋ the last valid values');
-    for (const name of ['async_wait_job', 'async_wait_agent', 'async_agent', 'async_workflow', 'async_list_subagent_models']) {
+    for (const name of ['async_wait', 'async_agent', 'async_workflow', 'async_list_subagent_models']) {
       assert.ok(buildToolText(name, resolveConfig({ toolName: name })).description.includes('Live config self-check failed'),
-        `${name} 的描述同样拼警示段（六个工具一律）`);
+        `${name} 的描述同样拼警示段（五个工具一律）`);
     }
     const zhConfig = resolveConfig({ toolName: 'async_run', agentLang: 'zh' });
     const zhDesc = buildToolText('async_run', zhConfig).description;
@@ -662,34 +1005,141 @@ test('T14：lib/ 的裸包 import 清单 ⊆ package.json 的 deps∪peers——
     `lib/ import 了未声明的包（R15 代际核查覆盖不到）：${undeclared.join(', ')}`);
 });
 
-test('T15（R38；R44 换钉）：peer 版本锁定整体换代——九个 dsh* 精确锁 0.2.1-rc.4，cordis/timer 随目标树升窗；本包 version 随窗', async () => {
-  // 为什么需要：peer 校验只看 @deepseek-ai/dsh 与 dsh-* 前缀，精确锁让
-  // 「宿主代际不对 → 行拒载」为本包工作。任一条漏改，在 0.2.0 实例上
-  // 就是中间态（failed to import / skipping profile bundle）——本用例把
-  // 「漏改」在仓库里就地打红，不用等真机。0.2.1-rc.4 → 正式版再升时本用例
-  // 先红，强迫整表同步换代。version 断言：
+test('T15（R38；R44 换钉）：九个 dsh* peer 共用同一支持集合——集合外宿主拒载；cordis/timer 随宿主树升窗；本包 version 随核心版本', async () => {
+  // 为什么需要：peer 校验只看 @deepseek-ai/dsh 与 dsh-* 前缀，支持集合让
+  // 「集合内任一宿主可装、集合外拒载」为本包工作。任一条漏改或写成不同集合，
+  // 在集合外宿主上就是中间态（failed to import / skipping profile bundle）——
+  // 本用例把「漏改」在仓库里就地打红，不用等真机。新增 rc 时先扩集合，本用例
+  // 与支持集合一起红，强迫整表同步换代。version 断言：
   // 把「tag 已打而 version 漏改」拦在 tag 之前，不再只靠切换穿指读回退。
   const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'));
-  const DSH_LINE = '0.2.1-rc.4';
+  // 这里的期望串是**测试侧的需求固定副本**：按需求 §7.3 固定预期支持集合，用来发现
+  // 包清单被悄悄改写（声明漂移）。测试期望作为需求副本，与包清单的 peer 原文并存是合理的；
+  // 运行期判据（准入、junction、安装说明）一律从包清单取集合。集合变化时本用例变红，
+  // 提示同步需求、版本与文档。
+  const SUPPORT = '0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5';
   const expected = {
     '@deepseek-ai/cordis': '~4.0.5',
     '@deepseek-ai/cordis-plugin-timer': '~1.1.7',
-    '@deepseek-ai/dsh': DSH_LINE,
-    '@deepseek-ai/dsh-jobs': DSH_LINE,
-    '@deepseek-ai/dsh-llm': DSH_LINE,
-    '@deepseek-ai/dsh-sandbox': DSH_LINE,
-    '@deepseek-ai/dsh-shell': DSH_LINE,
-    '@deepseek-ai/dsh-shell-env': DSH_LINE,
-    '@deepseek-ai/dsh-subagent': DSH_LINE,
-    '@deepseek-ai/dsh-typert-protocol': DSH_LINE,
-    '@deepseek-ai/dsh-tools': DSH_LINE
+    '@deepseek-ai/dsh': SUPPORT,
+    '@deepseek-ai/dsh-jobs': SUPPORT,
+    '@deepseek-ai/dsh-llm': SUPPORT,
+    '@deepseek-ai/dsh-sandbox': SUPPORT,
+    '@deepseek-ai/dsh-shell': SUPPORT,
+    '@deepseek-ai/dsh-shell-env': SUPPORT,
+    '@deepseek-ai/dsh-subagent': SUPPORT,
+    '@deepseek-ai/dsh-typert-protocol': SUPPORT,
+    '@deepseek-ai/dsh-tools': SUPPORT
   };
   assert.deepEqual(pkg.peerDependencies, expected,
     `peerDependencies 必须与需求 §7.3 兼容基准逐键逐值一致（实际：${JSON.stringify(pkg.peerDependencies)}）`);
+  assert.deepEqual(pkg.peerDependenciesMeta,
+    Object.fromEntries(Object.keys(expected).map((name) => [name, { optional: true }])),
+    '11 条 peer 必须全部标记 optional:true 且键集与 peerDependencies 完全一致——防止开启自动补齐（autoInstallPeers:true）的 profile 安装补装宿主依赖树；宿主准入不读该键，集合外拒载不受影响');
+  assert.equal(pkg.engines?.dsh, undefined,
+    '不得声明 engines.dsh——宿主在场时它会顶替九条 peer 单独决定，支持集合因此失效');
   assert.equal(pkg.dependencies?.['@deepseek-ai/schemastery'], '~3.18.5',
-    'schemastery 叶子依赖形态不变（~ 窗随目标树）');
-  assert.equal(pkg.version, '0.2.7+dsh.0.2.1-rc.4',
-    '本包 version 必须按需求 §7.3.1 带构建元数据全标识（核心 0.2.7 + 目标宿主 dsh.0.2.1-rc.4）——漏元数据会让用户失去兼容信息');
+    'schemastery 叶子依赖形态不变（~ 窗随宿主树）');
+  assert.equal(pkg.version, '0.2.9+dsh.0.2.1-rc',
+    '本包 version 必须按需求 §7.3.1 带构建元数据全标识（核心 0.2.9 + 兼容线 dsh.0.2.1-rc）——漏元数据会让用户失去兼容信息');
+});
+
+test('T21：refreshToolDescriptions 递归同步嵌套参数说明——en→zh→en 各层同步、结构／枚举／对象身份不变', async (t) => {
+  // 语言切换只改一级 description 时，meta.properties.*、phases.items.* 等嵌套层
+  // 会滞留在旧语言（FUNC-NESTED-DESCRIPTION-REFRESH）。用真 defineTool 固化的
+  // 借用 schema 驱动导出的 refreshToolDescriptions（其存在意义即让这条链可直测，
+  // 见 lib/index.js 导出注释），断言 en→zh→en 全层同步且就地改写不换对象。
+  const host = await loadHost();
+  const Context = await loadCordis();
+  if (host === undefined || Context === undefined) {
+    t.skip(HOST_SKIP_REASON);
+    return;
+  }
+  const workflowModule = await loadOfflineSafe('../lib/workflow.js');
+  const waitModule = await loadOfflineSafe('../lib/wait.js');
+  if (workflowModule === undefined || waitModule === undefined) {
+    t.skip(HOST_SKIP_REASON);
+    return;
+  }
+  const { refreshToolDescriptions } = host;
+  const { resolveConfig } = await import('../lib/config.js');
+  const CJK = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+  const mk = makeContext(Context);
+
+  // ① async_workflow：一级（script/meta）＋meta.properties（name/phases…）＋
+  // phases.items.properties（title/…）三层嵌套。
+  const en = resolveConfig({ toolName: 'async_workflow' });
+  const zh = resolveConfig({ toolName: 'async_workflow', agentLang: 'zh' });
+  const wf = workflowModule.createWorkflowTool(mk.ctx, en);
+  const meta = wf.parameters.properties.meta;
+  const phases = meta.properties.phases;
+  const phaseItem = phases.items;
+  const nodes = {
+    script: wf.parameters.properties.script,
+    meta,
+    metaName: meta.properties.name,
+    metaDescription: meta.properties.description,
+    metaWhenToUse: meta.properties.whenToUse,
+    phases,
+    phaseTitle: phaseItem.properties.title,
+    phaseDetail: phaseItem.properties.detail,
+    phaseModel: phaseItem.properties.model
+  };
+  const enTexts = new Map(Object.entries(nodes).map(([key, node]) => [key, node.description]));
+  for (const [key, text] of enTexts) {
+    assert.ok(typeof text === 'string' && text.length > 0, `前置：${key} 有描述`);
+    assert.ok(!CJK.test(text), `前置：${key} 构造档为 en（无 CJK）`);
+  }
+  const keysBefore = JSON.stringify([
+    Object.keys(wf.parameters.properties),
+    Object.keys(meta.properties),
+    Object.keys(phaseItem.properties)
+  ]);
+  refreshToolDescriptions(wf, zh);
+  for (const [key, node] of Object.entries(nodes)) {
+    assert.ok(CJK.test(node.description), `zh 刷新后 ${key} 的嵌套描述同步换 zh`);
+    assert.notEqual(node.description, enTexts.get(key), `${key} 的 zh 文案与 en 不同（真换语言）`);
+  }
+  // 就地改写：schema 根、各层节点与 items 的对象身份一律不变（工具表按引用借用）。
+  assert.equal(wf.parameters.properties.meta, meta, 'meta 节点身份不变');
+  assert.equal(meta.properties.phases, phases, 'phases 节点身份不变');
+  assert.equal(phases.items, phaseItem, 'phases.items 节点身份不变');
+  assert.equal(phaseItem.properties.title, nodes.phaseTitle, '叶子节点身份不变');
+  assert.equal(JSON.stringify([
+    Object.keys(wf.parameters.properties),
+    Object.keys(meta.properties),
+    Object.keys(phaseItem.properties)
+  ]), keysBefore, '各层参数键集不变（增删只由条件键逻辑负责）');
+  refreshToolDescriptions(wf, en);
+  for (const [key, node] of Object.entries(nodes)) {
+    assert.equal(node.description, enTexts.get(key), `回切 en 后 ${key} 恢复原描述`);
+  }
+
+  // ② async_wait：items 嵌套（targets.items.properties.*）同步且枚举／required
+  // 不被改写——同步只动 description。
+  const waiter = waitModule.createWaitTool(mk.ctx, en);
+  const targets = waiter.parameters.properties.targets;
+  const kind = targets.items.properties.kind;
+  const targetId = targets.items.properties.id;
+  const enumBefore = [...kind.enum];
+  const requiredBefore = structuredClone(targets.items.required);
+  const idEn = targetId.description;
+  assert.ok(Array.isArray(enumBefore) && enumBefore.includes('job'), '前置：kind 枚举在构造档固化');
+  refreshToolDescriptions(waiter, zh);
+  assert.equal(waiter.parameters.properties.targets, targets, 'targets 节点身份不变');
+  assert.ok(CJK.test(targetId.description), 'targets.items.properties.id 的描述换 zh（修前只换一级）');
+  assert.ok(CJK.test(targets.description), 'targets 一级描述照常换 zh（既有行为不回归）');
+  assert.deepEqual(kind.enum, enumBefore, '枚举值不被改写');
+  assert.deepEqual(targets.items.properties, { kind, id: targetId }, 'items.properties 子节点集合不变');
+  assert.strictEqual(targets.items.properties.kind, kind, 'kind 子节点引用不变');
+  assert.strictEqual(targets.items.properties.id, targetId, 'id 子节点引用不变');
+  assert.deepEqual(targets.items.required, requiredBefore, '中文刷新不改 required');
+  refreshToolDescriptions(waiter, en);
+  assert.equal(targetId.description, idEn, '回切 en 恢复原描述');
+  assert.deepEqual(kind.enum, enumBefore, '枚举在回切后仍不变');
+  assert.strictEqual(targets.items.properties.kind, kind, '回切后 kind 子节点引用不变');
+  assert.strictEqual(targets.items.properties.id, targetId, '回切后 id 子节点引用不变');
+  assert.deepEqual(targets.items.required, requiredBefore, '回切后 required 不变');
 });
 
 

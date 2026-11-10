@@ -12,7 +12,8 @@
  *
  * 用法：node verify/probe-escalation-advertised.mjs
  */
-import { instanceCredentials, loadLocalPlaneOrSkip } from '../tools/_local-config.mjs';
+import { instanceCredentials, loadLocalPlaneOrSkip, tokenEntryUrl } from '../tools/_local-config.mjs';
+import { authCookieFromFirstHop, assertApiNotRedirected } from './_auth.mjs';
 
 const localConfig = await loadLocalPlaneOrSkip('verify/probe-escalation-advertised.mjs');
 const { base: BASE, token } = instanceCredentials(localConfig);
@@ -30,12 +31,11 @@ function check(name, ok, detail = '') {
   console.log(`  ${ok ? 'OK    ' : 'WRONG '} ${name}${detail === '' ? '' : `\n          ${detail}`}`);
 }
 
-// 登录与 `verify/_rpc.mjs` 同款：token 换 cookie 一跳（redirect:'manual'），
-// **不追 Location**——相对重定向 `.` 拼进基址会得到 `http://…/./` 形态的坏 URL，
-// 且现行宿主在首跳就下发全部会话 cookie。
-const first = await fetch(`${BASE}/?token=${encodeURIComponent(token)}`, { redirect: 'manual' });
-const cookie = (first.headers.getSetCookie?.() ?? []).map((e) => e.split(';', 1)[0]).join('; ');
-if (cookie.length === 0) throw new Error('token exchange returned no cookie');
+// 登录与 `verify/_rpc.mjs` 同款：判定统一在 `verify/_auth.mjs`——首跳接受
+// 「3xx＋Set-Cookie＋同源/缺席 Location」的正常 cookie 交换（rc.5 实测形态），
+// 不跟随 Location；cookie 消费完即止。令牌编码统一走 tokenEntryUrl。
+const first = await fetch(tokenEntryUrl(BASE, token), { redirect: 'manual' });
+const cookie = authCookieFromFirstHop(first, BASE);
 
 let rpcId = 0;
 /**
@@ -50,8 +50,10 @@ async function rpc(method, args) {
   const response = await fetch(`${BASE}/api/${method}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', cookie },
-    body: JSON.stringify({ type: 'client-request', rpcId: `p${String(rpcId)}`, method, payload: { args } })
+    body: JSON.stringify({ type: 'client-request', rpcId: `p${String(rpcId)}`, method, payload: { args } }),
+    redirect: 'manual'
   });
+  assertApiNotRedirected(response, method);
   const body = await response.json();
   if (body.result?.ok !== true) throw new Error(`${method}: ${JSON.stringify(body.result?.error ?? body)}`);
   return body.result.value;

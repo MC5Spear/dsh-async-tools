@@ -73,7 +73,7 @@ const crossIllegal = [
   ['minWaitMs > maxWaitMs', { minYieldMs: 1, maxYieldMs: 10, minWaitMs: 500, maxWaitMs: 100, defaultYieldMs: 5 }],
   ['defaultYieldMs 超出区间', { minYieldMs: 1, maxYieldMs: 10, minWaitMs: 1, maxWaitMs: 10, defaultYieldMs: 99 }],
   // `defaultWaitMs` 的同类约束不可漏查：漏了它，
-  // `defaultWaitMs: 999999` 会被设置页放行、存盘，然后在某次 async_wait_job 调用里被夹紧，
+  // `defaultWaitMs: 999999` 会被设置页放行、存盘，然后在某次 async_wait 调用里被夹紧，
   // 使用者看到的是"我设了但没效果"。
   ['defaultWaitMs 超出区间', { minYieldMs: 1, maxYieldMs: 10, minWaitMs: 1, maxWaitMs: 10, defaultYieldMs: 5, defaultWaitMs: 99 }],
   ['pollIntervalMs > maxWaitMs', { minYieldMs: 1, maxYieldMs: 10, minWaitMs: 1, maxWaitMs: 10, defaultYieldMs: 5, pollIntervalMs: 999 }]

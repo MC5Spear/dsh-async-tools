@@ -7,8 +7,9 @@
  * ② 把 `label-error` 写成引用（官方 `.failed` 引用的那个未定义名字——照抄它
  * 就是复刻本判据要消灭的缺陷）。
  *
- * 本脚本会原地改写真实的 `client.js`，跑完在 `finally` 里写回
- * 并核对摘要。任何 SKIP 按失败处理。
+ * **本脚本在当前树的隔离副本里改写 `client.js` 并跑检查器**（`verify/_isolate.mjs`）：
+ * 运行前核对副本目标与开发树逐字一致，运行后比对开发树原始摘要——开发树不再被
+ * 原地写回（`finally` 的还原只作用于副本）。任何 SKIP 按失败处理。
  *
  * 用法：node verify/mutate-alias-tokens.mjs（需可捕获子进程输出——默认沙箱下 EPERM，
  * 见 verify/README.md 的「优先默认权限执行；纯函数判断尽量进程内复用」要点与既有 mutate-card-theme 的先例）
@@ -17,10 +18,11 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { prepareIsolatedMutation } from './_isolate.mjs';
 
-// 从模块自身位置推仓根（verify/ 上一级）——变异脚本要在任意 cwd 下都能跑。
-const PKG = fileURLToPath(new URL('..', import.meta.url));
+// 隔离现场：变异与检查都发生在副本里；PKG＝副本根（开发树全程只读）。
+const iso = prepareIsolatedMutation({ script: 'verify/mutate-alias-tokens.mjs', targets: ['client.js'] });
+const PKG = iso.root;
 const TARGET = join(PKG, 'client.js');
 
 const original = readFileSync(TARGET, 'utf8');
@@ -39,16 +41,17 @@ function runChecker() {
   }
 }
 
-/** 写回原文并核对摘要。 */
+/** 写回原文并核对摘要（只作用于隔离副本——开发树本来就没被写）。 */
 function restore() {
   writeFileSync(TARGET, original, 'utf8');
   const after = createHash('sha256').update(readFileSync(TARGET, 'utf8'), 'utf8').digest('hex');
-  if (after !== hashBefore) throw new Error(`还原失败：${TARGET} 与变异前不一致，请手工恢复。`);
+  if (after !== hashBefore) throw new Error(`还原失败：副本里的 ${TARGET} 与变异前不一致（不影响开发树，仅提示副本残留）。`);
 }
 
 const baseline = runChecker();
 if (baseline.red) {
   console.log(`BASELINE-RED  未变异时检查器就是红的（${baseline.summary}）——先修基线。`);
+  iso.cleanup();
   process.exit(2);
 }
 console.log(`基线：未变异时别名变量检查通过（${baseline.summary}）。`);
@@ -87,7 +90,9 @@ try {
 } finally {
   restore();
 }
+iso.assertDevTreeUntouched('变异收尾');
+iso.cleanup();
 console.log('');
 console.log(ok ? '变异被抓住：token 判据真的能拦住未定义的别名变量。' : '**变异逃逸**——token 判据区分力不足。');
-console.log('还原完成，摘要一致。');
+console.log(`隔离副本已清理；开发树 ${iso.devRoot} 的 client.js 全程未被写入（起跑摘要与收尾一致）。`);
 process.exitCode = ok ? 0 : 1;

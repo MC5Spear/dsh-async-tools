@@ -82,11 +82,11 @@ const ALLOWLIST = {
     { needle: '设置快照缺席', why: 'stderr 通告（emitLifecycleNotice），操作者一侧' },
     { needle: '宿主行未装载', why: '同上通告的续行字符串，操作者一侧' }
   ],
-  // 刷新总线的诊断与失败通告：logger.debug / emitLifecycleNotice（stderr）。
+  // 刷新总线的诊断与失败通告：DSH_ASYNC_BUS_DIAG=1 的 stderr 诊断 / emitLifecycleNotice（stderr）。
   'refresh-bus.js': [
-    { needle: '登记监听器', why: 'diag（logger.debug），操作者一侧' },
-    { needle: '注销监听器', why: 'diag（logger.debug），操作者一侧' },
-    { needle: '广播设置变更', why: 'diag（logger.debug），操作者一侧' },
+    { needle: '登记监听器', why: 'diag（DSH_ASYNC_BUS_DIAG=1 时写 stderr），操作者一侧' },
+    { needle: '注销监听器', why: 'diag（DSH_ASYNC_BUS_DIAG=1 时写 stderr），操作者一侧' },
+    { needle: '广播设置变更', why: 'diag（DSH_ASYNC_BUS_DIAG=1 时写 stderr），操作者一侧' },
     { needle: '刷新工具描述失败', why: 'stderr 通告（emitLifecycleNotice），操作者一侧' }
   ],
   // volatile 提交失败的报错与首次装载的降级通告：warn + stderr 通告，操作者一侧。
@@ -232,8 +232,17 @@ const OPERATOR_MARKERS = ['LOG_PREFIX', 'logger.', 'logger?.', 'diag(', 'process
  * 允许的有三类——**定长标记**（宿主同款英文，不是句子）、**校验/断言错误**
  * （操作者一侧：降级 stderr 与开发期断言，schemastery 同层也是英文）与
  * **宿主逐字同形副本**：宿主源码里逐字存在的
- * 串，钉版看守（有限锚集）要求被锚住的串与宿主逐字同形——双语化即破坏锚、即与宿主
- * 行为漂移。判定特征统一为"宿主侧同串同现 + 看守锚定于宿主源"。
+ * 串，逐行互锚检查（有限锚集）要求被锚住的串与宿主逐字同形——双语化即破坏锚、即与宿主
+ * 行为漂移。判定特征统一为"宿主侧同串同现 + 互锚检查锚定于宿主源"。
+ *
+ * 操作者诊断一类的**effect 标签子类**：cordis effect 卸载标签（处置句柄的登记
+ * 名，进 Fiber 树与宿主日志，不进模型上下文）逐条 needle＋why 登记、不设
+ * 「标签形」语法白名单——标签是自由短语，形态上与短句不可分，语法放行会同时
+ * 放行将来混入的同形真文案（锚精确：改字即失去豁免、重新命中）。
+ *
+ * 宿主逐字同形副本类收录 `lib/jobs-shadow.js` 的遮蔽段宿主前缀（dsh-tool-jobs
+ * 全局 `tool:jobs` 段前两句）：T20b 宿主源互锚＋组稿文本断言双锚锁定，双语化
+ * 即破坏逐字保留。
  */
 const PROSE_ALLOWLIST = {
   'jobs.js': [
@@ -252,7 +261,8 @@ const PROSE_ALLOWLIST = {
     { needle: 'workflow run ended abnormally', why: '宿主同形防御分支（stopReason 封闭联合的未来变体；正常路径不可达，宿主同款英文）' },
     { needle: 'async workflow job killed', why: '内部取消缺省理由（喂给 run.cancel，经注册表 kill-reason 合并；对应宿主后台的 background workflow job killed 同类缺省）' },
     { needle: 'workflow run settled before the outcome arrived', why: '不变量破坏时的 fail-loud 断言（终态到达时 done 链必已映射，正常路径不可达）' },
-    { needle: 'workflow run failed', why: 'failed 支的 detail 缺省回退（宿主 stopReasonError 同款前缀；正常路径 settled.detail 必在）' }
+    { needle: 'workflow run failed', why: 'failed 支的 detail 缺省回退（宿主 stopReasonError 同款前缀；正常路径 settled.detail 必在）' },
+    { needle: 'throw new Error(${JSON.stringify(guardMessage)})', why: '脚本生成模板片段（根值守卫包装 B-SOL-01 拼进脚本的 throw 语句行——生成的代码文本，不是文案；needle 取含守卫变量插值的完整行，别的英文 throw 不沾光；抛错消息本体经 text.js 双语键 error.workflowRootGuard 由调用方传入）' }
   ],
   'config-view.js': [
     { needle: 'the config view is read-only', why: '只读视图的防御性异常（正常路径不会到达模型；英文是它唯一形态）' }
@@ -292,21 +302,43 @@ const PROSE_ALLOWLIST = {
     { needle: 'sweep reminder failed for agent', why: '同上（补醒提醒失败的审计行）' },
     { needle: 'hand-back failed for batch', why: '同上（可逆卸载交还失败的审计行）' }
   ],
-  'wait-job.js': [
-    { needle: 'wait concluded', why: '内部中止原因（喂给 raceAbort 的 Error，只在进程内传播）' }
+  'wait.js': [
+    { needle: 'wait concluded', why: '内部中止原因（喂给 raceAbort 的 Error，只在进程内传播；原 wait-job 同款条目随文件并入）' },
+    { needle: 'returning as budget-exhausted', why: '操作者一侧诊断（ctx.logger.warn——自旋防线检出的缺陷信号行的尾段字面量，不进模型上下文；needle 须与被抽取字面量同段）' }
   ],
-  'wait-agent.js': [
-    { needle: 'total budget exhausted', why: '内部中止原因（总截止 AbortController 的 abort 理由，只在进程内传播；同 wait-job 的 wait concluded 一类）' }
+  'index.js': [
+    { needle: 'the tool-jobs row must be part of', why: '操作者一侧诊断（ctx.logger.warn——job_output 隐藏登记降级行的尾段字面量，不进模型上下文；agent/created 挂点改版后的新措辞，needle 须与被抽取字面量同段）' },
+    { needle: 'tool roster view unavailable', why: '操作者一侧诊断（ctx.logger.info——生效边界判定的名册视图缺席分支：保守不隐藏的登记行，不进模型上下文）' },
+    { needle: 'async_wait not in visible roster', why: '同上（名册无 async_wait 的保守不隐藏行尾段——needle 须与被抽取字面量同段）' },
+    { needle: 'agent.ctx.tools.restrict unavailable', why: '操作者一侧诊断（同上降级路径 throw 的 Error 消息——只在进程内被 catch 转 warn，不进模型上下文）' },
+    { needle: 'agent.ctx.tools.register unavailable', why: '操作者一侧诊断（会话遮蔽注册降级的 warn 前缀——PRESET-ISOLATION-02 防御路径，不进模型上下文）' },
+    { needle: 'shared description stays session-neutral', why: '同上（遮蔽注册失败降级行的说明尾段——共享定义回落基础文本的操作者侧交代）' },
+    { needle: 'async-tools: job_output hide', why: 'cordis effect 卸载标签（行卸载时摘限制句柄的登记名，宿主日志一侧，不进模型上下文）' },
+    { needle: 'async-tools: tool:jobs prompt shadow', why: 'cordis effect 卸载标签（提示遮蔽段处置句柄的登记名，进 Fiber 树与宿主日志，不进模型上下文——与 async-tools: job_output hide、host.js 的 host snapshot source 同类）' }
+  ],
+  'delivery.js': [
+    { needle: 'listener attach failed', why: '操作者一侧 stderr 诊断（log() 通道——attachClaimedListener 三监听（claimed/discarded/turn-stopping）各自挂接失败的防御路径，事件名与错误文本来自变量插值，不进模型上下文）' },
+    { needle: 'keep-alive beat', why: '同上（预注册心跳被注册表拒绝的 warn 行；jobId 与错误文本来自变量插值）' },
+    { needle: 'settled read', why: '同上（结算读取失败的 warn 行）' },
+    { needle: 'incremental read', why: '同上（增量读取失败的 warn 行）' },
+    { needle: 'completion delivery for', why: '同上（完成消息投递失败/registry miss 的 warn 行——owner 与错误文本来自变量插值，两条同前缀合并登记）' },
+    { needle: 'post-settle delivery for', why: '同上（#settleReady 加固 catch 的 warn 行——结算后补投失败的防御路径，jobId 与错误文本来自变量插值）' }
   ],
   // 宿主副本豁免类：assertRoutes 三条 + fold 空名单 throw 一条，全部是宿主
-  // `dsh-tool-subagent` 源码的逐字同形串——verify/check-agent-policy.mjs 钉版看守
+  // `dsh-tool-subagent` 源码的逐字同形串——verify/check-agent-policy.mjs 逐行互锚检查
   // （有限锚集）锚住这些串的逐字形态；改一字（含双语化）看守即红、
   // 本包即与宿主行为漂移。宿主侧同串同现，不是本包自有文案。
   'agent-policy.js': [
-    { needle: 'subagent model selection requires an array of routes', why: '宿主逐字同形副本（assertRoutes ↔ 宿主 assertAllowedModelRoutes；钉版看守锚住该串、要求逐字，双语化即破坏锚）' },
+    { needle: 'subagent model selection requires an array of routes', why: '宿主逐字同形副本（assertRoutes ↔ 宿主 assertAllowedModelRoutes；逐行互锚检查锚住该串、要求逐字，双语化即破坏锚）' },
     { needle: 'subagent model selection requires non-empty provider and model ids', why: '同上（宿主 assertAllowedModelRoutes 的第二条校验串）' },
     { needle: 'subagent model selection repeats route', why: '同上（重复路由 throw 的模板串；needle 取插值前的稳定前缀）' },
     { needle: 'requires at least one route', why: '宿主逐字同形副本（fold 空名单 throw ↔ 宿主投影定义同串；「≥1 条」分列在此处与 settings current() 等三处校验，不在 assertRoutes）' }
+  ],
+  // 遮蔽段宿主前缀（宿主副本豁免类，同 agent-policy.js 一组）：单一字面量持前缀
+  // 全文，一句 needle 即覆盖（豁免匹配是字面量级 includes——needle 是被抽出
+  // 字面量的子串才豁免；改一字即失去豁免、重新命中，M12b 看守）。
+  'jobs-shadow.js': [
+    { needle: 'Track every background job id you start.', why: '宿主逐字同形副本（dsh-tool-jobs 全局 tool:jobs 段前两句；需求 5.3 未改宿主原句保留宿主语言。T20b 宿主源互锚＋组稿文本断言双重锁定，双语化即破坏逐字保留）' }
   ],
   'silent-failure.js': [
     { needle: 'failed to run', why: '签名 2 的 EN 拒绝锚对之一（判定常量，匹配命令输出；文案在 text.js）' },
@@ -339,9 +371,9 @@ const PROSE_ALLOW_NEEDLES = Object.values(PROSE_ALLOWLIST).flat().map((entry) =>
   }
 }
 
-// ── 运行时层：两档各构造四个工具，另对编排取端到端渲染样例 ────────────────
+// ── 运行时层：两档各构造三个工具，另对编排取端到端渲染样例 ────────────────
 //
-// 构造 async_run / async_wait_job / async_wait_agent / async_agent 四个工具，取
+// 构造 async_run / async_wait / async_agent 三个工具，取
 // description / 参数说明 / render 输出 / 全部 note 与 digest 函数的样例串——这些
 // 正是模型看到的串；编排工具的完成分支渲染经下方端到端取样，查询工具的模型可见
 // 文本全部由词典键组装、由表层逐键判据覆盖。en 档零 CJK；zh 档与 en 同位串不同
@@ -410,18 +442,17 @@ async function collectWorkflowCompletedRender(agentLang) {
 async function collectSamples(agentLang) {
   const { resolveConfig, resolveWait } = await import('../lib/config.js');
   const { createRunTool } = await import('../lib/jobs.js');
-  const { createWaitJobTool } = await import('../lib/wait-job.js');
-  const { createWaitAgentTool } = await import('../lib/wait-agent.js');
+  const { createWaitTool } = await import('../lib/wait.js');
   const { createAgentTool } = await import('../lib/agent.js');
   const output = await import('../lib/output.js');
   const { t } = await import('../lib/text.js');
+  const { jobsShadowText } = await import('../lib/jobs-shadow.js');
 
   const config = resolveConfig({ agentLang });
   const ctx = { shell: { sandboxMode: 'workspace-write' } };
   const tools = {
     run: createRunTool(ctx, { ...config }),
-    wait_job: createWaitJobTool(ctx, { ...config }),
-    wait_agent: createWaitAgentTool(ctx, { ...config }),
+    wait: createWaitTool(ctx, { ...config }),
     agent: createAgentTool(ctx, { ...config })
   };
   const samples = [];
@@ -436,14 +467,11 @@ async function collectSamples(agentLang) {
     const noteValues = key === 'run'
       ? [{ status: 'completed', output: 'ok', truncated: true, exit_code: 1 },
         { status: 'running', note: output.yieldNote({ lang: agentLang, jobId: 'async-command-1', yieldMs: config.defaultYieldMs, maxWaitMs: config.maxWaitMs, defaultWaitMs: config.defaultWaitMs, elapsedMs: 1, mode: 'user' }) }]
-      : key === 'wait_job'
-        ? [{ status: 'completed', job_id: 'j', output: 'ok', truncated: true, detail: t(agentLang, 'detail.exitCode', { code: 0 }) },
+      : key === 'wait'
+        ? [{ status: 'completed', job_id: 'j', output: t(agentLang, 'detail.exitCode', { code: 0 }), truncated: true, detail: t(agentLang, 'detail.exitCode', { code: 0 }) },
           { status: 'running', job_id: 'j', waited_ms: 1, note: output.waitAgainNote({ lang: agentLang, jobId: 'j', waitedMs: 1, maxWaitMs: config.maxWaitMs }) },
-          { status: 'interrupted', job_id: 'j', waited_ms: 1, note: output.interruptedNote({ lang: agentLang, subject: 'job j', waitedMs: 1, resume: 'async_wait_job(...)' }) }]
-        : key === 'wait_agent'
-          ? [{ status: 'running', agent_id: 'sa-1', waited_ms: 1, note: output.agentWaitAgainNote({ lang: agentLang, agentId: 'sa-1', waitedMs: 1, maxWaitMs: config.maxWaitMs }) },
-            { status: 'not_found', agent_id: 'sa-x', known_children: [t(agentLang, 'via.idle')] }]
-          : [{ agent_id: 'sa-1', note: t(agentLang, 'note.agentStarted', { agentId: 'sa-1', defaultWaitMs: config.defaultWaitMs }) + t(agentLang, 'route.inherits') }];
+          { status: 'interrupted', job_id: 'j', waited_ms: 1, note: output.interruptedNote({ lang: agentLang, waitedMs: 1, resume: 'async_wait(...)' }) }]
+        : [{ agent_id: 'sa-1', note: t(agentLang, 'note.agentStarted', { agentId: 'sa-1', defaultWaitMs: config.defaultWaitMs }) + t(agentLang, 'route.inherits') }];
     for (const value of noteValues) {
       for (const block of renders({}, value)) samples.push([`render(${key})`, String(block?.text ?? '')]);
     }
@@ -453,7 +481,7 @@ async function collectSamples(agentLang) {
     ['agentWaitAgainNote', output.agentWaitAgainNote({ lang: agentLang, agentId: 'sa-1', waitedMs: 1, maxWaitMs: config.maxWaitMs })],
     ['recheckFailedNote', output.recheckFailedNote({ lang: agentLang, jobId: 'async-command-1', waitedMs: 1, maxWaitMs: config.maxWaitMs })],
     ['agentRecheckFailedNote', output.agentRecheckFailedNote({ lang: agentLang, agentId: 'sa-1', waitedMs: 1, maxWaitMs: config.maxWaitMs })],
-    ['interruptedNote(agent)', output.interruptedNote({ lang: agentLang, subject: 'subagent sa-1', waitedMs: 1, resume: 'async_wait_agent(...)' })],
+    ['interruptedNote(agent)', output.interruptedNote({ lang: agentLang, waitedMs: 1, resume: 'async_wait(...)' })],
     ['yieldDigest', output.yieldDigest(config)],
     ['waitDigest', output.waitDigest(config)]
   );
@@ -461,6 +489,21 @@ async function collectSamples(agentLang) {
   let waitError = '';
   try { resolveWait(undefined, resolveConfig({ agentLang })); } catch (error) { waitError = String(error?.message ?? error); }
   samples.push(['error.waitRequired', waitError]);
+  // WAIT-OBSERVE-01／WAIT-SETTLE-GATE-01 的四个新键（周期复查交回与结算交付前的注册表复核）：
+  // 经 t() 直接取样——运行时层判据（en 零 CJK、zh 换语言）对新键同样成立。
+  samples.push(
+    ['t(wait.workConcluded)', t(agentLang, 'wait.workConcluded')],
+    ['t(wait.settleNoticeArrived)', t(agentLang, 'wait.settleNoticeArrived')],
+    ['t(wait.settleNoticePending)', t(agentLang, 'wait.settleNoticePending', { ids: 'sa-1' })],
+    ['t(via.settleNoticeSeen)', t(agentLang, 'via.settleNoticeSeen')]
+  );
+  // tool:jobs 遮蔽段（AGENT-LANG-01）：组装函数端到端取样（宿主前缀＋收集句；
+  // zh 档是「英文前缀＋中文收集句」的混合段，判据照常＝含 CJK 且与 en 同位串
+  // 不同）＋新词典键直接取样（与上面四键同一形态）。
+  samples.push(
+    ['jobsShadowText', jobsShadowText(agentLang)],
+    ['t(discipline.jobsCollect)', t(agentLang, 'discipline.jobsCollect')]
+  );
   // 编排完成渲染（端到端；render.workflowCompleted + detail.workflowAgents）。
   samples.push(['render(workflow completed)', await collectWorkflowCompletedRender(agentLang)]);
   return samples;

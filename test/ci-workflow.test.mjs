@@ -89,3 +89,14 @@ test('CI：两个作业的公开层检查都逐项传播失败', () => {
     assert.match(block, /throw/);
   }
 });
+
+test('CI：预期非零的段必须自己归一化退出码（否则作业红在已验证的正常读数上）', () => {
+  // 离线形态的兼容检查以 2 退出属正常读数。pwsh 步骤的收尾退出码取自最后一条原生命令，
+  // 只核对不归一化的话，作业仍按 2 结算——实测就是「打印跳过 ✔ 后 exit code 1」。
+  const expectNonZero = BLOCKS.filter((block) => /-ne\s+2\b/.test(block));
+  assert.equal(expectNonZero.length, 1, `预期以 2 退出的段应恰好一段（离线兼容检查），实际 ${String(expectNonZero.length)} 段`);
+  const block = expectNonZero[0];
+  assert.match(block, /check-host-compat/, '这段跑的是兼容检查');
+  assert.match(block, /throw/, '实际退出码不是 2 时必须让整段失败');
+  assert.match(block, /^\s*exit 0\s*$/m, '核对完预期非零后必须在段内显式 exit 0');
+});

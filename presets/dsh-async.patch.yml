@@ -1,21 +1,23 @@
 # `dsh-async` 预设：改用异步 shell 的完整编码 Agent。
 #
-# 结构（设计 §3.6）：本文件是 `dsh.bundle.patch` 数组的一项——一条预设声明行
+# 结构（设计 §3.5）：本文件是 `dsh.bundle.patch` 数组的一项——一条预设声明行
 # （`@deepseek-ai/dsh-agent-preset`），config.plugins 是完整子清单。预设生命周期由
 # loader 拥有：本包从 bundles 移除即预设消失，无清理代码（设计 §7.1）。
 #
-# 基线 = 随宿主 0.2.1-rc.4 发布的 shipped standard 预设补丁（需求 §7.3；基线位置由
-# tools/validate-preset.mjs 按需求读取，不硬编码本机路径）。相对基线的改动
-# （设计 §3.6"两者相对基线的共同差异"，逐条给依据）：
+# 基线 = 随支持集合内宿主发布的 shipped standard 预设补丁（需求 §7.3；基线位置由
+# tools/validate-preset.mjs 按需求读取，不硬编码本机路径）。当前四个受支持宿主
+#（rc.2–rc.5）的随包基线相同，按 0.2.1-rc.4 出处核读并经 rc.2/rc.5 哈希核对。
+# 相对基线的改动（设计 §3.5"两者相对基线的共同差异"，逐条给依据）：
 #   1. tool-bash 无条件 disabled: true——禁同步 shell（需求 §3.1），两平台工具清单
 #      一致（需求 §3.3）；
 #   2. 不挂 tool-pwsh 行——前台同步 shell 到期杀进程树，与异步语义冲突（需求 §3.1）；
-#   3. tool-bash 之后连续成组新增五行 dsh-async-tools（toolName 分派；第五行
+#   3. tool-bash 之后连续成组新增四个 dsh-async-tools 顶层行（toolName 分派；其中
 #      async_list_subagent_models 是顶层只读行——查询工具不进 delegation 组，
-#      设计 §3.6）；第六行 async_workflow 在 delegation 组内 tool-workflow 行后——
-#      编排引擎是组内隔离服务，组外行取不到（需求 §3.2 末条、设计 §3.5）。
-#      六行 config 均携带 owningPreset 归属声明（设计 §6.2——描述警示按行归属
-#      判定，非 volatile）；
+#      设计 §3.5）；第五个工具 async_workflow 在 delegation 组内 tool-workflow 行后
+#      ——编排引擎是组内隔离服务，组外行取不到（需求 §3.2 末条、设计 §3.4）。
+#      五行 config 均携带 owningPreset 行身份声明（非 volatile、RPC 不可写——
+#      组合文件与诊断指认「这一行属于哪份预设」用；防护内容的判定统一按
+#      「会话实际预设 ∈ boundPresets」，与行声明无关，设计 §6.2）；
 #   4. tool-workflow 与 tool-subagent 系委托入口（单发 / fork）置 disabled: true
 #      （需求 §3.1：委托／编排入口收归本包——派生入口唯一化为 async_agent、
 #      编排入口唯一化为 async_workflow，统一等待预算与消息纪律；原生
@@ -46,7 +48,7 @@
       config:
         id: dsh-async
         name: 异步模式
-        description: 在标准模式基础上改用异步命令执行的编码 Agent：async_run 的命令超出首次等待时转入后台并返回作业编号（job_id），稍后用 async_wait_job 取回结果；async_wait_agent 有界等待后台子代理；async_agent 后台派生子代理并支持按 dsh 模型选择设置指定路由，async_list_subagent_models 只读查询可用路由。用户插话时等待立即结束，后台工作继续运行。
+        description: 在标准模式基础上改用异步命令执行的编码 Agent：async_run 的命令超出首次等待时转入后台并返回作业编号（job_id）；async_wait 统一等待后台作业与子代理，作业结算时结果正文直接附在返回里，无需再调用取回；async_agent 后台派生子代理并支持按 dsh 模型选择设置指定路由，async_list_subagent_models 只读查询可用路由。用户插话时等待立即结束，后台工作继续运行。
         order: 5
         plugins:
           # ── 身份（改动项 5：persona prefix 与基线身份句逐字一致，纪律走运行时
@@ -65,20 +67,21 @@
           - id: tool-bash
             name: '@deepseek-ai/dsh-tool-bash'
             disabled: true
+          # 作业管理三件套（基线原行，位置保持在本包交付类行之前——行序对账
+          # 判据的既定形态；job_output 的隐藏挂在 agent/created、按名册判定，
+          # 与行序无关（需求 9.3.5、设计 §3.5.1）；job_list / job_kill 等
+          # 非阻塞管理入口保留在场）。
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
           - id: async-run
             name: dsh-async-tools
             config:
               toolName: async_run
               owningPreset: dsh-async
-          - id: async-wait-job
+          - id: async-wait
             name: dsh-async-tools
             config:
-              toolName: async_wait_job
-              owningPreset: dsh-async
-          - id: async-wait-agent
-            name: dsh-async-tools
-            config:
-              toolName: async_wait_agent
+              toolName: async_wait
               owningPreset: dsh-async
           - id: async-agent
             name: dsh-async-tools
@@ -99,8 +102,6 @@
             name: '@deepseek-ai/dsh-tool-fs-search'
             config:
               sampleOverCapGlobResults: false
-          - id: tool-jobs
-            name: '@deepseek-ai/dsh-tool-jobs'
           - id: tool-schedule
             name: '@deepseek-ai/dsh-tool-schedule'
           - id: skill-filesystem
@@ -189,9 +190,9 @@
               - id: tool-workflow
                 name: '@deepseek-ai/dsh-tool-workflow'
                 disabled: true
-              # 第六行 async_workflow 插在 delegation 组内（tool-workflow 行后）——
+              # async_workflow 插在 delegation 组内（tool-workflow 行后）——
               # 编排引擎是组内隔离服务，组外行 ctx.get 恒取不到（需求 §3.2 末条、
-              # 设计 §3.5/§3.6）；组内注册工具的成例即上面的 tool-workflow 行。
+              # 设计 §3.4/§3.5）；组内注册工具的成例即上面的 tool-workflow 行。
               - id: async-workflow
                 name: dsh-async-tools
                 config:

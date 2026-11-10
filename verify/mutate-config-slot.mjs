@@ -29,6 +29,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { judgeSlotWiring, runRegistration } from './r24-judgements.mjs';
 
+/** 语义对应的测试落点（变异索引登记用）：T5/T16/T18 各有一条断言。 */
+const TEST = 'test/two-planes.test.mjs';
+
 // 从模块自身位置推仓根（verify/ 上一级）——变异脚本要在任意 cwd 下都能跑。
 const TARGET = join(fileURLToPath(new URL('..', import.meta.url)), 'client.js');
 const original = readFileSync(TARGET, 'utf8');

@@ -9,6 +9,9 @@
  */
 import { judgeLangIndependence, judgeLangRestored } from './lang-judgements.mjs';
 
+/** 语义对应的测试落点（变异索引登记用）：语言双开关的单测在 two-planes。 */
+const TEST = 'test/two-planes.test.mjs';
+
 const results = [];
 /**
  * 跑一条变异。

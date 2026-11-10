@@ -3,7 +3,7 @@
  * 供回归判据（`verify/probe-queue-delivery.mjs`）作对照。
  *
  * 要回答的两个问题（都不设断言，只记录——这是取证，不是回归判据）：
- *  1. queue 消息（落 `next-turn`）会不会打断 async_wait_job 的等待？
+ *  1. queue 消息（落 `next-turn`）会不会打断 async_wait 的等待？
  *     （只判 `source.kind === 'user'`、不区分落点的实现会打断——本探针可取证该形态。）
  *  2. 本轮结束（turn/end）之后，宿主会不会把 `next-turn` 里排队的消息领取进新轮次
  *     （user/message 出现）？——这是"收窄后 queue 消息还能不能被投递"的宿主侧地基。
@@ -23,13 +23,16 @@ const OUT = join(localConfig.evidenceDir, 'logs', 'queue-baseline.json');
 const QUEUE_MARKER = '排队投递测试';
 const QUEUE_TEXT = `${QUEUE_MARKER}：这条消息是用 queue 模式发进队列的。当它真正到达你时，请只回复一行：QUEUE_RECEIVED_OK`;
 
-// 起跑前把设置写回出厂默认（上游残留的 maxWaitMs 会让窗口假窄）。
-const DEFAULTS = {
+// 起跑前把设置写成本探针的测试基线（上游残留的 maxWaitMs 会让窗口假窄）。基线
+// 口径见 final-acceptance.mjs 头注：minYieldMs/minWaitMs/maxResultChars 三项有意
+// 偏离出厂默认（指令里的 yield_ms=1500 需要短下限才原样生效）；跑完由
+// restore-async-settings.mjs 还原出厂默认。
+const TEST_BASELINE = {
   maxResultChars: 30000, defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
   defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000, pollIntervalMs: 500, jobKind: 'async-command'
 };
 // 设置写入经共享助手（`_r28-helpers.mjs` 的 NS 单一登记点＋嵌套 settings 形状）。
-await replaceNs(DEFAULTS);
+await replaceNs(TEST_BASELINE);
 
 const created = await rpc('session/create', { request: { cwd: CWD, agentPreset: PRESET } });
 if (created.agentPreset !== PRESET) throw new Error(`session/create fell back: ${String(created.agentPreset)}`);
@@ -41,8 +44,8 @@ console.log(`sessionId=${sessionId}`);
 
 const TASK = [
   '请严格按两步做：',
-  '第 1 步：用 async_run 执行 `Start-Sleep -Seconds 300; Write-Output PATIENCE`，传 yield_ms=1500。拿到 job_id 后立刻用 async_wait_job 等它，wait_ms=120000。',
-  '第 2 步：那次 async_wait_job 返回后（无论 status 是什么），不要再调用任何工具，直接用一句话原样引用返回里"等待被打断"或"仍在运行"那句，然后结束回合。'
+  '第 1 步：用 async_run 执行 `Start-Sleep -Seconds 300; Write-Output PATIENCE`，传 yield_ms=1500。拿到 job_id 后立刻用 async_wait 等它（targets=[{kind:"job", id:...}]），wait_ms=120000。',
+  '第 2 步：那次 async_wait 返回后（无论 status 是什么），不要再调用任何工具，直接用一句话原样引用返回里"等待被打断"或"仍在运行"那句，然后结束回合。'
 ].join('\n');
 
 await rpc('session/prompt', {
@@ -103,9 +106,9 @@ for (;;) {
     }
   }
 
-  // 定位长等待（wait_ms=120000），两拍后发 queue 消息（窗口定位法与 async-e2e 同款）。
+  // 定位长等待（wait_ms=120000），两个轮询周期后发 queue 消息（窗口定位法与 async-e2e 同款）。
   const longWaitActive = page.records.some((r) => {
-    if (r.event?.type !== 'tool/call' || r.event.data?.name !== 'async_wait_job') return false;
+    if (r.event?.type !== 'tool/call' || r.event.data?.name !== 'async_wait') return false;
     return /wait_ms"\s*:\s*120000/.test(String(r.event.data.arguments ?? ''));
   });
   if (longWaitActive && waitFirstSeenPoll < 0) waitFirstSeenPoll = pollCount;

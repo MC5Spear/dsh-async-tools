@@ -11,8 +11,9 @@
  *   → 必须红在 `tools/validate-preset.mjs` 的词典锚句判据（⑤b）上（校验目标是**包内文件**，
  *   不是已安装副本——已安装件按需求 §3.2 由使用者自管）。
  *
- * **本脚本会原地改写真实的 `lib/agent.js` 与 `lib/text.js`**，
- * 每个变异跑完立即写回，最后核对 sha256。
+ * **本脚本在当前树的隔离副本里改写 `lib/agent.js` 与 `lib/text.js` 并跑测试**
+ * （`verify/_isolate.mjs`）：运行前核对副本目标与开发树逐字一致，运行后比对开发
+ * 树原始摘要——开发树不再被原地写回（`finally` 的还原只作用于副本）。
  *
  * 用法：node verify/mutate-agent.mjs
  */
@@ -20,10 +21,11 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { prepareIsolatedMutation } from './_isolate.mjs';
 
-// 从模块自身位置推仓根（verify/ 上一级）——变异脚本要在任意 cwd 下都能跑。
-const ROOT = fileURLToPath(new URL('..', import.meta.url));
+// 隔离现场：变异与测试都发生在副本里；ROOT＝副本根（开发树全程只读）。
+const iso = prepareIsolatedMutation({ script: 'verify/mutate-agent.mjs', targets: ['lib/agent.js', 'lib/text.js'] });
+const ROOT = iso.root;
 const AGENT = join(ROOT, 'lib', 'agent.js');
 const TEXT = join(ROOT, 'lib', 'text.js');
 const TEST = 'test/agent.test.mjs';
@@ -110,14 +112,14 @@ function firstFailOf(out) {
   return (out.split('\n').find((l) => /^✖ /.test(l.trim())) ?? '').trim().slice(0, 110);
 }
 
-/** 写回原文并核对摘要。 */
+/** 写回原文并核对摘要（只作用于隔离副本——开发树本来就没被写）。 */
 function restore() {
   writeFileSync(AGENT, agentOriginal, 'utf8');
   writeFileSync(TEXT, textOriginal, 'utf8');
   const agentAfter = createHash('sha256').update(readFileSync(AGENT, 'utf8'), 'utf8').digest('hex');
   const textAfter = createHash('sha256').update(readFileSync(TEXT, 'utf8'), 'utf8').digest('hex');
   if (agentAfter !== agentHash || textAfter !== textHash) {
-    throw new Error(`还原失败：请 git checkout 恢复 ${AGENT} 与 ${TEXT}。`);
+    throw new Error(`还原失败：副本里的 ${AGENT} 与 ${TEXT} 与变异前不一致（不影响开发树，仅提示副本残留）。`);
   }
 }
 
@@ -161,6 +163,7 @@ const baselineTests = runTests(120000);
 const baselinePreset = runPresetValidator();
 if (baselineTests.state !== 'green' || baselinePreset.state !== 'green') {
   console.log(`BASELINE  测试=${baselineTests.state}/${baselineTests.summary}；预设校验=${baselinePreset.state}/${baselinePreset.summary}——先修基线/换环境。`);
+  iso.cleanup();
   process.exit(2);
 }
 console.log(`基线：${TEST} 全绿；预设补丁校验通过。`);
@@ -207,7 +210,9 @@ try {
 } finally {
   restore();
 }
+iso.assertDevTreeUntouched('变异收尾');
+iso.cleanup();
 console.log('');
 console.log(ok ? '变异被抓住：后台形态与纪律锚句都有能失败的判据。' : '**变异逃逸或没跑成**——判据是恒真的，或环境不可用。');
-console.log('还原完成，摘要一致。');
+console.log(`隔离副本已清理；开发树 ${iso.devRoot} 的 lib/agent.js 与 lib/text.js 全程未被写入（起跑摘要与收尾一致）。`);
 process.exitCode = ok ? 0 : 1;

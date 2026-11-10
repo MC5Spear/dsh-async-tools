@@ -26,8 +26,8 @@
  * 插话文案：等待被打断，且**结束等待没有终止工作对象**。
  *
  * 出处 `lib/text.js` 的 `note.interrupted`（两语逐字；键名即锚，插行不漂）：
- * `等待被打断：一条用户消息已到达，将出现在你的下一条输入里（已等待 {waitedMs} ms）。结束等待没有终止 {subject} 的工作。…`
- * `Wait interrupted: a user message has arrived and will appear in your next input (waited {waitedMs} ms). Ending the wait did not stop {subject}. …`
+ * `等待被打断：一条用户消息已到达，将出现在你的下一条输入里（已等待 {waitedMs} ms）。结束等待没有终止被等待的后台工作。…`
+ * `Wait interrupted: a user message has arrived and will appear in your next input (waited {waitedMs} ms). Ending the wait did not stop the background work you were waiting on. …`
  *
  * 标记必须两语都认：agentLang 是设置项（需求 §5.3 两个独立语言开关），判据不能只在一种
  * 语言下成立。单语标记红的是语言，不是被测对象。
@@ -38,28 +38,28 @@ export const WAIT_INTERRUPTED = /等待被打断|Wait interrupted/;
  * 行为陈述口径：只断言"结束等待"这个动作没有终止工作对象——等待被打断这一
  * 事件本身证明不了运行状态，故不匹配"仍在后台运行"类措辞。
  */
-export const SUBJECT_UNTOUCHED = /结束等待没有终止[\s\S]{0,60}的工作|Ending the wait did not stop/;
+export const SUBJECT_UNTOUCHED = /结束等待没有终止[\s\S]{0,60}工作|Ending the wait did not stop/;
 
 /**
- * `async_wait_agent` 的**结局**标记——三选一即可，两语都要认（agentLang 是设置项，
+ * `async_wait`（子代理目标）的**结局**标记——三选一即可，两语都要认（agentLang 是设置项，
  * 与 `WAIT_INTERRUPTED` 同一条纪律：单语标记红的是语言，不是被测对象）。
  *
  * | 标记 | 出处（zh / en 同键） |
  * |---|---|
  * | `不再被观察到在运行` / `is no longer observed running` | `lib/text.js` 的 `note.settled`（`settledNote`，两个渠道共用） |
- * | `完成了当前工作（状态转为 idle）` / `finished its current work (status turned idle)` | `lib/text.js` 的 `via.idle`（结算通知渠道） |
- * | `有进展，当前不处于运行态` / `made progress and is currently no longer in a running state` | `lib/text.js` 的 `via.recheck`（activity 复查渠道） |
+ * | `状态转为 idle，不再被观察到在运行` / `status turned idle; it is no longer observed running` | `lib/text.js` 的 `via.idle`（结算通知渠道；只述已证状态，不作完成断言） |
+ * | `复查不再把该子代理读作运行中` / `A follow-up check no longer reads this subagent as running` | `lib/text.js` 的 `via.recheck`（activity 复查渠道） |
  */
 export const CHILD_SETTLED = [
   /不再被观察到在运行|is no longer observed running/,
-  /完成了当前工作（状态转为 idle）|finished its current work \(status turned idle\)/,
-  /有进展，当前不处于运行态|made progress and is currently no longer in a running state/
+  /状态转为 idle，不再被观察到在运行|status turned idle; it is no longer observed running/,
+  /复查不再把该子代理读作运行中|A follow-up check no longer reads this subagent as running/
 ];
 
 /**
- * `async_wait_job` 的**结局**标记：取回的是终态输出。
+ * `async_wait`（作业目标）的**结局**标记：取回的是终态输出。
  *
- * 出处 `lib/wait-job.js` 的 `settledResult`——终态时在输出正文前拼一行终态状态行
+ * 出处 `lib/wait-job-target.js` 的终态出口——终态时在输出正文前拼一行终态状态行
  * （文案键 `render.jobStatus.<completed|failed|killed>` 在 `lib/text.js`，两语都有），
  * 这是三种终态**都出现**的稳定特征。输出末尾的退出码行（`lib/jobs.js` 的
  * `exitStatusMarker`/`exitLine`，文案键 `render.exitCode`/`detail.exitCode`）只标记
@@ -113,7 +113,7 @@ export const START_REFUSED = /refused before the process launched|进程启动�
 export const WORKFLOW_P2_PHRASE = /large multi-agent orchestration|大规模多代理编排/;
 
 /**
- * `async_wait_agent` 被**用户消息唤醒**的文案。出处 `lib/text.js` 的
+ * `async_wait`（子代理目标）被**用户消息唤醒**的文案。出处 `lib/text.js` 的
  * `wait.wokeByMessage`（两语逐字）。
  */
 export const WAIT_WOKE_BY_MESSAGE = /A processable message arrived|一条可处理消息已到/;

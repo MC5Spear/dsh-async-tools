@@ -1,7 +1,7 @@
 /**
  * 真机验收驱动（判据清单 = 需求 §8 验收要求、设计 §8 验证设计）。目标实例与凭据经
- * `tools/_local-config.mjs` 的本机配置解析（开发约定目标宿主精确锁定 0.2.1-rc.4；无
- * `.local/` 配置的环境按文档化跳过处理）。
+ * `tools/_local-config.mjs` 的本机配置解析（开发约定目标宿主为支持集合内的一代；
+ * 无 `.local/` 配置的环境按文档化跳过处理）。
  *
  * ## 为什么是"驱动"而不是一次性脚本
  *
@@ -30,7 +30,7 @@
 import { readFileSync, writeFileSync, mkdirSync, openSync, readSync, readdirSync, statSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { instanceCredentials, loadLocalPlaneOrSkip } from '../tools/_local-config.mjs';
+import { instanceCredentials, loadLocalPlaneOrSkip, tokenEntryUrl } from '../tools/_local-config.mjs';
 import { judgeDeliveredBytes } from './r24-judgements.mjs';
 import { judgeAgentRouting, queryVerdictAllowed, queryVerdictDisabled } from './agent-judgements.mjs';
 // async-tools-host 的设置读写经共享助手（嵌套 settings 形状，设计 §8.3）；
@@ -81,16 +81,15 @@ function record(name, passed, detail = '') {
 // ── RPC ────────────────────────────────────────────────────────────────────
 function readToken() {
   if (tokenArg !== undefined) return tokenArg.slice('--token='.length);
-  const raw = readFileSync(TOKEN_FILE, 'utf8').trim();
-  const at = raw.indexOf('http');
-  if (at < 0) throw new Error(`token file has no URL: ${TOKEN_FILE}`);
-  return new URL(raw.slice(at)).searchParams.get('token');
+  // 从文件取令牌一律经 instanceCredentials：令牌轮换（实例重启）时令牌 URL 的来源
+  // （origin）可能跟着变，绑定校验随读随核，不能只在起跑核一次。
+  return instanceCredentials(localConfig).token;
 }
 
 let cookie = '';
 /** token 换 cookie（每次跑现读 token：实例重启会换令牌）。 */
 async function connect() {
-  const indexResponse = await fetch(`${BASE}/?token=${readToken()}`, { redirect: 'manual' });
+  const indexResponse = await fetch(tokenEntryUrl(BASE, readToken()), { redirect: 'manual' });
   cookie = (indexResponse.headers.getSetCookie?.() ?? []).map((e) => e.split(';', 1)[0]).join('; ');
   if (cookie.length === 0) throw new Error('token exchange returned no cookie（令牌过期：实例可能已重启）');
 }
@@ -295,10 +294,12 @@ async function newSessionUnconfined(preset) {
 /** 模型可见文本里的 CJK 判据（`\u3000-\u303f`、CJK 汉字、全角标点）。 */
 const CJK = /[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]/;
 
-const FOUR = ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent'];
+const FOUR = ['async_run', 'async_wait', 'async_agent'];
 
-/** 生效设置的出厂默认（T17 对账的十项；漂移了读数就不可比）。 */
-const FACTORY = {
+/** 生效设置的核对基线（T17 对账的十项；实例上不是这组数时读数就不可比）。这份
+ * 基线与真机探针的测试基线同族——`minYieldMs`/`minWaitMs`/`maxResultChars`
+ * 三项有意偏离出厂默认（见 final-acceptance.mjs 头注），跑对账前应先写入这组数。 */
+const BASELINE = {
   defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000, defaultWaitMs: 30000,
   minWaitMs: 250, maxWaitMs: 600000, pollIntervalMs: 500, maxResultChars: 30000,
   jobKind: 'async-command', subagentProvider: 'spawn'
@@ -315,8 +316,8 @@ async function phaseFace() {
   record('前置 宿主行在线：settings/describe 含 async-tools-host',
     nsNames.includes('async-tools-host'), `命名空间数=${String(nsNames.length)}`);
   const liveValue = (await readNs()).value;
-  const drifted = Object.keys(FACTORY).filter((k) => liveValue[k] !== FACTORY[k]);
-  record('前置 生效设置 = 出厂默认（否则"数字随设置变"的读数不可比）',
+  const drifted = Object.keys(BASELINE).filter((k) => liveValue[k] !== BASELINE[k]);
+  record('前置 生效设置 = 核对基线（否则"数字随设置变"的读数不可比）',
     drifted.length === 0, drifted.length === 0 ? '十项全等' : `偏离=${drifted.join(',')}`);
 
   const sid = await newSession('dsh-async');
@@ -373,7 +374,7 @@ async function behaviorA() {
     'Follow these steps in order and do nothing else:',
     '1) async_run: `Write-Output SHORT_OK`',
     '2) async_run: `Start-Sleep -Seconds 6; Write-Output LONG_DONE` with yield_ms=1500',
-    '3) take the job_id from step 2 and call async_wait_job with wait_ms=30000',
+    '3) take the job_id from step 2 and call async_wait with targets=[{kind:"job", id:...}] and wait_ms=30000',
     '4) reply with exactly one line: ALL_DONE'
   ].join('\n'));
   const transcript = await page(sid);
@@ -382,15 +383,15 @@ async function behaviorA() {
     modes.includes('danger-full-access'), `sandbox/mode 事件序列=${modes.join(' → ') || '(无)'}`);
   const { calls, results } = parseEvents(transcript);
   const runCalls = calls.filter((c) => c.name === 'async_run').length;
-  const waitCalls = calls.filter((c) => c.name === 'async_wait_job').length;
+  const waitCalls = calls.filter((c) => c.name === 'async_wait').length;
   record('短命令直接返回（结果里有 SHORT_OK）',
     results.some((t) => t.includes('SHORT_OK')), `async_run 调用 ${String(runCalls)} 次`);
   record('长命令让出而非被杀（note 说明超出首次等待且未被终止）',
     results.some((t) => YIELD_RUNNING.test(t) && NOT_TERMINATED.test(t)),
     `命中首次等待文案=${String(results.filter((t) => YIELD_RUNNING.test(t)).length)} 条`);
-  record('让出返回给出可复制的 async_wait_job 调用（带作业编号）与生效数字',
-    results.some((t) => /async_wait_job\(job_id="[^"]+", wait_ms=\d+\)/.test(t)),
-    `async_wait_job 调用 ${String(waitCalls)} 次`);
+  record('让出返回给出可复制的 async_wait 调用（带作业编号）与生效数字',
+    results.some((t) => /async_wait\(targets=\[\{kind:"job", id:"[^"]+"\}\]/.test(t)),
+    `async_wait 调用 ${String(waitCalls)} 次`);
   record('等待把长命令的输出取回（结果里有 LONG_DONE）',
     results.some((t) => t.includes('LONG_DONE')));
   extra.behaviorA = {
@@ -411,23 +412,23 @@ async function behaviorB() {
       content: [{
         type: 'text',
         text: 'Use async_run to run `Start-Sleep -Seconds 60; Write-Output SURVIVED` with yield_ms=1500; '
-          + 'as soon as you get the job_id, call async_wait_job on it with wait_ms=120000 and do nothing else.'
+          + 'as soon as you get the job_id, call async_wait on it with targets=[{kind:"job", id:...}] and wait_ms=120000, and do nothing else.'
       }],
       clientTimeZone: 'Asia/Shanghai'
     }
   });
-  // 等到出现一次 async_wait_job 调用（说明它已经进入长等待），再发插话。
+  // 等到出现一次 async_wait 调用（说明它已经进入长等待），再发插话。
   let waiting = false;
   for (let i = 0; i < 90 && !waiting; i++) {
     await sleep(1000);
     const { calls } = parseEvents(await page(sid));
-    waiting = calls.some((c) => c.name === 'async_wait_job');
+    waiting = calls.some((c) => c.name === 'async_wait');
   }
-  record('情形搭建成功（模型已进入 async_wait_job 长等待）', waiting);
+  record('情形搭建成功（模型已进入 async_wait 长等待）', waiting);
   if (waiting) {
     await steer(sid, 'By the way: nice weather. Use job_list to check that job\'s current status and reply with its status only.');
   }
-  await ask(sid, 'Continue: fetch that job\'s output with async_wait_job (wait_ms=90000), then reply with the single line it printed.');
+  await ask(sid, 'Continue: fetch that job\'s output with async_wait (targets=[{kind:"job", id:...}], wait_ms=90000), then reply with the single line it printed.');
   const transcriptB = await page(sid);
   const modesB = sandboxModes(transcriptB);
   record('运行形态：B 段会话同样运行在 danger-full-access 下',
@@ -446,23 +447,23 @@ async function behaviorB() {
   };
 }
 
-/** C 段：async_agent 派生 + async_wait_agent 有界等待（需求 §2.3）。 */
+/** C 段：async_agent 派生 + async_wait（子代理目标）有界等待（需求 §2.3）。 */
 async function behaviorC() {
   const sid = await newSession('dsh-async');
   sessionIds.behaviorC = sid;
   await ask(sid, [
     'Follow these steps in order and do nothing else:',
     '1) async_agent with prompt: `Reply with exactly one line: PONG`',
-    '2) take the agent_id it returns and call async_wait_agent with wait_ms=60000',
+    '2) take the agent_id it returns and call async_wait with targets=[{kind:"agent", id:...}] and wait_ms=60000',
     '3) reply with exactly one line: AGENT_DONE'
   ].join('\n'), 300000);
   const { calls, results } = parseEvents(await page(sid));
   record('async_agent 立即返回 agent_id 与可复制的等待调用',
-    results.some((t) => /async_wait_agent\(agent_id="[^"]+", wait_ms=\d+\)/.test(t)),
+    results.some((t) => /async_wait\(targets=\[\{kind:"agent", id:"[^"]+"\}\]/.test(t)),
     `async_agent 调用 ${String(calls.filter((c) => c.name === 'async_agent').length)} 次`);
-  record('async_wait_agent 有界等待以合法出口返回（结算：最终回答另行到达；或消息唤醒：交还运行句柄）',
+  record('async_wait（子代理目标）有界等待以合法出口返回（结算：最终回答另行到达；或消息唤醒：交还运行句柄）',
     results.some((t) => CHILD_SETTLED.some((re) => re.test(t)) || WAIT_WOKE_BY_MESSAGE.test(t)),
-    `async_wait_agent 调用 ${String(calls.filter((c) => c.name === 'async_wait_agent').length)} 次`);
+    `async_wait 调用 ${String(calls.filter((c) => c.name === 'async_wait').length)} 次`);
   extra.behaviorC = { calls: calls.map((c) => c.name), results: results.map((t) => t.slice(0, 300)) };
 }
 
@@ -563,7 +564,7 @@ async function phaseAgent() {
     // ── 实时腿：同一会话内开关翻转（不重开会话——与采样口径的分水岭）──
     // ① 关：本会话下一次指定路由必须可读拒绝（selectionDisabled 或启动前重读
     //    撤回 routeRecheckFailed——两者都是实时口径的合法拒绝形态），且零派生；
-    //    查询工具同拍判"不允许显式选择"（双向差异，§2.3.4）。
+    //    查询工具同一时刻判"不允许显式选择"（双向差异，§2.3.4）。
     await rpc('settings/update', { ns: SEL_NS, patch: { enabled: false } });
     await ask(sid, [
       'Follow these steps in order and do nothing else:',
@@ -662,10 +663,10 @@ async function phaseSettings() {
     const face = faceOf(await page(sid));
     if (face === null) throw new Error('设置相位：会话里没有 request/header');
     const runDesc = String(face.tools.find((t) => t.name === 'async_run')?.description ?? '');
-    const waitDesc = String(face.tools.find((t) => t.name === 'async_wait_job')?.description ?? '');
+    const waitDesc = String(face.tools.find((t) => t.name === 'async_wait')?.description ?? '');
     record('async_run 描述里的首次等待数字跟着设置变（12000）',
       runDesc.includes('The first wait defaults to 12000 ms'), `片段=${runDesc.match(/The first wait defaults to \d+ ms[^;]*/)?.[0] ?? '(未命中)'}`);
-    record('async_wait_job 描述里的等待上限跟着设置变（480000）',
+    record('async_wait 描述里的等待上限跟着设置变（480000）',
       waitDesc.includes('250–480000 ms'), `片段=${waitDesc.match(/Per-call wait budgets must be passed explicitly[^;]*/)?.[0] ?? '(未命中)'}`);
 
     const delta = logSince(mark);

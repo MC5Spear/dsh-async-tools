@@ -48,7 +48,8 @@
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { instanceCredentials, loadLocalPlaneOrSkip } from '../tools/_local-config.mjs';
+import { instanceCredentials, loadLocalPlaneOrSkip, tokenEntryUrl } from '../tools/_local-config.mjs';
+import { authCookieFromFirstHop, assertApiNotRedirected } from './_auth.mjs';
 
 const localConfig = await loadLocalPlaneOrSkip('verify/probe-preset-portability.mjs');
 const { base: BASE, token } = instanceCredentials(localConfig);
@@ -72,11 +73,14 @@ function record(name, ok, detail = '') {
   console.log(`  ${ok ? 'OK    ' : 'WRONG '} ${name}${detail === '' ? '' : `\n          ${detail}`}`);
 }
 
-const indexResponse = await fetch(`${BASE}/?token=${token}`, { redirect: 'manual' });
-const cookie = (indexResponse.headers.getSetCookie?.() ?? []).map((e) => e.split(';', 1)[0]).join('; ');
+// 登录与 `verify/_rpc.mjs` 同款：判定统一在 `verify/_auth.mjs`——首跳接受
+// 「3xx＋Set-Cookie＋同源/缺席 Location」的正常 cookie 交换，不跟随 Location；
+// API 调用的任何 3xx 仍按错误处理。令牌编码统一走 tokenEntryUrl。
+const indexResponse = await fetch(tokenEntryUrl(BASE, token), { redirect: 'manual' });
+const cookie = authCookieFromFirstHop(indexResponse, BASE);
 
 /**
- * 发一次信封 RPC。
+ * 发一次信封 RPC。API 的任何 3xx 都按错误处理（不携带凭据跳转）。
  *
  * @param {string} method - 方法名。
  * @param {object} args - 参数。
@@ -87,8 +91,10 @@ async function rpc(method, args) {
   const response = await fetch(`${BASE}/api/${method}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', cookie },
-    body: JSON.stringify({ type: 'client-request', rpcId, method, payload: { args } })
+    body: JSON.stringify({ type: 'client-request', rpcId, method, payload: { args } }),
+    redirect: 'manual'
   });
+  assertApiNotRedirected(response, method);
   const body = JSON.parse(await response.text());
   if (body?.result?.ok !== true) throw new Error(`${method}: ${JSON.stringify(body?.result?.error).slice(0, 200)}`);
   return body.result.value;
@@ -139,7 +145,7 @@ try {
     }
   });
 
-  // 等转录稳定（连续两拍记录条数相同）——同 `probe-settings-behavior-full` 的取样纪律。
+  // 等转录稳定（连续两个轮询周期记录条数相同）——同 `probe-settings-behavior-full` 的取样纪律。
   //
   // `session/page` 的 args 形状是
   // `{ request: { address: { kind:'session', sessionId }, throughSeq, maxMessages } }`——
@@ -177,9 +183,9 @@ try {
     .map((t) => t?.name);
   // 根作用域可见的五个本包工具（async_workflow 在 delegation 组内、根不可见，
   // 由 d05 组合探针证明，此处不断言）。
-  const ours = ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent', 'async_list_subagent_models'];
+  const ours = ['async_run', 'async_wait', 'async_agent', 'async_list_subagent_models'];
   const present = ours.filter((n) => tools.includes(n));
-  record('五个根可见工具在**另一个预设**下也出现（"不限于本预设"）',
+  record('四个根可见工具在**另一个预设**下也出现（"不限于本预设"）',
     present.length === ours.length,
     `实得 ${JSON.stringify(present)}；该预设工具数 ${String(tools.length)}`);
   failed = checks.filter((c) => !c.ok).length;

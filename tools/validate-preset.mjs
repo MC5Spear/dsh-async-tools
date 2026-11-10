@@ -8,7 +8,7 @@
  * 宿主包树按真实路径 import 宿主自带的 js-yaml 并注册同一形状的自定义 `js` 类型
  * （`!!js` 表达式解析为**字符串**，这正好让"disabled 必须是布尔"这类判据可区分）。
  *
- * 十四条判据（③b、⑤b、⑧b 各独立计一条；骨架两套共用、期望随套切换）：
+ * 十五条判据（③b、⑤b、⑤c、⑧b 各独立计一条；骨架两套共用、期望随套切换）：
  * 1. 补丁恰一条 `insert`，行 `name` 是 `@deepseek-ai/dsh-agent-preset`，行 `id` 与
  *    `config.id` 等于期望集的 `rowId` / `configId`；未知 `config.id` 即红（不许
  *    "套不上就放行"）；
@@ -17,8 +17,8 @@
  *    **逐项按序**比对——缺一即红、多一行也红、顺序错也红（"不得静默缺失"；
  *    嵌套序列含 delegation 组内 `async-workflow` 行）；
  * 3b. 子清单不含期望集 `forbidden` 的行名（pwsh 禁入；worker-thread 缺席）；
- * 4. 恰六行 `dsh-async-tools`（顶层五行 + delegation 组内第六行），`toolName` 恰为
- *    六值且无重复；顶层第五行是只读查询行 `async_list_subagent_models`（需求
+ * 4. 恰五行 `dsh-async-tools`（顶层四行 + delegation 组内第五行），`toolName` 恰为
+ *    五值且无重复；顶层第四行是只读查询行 `async_list_subagent_models`（需求
  *    §2.3.4），delegation 组内行钉在组内 `tool-workflow` 行后（行位判据：
  *    workflowEngine 是组内隔离服务，挪出组必红）；
  * 5. persona `prefix` 与宿主基线身份句**逐字一致**（任何增改即红——宿主原生
@@ -30,6 +30,11 @@
  *     传」句（zh），create 为「已禁用、不要调用」句）+ 提问角色纪律四组锚词
  *     （ASK-01，人称代词禁用 / 明确角色名称 / 角色加动作 / 指向一致，两套同值）
  *     ——语言档由 agentLang 管理（需求 §5.3），zh 档锚句必须与 en 档语义同源；
+ * 5c. 通用纪律锚句（VERIFY-GENERIC-01）：`discipline.preset.generic` 的 en/zh
+ *     两档每档须含通用锚句表（后台创建／不传 `run_in_background: false`／
+ *     直接交付／有界等待／不循环轮询＋提问角色四组，ASK 与内置同值）的每一条
+ *     ——不随期望集切换，随每份补丁校验各执行一次（无参 CLI 重复输出属预期）；
+ *     「唯一入口」不设通用锚（通用变体按 §3.5.4 不声称宿主入口已禁用）；
  * 6. 预设行**不得**出现 `disabled` 护栏（护栏会在 agentPresets 就绪前把行静默杀死，
  *    cordis-plugin-loader/lib/index.js:359-363）；
  * 7. 互斥判据（期望集 `bothAliveRule` 开时；两套都开）：活 `tool-subagent`
@@ -53,9 +58,10 @@
  * 即非零退出；带参 = 只校验那一份。
  *
  * 也可作为模块导入：`validatePatch(patchPath, { quiet })` 返回 `{ ok, failures, lines }`，
- * `loadYaml()` / `EXPECTATIONS` 一并导出——`test/preset.test.mjs` 用它们在**进程内**跑
- * 变异副本（子进程 spawn 在沙箱里会被 EPERM 拦，且进程内调用让"变异 → 断言红"同轮完成），
- * 并把期望集与真实基线补丁对账（防快照漂移）。
+ * `loadYaml()` / `EXPECTATIONS` / `GENERIC_DISCIPLINE_ANCHORS` 一并导出——
+ * `test/preset.test.mjs` 用它们在**进程内**跑变异副本（子进程 spawn 在沙箱里会被
+ * EPERM 拦，且进程内调用让"变异 → 断言红"同轮完成），并把期望集与真实基线补丁
+ * 对账（防快照漂移）。
  */
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
@@ -74,7 +80,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
  *
  * 每个基目录下认**两种布局**：
  *   - **提升形** `<base>/js-yaml/index.js`——npm 装 `@deepseek-ai/dsh` 时把依赖提升到
- *     node_modules 根；CI 的 `npm install @deepseek-ai/dsh@0.2.1-rc.4` 就是这一种；
+ *     node_modules 根；CI 按支持集合逐宿主显式安装（`npm install @deepseek-ai/dsh@<精确宿主版本>`）就是这一种；
  *   - **嵌套形** `<base>/@deepseek-ai/dsh/node_modules/js-yaml/index.js`——全局安装树
  *     与运行树的形状（自带一份嵌套副本）。
  * 只认嵌套形会让「干净环境 + npm 锚」的预设用例整片全红（实测 35 条失红），
@@ -101,10 +107,12 @@ export async function loadYaml() {
   return { load: (text) => YAML.load(text, { schema: YAML.DEFAULT_SCHEMA.extend([JsType]) }) };
 }
 
-/** 五行顶层 async 工具行在基线行序列里的插入位：紧跟 `tool-bash`（改动位）。 */
-const ASYNC_ROW_IDS = ['async-run', 'async-wait-job', 'async-wait-agent', 'async-agent', 'async-list-models'];
-/** toolName 六值（判据④：顶层五行 + delegation 组内第六行 async_workflow）。 */
-const EXPECTED_TOOL_NAMES = ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent', 'async_list_subagent_models', 'async_workflow'];
+/** 四行顶层 async 工具行在基线行序列里的插入位：紧跟前移后的 `tool-jobs`（行位判据
+ * 的既定形态——插入位保持稳定供对账；`job_output` 隐藏挂点在 `agent/created` 并按
+ * 名册判定，与行序无关，见 lib/index.js 与设计 §3.5.1）。 */
+const ASYNC_ROW_IDS = ['async-run', 'async-wait', 'async-agent', 'async-list-models'];
+/** toolName 五值（判据④：顶层四行 + delegation 组内第五行 async_workflow；WAIT-01 合并等待入口）。 */
+const EXPECTED_TOOL_NAMES = ['async_run', 'async_wait', 'async_agent', 'async_list_subagent_models', 'async_workflow'];
 
 /** 嵌套行序列（两基线同构：planning 1 + compaction 3 + delegation 6；0.2.1 基线
  * 的 delegation 组不再挂 codex / claude-code / ralph 行；组在 tool-workflow 行后
@@ -149,6 +157,30 @@ const ASK_ANCHORS_ZH = [
   '与所选角色名称保持一致'
 ];
 
+/** 通用纪律变体（`discipline.preset.generic`，判据 ⑤c／VERIFY-GENERIC-01）的
+ * 强制锚句表：只取现行文案里的**指令式**句子——通用变体按设计 §3.5.4 不声称
+ * 宿主入口已禁用，「唯一入口」句对自建组合不真实，故不设该锚；提问角色四组
+ * 与内置期望集同值（ASKING RULES 段三变体逐字同文，ASK-01）。锚句只是
+ * `includes` 判据，不向变体文本新增内容。 */
+export const GENERIC_DISCIPLINE_ANCHORS = {
+  en: [
+    'Delegations are created with async_agent in the background',
+    'never pass run_in_background: false',
+    'delivered directly (attached to an in-flight async_wait return, or as a completion message)',
+    'wait with async_wait',
+    'Do not poll in a loop',
+    ...ASK_ANCHORS
+  ],
+  zh: [
+    '委托一律经 async_agent 在后台创建',
+    '也不传 run_in_background: false',
+    '结果正文直接交付',
+    '需要子代理的结果时，用 async_wait',
+    '不要循环轮询',
+    ...ASK_ANCHORS_ZH
+  ]
+};
+
 /** 宿主基线 persona 身份句（shipped standard/cordis 补丁逐字同源）——预设
  * prefix 与它逐字一致，任何增改即红（宿主原生身份句不承载本包内容）。 */
 const BASELINE_IDENTITY = 'You are a coding agent powered by the {{model}} model.';
@@ -164,9 +196,9 @@ export const EXPECTATIONS = {
     configId: 'dsh-async',
     patchRel: join('presets', 'dsh-async.patch.yml'),
     baselineTop: [
-      'persona', 'agent-instructions', 'time-context', 'tool-bash',
+      'persona', 'agent-instructions', 'time-context', 'tool-bash', 'tool-jobs',
       ...ASYNC_ROW_IDS,
-      'tool-fs', 'tool-fs-search', 'tool-jobs', 'tool-schedule', 'skill-filesystem', 'tool-skill',
+      'tool-fs', 'tool-fs-search', 'tool-schedule', 'skill-filesystem', 'tool-skill',
       'command-goal', 'tool-goal',
       'planning', 'compaction', 'delegation',
       'tool-ask-user', 'tool-todo', 'tool-web', 'present', 'tool-plugin-manager', 'tool-plugin-market'
@@ -180,7 +212,8 @@ export const EXPECTATIONS = {
       en: [
         'ALWAYS',
         'async_agent is the ONLY delegation entry',
-        'wait with async_wait_agent',
+        'delivered directly',
+        'wait with async_wait',
         'never pass run_in_background: false',
         'Do not poll in a loop',
         ...ASK_ANCHORS
@@ -188,7 +221,8 @@ export const EXPECTATIONS = {
       zh: [
         '一律在后台',
         '唯一的委托入口',
-        '用 async_wait_agent 有界等待',
+        '结果正文直接交付',
+        '需要后台子代理的结果时用 async_wait',
         '绝不要传 run_in_background: false',
         '不要循环轮询',
         ...ASK_ANCHORS_ZH
@@ -202,9 +236,9 @@ export const EXPECTATIONS = {
     configId: 'dsh-async-create',
     patchRel: join('presets', 'dsh-async-create.patch.yml'),
     baselineTop: [
-      'persona', 'agent-instructions', 'time-context', 'tool-bash',
+      'persona', 'agent-instructions', 'time-context', 'tool-bash', 'tool-jobs',
       ...ASYNC_ROW_IDS,
-      'tool-fs', 'tool-fs-search', 'tool-jobs', 'tool-schedule',
+      'tool-fs', 'tool-fs-search', 'tool-schedule',
       'command-goal', 'tool-goal',
       'planning', 'compaction', 'delegation',
       'tool-ask-user', 'tool-todo', 'tool-web', 'tool-cordis',
@@ -221,7 +255,8 @@ export const EXPECTATIONS = {
       en: [
         'ALWAYS',
         'async_agent is the ONLY delegation entry',
-        'wait with async_wait_agent',
+        'delivered directly',
+        'wait with async_wait',
         'disabled here; do not call them',
         'Do not poll in a loop',
         ...ASK_ANCHORS
@@ -229,7 +264,8 @@ export const EXPECTATIONS = {
       zh: [
         '一律在后台',
         '唯一的委托入口',
-        '用 async_wait_agent 有界等待',
+        '结果正文直接交付',
+        '需要后台子代理的结果时用 async_wait',
         '已禁用，不要调用',
         '不要循环轮询',
         ...ASK_ANCHORS_ZH
@@ -242,7 +278,8 @@ export const EXPECTATIONS = {
 
 /**
  * 从一份真实 shipped 基线补丁的解析结果反推改动后的顶层行序列（对账用）：
- * 去掉 tool-pwsh，在 tool-bash 之后插入五行 async。
+ * 去掉 tool-pwsh，把 tool-jobs 前移到 tool-bash 之后，再在 tool-jobs 之后插入
+ * 五行 async（前移原因见 ASYNC_ROW_IDS 注释——job_output 隐藏登记的时序）。
  * @param {object} doc - 基线补丁的解析结果（一条 insert 一行）。
  * @returns {string[]} 改动后的顶层行 id 序列。
  */
@@ -251,7 +288,16 @@ export function expectedTopFromBaseline(doc) {
   const withoutPwsh = baselineIds.filter((id) => id !== 'tool-pwsh');
   const bashIndex = withoutPwsh.indexOf('tool-bash');
   if (bashIndex === -1) throw new Error('基线补丁没有 tool-bash 行（插入位无从谈起）');
-  return [...withoutPwsh.slice(0, bashIndex + 1), ...ASYNC_ROW_IDS, ...withoutPwsh.slice(bashIndex + 1)];
+  const rest = withoutPwsh.slice(bashIndex + 1);
+  const jobsIndex = rest.indexOf('tool-jobs');
+  if (jobsIndex === -1) throw new Error('基线补丁没有 tool-jobs 行（前移位无从谈起）');
+  return [
+    ...withoutPwsh.slice(0, bashIndex + 1),
+    'tool-jobs',
+    ...ASYNC_ROW_IDS,
+    ...rest.slice(0, jobsIndex),
+    ...rest.slice(jobsIndex + 1)
+  ];
 }
 
 /**
@@ -351,22 +397,24 @@ export async function validatePatch(patchPath, { quiet = false, expectation } = 
     }
   }
 
-  // ── ④ 六行 dsh-async-tools（顶层五行 + delegation 组内一行），toolName 六值各一；
-  //      顶层第五行是只读查询行 async_list_subagent_models（需求 §2.3.4）；
+  // ── ④ 五行 dsh-async-tools（顶层四行 + delegation 组内一行），toolName 五值各一；
+  //      顶层第四行是只读查询行 async_list_subagent_models（需求 §2.3.4）；
   //      delegation 组内行必须钉在组内 tool-workflow 行后（行位判据：
   //      workflowEngine 是组内隔离服务，组外行 ctx.get 恒 miss——挪出组必红） ──
   const asyncRows = allRows.filter((child) => child?.name === 'dsh-async-tools');
   const actualToolNames = asyncRows.map((child) => child?.config?.toolName).filter((v) => typeof v === 'string');
   const dupToolNames = actualToolNames.filter((v, index) => actualToolNames.indexOf(v) !== index);
-  if (asyncRows.length !== 6) fail(`期望恰 6 行 dsh-async-tools（顶层 5 + delegation 组内 1），实得 ${String(asyncRows.length)}`);
+  if (asyncRows.length !== 5) fail(`期望恰 5 行 dsh-async-tools（顶层 4 + delegation 组内 1），实得 ${String(asyncRows.length)}`);
   for (const expected of EXPECTED_TOOL_NAMES) {
-    if (!actualToolNames.includes(expected)) fail(`toolName 六值缺 "${expected}"（实得 ${actualToolNames.join(', ') || '(无)'}）`);
+    if (!actualToolNames.includes(expected)) fail(`toolName 五值缺 "${expected}"（实得 ${actualToolNames.join(', ') || '(无)'}）`);
   }
   if (dupToolNames.length > 0) fail(`toolName 有重复：${dupToolNames.join(',')}`);
-  // 归属声明（设计 §6.2）：六行必须各自携带 owningPreset 且等于本补丁的 config.id
-  // ——描述警示按行归属判定，漏声明＝警示对预设行静默消失，此处锁死。
+  // 行身份（设计 §6.2）：五行必须各自携带 owningPreset 且等于本补丁的 config.id
+  // ——组合文件与诊断据此指认「这一行属于哪份预设」；防护内容按「会话实际
+  // 预设 ∈ boundPresets」判定、与行声明无关（PRESET-ISOLATION-02），此检查
+  // 只锁行身份一致性，不承载警示在场判定。
   if (!asyncRows.every((child) => child?.config?.owningPreset === configId)) {
-    fail(`六行 dsh-async-tools 的 owningPreset 必须全部等于 "${String(configId)}"（描述警示按行归属判定）`);
+    fail(`五行 dsh-async-tools 的 owningPreset 必须全部等于 "${String(configId)}"（行身份声明）`);
   }
   // 行位：查询行必须在顶层（组外行消费的都是宿主全局服务，进组反而对编排
   // 会话外不可见）；delegation 组内行在嵌套序列里紧跟 tool-workflow。
@@ -386,8 +434,8 @@ export async function validatePatch(patchPath, { quiet = false, expectation } = 
       fail(`async-workflow 行必须紧跟 tool-workflow 行（tool-workflow 在嵌套序列第 ${String(wfIdx + 1)} 位，async-workflow 在第 ${String(awIdx + 1)} 位）——行位判据`);
     }
   }
-  if (asyncRows.length === 6 && dupToolNames.length === 0 && workflowAsyncRow !== undefined && listModelsRow !== undefined) {
-    emit(`OK    ④ 六行 dsh-async-tools（toolName：${actualToolNames.join(', ')}，owningPreset=${String(configId)}），async_list_subagent_models 在顶层，async_workflow 钉在 delegation 组内 tool-workflow 行后`);
+  if (asyncRows.length === 5 && dupToolNames.length === 0 && workflowAsyncRow !== undefined && listModelsRow !== undefined) {
+    emit(`OK    ④ 五行 dsh-async-tools（toolName：${actualToolNames.join(', ')}，owningPreset=${String(configId)}），async_list_subagent_models 在顶层，async_workflow 钉在 delegation 组内 tool-workflow 行后`);
   }
 
   // ── ⑤ persona prefix 与宿主基线身份句逐字一致（增改即红——身份句不承载
@@ -415,6 +463,21 @@ export async function validatePatch(patchPath, { quiet = false, expectation } = 
   }
   if (disciplineOk) emit(`OK    ⑤b 纪律锚句齐全（discipline.preset.${String(configId)}，en/zh 两档）`);
 
+  // ── ⑤c 通用纪律锚句（discipline.preset.generic，en/zh 两档） ─────────────
+  // 独立于期望集、每份补丁校验都执行（通用变体不属于任何一份补丁的期望集；
+  // 无参 CLI 校验两份补丁 → 本行输出两遍属预期，不为去重引入跨调用状态）。
+  let genericDisciplineOk = true;
+  for (const lang of ['en', 'zh']) {
+    const genericText = t(lang, 'discipline.preset.generic');
+    for (const anchor of GENERIC_DISCIPLINE_ANCHORS[lang]) {
+      if (!genericText.includes(anchor)) {
+        fail(`discipline.preset.generic（${lang} 档）缺强制规则锚句：${JSON.stringify(anchor)}`);
+        genericDisciplineOk = false;
+      }
+    }
+  }
+  if (genericDisciplineOk) emit('OK    ⑤c 通用纪律锚句齐全（discipline.preset.generic，en/zh 两档）');
+
   // ── ⑥ 预设行不得带 disabled 护栏 ──
   // loader 的 refresh() 在服务就绪前求值 disabled：`!ctx.get('agentPresets')` 为真
   // 时静默跳过 init，行永远不导入、审计报 "failed to import"。等待由 dsh-agent-preset
@@ -435,9 +498,9 @@ export async function validatePatch(patchPath, { quiet = false, expectation } = 
     if (liveSubagent !== undefined && hasAsyncAgent) {
       const disciplineEn = t('en', `discipline.preset.${String(configId)}`);
       const hasEntry = disciplineEn.includes('async_agent is the ONLY delegation entry');
-      const hasRetrieval = disciplineEn.includes('wait with async_wait_agent');
+      const hasRetrieval = disciplineEn.includes('wait with async_wait');
       if (!hasEntry) fail('活 tool-subagent 行与 async_agent 行同时在场，纪律段必须写明唯一派生入口（async_agent is the ONLY delegation entry）——需求 §3.1 可验证口径');
-      if (!hasRetrieval) fail('活 tool-subagent 行与 async_agent 行同时在场，纪律段必须写明取回通道（wait with async_wait_agent）——需求 §3.1 可验证口径');
+      if (!hasRetrieval) fail('活 tool-subagent 行与 async_agent 行同时在场，纪律段必须写明取回通道（wait with async_wait）——需求 §3.1 可验证口径');
       if (hasEntry && hasRetrieval) emit('OK    ⑦ 互斥判据触发并通过（活 tool-subagent × async_agent：纪律段已写明唯一派生入口与取回通道）');
     } else {
       emit('OK    ⑦ 互斥判据未触发（tool-subagent 行禁用中——结构性唯一入口在位，条件式守卫待翻活时接管）');

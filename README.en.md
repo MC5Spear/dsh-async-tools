@@ -4,89 +4,104 @@
 
 [![CI](https://github.com/MC5Spear/dsh-async-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/MC5Spear/dsh-async-tools/actions/workflows/ci.yml)
 
-Let a DSH Agent start a long command or child Agent, then continue other work. The task runs in the background. When the result is needed, the Agent waits for a specified time. An expired wait returns control without killing the task. “Host” means the DSH instance loading this plugin.
+Let a DSH Agent run long commands and delegate tasks without waiting for each one to finish. Commands that outlast the initial wait keep running in the background, leaving the Agent free to do independent work. When a result is needed, the Agent waits for it; results arrive directly in the conversation. Expiry or user steering ends the wait without stopping the background task.
 
-**This branch is preparing support for DSH `0.2.2-alpha.2`; the alpha targets are not implemented.** The current code and manifest still correspond to rc4 below. These installation instructions are for the rc4 host, not the alpha host. Future version, Node, and dependency targets remain in the source requirements.
+Install this plugin for frequent long tasks or parallel delegation. If short commands cover your needs, keeping the existing preset is reasonable.
 
-| Component | Current applicable version |
-| --- | --- |
-| Plugin version | `0.2.7+dsh.0.2.1-rc.4` |
-| Exact dsh host version | `0.2.1-rc.4` |
-
-This third-party plugin is unaffiliated with DeepSeek. It is personally maintained: [issues](<https://github.com/MC5Spear/dsh-async-tools/issues>) are accepted, external PRs are not, and there is no fixed response or repair schedule. Report security problems through issues too, after removing sensitive information.
+This third-party plugin is unaffiliated with DeepSeek. It is personally maintained: issues are accepted, external PRs are not, and there is no fixed response or repair schedule. Report security problems through issues after removing sensitive information.
 
 ## Before installing
 
-- **Match the exact DSH version above.** A mismatch may prevent the entire plugin from loading.
-- **Node.js 24 is recommended.** Before using another version, check the [complete runtime prerequisites](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>). Do not treat the plugin declaration as a minimum for the complete DSH host.
-- **Installation source.** This package is not distributed through npm. If the installation address does not yield the source, check the repository address and pinned commit, then the network or proxy. If it still fails, contact the maintainer who supplied the source. The [installation prerequisites](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>) explain access troubleshooting.
-- **This line targets Windows; full host revalidation remains pending.** Linux commands and one-shot escalation, macOS, and remote execution are unverified. Send the maintainer your environment and intended use to arrange isolated verification. Partial Windows results do not establish support for other platforms.
+| Component | Current applicable version |
+| --- | --- |
+| Plugin version | `0.2.9+dsh.0.2.1-rc` |
+| Supported dsh host versions | `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4`, `0.2.1-rc.5` |
 
-## Install
+“Host” means the DSH instance loading the plugin. **Only these four DSH versions can load this package**, not the final `0.2.1` or an unlisted rc. Node.js 24 is recommended; see the [runtime prerequisites](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>) before choosing another runtime.
 
-In a terminal configured for the matching DSH, run:
+Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Full real-host rechecking on rc.3/rc.4 is also incomplete. Before relying on these environments, check the features needed in a separate test session.
+
+For IME, screen-reader, or touch-based answers, and for result recovery after a canceled tool call, also read [usage limits and saving results](<docs/user-reference.en.md#usage-limits-and-saving-results>).
+
+## Install and confirm loading
+
+The package is not distributed through npm. Installation reuses dependencies supplied by DSH; no separate DSH installation is needed. Since 0.2.9, installing or upgrading this package does not require disabling the package manager's `autoInstallPeers` option.
+
+The package has no installation scripts of its own. If installation or an upgrade requests script approval, follow [script-approval troubleshooting](<docs/user-reference.en.md#installation-script-approval-troubleshooting>) to check the source and need before deciding whether to allow execution.
+
+Install through the GUI:
+
+1. Open **Plugins** in the left sidebar and select **Add plugin**. **Install a third-party plugin** in the adjacent dropdown opens the same flow.
+2. Paste this into the package name/address field:
+
+   ```text
+   github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
+   ```
+
+3. Select **Install**, then **Enable now** on the success page. If already enabled, confirm its enabled status instead.
+4. If the host requests a reload/restart, deal with active tasks and save needed results before following that prompt.
+5. Open the package's detail page and confirm that the settings form is visible.
+6. Create a session and find `dsh-async` and `dsh-async-create` in the preset selector. Choose either and confirm that the Agent has the five tools below. A preset configures the Agent's tools and working instructions; both are supplied with the package. Follow [installation troubleshooting](<docs/user-reference.en.md#installation-troubleshooting>) if entries are missing.
+
+Alternatively, install from a terminal:
 
 ```powershell
-dsh plugin --profile web add github:MC5Spear/dsh-async-tools#ca8f65b39b7694f9e5a2b28cca7a29bc43485ecc
+dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
 ```
 
-Alternatively, open plugin management in DSH Web and paste this into the installation address field of the install dialog:
+`web` is the target profile's name; substitute the appropriate name for another profile. After installation, likewise confirm it is enabled and check loading as above.
 
-```text
-github:MC5Spear/dsh-async-tools#ca8f65b39b7694f9e5a2b28cca7a29bc43485ecc
-```
+This address follows a moving maintenance branch. For repeatable installation, replace the branch after `#` with a full commit ID available from the repository, and keep that installation address. See [pinning and checking the installation](<docs/user-reference.en.md#install-pin-a-source-and-check-the-version>) for version checks.
 
-This pins an rc4 source commit, not an alpha artifact. The maintainer's `#adapt/dsh-0.2.1-rc.4` source follows a moving branch; use the full commit above to reproduce a fixed source.
+## Try a first background task
 
-After installation and any host-requested reload, `dsh-async-tools` should appear in the plugin list. Open its detail page: the settings form should appear between the description and component rows. New sessions should offer `dsh-async` and `dsh-async-create`, without manually creating preset directories. If tools or settings are missing, follow [installation and settings recovery](<docs/user-reference.en.md#8-disable-recover-and-report-problems>) to check the version and loading state.
+This demonstration uses factory wait settings. On Windows, create a session with `dsh-async` for general coding, or `dsh-async-create` to retain plugin and preset authoring tools. Send the Agent this request:
 
-## Start a background task
+> Demonstrate background execution without modifying files, accessing the network, or creating children. First use async_run to run `Write-Output SHORT_OK`, then run `Start-Sleep -Seconds 30; Write-Output LONG_DONE` with yield_ms=20000 on the second call. Keep the returned job_id and do independent work first. When the result is needed, use async_wait targeting that job with wait_ms=30000. Report both markers and actual exit information. Do not rerun the command to check progress; if no identifier arrived, check job_list first.
 
-Choose `dsh-async` for general coding or `dsh-async-create` for authoring with plugin and preset creation tools retained. A preset is a set of Agent tools and execution rules. These two presets leave DSH's existing presets unchanged.
+The short command should return `SHORT_OK` directly. The 30-second command should return a `job_id` after its initial wait of at most 20 seconds. Its result, containing `LONG_DONE`, then arrives in a wait return or completion message. Still inspect exit information: `completed` means execution ended, not that the exit code was zero.
 
-Ask the Agent to run a harmless long task. This is an **Agent tool-call illustration, not a PowerShell function**:
+These are **Agent tool-call examples, not terminal commands**:
 
 ```text
 async_run(command="Start-Sleep -Seconds 30; Write-Output LONG_DONE",
-          description="Wait then print completion marker", yield_ms=1000)
+          description="Wait then print completion marker", yield_ms=20000)
+async_wait(targets=[{kind:"job", id:"<returned job_id>"}], wait_ms=30000)
 ```
 
-The example initially waits one second. If the task has not finished, the tool returns a job identifier, `job_id`, and the Agent can continue independent work. When the result is needed, use that same identifier:
+Factory settings give `yield_ms` a default of 20000 ms and bound each request to 20000–600000 ms. `wait_ms` is required every time. Expiry leaves the task running; use `job_kill` explicitly for unwanted jobs, rather than rerunning commands to check progress.
 
-```text
-async_wait_job(job_id="<returned job_id>", wait_ms=30000)
-```
+Results are not replayed indefinitely. Save anything that must be kept. For long output, failed reads, or canceled calls, continue with the original job using [result handling and recovery](<docs/user-reference.en.md#4-wait-states-and-direct-delivery>).
 
-`wait_ms` is required on every call and has no default. If the task is not yet finished, wait again later; do not start the command again. Canceling a wait also leaves the task running. To stop unwanted work, explicitly use the host's `job_kill`. Recover a missing identifier from `job_list` or the completion notice.
+## Tools and presets
 
-Output is consumed incrementally: successful reads do not replay consumed text, and the final result is delivered once. Save necessary results promptly and inspect the actual exit code; `completed` does not mean exit code zero. See [result handling](<docs/user-reference.en.md#4-wait-states-and-consuming-output>) for truncation, buffer loss, and temporary files.
-
-## Tools and settings
+Both presets directly provide five tools without modifying existing presets:
 
 | Tool | Purpose |
 | --- | --- |
-| `async_run` | Runs commands; short tasks return results, long tasks return job identifiers |
-| `async_wait_job` | Waits for a job and reads the result obtained by this call |
-| `async_agent` | Starts a resumable child in the background and immediately returns `agent_id` |
-| `async_wait_agent` | Waits until a child is no longer running; its final answer arrives separately |
-| `async_workflow` | Runs an explicitly requested workflow or large-scale orchestration as a background job |
-| `async_list_subagent_models` | Browses and searches models and checks applicability to a chosen creation tool |
+| `async_run` | Runs a command and returns its result or a background job identifier |
+| `async_wait` | Waits for messages, job results, or explicit targets; returns immediately when there is no work to wait for |
+| `async_agent` | Starts a resumable child in the background and immediately returns `agent_id`; the final answer arrives separately |
+| `async_workflow` | Coordinates large multi-agent tasks with JavaScript; manages the whole run as a background job |
+| `async_list_subagent_models` | Browses or searches models and checks whether a chosen creation tool can use them |
 
-Both presets expose all six tools directly. Inspection, messaging, and stopping remain host management operations. See the [user reference](<docs/user-reference.en.md>) for all arguments, 17 settings, and custom preset composition.
+Inspection, messaging, and stopping remain DSH management operations. Children usually need no explicit model choice. When one is needed, follow [discovery, creation, and waiting](<docs/user-reference.en.md#5-model-catalogs-authorization-and-inheritance>). Each explicit model or effort choice through `async_agent` reads the current DSH model-selection policy. Saved changes affect later creation, not running children.
 
-Edit settings on the plugin detail page, then click Save to apply them; ordinary settings saves do not require restart. Restoring defaults also requires Save. Question takeover and silent-command-failure protection are off by default; read [questions and protection](<docs/user-reference.en.md#6-question-takeover-and-silent-failures>) before enabling them.
+Custom presets can use all features too, but tools must be mounted manually and workflows need an engine. The `boundPresets` setting scopes operating instructions and auxiliary features; it does not install tools. See [custom composition](<docs/user-reference.en.md#7-advanced-composition>).
 
-## Change the default preset before removal
+## Settings, safety, and removal
 
-**Change the default preset before disabling or uninstalling.** If it still points to `dsh-async` / `dsh-async-create`, new sessions fail with `agent-preset/not-found` after removal. Select an available preset in host settings first. If already removed, clear or reselect the default there, then verify with a new session.
+Open the plugin list → this package's detail page. Save applies edits, including Restore default actions. Ordinary valid saves need no restart. The [settings reference](<docs/user-reference.en.md#2-first-use-and-settings>) explains each field and its default.
 
-Removal does not automatically cancel jobs owned by their initiating session. Inspect `job_list` and explicitly stop unwanted work first; restarting may terminate active processes. See [disable, recover, and report](<docs/user-reference.en.md#8-disable-recover-and-report-problems>) for complete steps.
+The pending-question panel and silent-command-failure warnings are off by default. Enable `askTakeover` and `silentFailureGuard`, respectively, when needed. Both act only on presets in `boundPresets`, which defaults to the two shipped presets.
 
-Commands retain session permissions, approvals, sandbox, and directory. Commands and results may contain sensitive data; redact them before sharing. See [result handling](<docs/user-reference.en.md#4-wait-states-and-consuming-output>) for buffer and temporary-file risks, and [model catalogs and authorization](<docs/user-reference.en.md#5-model-catalogs-authorization-and-inheritance>) for model selection.
+Commands inherit the session's directory, sandbox, approvals, and permissions, and can still access the network or sensitive information. The plugin itself collects no telemetry, initiates no network requests, and does not read or write credentials. Model discovery obtains data from DSH without model inference. Output and host temporary files may contain secrets; redact before sharing.
+
+**Before disabling or uninstalling, change the default preset and deal with active tasks.** If the default still points to `dsh-async` or `dsh-async-create`, new sessions fail with `agent-preset/not-found` after removal. Select an available preset in host settings; if already removed, clear or reselect the default and confirm with a new session. Removing tools does not automatically stop session jobs, while restarting may terminate active processes. See the [removal and recovery steps](<docs/user-reference.en.md#8-disable-recover-and-report-problems>).
 
 ## AI maintainers
 
-AI maintainers involved in this project include:
+AI maintainers include:
 
 - `gpt-6.1-sol`
 - `kimi k3`
@@ -95,16 +110,8 @@ AI maintainers involved in this project include:
 
 ## Documentation and licensing
 
-The [user reference](<docs/user-reference.en.md>) contains complete operating instructions. Maintenance material is in Chinese and is not all packaged. Obtain the corresponding checkout from the [fixed rc4 source](<https://github.com/MC5Spear/dsh-async-tools/tree/ca8f65b39b7694f9e5a2b28cca7a29bc43485ecc>) and read:
+See the [user reference](<docs/user-reference.en.md>) for operating details. Development, requirements, design, verification, and changelog documents are in Chinese and are not shipped with the package. They are available in the [source repository](<https://github.com/MC5Spear/dsh-async-tools/tree/adapt/dsh-0.2.1>). To check an installation, use the commit from its installation address rather than the latest contents of the moving branch.
 
-```text
-CONTRIBUTING.md          Development, review, and release
-docs/requirements.md     Product contract
-docs/design.md           Mechanisms and verification gaps
-verify/README.md         Probe safety and mutation index
-CHANGELOG.md             Release history
-```
-
-The project uses the [MIT license](<LICENSE>). Both presets and some subagent-policy helpers adapt DeepSeek Harness material. The packaged [third-party notices](<THIRD_PARTY_NOTICES.md>) contain the source attribution, upstream copyright, and full MIT text.
+The project uses the [MIT license](<LICENSE>). Both presets and some subagent-policy helpers adapt DeepSeek Harness material. The packaged [third-party notices](<THIRD_PARTY_NOTICES.md>) contain sources, upstream copyright, and the full MIT text.
 
 Documentation maintenance follows the [documentation principles (Chinese)](<docs/documentation-principles.md>).

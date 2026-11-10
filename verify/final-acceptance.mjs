@@ -1,15 +1,17 @@
 /**
- * 终局验收：把目标里的**每一条强制要求**在验证实例上逐条实测，一次跑完并给出总判定。
+ * 终局验收（基础子集）：在验证实例上把下面列出的七组基础判据一次跑完并给出总判定。
  *
  * 为什么要单独写这个：既有脚本每个只验一到两条要求，收尾时"到底哪几条验过了"要靠人
- * 在几份 JSON 与文档之间对账。这份脚本把**强制要求 → 可观察判据**固化成一张表。
+ * 在几份 JSON 与文档之间对账。这份脚本把**已覆盖的强制要求 → 可观察判据**固化成一张表。
+ * 它**不**覆盖目标里的全部强制要求——路由查询与实时选择由 acceptance-017 承担、
+ * workflow 由专门探针承担、其余要求见 `verify/README.md` 第 3 节各探针的覆盖行。
  *
  * 覆盖：
- *   1. 呈现模式 native（需求 §1.2：有 async_run/async_wait_job/async_wait_agent，无 run_code、无 pwsh）
+ *   1. 呈现模式 native（需求 §1.2：有 async_run/async_wait/async_agent，无 run_code、无 pwsh）
  *   2. 预设隔离（需求 §1.2：standard 有 pwsh、无三个工具）
  *   3. 短命令在首次等待内直接返回完整输出（需求 §2.2.1：命令从执行起注册，首次等待内结算直回）
  *   4. 长命令让出且**不被杀**，句柄可复制粘贴（需求 §2.2.1）
- *   5. async_wait_job 取回输出（需求 §2.2.2）
+ *   5. async_wait 取回输出（需求 §2.2.2）
  *   6. 插话打断等待、作业未被取消、最终仍取回完整输出（需求 §2.1.2）
  *   7. 反复调用不累积（3 轮）
  *
@@ -33,7 +35,15 @@ function record(name, passed, detail) {
 }
 
 /**
- * 起跑前把设置**打回出厂默认值**，并核对确实打回去了。
+ * 起跑前把设置写成本探针的**测试基线**，并核对确实写进去了。
+ *
+ * ## 这是自定义测试基线，不是出厂默认
+ *
+ * `lib/config.js` 的 schema 默认值（出厂默认的唯一来源）与本表在**三处有意不同**：
+ * `minYieldMs` 1000（出厂 20000 会把本脚本指令里的 `yield_ms=1500` 夹紧为 20s，
+ * 六秒长命令在首等内结算、不再让出，判据④②被旁路）、`minWaitMs` 250（放开小额
+ * `wait_ms` 的夹紧下限）、`maxResultChars` 30000（结果预算余量，避免截断干扰断言）。
+ * 这三处是**有意构造的短预算**，不要"顺手"改回出厂值；其余字段与出厂默认一致。
  *
  * ## 为什么每个真机脚本都要做这一步（这是类问题，不是单点）
  *
@@ -45,11 +55,19 @@ function record(name, passed, detail) {
  * "等待被夹到 2 秒"而报行为不符，看起来像产品坏了。
  *
  * 所以每个真机脚本都**自己**保证起跑状态，不依赖别人的 `finally`：
- * 写一遍默认值 + 读回核对。写不进去就明确报出来并失败，而不是带着脏状态跑出假结论。
+ * 写一遍基线 + 读回核对。写不进去就明确报出来并失败，而不是带着脏状态跑出假结论。
  *
- * 归属边界：`restore-async-settings.mjs` 管"跑完之后还原"，这里管"跑之前先归位"。
+ * ## 写入与恢复的责任划分
+ *
+ * 本脚本只负责**起跑前**把设置写成这份基线；**跑完之后**的收尾由
+ * `restore-async-settings.mjs` 承担——它用 `settings/replace` 清除全部 volatile
+ * 用户覆盖（不读快照、不做修订号比对，核对与调用之间无并发保护；判据是用户
+ * 覆盖层清空，不是手抄默认值对照）。一次性验证实例上组合层无别的覆盖，用户
+ * 覆盖清空＝回到出厂形态；共享实例上它只清用户覆盖、不恢复原状——恢复须按
+ * 主设置探针（probe-settings-behavior-full）落盘的证据快照人工执行。
+ * 需要引用当前出厂默认值时从 `lib/config.js` 取得，不在探针里另抄一份会漂移的手抄副本。
  */
-const FACTORY_DEFAULTS = {
+const TEST_BASELINE = {
   defaultYieldMs: 20000, minYieldMs: 1000, maxYieldMs: 600000,
   defaultWaitMs: 30000, minWaitMs: 250, maxWaitMs: 600000,
   pollIntervalMs: 500, maxResultChars: 30000, jobKind: 'async-command'
@@ -66,18 +84,18 @@ async function readSettings() {
 }
 
 const before = await readSettings();
-const drifted = Object.keys(FACTORY_DEFAULTS).filter((k) => before[k] !== FACTORY_DEFAULTS[k]);
+const drifted = Object.keys(TEST_BASELINE).filter((k) => before[k] !== TEST_BASELINE[k]);
 if (drifted.length > 0) {
-  console.log(`起跑前发现设置漂移，先归位：${drifted.map((k) => `${k}=${String(before[k])}`).join(' ')}`);
-  await patchNs(FACTORY_DEFAULTS);
+  console.log(`起跑前发现设置偏离本探针测试基线，先归位：${drifted.map((k) => `${k}=${String(before[k])}`).join(' ')}`);
+  await patchNs(TEST_BASELINE);
 }
 const after = await readSettings();
-const stillDrifted = Object.keys(FACTORY_DEFAULTS).filter((k) => after[k] !== FACTORY_DEFAULTS[k]);
+const stillDrifted = Object.keys(TEST_BASELINE).filter((k) => after[k] !== TEST_BASELINE[k]);
 if (stillDrifted.length > 0) {
   // 带着脏设置跑出来的红是**假红**，比不跑更糟——所以这里直接停。
   throw new Error(`起跑基线写不进去，拒绝继续（否则读数不可信）：${stillDrifted.join(', ')}`);
 }
-console.log(`起跑基线：设置全部等于出厂默认值（${drifted.length > 0 ? `本次归位了 ${String(drifted.length)} 项` : '本来就干净'}）。`);
+console.log(`起跑基线：设置全部等于本探针测试基线（${drifted.length > 0 ? `本次归位了 ${String(drifted.length)} 项` : '本来就干净'}；跑完由 restore-async-settings.mjs 清除全部用户覆盖——一次性验证实例上等价回到出厂形态，见该脚本头注）。`);
 console.log('');
 
 /** 起一个会话并断言预设没被静默回退。 */
@@ -150,8 +168,8 @@ console.log('=== 1) 呈现模式与预设隔离 ===');
   const { assistantText, calls } = parse(await transcript(sid));
   const match = assistantText.match(/TOOLS=([^\n`]+)/);
   const names = match === null ? [] : match[1].split(',').map((s) => s.trim()).filter(Boolean);
-  record('四个工具都在（async_run/async_wait_job/async_wait_agent/async_agent）',
-    ['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent'].every((n) => names.includes(n)),
+  record('三个工具都在（async_run/async_wait/async_agent）',
+    ['async_run', 'async_wait', 'async_agent'].every((n) => names.includes(n)),
     `工具清单=${names.join(',') || '(读不到)'}；模型调用数=${String(calls.length)}`);
   record('呈现模式是 native（无 run_code）', !names.includes('run_code'));
   record('未挂同步 shell（无 pwsh）', !names.includes('pwsh'));
@@ -176,7 +194,7 @@ console.log('=== 1) 呈现模式与预设隔离 ===');
   // 它会被读成"这三个工具不许出现在 standard 里"，也就是把**模板**读成了**限制**。
   // 而它在这里真正证明的是"本插件那一行没有落到宿主侧"。
   record('本插件**没有把工具强行装进所有预设**（standard 里不出现，即未泄漏到全局工具层）',
-    !['async_run', 'async_wait_job', 'async_wait_agent', 'async_agent'].some((n) => names.includes(n)),
+    !['async_run', 'async_wait', 'async_agent'].some((n) => names.includes(n)),
     '这条不表示"只有 dsh-async 预设能有它们"——别的预设自己加同样的行就能得到（需求 §1.2）');
 }
 
@@ -188,19 +206,19 @@ console.log('=== 2) 执行、取回与插话行为 ===');
     '严格按顺序做四步，不要做别的事情：',
     '① 用 async_run 执行 `Write-Output SHORT_OK`；',
     '② 用 async_run 执行 `Start-Sleep -Seconds 6; Write-Output LONG_DONE`，传 yield_ms=1500；',
-    '③ 用返回的 job_id 调 async_wait_job（wait_ms=30000）；',
+    '③ 用返回的 job_id 调 async_wait（targets=[{kind:"job", id:...}]，wait_ms=30000）；',
     '④ 只回复一行 ALL_DONE，不要总结。'
   ].join('\n'));
   const { calls, results } = parse(await transcript(sid));
   const runCalls = calls.filter((c) => c.name === 'async_run');
-  const waitCalls = calls.filter((c) => c.name === 'async_wait_job');
+  const waitCalls = calls.filter((c) => c.name === 'async_wait');
   record('短命令在首次等待内直接返回完整输出', results.some((t) => t.includes('SHORT_OK')), '见结果里的 SHORT_OK；作业本身从执行起已注册（需求 §2.2.1）');
   record('长命令让出而非被杀',
     results.some((t) => YIELD_RUNNING.test(t) && NOT_TERMINATED.test(t)),
     `async_run 调用 ${String(runCalls.length)} 次`);
-  record('async_wait_job 取回输出', results.some((t) => t.includes('LONG_DONE')), `async_wait_job 调用 ${String(waitCalls.length)} 次`);
-  record('让出结果里给出可复制粘贴的 async_wait_job 调用句（带 job_id）',
-    results.some((t) => /async_wait_job\(job_id="[^"]+", wait_ms=\d+\)/.test(t)));
+  record('async_wait 取回输出', results.some((t) => t.includes('LONG_DONE')), `async_wait 调用 ${String(waitCalls.length)} 次`);
+  record('让出结果里给出可复制粘贴的 async_wait 调用句（带 job_id）',
+    results.some((t) => /async_wait\(targets=\[\{kind:"job", id:"[^"]+"\}\]/.test(t)));
 }
 
 console.log('');
@@ -213,18 +231,18 @@ console.log('=== 3) 插话打断等待而不打断后台作业 ===');
       requestId: `req-${Math.random().toString(36).slice(2, 10)}`,
       sessionId: sid, mode: 'queue',
       content: [{ type: 'text', text: '用 async_run 执行 `Start-Sleep -Seconds 60; Write-Output SURVIVED`，传 yield_ms=1500；'
-        + '拿到 job_id 后**立刻**用 async_wait_job 等它（wait_ms=120000）。期间不要做别的。' }],
+        + '拿到 job_id 后**立刻**用 async_wait 等它（targets=[{kind:"job", id:...}]，wait_ms=120000）。期间不要做别的。' }],
       clientTimeZone: 'Asia/Shanghai'
     }
   });
-  // 等到出现一次 async_wait_job 调用（说明它已经进入长等待），再发插话。
+  // 等到出现一次 async_wait 调用（说明它已经进入长等待），再发插话。
   let waiting = false;
   for (let i = 0; i < 60 && !waiting; i++) {
     await sleep(1000);
     const { calls } = parse(await transcript(sid));
-    waiting = calls.some((c) => c.name === 'async_wait_job');
+    waiting = calls.some((c) => c.name === 'async_wait');
   }
-  record('场景搭建成功（模型已进入 async_wait_job 长等待）', waiting);
+  record('场景搭建成功（模型已进入 async_wait 长等待）', waiting);
   await rpc('session/prompt', {
     request: {
       requestId: `req-${Math.random().toString(36).slice(2, 10)}`,
@@ -233,7 +251,7 @@ console.log('=== 3) 插话打断等待而不打断后台作业 ===');
       clientTimeZone: 'Asia/Shanghai'
     }
   });
-  await ask(sid, '继续：用 async_wait_job 把那个作业的输出取回来（wait_ms=90000），然后只回复它打印的那一行。');
+  await ask(sid, '继续：用 async_wait 把那个作业的输出取回来（targets=[{kind:"job", id:...}]，wait_ms=90000），然后只回复它打印的那一行。');
   const { results } = parse(await transcript(sid));
   record('等待被插话打断并说明作业未受影响',
     results.some((t) => WAIT_INTERRUPTED.test(t) && SUBJECT_UNTOUCHED.test(t)));
@@ -249,7 +267,7 @@ console.log('=== 4) 反复调用不累积（3 轮）===');
   const rounds = [];
   for (let n = 1; n <= 3; n++) {
     await ask(sid, `用 async_run 执行 \`Start-Sleep -Seconds 4; Write-Output REPEAT${String(n)}\`，传 yield_ms=1500；`
-      + `拿到 job_id 后用 async_wait_job 等它（wait_ms=30000），然后只回复它打印的那一行。`);
+      + `拿到 job_id 后用 async_wait 等它（targets=[{kind:"job", id:...}]，wait_ms=30000），然后只回复它打印的那一行。`);
     const { results } = parse(await transcript(sid));
     const y = results.map((t) => t.match(/已运行约 (\d+) ms|about (\d+) ms elapsed/)).filter((m) => m !== null).map((m) => Number(m[1] ?? m[2]));
     rounds.push({ n, got: results.some((t) => t.includes(`REPEAT${String(n)}`)), yieldMs: y.at(-1) ?? null });

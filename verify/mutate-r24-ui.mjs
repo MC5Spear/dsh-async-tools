@@ -8,13 +8,13 @@
  * 变异原则与 `verify/mutate-facts-anchors.mjs` 相同：**每一条判据都要能被改坏打成红**，
  * 任何一条没红就报 UNCAUGHT 并退出 1（不设 SKIP）。
  *
- * 字段清单**从代码取**（`lib/config.js` 的 `BUDGET_FIELD_KEYS`），不在本文件里抄一份——
+ * 字段清单**从代码取**（`lib/config.js` 的 `SETTING_FIELD_KEYS`），不在本文件里抄一份——
  * 手抄键名一旦拼错，"身份"变异就一直作用在假清单上而不变红。
  *
  * 用法：node verify/mutate-r24-ui.mjs
  */
 import { judgeDeliveredBytes, judgeConfigForm, judgePlacement, judgeReadoutFollows, judgeRoundTrip } from './r24-judgements.mjs';
-import { BUDGET_FIELD_KEYS, LANG_FIELD_KEYS, FLAG_FIELD_KEYS, ASK_FIELD_KEYS, MS_FIELD_KEYS } from '../lib/config.js';
+import { SETTING_FIELD_KEYS, MS_FIELD_KEYS } from '../lib/config.js';
 
 const results = [];
 /**
@@ -45,9 +45,9 @@ mutation('M5 挂回官方槽 plugins.item 必须判不成立', true, () => judge
   '<script>class AsyncToolsBundleCard{}; slots.register({name:"plugins.item"})</script>'));
 
 // ── 第二段：插件页的设置区 DOM 读数（含放置） ─────────────────────────────
-// 四组**全要**（预算、语言、开关、提问接管）——少取一组，判据就少看那组字段，
-// 变异照样全绿。键集的单一来源是 `lib/config.js`，别在这里另立一份。
-const KEYS = [...BUDGET_FIELD_KEYS, ...LANG_FIELD_KEYS, ...FLAG_FIELD_KEYS, ...ASK_FIELD_KEYS];
+// **六组全量**（键集的单一来源是 `lib/config.js` 的 `SETTING_FIELD_KEYS`，含
+// boundPresets 绑定块身份）——少取一组，判据就少看那组字段，变异照样全绿。
+const KEYS = [...SETTING_FIELD_KEYS];
 const MS_KEYS = [...MS_FIELD_KEYS];
 const goodForm = {
   count: KEYS.length,
@@ -58,9 +58,15 @@ const goodForm = {
   failed: false
 };
 
-mutation(`M6 基线：${String(KEYS.length)} 字段（身份一致）+ 全部可写 + 读数长在 ${String(MS_KEYS.length)} 个毫秒字段上必须判成立`, false,
+mutation(`M6 基线：${String(KEYS.length)} 字段（身份一致，含 boundPresets 绑定块身份经帮助锚读出）+ 全部可写 + 读数长在 ${String(MS_KEYS.length)} 个毫秒字段上必须判成立`, false,
   () => judgeConfigForm(goodForm, KEYS, MS_KEYS));
-mutation(`M7 少一个字段（${String(KEYS.length - 1)} 个）必须判不成立`, true, () => judgeConfigForm({ ...goodForm, count: KEYS.length - 1 }, KEYS, MS_KEYS));
+mutation(`M7 少一个字段（count=${String(KEYS.length - 1)} 与键数不符）必须判不成立`, true, () => judgeConfigForm({ ...goodForm, count: KEYS.length - 1 }, KEYS, MS_KEYS));
+mutation(`M7b 页面少渲染一个字段（keys/count/writable 同少 ${String(KEYS.length - 1)}）必须判不成立`, true,
+  () => judgeConfigForm({ ...goodForm, count: KEYS.length - 1, keys: KEYS.slice(0, KEYS.length - 1), writable: KEYS.slice(0, KEYS.length - 1).map(() => true) }, KEYS, MS_KEYS));
+// 控件通道按精确 id 排除绑定块复选框（id 形如 plugin-config-boundPresets-<预设id>）——
+// 复选框键混入身份集合必须红，否则绑定块的读数污染不可见。
+mutation('M29 复选框键混入（boundPresets-<预设id> 形态键）必须判不成立', true,
+  () => judgeConfigForm({ ...goodForm, keys: [...KEYS, 'boundPresets-dsh-async'], count: KEYS.length + 1 }, KEYS, MS_KEYS));
 mutation('M8 秒数读数缺失必须判不成立', true, () => judgeConfigForm({ ...goodForm, readouts: [] }, KEYS, MS_KEYS));
 mutation('M9 页脚出现失败文案必须判不成立', true,
   () => judgeConfigForm({ ...goodForm, failed: true }, KEYS, MS_KEYS));

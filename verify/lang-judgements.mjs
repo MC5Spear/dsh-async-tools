@@ -19,8 +19,10 @@ function same(a, b) {
  * 需求 §5.3 的判据：两个方向各自"换了自己那块"且"没动对方那块"。
  *
  * 读数来源与命名（`0` = 出厂态、`1` = 只改 `agentLang` 之后、`2` = 再改 `uiLang` 之后）：
- * - `labels*`：设置表单的可见字段标签（`[data-plugin-config] label` 的文本序列）；
- * - `names*`：表单控件的身份序列（`[id^="plugin-config-"]` 去前缀，字段身份，语言切换不得改变它）；
+ * - `labels*`：设置表单的字段行标签（`.ats-enum-head` 内 `.ats-enum-label` 的文本序列，
+ *   含布尔行与绑定块）；
+ * - `names*`：字段行身份序列（帮助锚 `aria-controls` 去前缀，值控件/布尔/绑定块 20 行
+ *   全覆盖——语言切换不得改变它）；
  * - `desc*`：新会话第一条 `request/header` 里 `async_run` 的描述（模型实际收到的串）。
  *
  * @param {{labels0: string[], labels1: string[], labels2: string[], names0: string[], names2: string[],
