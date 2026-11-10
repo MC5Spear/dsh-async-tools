@@ -5,12 +5,13 @@
  *
  * 当前几何预期：①--sidebar 面板右锚 16px＋width:min(340px,100vw-76px)，在一切
  * 宽度左缘 ≥60px（390 形态 l=60；768 时 l≈412/r=752，面板不再被 left:60px
- * 过度约束成居左形态）；②计数泡 right:-2px（泡盒右缘内收入列界 56px 内，
- * 判据 A 间隙应 ≥8px）。
+ * 过度约束成居左形态）；②徽标宿主化形态——固定 50px 盒内「图标＋内联泡」
+ * 居中（泡四边含于按钮盒、与 svg 间隙 ≈3px）。
  *
  * 常设计据（徽标/面板矩阵×4 配置＋徽标悬停两主题＋批次清空后的徽标消隐，
  * 逐条见 check 调用点）：
- * - A：问号 svg 盒×计数泡盒零重叠（矩形相交即 FAIL）。
+ * - A：计数泡盒四边含于按钮盒且与问号 svg 盒零重叠（适用零至三位计数；
+ *   四位及以上为登记退化形态不入判——旧形泡上凸遮边/叠图标即 FAIL）。
  * - B：面板盒×侧栏列盒（徽标第一个 overflow hidden/clip 祖先——等价选择器，
  *   不依赖宿主 CSS 模块类名）零重叠。
  * 其余：三盒零重叠维持（bottom=94px）、泡对比度（浅 92%/深 62% 混黑白字）、
@@ -239,7 +240,7 @@ function parseCssColor(text) {
   return null;
 }
 
-// ── 徽标/面板几何读取（第二轮：纯图标按钮＋右上叠置泡）──────────────────────
+// ── 徽标/面板几何读取（第二轮：纯图标按钮＋内联计数泡）──────────────────────
 const BADGE_READ = `(() => {
   const b = document.querySelector('.ats-ask-badge');
   if (b === null) return null;
@@ -267,7 +268,7 @@ const BADGE_READ = `(() => {
       const s = getComputedStyle(node);
       if (s.overflowX === 'hidden' || s.overflowX === 'clip' || s.overflowY === 'hidden' || s.overflowY === 'clip') {
         const nr = node.getBoundingClientRect();
-        // 泡带负偏移（top/right -6px）有意越出徽标盒但不得越出裁切列。
+        // 泡已内联（四边含于徽标盒）——联合盒≈徽标盒，仍按联合界判不越出裁切列。
         const ur = cr === null ? r : { left: Math.min(r.left, cr.left), right: Math.max(r.right, cr.right), top: Math.min(r.top, cr.top), bottom: Math.max(r.bottom, cr.bottom) };
         if (ur.right > nr.right + 1 || ur.left < nr.left - 1 || ur.bottom > nr.bottom + 1 || ur.top < nr.top - 1) return String(node.tagName) + '.' + String(node.className).slice(0, 40);
       }
@@ -283,19 +284,19 @@ const BADGE_READ = `(() => {
     colRect: colRect === null ? null : { l: Math.round(colRect.left), t: Math.round(colRect.top), r: Math.round(colRect.right), b: Math.round(colRect.bottom), w: Math.round(colRect.width), h: Math.round(colRect.height) },
     withinCol: r.left >= colLeft - 0.5,
     inViewport: r.left >= -0.5 && r.right <= innerWidth + 0.5 && r.top >= -0.5 && r.bottom <= innerHeight + 0.5,
-    // 记录字段（不入判）：绝对定位泡有意越出按钮盒（top/right -6px），按 CSS
-    // 规范参与 scrollWidth/scrollHeight 溢出区——叠置泡形态下此读数结构性偏大，
-    // 不构成内容溢出判定；内容真溢出的直接判据是 svgInBox。
+    // 记录字段（不入判）：内联泡形态下泡含于按钮盒、不参与 scrollWidth 溢出区
+    // （旧叠置泡形态此读数结构性偏大）——内容真溢出的直接判据是 svgInBox。
     noSelfOverflowH: b.scrollWidth <= b.clientWidth + 1,
     ancestorClipped,
     count: cr === null ? null : {
       w: Math.round(cr.width), h: Math.round(cr.height),
       text: count.textContent ?? '',
       position: getComputedStyle(count).position,
-      // 右上叠置形：绝对定位＋越出徽标盒（top/right 负偏移，相对 padding box——
-      // right:-2 时越出 border 盒约 1~1.5px，容差取 0.5px 防亚像素边界假阴；
-      // 若内收为 right:0 及以内则如实判非叠置）。
-      anchoredOverlay: getComputedStyle(count).position === 'absolute' && cr.top < r.top - 0.5 && cr.right > r.right + 0.5,
+      // 内联形：非绝对定位＋泡盒四边含于按钮盒（±0.5px 容差防亚像素边界假阴；
+      // 旧叠置泡 top/right 负偏移越出按钮盒——按本判据如实判非内联）。
+      inlineInside: getComputedStyle(count).position !== 'absolute'
+        && cr.left >= r.left - 0.5 && cr.right <= r.right + 0.5
+        && cr.top >= r.top - 0.5 && cr.bottom <= r.bottom + 0.5,
       inViewport: cr.left >= -0.5 && cr.right <= innerWidth + 0.5 && cr.top >= -0.5 && cr.bottom <= innerHeight + 0.5,
       rect: { l: Math.round(cr.left), t: Math.round(cr.top), r: Math.round(cr.right), b: Math.round(cr.bottom) },
       // 泡中心实际绘制者（不被裁切/遮挡——命中泡自身或其文本）。
@@ -315,8 +316,8 @@ const BADGE_READ = `(() => {
         tokenError: getComputedStyle(document.body).getPropertyValue('--dsw-alias-state-error-primary').trim() };
     })(),
     svg: sr === null ? null : { w: Math.round(sr.width), h: Math.round(sr.height), rect: { l: Math.round(sr.left), t: Math.round(sr.top), r: Math.round(sr.right), b: Math.round(sr.bottom) } },
-    // 判据 A：问号图标盒与计数泡盒零重叠——旧形泡直接叠图标右上，几何命中
-    // 判据全过但问号被盖不可辨；两盒矩形相交即 FAIL。
+    // 判据 A 组成①：问号图标盒与计数泡盒零重叠（内联形下两盒为 gap:3px 的
+    // flex 兄弟——相交即形态回归 FAIL）。
     svgCountOverlap: sr === null || cr === null ? null
       : !(sr.right <= cr.left + 0.5 || cr.right <= sr.left + 0.5 || sr.bottom <= cr.top + 0.5 || cr.bottom <= sr.top + 0.5),
     svgGapX: sr === null || cr === null ? null : Math.round((cr.left - sr.right) * 10) / 10,
@@ -345,7 +346,7 @@ const PANEL_READ = `(() => {
   const cr = b === null ? null : b.querySelector('.ats-ask-count')?.getBoundingClientRect() ?? null;
   const separated = br === null ? false
     : pr.bottom <= br.top + 0.5 || br.bottom <= pr.top + 0.5 || pr.right <= br.left + 0.5 || br.right <= pr.left + 0.5;
-  // 泡盒分离（独立于徽标盒——泡带 top/right 负偏移，可能与面板角相碰）。
+  // 泡盒分离（独立判——旧形泡带负偏移可能与面板角相碰；内联形泡含于徽标盒，本判据恒随徽标盒分离成立）。
   const countSeparated = cr === null ? false
     : pr.bottom <= cr.top + 0.5 || cr.bottom <= pr.top + 0.5 || pr.right <= cr.left + 0.5 || cr.right <= pr.left + 0.5;
   // 判据 B：面板盒与宿主侧栏列盒（徽标的第一个 overflow hidden/clip 祖先）
@@ -605,23 +606,24 @@ try {
     if (collapsed === null || collapsed === undefined) {
       check(`BADGE ${tag} 收起态徽标在场`, false, '.ats-ask-badge 未命中');
     } else {
-      check(`BADGE ${tag} 徽标盒 ≤52px 且左缘不裁切（≥图标列左缘＋svg 在按钮盒内＋无 hidden/clip 祖先真裁切＋视口内）`,
-        collapsed.rect.w <= 52 && collapsed.withinCol === true && collapsed.inViewport === true
+      check(`BADGE ${tag} 徽标盒 ≤52px×高 ≥28px 且左缘不裁切（≥图标列左缘＋svg 在按钮盒内＋无 hidden/clip 祖先真裁切＋视口内）`,
+        collapsed.rect.w <= 52 && collapsed.rect.h >= 28 && collapsed.withinCol === true && collapsed.inViewport === true
           && collapsed.svgInBox === true && collapsed.ancestorClipped === '',
-        `rect=${JSON.stringify(collapsed.rect)}（宽=${String(collapsed.rect.w)}px，列左缘=${String(collapsed.colLeft)}） 视口=${String(collapsed.vw)}×${String(collapsed.vh)} svg在盒内=${String(collapsed.svgInBox)} 祖先裁切=${String(collapsed.ancestorClipped)} 左缘带绘制=${String(collapsed.drawnAtLeftEdge)}（记录：scrollWidth≤clientWidth=${String(collapsed.noSelfOverflowH)}——叠置泡越出计入溢出区，非内容溢出）`);
+        `rect=${JSON.stringify(collapsed.rect)}（宽=${String(collapsed.rect.w)}px 高=${String(collapsed.rect.h)}px，列左缘=${String(collapsed.colLeft)}） 视口=${String(collapsed.vw)}×${String(collapsed.vh)} svg在盒内=${String(collapsed.svgInBox)} 祖先裁切=${String(collapsed.ancestorClipped)} 左缘带绘制=${String(collapsed.drawnAtLeftEdge)}（记录：scrollWidth≤clientWidth=${String(collapsed.noSelfOverflowH)}）`);
       check(`BADGE ${tag} 问号图标 16×16 在场（纯图标按钮）`,
         collapsed.svg !== null && collapsed.svg.w >= 14 && collapsed.svg.h >= 14,
         `svg=${JSON.stringify(collapsed.svg)} display=${String(collapsed.badgeDisplay)}`);
-      check(`BADGE ${tag} 计数泡：右上叠置（绝对定位负偏移）＋≥16×16＋视口内＋泡中心 elementFromPoint 命中泡/徽标（不被裁切遮挡）`,
-        collapsed.count !== null && collapsed.count.anchoredOverlay === true
-          && collapsed.count.w >= 15 && collapsed.count.h >= 15 && collapsed.count.inViewport === true
+      check(`BADGE ${tag} 计数泡：内联（非绝对定位）＋≥18×18＋视口内＋泡中心 elementFromPoint 命中泡/徽标（不被裁切遮挡）`,
+        collapsed.count !== null && collapsed.count.inlineInside === true
+          && collapsed.count.w >= 17 && collapsed.count.h >= 17 && collapsed.count.inViewport === true
           && (collapsed.count.bubbleHit === 'bubble' || collapsed.count.bubbleHit === 'badge'),
         `count=${JSON.stringify(collapsed.count)}`);
-      // 判据 A：svg 盒×泡盒零重叠——旧形泡叠图标右上，问号被盖不可辨；
-      // 几何命中判据对「盖住图标」天然失明，须以矩形相交直接判。
-      check(`BADGE ${tag} 判据A：问号图标盒与计数泡盒零重叠（两盒矩形相交即 FAIL）`,
-        collapsed.svgCountOverlap === false,
-        `svg盒=${JSON.stringify(collapsed.svg?.rect)} 泡盒=${JSON.stringify(collapsed.count?.rect)} 相交=${String(collapsed.svgCountOverlap)} 横向间隙=${String(collapsed.svgGapX)}px`);
+      // 判据 A（新形，VIS-BADGE-01 宿主化形态）：泡盒四边含于按钮盒＋与 svg
+      // 零重叠——旧形泡上凸遮边/叠图标（几何命中判据对「盖住图标」失明），
+      // 须以矩形直接判；适用零至三位计数（四位及以上为登记退化，不入判）。
+      check(`BADGE ${tag} 判据A：计数泡盒四边含于按钮盒且与问号 svg 盒零重叠（适用 0–3 位计数）`,
+        collapsed.svgCountOverlap === false && collapsed.count !== null && collapsed.count.inlineInside === true,
+        `svg盒=${JSON.stringify(collapsed.svg?.rect)} 泡盒=${JSON.stringify(collapsed.count?.rect)} 含于按钮盒=${String(collapsed.count?.inlineInside)} 相交=${String(collapsed.svgCountOverlap)} 横向间隙=${String(collapsed.svgGapX)}px 按钮盒=${JSON.stringify(collapsed.rect)}`);
       // 泡对比度实算：泡底 computed（color-mix 解析值，深浅两档各拿最终生效值）。
       // 解析失败不猜比例（深色 62%/浅色 92% 两档，猜错出假数）——直接 FAIL 附原串。
       if (collapsed.countColors !== null) {
@@ -630,7 +632,7 @@ try {
         const fgRgb = parseCssColor(cc.color) ?? [255, 255, 255, 1];
         if (bgRgb !== null && bgRgb[3] >= 0.999) {
           const ratio = contrastRatio(fgRgb.slice(0, 3), bgRgb.slice(0, 3));
-          check(`BADGE ${tag} 计数泡文字对泡底 ≥4.5:1 实算（10px/600 普通文字）`,
+          check(`BADGE ${tag} 计数泡文字对泡底 ≥4.5:1 实算（12px/600 普通文字）`,
             ratio >= 4.5,
             `泡底=${String(cc.bg)}（→rgb(${String(Math.round(bgRgb[0]))}, ${String(Math.round(bgRgb[1]))}, ${String(Math.round(bgRgb[2]))}）） 文字=${String(cc.color)} 字号=${String(cc.fontSize)} tokenError=${String(cc.tokenError)} 比值=${String(Math.round(ratio * 100) / 100)}:1`);
         } else {
@@ -655,7 +657,7 @@ try {
     check(`BADGE ${tag} 面板标题行承载可见全名（.ats-ask-title 与 aria-label 同文）`,
       panel?.titleText === openBadge?.ariaLabel && panel?.titleText.includes('待答问题') === true,
       `title=${JSON.stringify(panel?.titleText)} aria-label=${JSON.stringify(openBadge?.ariaLabel)}`);
-    check(`BADGE ${tag} --sidebar 让位 bottom=94px＋面板与徽标盒及泡盒零重叠（盒重叠几何判定，泡带负偏移）`,
+    check(`BADGE ${tag} --sidebar 让位 bottom=94px＋面板与徽标盒及泡盒零重叠（盒重叠几何判定，泡内联含于徽标盒）`,
       panel?.computedBottom === '94px' && panel?.sidebarClass === true && panel?.separatedFromBadge === true
         && panel?.separatedFromCount === true && panel?.badgeCountStillVisible === true,
       `bottom=${String(panel?.computedBottom)} sidebar类=${String(panel?.sidebarClass)} 分离(徽标)=${String(panel?.separatedFromBadge)} 分离(泡)=${String(panel?.separatedFromCount)} 泡中心命中(展开态)=${String(panel?.badgeCountStillVisible)} panel=${JSON.stringify(panel?.rect)} badge=${JSON.stringify(panel?.badgeRect)} 泡=${JSON.stringify(panel?.countRect)}`);
@@ -721,7 +723,7 @@ cleanup();
 let head = '';
 try { head = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: repo, encoding: 'utf8' }).stdout.trim(); } catch { /* 非 git 环境 */ }
 const SCENE_NOTES = {
-  badge: 'sidebar 收起态整帧：纯图标徽标（问号圆环）＋右上叠置计数泡在侧栏底栏窄图标列',
+  badge: 'sidebar 收起态整帧：纯图标徽标（问号圆环）＋内联计数泡在固定盒内居中、长在侧栏底栏窄图标列',
   panel: 'sidebar 展开态整帧：面板 --sidebar 让位（bottom:94px、右锚 16px 宽度公式左缘 ≥60px）、避列与三盒零重叠',
   'hover-badge': '徽标悬停近景（收起态，指针在徽标上——样式段重写后的回归）'
 };

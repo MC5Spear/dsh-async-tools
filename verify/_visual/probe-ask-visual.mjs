@@ -972,6 +972,30 @@ try {
       `徽标=${JSON.stringify(badge?.text)}（解析计数=${String(badgeCount)}） 展开态题数=${String(countWhenOpen)} 收起后面板=${String(collapsed)} 复展题数=${String(reopened)}`);
   }
 
+  // AV-9g（VIS-BADGE-01 宿主化形态）：徽标固定盒 ≤52×高 ≥28；内联计数泡四
+  // 边含于按钮盒、与 svg 零重叠（横向间隙 ≈3px−容差）。本探针计数为两位数
+  // 形态；零/一/三位由 T24 静态几何验算＋ratify 判据 A 的范围句覆盖。
+  const badgeGeom = await evaluate(page, `(() => {
+    const b = document.querySelector('.ats-ask-badge');
+    const count = b?.querySelector('.ats-ask-count');
+    const svg = b?.querySelector('svg');
+    if (b === null || b === undefined) return null;
+    const r = b.getBoundingClientRect();
+    const cr = count === null || count === undefined ? null : count.getBoundingClientRect();
+    const sr = svg === null || svg === undefined ? null : svg.getBoundingClientRect();
+    const inside = cr === null ? null
+      : cr.left >= r.left - 0.5 && cr.right <= r.right + 0.5 && cr.top >= r.top - 0.5 && cr.bottom <= r.bottom + 0.5;
+    const overlap = cr === null || sr === null ? null
+      : !(sr.right <= cr.left + 0.5 || cr.right <= sr.left + 0.5 || sr.bottom <= cr.top + 0.5 || cr.bottom <= sr.top + 0.5);
+    return { box: [Math.round(r.width), Math.round(r.height)], inside, overlap,
+      gapX: sr === null || cr === null ? null : Math.round((cr.left - sr.right) * 10) / 10,
+      count: cr === null ? null : `${String(Math.round(cr.width))}x${String(Math.round(cr.height))}` };
+  })()`);
+  check('AV-9g 徽标宿主化几何：盒 ≤52×≥28、计数泡内联含于盒且与 svg 零重叠（间隙 ≥2px）',
+    badgeGeom !== null && badgeGeom.box[0] <= 52 && badgeGeom.box[1] >= 28
+      && badgeGeom.inside === true && badgeGeom.overlap === false && (badgeGeom.gapX ?? 0) >= 2,
+    `盒=${JSON.stringify(badgeGeom?.box)} 泡含于盒=${String(badgeGeom?.inside)} 相交=${String(badgeGeom?.overlap)} 间隙=${String(badgeGeom?.gapX)}px 泡=${String(badgeGeom?.count)}`);
+
   // ── AV-7 触屏点按＋目标度量 ──
   // 座位切换后等面板在场再读尺寸（重挂载慢时 sizing 读 0×0 假红）。
   await ensurePanel('overlay');
@@ -992,6 +1016,46 @@ try {
   })()`);
   check('AV-7 触屏目标度量（自持口径）：选项/输入框/提交按钮包围盒 ≥24×24',
     sizing.every(([, w, h]) => w >= 24 && h >= 24), JSON.stringify(sizing));
+  // AV-7b（VIS-ACTION-TIER-01）：提交与不答同排同高（44px 操作档——不以缩小
+  // 提交点击区换取外观一致；「提交中」态与常态同一 min-height，静态断言
+  // T24③ 已钉，本测量常态两钮）。读数取整后差 ≤1px（亚像素舍入容差）。
+  const actionPair = await evaluate(page, `(() => {
+    const q = ${qExpr(Q1_TEXT)};
+    const submit = q?.querySelector('.ats-ask-submit');
+    const skip = q?.querySelector('.ats-ask-skip');
+    if (submit === null || submit === undefined || skip === null || skip === undefined) return null;
+    const sr = submit.getBoundingClientRect();
+    const kr = skip.getBoundingClientRect();
+    return { submit: [Math.round(sr.width), Math.round(sr.height)], skip: [Math.round(kr.width), Math.round(kr.height)] };
+  })()`);
+  check('AV-7b 提交与不答同排同高（44px 操作档：两钮高均 ≥44 且差 ≤1px）',
+    actionPair !== null && actionPair.submit[1] >= 44 && actionPair.skip[1] >= 44
+      && Math.abs(actionPair.submit[1] - actionPair.skip[1]) <= 1,
+    `提交=${JSON.stringify(actionPair?.submit)} 不答=${JSON.stringify(actionPair?.skip)}`);
+  // AV-7c（VIS-INPUT-01 两档机制）：模拟媒体特性读双档计算字号——细指针＋可
+  // 悬停 → 13px；粗指针／不可悬停 → ≥16px（安全档，不可判环境同落安全档）。
+  // 仿真不支持的环境降级为观察项（安全档下限由 T24① 承担）。
+  const readInputFont = () => evaluate(page, `(() => {
+    const q = ${qExpr(Q1_TEXT)};
+    const i = q?.querySelector('textarea.ats-ask-input') ?? document.querySelector('.ats-ask-panel textarea.ats-ask-input');
+    return i === null || i === undefined ? null : getComputedStyle(i).fontSize;
+  })()`);
+  try {
+    await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'pointer', value: 'fine' }, { name: 'hover', value: 'hover' }] });
+    await sleep(120);
+    const fineFont = await readInputFont();
+    await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'pointer', value: 'coarse' }, { name: 'hover', value: 'none' }] });
+    await sleep(120);
+    const coarseFont = await readInputFont();
+    await page.send('Emulation.setEmulatedMedia', { features: [] });
+    await sleep(120);
+    check('AV-7c 输入字号双档（pointer:fine+hover:hover → 13px；coarse/none → ≥16px 安全档）',
+      fineFont === '13px' && Number((/(\d+(?:\.\d+)?)/.exec(coarseFont ?? '') ?? [])[1] ?? 0) >= 16,
+      `细指针档=${String(fineFont)} 粗指针档=${String(coarseFont)}`);
+  } catch (mediaErr) {
+    check('AV-7c 输入字号双档（媒体特性仿真）', null,
+      `本环境不支持 pointer/hover 媒体仿真（${String(mediaErr)}）——按观察项留痕，双档断言由 T24①＋SK-2 承担`);
+  }
   await page.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxPoints: 1 });
   // tapVia 复用已命中的合成方法（环境只支持某一方法时，固定另一种会假红）
   // ——按已证方法分派。

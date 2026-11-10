@@ -615,11 +615,32 @@ try {
   check('SK-1 多行输入软键盘语义：textarea 无键盘动作暗示 enterkeyhint（白名单仅容空／enter——Enter＝换行不被 send/go/next 一类导航键劫持）；inputmode 记录',
     skAttrs.length >= 2 && noEnterHint === true,
     `样本=${String(skAttrs.length)} enterkeyhint=${JSON.stringify([...new Set(skAttrs.map((a) => a.enterkeyhint))])} inputmode=${JSON.stringify([...new Set(skAttrs.map((a) => a.inputmode))])}`);
-  // SK-2：字号 ≥16px（iOS 聚焦自动放大预防——<16px 即触发聚焦缩放）——设计
-  // 令牌现状按观察项量测留痕（是否调字号属产品决定，见问题清单 VIS-OBS-01）。
-  const sizes = skAttrs.map((a) => Number((/(\d+(?:\.\d+)?)/.exec(a.fontSize ?? '') ?? [])[1] ?? 0));
-  check('SK-2 输入框字号量测（≥16px 防 iOS 聚焦自动放大——现状不足按观察项留痕，产品决定在 VIS-OBS-01）',
-    null, `fontSize=${JSON.stringify([...new Set(skAttrs.map((a) => a.fontSize))])} px=${JSON.stringify(sizes)}`);
+  // SK-2（VIS-INPUT-01 两档机制）：模拟媒体特性断双档——细指针＋可悬停 →
+  // 13px（与题干/选项标题同级）；粗指针／不可悬停 → ≥16px（安全档，iOS 聚焦
+  // 自动放大预防——<16px 即触发聚焦缩放；不可判环境同落安全档）。仿真不支持
+  // 的环境降级为观察项（安全档下限由 T24① 承担）。
+  const readSkFont = () => evaluate(page, `(() => {
+    const q = document.querySelector('.ats-ask-panel .ats-ask-q');
+    const i = q?.querySelector('textarea.ats-ask-input');
+    return i === null || i === undefined ? null : getComputedStyle(i).fontSize;
+  })()`);
+  try {
+    await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'pointer', value: 'fine' }, { name: 'hover', value: 'hover' }] });
+    await sleep(120);
+    const fineFont = await readSkFont();
+    await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'pointer', value: 'coarse' }, { name: 'hover', value: 'none' }] });
+    await sleep(120);
+    const coarseFont = await readSkFont();
+    await page.send('Emulation.setEmulatedMedia', { features: [] });
+    await sleep(120);
+    const sizes = skAttrs.map((a) => Number((/(\d+(?:\.\d+)?)/.exec(a.fontSize ?? '') ?? [])[1] ?? 0));
+    check('SK-2 输入框字号双档（pointer:fine+hover:hover → 13px；coarse/none → ≥16px 防 iOS 聚焦缩放）',
+      fineFont === '13px' && Number((/(\d+(?:\.\d+)?)/.exec(coarseFont ?? '') ?? [])[1] ?? 0) >= 16,
+      `细指针档=${String(fineFont)} 粗指针档=${String(coarseFont)}（仿真前自然态 fontSize=${JSON.stringify([...new Set(skAttrs.map((a) => a.fontSize))])} px=${JSON.stringify(sizes)}）`);
+  } catch (mediaErr) {
+    check('SK-2 输入框字号双档（媒体特性仿真）', null,
+      `本环境不支持 pointer/hover 媒体仿真（${String(mediaErr)}）——按观察项留痕；安全档下限由 T24① 承担`);
+  }
   // SK-3：键盘遮屏近似（视口高度收缩 390×400）——可达性按「**逐题逐控件**
   // 各自滚入」判（首跑定因：一次滚到底只证 Q2 尾部；盲测定因：两题读数若在
   // 同一次 evaluate 里连滚连读，读数来自不同滚动位、不能同帧共存——改为每题
