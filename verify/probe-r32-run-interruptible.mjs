@@ -139,7 +139,15 @@ async function waitRunCalled(sessionId) {
  * 不匹配 assistant/tool 记录（模型复述不算通知，r34-O6），也不匹配 request/header
  * 与 system/message——工具描述自带 `async_wait(targets=[{kind:"job", id:"async-command-…"}]` 示例与
  * 「完成」字样，正文级匹配会把请求头当成通知（(e) 实读的误报形态）。
+ * 通道双锚（2026-11-12 临时实例实读校准）：结算通知有两条合法通道——宿主
+ * dsh-tool-jobs 自发通知（恒英文，`background job … finished` 形，`source.kind
+ * === 'tool-jobs'`＋`form === 'notice'`）与本包交付的完成消息（随 agentLang
+ * 两语，`delivery.completionItem`：`Background job … settled:`／`后台作业 …
+ * 已结算：`形）。只锚其一会把另一通道的合法送达计成 0。产品锚同样要求
+ * 「作业 id＋结算谓词」连排，工具描述正文不含该连排形态，不会误配请求头。
  */
+const PRODUCT_SETTLED_EN = /Background job \S+ settled: (?:completed|failed|killed|cancelled)/;
+const PRODUCT_SETTLED_ZH = /后台作业 \S+ 已结算：(?:completed|failed|killed|cancelled)/;
 function completionNotices(transcript) {
   const seen = new Set();
   const notices = [];
@@ -147,12 +155,12 @@ function completionNotices(transcript) {
     if (r.event?.type !== 'user/message') continue;
     const msg = r.event.data?.message ?? r.event.data;
     const source = msg?.source ?? {};
-    if (source.kind !== 'tool-jobs' || source.form !== 'notice') continue;
     const text = (msg?.content ?? []).map((c) => String(c.text ?? '')).join('\n');
-    // 宿主完成通知恒为英文（dsh-tool-jobs，agentLang 不影响宿主文本）、编号不透明
-    // （形如 async-command-29bb2c6b2dff4ad9）——锚取共享模块的宿主锚，不假定数字
-    // 编号、不依赖类型前缀（本探针不写设置）。
-    if (HOST_JOB_NOTICE.test(text) && HOST_JOB_FINISHED.test(text)) {
+    const hostChannel = source.kind === 'tool-jobs' && source.form === 'notice'
+      && HOST_JOB_NOTICE.test(text) && HOST_JOB_FINISHED.test(text);
+    const productChannel = PRODUCT_SETTLED_EN.test(text) || PRODUCT_SETTLED_ZH.test(text);
+    if (!hostChannel && !productChannel) continue;
+    {
       const id = String(msg?.id ?? `${notices.length}-`);
       if (!seen.has(id)) {
         seen.add(id);
@@ -411,9 +419,21 @@ async function criterionC(page) {
   record('c-4-settled-name-persists', settledCard !== '' && settledCard.includes(jobName),
     `结算后注册名称仍在（卡内实读：${settledCard.slice(0, 140)}）`);
   // c-5 原始调用记录：命令原文经界面调用记录查看——转录请求记录与界面调用
-  // 记录同源，原文在场即可查看（不在卡面断言，见 c-2）。
+  // 记录同源，原文在场即可查看（不在卡面断言，见 c-2）。匹配按结构走：`tool/call`
+  // 的 `arguments` 在本代宿主是 **JSON 字符串**（外层再 stringify 会双重转义），
+  // 裸 needle 或单层 stringify 都会因引号转义失配假红——解析后逐字段比对才可靠
+  // （2026-11-12 现场轮实读校准）。
   const transcript = await transcriptOf(sid);
-  const sawCommand = JSON.stringify(transcript.records ?? []).includes(command);
+  let sawCommand = false;
+  for (const r of transcript.records ?? []) {
+    const ev = r.event ?? r;
+    if (ev.type !== 'tool/call' || (ev.data?.name ?? '') !== 'async_run') continue;
+    let args = ev.data?.arguments ?? ev.data?.args;
+    if (typeof args === 'string') {
+      try { args = JSON.parse(args); } catch { continue; }
+    }
+    if (typeof args === 'object' && args !== null && args.command === command) sawCommand = true;
+  }
   record('c-5-command-via-call-record', sawCommand,
     '界面调用记录（转录请求记录）含命令原文，可查看');
   return { sessionId: sid };
