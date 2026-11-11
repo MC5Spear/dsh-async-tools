@@ -93,7 +93,7 @@ Custom presets can use all features too, but tools must be mounted manually and 
 
 Open the plugin list → this package's detail page. Save applies edits, including Restore default actions. Ordinary valid saves need no restart. The [settings reference](<docs/user-reference.en.md#2-first-use-and-settings>) explains each field and its default.
 
-The pending-question panel and silent-command-failure warnings are off by default. Enable `askTakeover` and `silentFailureGuard`, respectively, when needed. Both act only on presets in `boundPresets`, which defaults to the two shipped presets.
+The pending-question panel and silent-command-failure warnings are off by default. Both act only on presets in `boundPresets`, which defaults to the two shipped presets. Enable `askTakeover` when the panel is needed. **Some current `silentFailureGuard` warnings can encourage repeating a command that already succeeded; keep it off until fixed.** If already enabled, follow [missing-output checks](<docs/user-reference.en.md#a-command-should-have-produced-output-but-did-not>) rather than immediately rerunning the command.
 
 Commands inherit the session's directory, sandbox, approvals, and permissions, and can still access the network or sensitive information. The plugin itself collects no telemetry, initiates no network requests, and does not read or write credentials. Model discovery obtains data from DSH without model inference. Output and host temporary files may contain secrets; redact before sharing.
 

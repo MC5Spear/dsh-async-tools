@@ -153,7 +153,7 @@ Wait durations use milliseconds (ms); 1000 ms is one second. The ranges below de
 | `defaultWaitMs` | number | `30000` | 1..2147483647; fractions allowed | ms | Wait example in tool guidance; never fills in a missing wait_ms |
 | `minWaitMs` | number | `20000` | 1..2147483647; fractions allowed | ms | Lower request bound for the next positive async_wait; zero-wait checks are exempt |
 | `maxWaitMs` | number | `600000` | 1..2147483647; fractions allowed | ms | Upper request bound for the next positive async_wait |
-| `pollIntervalMs` | number | `500` | 1..2147483647; fractions allowed | ms | State-check interval for new waits; affects detection speed, not the total wait budget |
+| `pollIntervalMs` | number | `500` | 1..2147483647; fractions allowed | ms | Interval for fallback child-state checks, work rechecks in untargeted waits, and retries when a child is temporarily absent from the directory; all share the call's total budget |
 | `maxResultChars` | integer | `12000` | 1..1000000 | JS String.length | Total result-content allowance for one delivery batch; see section 4 for continued reading |
 
 All numbers must be finite and satisfy:
@@ -164,7 +164,7 @@ All numbers must be finite and satisfy:
 
 A minimum is not a mandatory delay. Completion or an eligible message still returns early. Configuration changes do not restart an in-flight wait.
 
-pollIntervalMs accepts values as low as 1 ms, but the actual timer interval is at least 50 ms. Setting 1 ms does not make state queries run every millisecond.
+`pollIntervalMs` accepts values as low as 1 ms. During a suspended wait, fallback child-state checks and untargeted work rechecks use a timer interval of at least 50 ms. Retries for a child temporarily absent from the directory use the configured interval between at most three query periods, without that 50 ms floor. Queries and intervals still share the call's total budget.
 
 #### Execution, languages, and result presentation
 
@@ -356,7 +356,8 @@ async_list_subagent_models(provider="<exact ID>", model="<exact ID>", target_too
 Read these parts of the result:
 
 - `entries` contains this page's items, `mode` identifies the query type, and `total` is the match count.
-- `target` identifies the tool being assessed; `verdict` and `basis` give the conclusion and reason, explained in section 5.
+- When browsing models or searching, first inspect `target`, `verdict`, and `basis` to check whether the target supports explicit selection. Then inspect each model entry's `selectable`: only `true` confirms that route is selectable for the target; `false` means it is outside the allowed list, and an absent field does not confirm permission.
+- For exact-model details, `verdict` applies to the specific route queried. When selection is allowed, `example` supplies creation arguments accepted by the target tool. Browse and search examples are generated only from selectable entries on the current page.
 - `complete=false` means some providers could not be read; `failed_providers` identifies them. total then counts only obtained results, not evidence that other providers have no models.
 - For another page, reuse the returned `next` object in the next query. It already contains the page, size, version, and filters. If the version expires, restart on page 1 instead of merging old and new pages.
 
@@ -370,7 +371,9 @@ A wait ending does not mean a task ended. Check `status` before deciding whether
 
 | State or observation | Meaning and next action |
 | --- | --- |
-| `running`, or `budget` for a positive wait | This wait's duration expired. Do independent work first; wait on the original target when the result is needed |
+| `running` in a command or workflow's initial return | The initial wait ended because of expiry, user steering, or cancellation; read `note` for the reason. Keep `job_id`. Ending the wait did not stop the task; use the returned query findings for its current state |
+| `running` from `async_wait` with explicit targets | Usually means the wait budget expired; an internal spin guard can also return early. Inspect each target's state and `note` rather than assuming every target is still running. Wait again only when the original result is still needed |
+| `budget` for an untargeted positive wait | The wait budget expired without an eligible message. Reassess whether waiting is still needed from known work states and the returned content |
 | `budget` with wait_ms=0 | The immediate check finished; this is not a wait timeout. Decide what to do from the returned content and target states |
 | `interrupted` / `message` | User steering or a processable message ended the wait early. Handle the new content; the target may still be unfinished |
 | `cancelled` or a host cancellation error | This call was canceled, not the task. Find a missing identifier with job_list or a completion message |
@@ -401,11 +404,15 @@ When a result is marked `truncated`, says its middle was omitted, or reports def
 async_wait(wait_ms=0)
 ```
 
-Several job results entering the next model input together share one allowance, called a delivery batch. `maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes; it is not 12000 per job. The target triggering delivery has priority, followed by readiness order. A batch contains at most 10 entries, including empty ones.
+`maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes. Results share this allowance within one internal delivery batch. The target triggering delivery has priority, followed by readiness order. A batch contains at most 10 entries, including empty ones.
+
+A current parallel-call issue affects this limit: when one caller starts commands concurrently and their directory preparation takes different amounts of time, the returns can be assigned to separate internal batches, each with the full allowance, yet enter the same next model input. In that case, `maxResultChars` is not a total bound for result content in that input. Until fixed, start commands one at a time when strict result-length control is needed; background jobs can still run concurrently.
 
 An oversized entry keeps its head and tail while its middle remains for later reading. Excess entries are deferred in full. Status, necessary error explanations, and retained-output paths are outside the body allowance. **Shortened display does not mean the content was lost.**
 
-With `fullCommandEcho=true`, background results attach command or script source. Bodies use the allowance first; source uses the remainder, retaining head and tail in a 6:4 ratio and marking omissions when too long. Source appears at most once per job in a batch. Results completed directly in the initial call and job listings do not attach it. Original UI call records are unaffected. Command listings use description, while workflows use meta.name.
+With `fullCommandEcho=true`, background results attach command or script source. Result bodies use the allowance first. Source uses the remainder only when that delivery's body fits in full. Oversized source retains its head and tail in a 6:4 ratio with an omission count; no remaining allowance produces a note that source was not attached.
+
+In normal delivery, each job's source is attached at most once, not again in later batches. **Omitted source cannot be continued through later reads**; inspect the original UI call record for the full command or script. Results completed directly in the initial call and job listings do not attach source. Original UI records are unaffected by this switch. Command listings use `description`, while workflows use `meta.name`.
 
 ### A tool result may not have arrived: request a recovery copy
 
@@ -438,8 +445,8 @@ A model route is an exact provider ID and model ID pair. Usually omit model argu
    async_list_subagent_models(provider="<provider ID>", model="<model ID>", target_tool="async_agent")
    ```
 
-2. Read `verdict` and `basis`: `allowed` means the target permits selection, `not-allowed` means it does not, and `unconfirmed` means information is insufficient. allowed does not check credentials or remote availability. Use next for further pages, restarting on page 1 if its version expires.
-3. Pass the exact queried IDs together and provide the complete task:
+2. Read `verdict` and `basis`: `allowed` means the target permits explicit selection, `not-allowed` means it does not, and `unconfirmed` means information is insufficient. In browse or search results, `allowed` does not authorize every listed model: choose an entry with `selectable=true`. An exact-detail verdict applies to the route queried. Use `next` for further pages, restarting on page 1 if its version expires. Permission checks do not validate credentials or remote availability.
+3. After selecting a confirmed selectable route, pass its exact IDs together and provide the complete task. Alternatively, reuse the returned `example` arguments and add the task content:
 
    ```text
    async_agent(description="Review one isolated item", prompt="<complete task, materials, and completion criteria>",
@@ -497,13 +504,17 @@ After expiry, questions can still be answered or ignored in the panel. A notific
 
 Check the panel's submission response. Explicit delivery failure reopens the question for retry as instructed; replying directly in the original session is also possible. If the panel reports that the batch or question no longer exists and the answer was not delivered, reply in the original session. If confirmation is merely missing, wait for the panel to refresh before deciding. Do not resubmit when the panel says another client has already answered.
 
-Expired records are held only in memory. Unhandled records more than 24 hours past expiry are cleared when a new question batch is intercepted. With no new batch, they can last longer, so 24 hours is not a fixed late-answer deadline. Restarting or uninstalling loses these records and returns pending questions to the host flow. Write important answers into the original session promptly.
+Panel records are held only in memory. Unhandled records more than 24 hours past expiry are cleared when a new question batch is intercepted. With no new batch, they can last longer, so 24 hours is not a fixed late-answer deadline.
+
+When the plugin's takeover service unloads normally, unfinished questions return to an available host flow; if hand-back is unavailable, they are canceled. Restarting the instance loses in-memory records and does not guarantee that the original question cards return. Expired calls are not handed back. Before restarting or uninstalling, finish pending answers or write important answers into the original session.
 
 If a question call is rejected as a whole, check that questions is an array and that no question has duplicate options with identical labels and descriptions. The same label with different descriptions is allowed. A multi-question batch is not partially handled.
 
 ### A command should have produced output, but did not
 
 `silentFailureGuard` is off by default. Enabling it adds command diagnostics, tool-description warnings, and operating instructions for presets in boundPresets. It reminds the Agent to check execution rather than replacing host execution logs.
+
+**Known issue: some warnings treat empty output as non-execution and suggest retrying the original command, even when a valid command exited successfully or already caused side effects. Keep this switch off until the issue is fixed. If such a warning appears, do not immediately rerun the command; use the checks below.**
 
 Some restricted environments silently fail commands that capture output, such as assignments to variables, subexpressions, or `2>&1`. If expected output is missing and there is no actual exit information, do not assume success from an empty result or immediately conclude that the command never ran.
 
