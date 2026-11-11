@@ -546,6 +546,11 @@ async function phaseAgent() {
     ].join('\n'), 300000);
     const transcript = await page(sid);
     const { results } = parseEvents(transcript);
+    // 腿间窗口化（2026-11-12 现场轮校准）：page(sid) 取整段转录，judgeAgentRouting
+    // 的锚在全量结果上必把第一腿的 requested 注记带进后续腿——OFF 腿判据
+    // 「拒绝且不再 requested」在第一腿成功后结构性必红。转录结果只追加，
+    // 按各腿已知条数切片后判定。
+    const leg1Count = results.length;
     // 判据本体在 `verify/agent-judgements.mjs` 的纯函数里（取数在这里，判据在那里）。
     const routing = judgeAgentRouting(results, ROUTE_PROVIDER, ROUTE_MODEL);
     record('指定路由的 async_agent 调用被接受（note 锚 requested 标记）',
@@ -594,7 +599,7 @@ async function phaseAgent() {
       '3) reply with exactly one line: OFF_DONE'
     ].join('\n'), 300000);
     const transcriptOff = await page(sid);
-    const resultsOff = parseEvents(transcriptOff).results;
+    const resultsOff = parseEvents(transcriptOff).results.slice(leg1Count);
     const routingOff = judgeAgentRouting(resultsOff, ROUTE_PROVIDER, ROUTE_MODEL);
     record('同一会话内开关关：下一次指定路由调用得到可读拒绝（selectionDisabled／routeRecheckFailed 锚）',
       (routingOff.sawDisabled || routingOff.sawRecheck) && !routingOff.sawRequested, routingOff.detail);
@@ -614,7 +619,9 @@ async function phaseAgent() {
       '2) reply with exactly one line: ON_AGAIN_DONE'
     ].join('\n'), 300000);
     const transcriptOn = await page(sid);
-    const routingOn = judgeAgentRouting(parseEvents(transcriptOn).results, ROUTE_PROVIDER, ROUTE_MODEL);
+    const routingOn = judgeAgentRouting(
+      parseEvents(transcriptOn).results.slice(leg1Count + resultsOff.length), ROUTE_PROVIDER, ROUTE_MODEL
+    );
     record('同一会话内开关开回：指定路由调用再次被接受（实时恢复，note 锚 requested）',
       routingOn.sawRequested, routingOn.detail);
     extra.agentOn = { results: routingOn.count };

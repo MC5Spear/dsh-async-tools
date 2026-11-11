@@ -1498,13 +1498,19 @@ WAIT-01 的设计落点：2.1（单一总截止与挂起条件检查）、2.2（
 - 宿主边界（非本包缺陷）：rc.5 不允许后台子代理直接请求人类交互（已观察归档）。
 - 缺环境、跳过、未运行不算通过，也不等于产品失败。
 
-**本轮改动面（终态：实施与受控验证完成，实例级验证按下列缺口如实保留）**：
+**本轮改动面（终态：实施与受控验证完成；现场轮已于 2026-11-12 在隔离临时实例＋受控模型下分项执行，读数与剩余缺口按下列分项如实保留）**：
 
 - ACCEPT-BATCH-01 创建认领——已实施（设计 2.6「创建认领」、3.1／3.4 入口顺序）：两工具 execute 同步前缀 `claimCreation`、窗口判据＝活等待∪在途创建（四点）、认领注销先复查后关批、回合收尾清中止认领、令牌记录调用类型与取消信号；受控验证：CRE-1..5＋R57④ 真实注册表（9.1 交付批次行，断言与装置判据见 8.2 交付批次行、8.4）。
 - ACCEPT-SILENT-01 两步核实——已实施（设计 6.2 签名语义）：三处防护文本（`note.silentCapture`／`note.silentDenied`／`note.silentDeniedNoEscalation`）与纪律段两平台两语重写为两解释并陈＋核实次序＋三条件重跑，签名 1 机器侧退出码 0（合法空输出）不出 note；受控验证：8.2 语言与防护行反例（含盲审返修补入的 2b 重定向先查目标文件、2c 多语句不按整行未执行）。
 - ACCEPT-PUBLIC-JOB-01 按主体分册——已实施（设计 2.6「外来作业按主体分册」）：分册登记与分账解析细节见 9.1 运行时行；`error.foreignJob` 两语词典键删除，有主可见性拒绝统一走 `error.unknownJob` 查无口径；受控验证：PJ-1/PJ-2（装置判据见 8.4 双主体分册装置）。
-- 装置与检查器判据修订（判据定位 8.4）——已实施：ACCEPT-DOC-CHECK-01（check-docs 历史措辞词面命中降人工候选、不判红，C10/C10b 反例入套件）、ACCEPT-MODEL-PROBE-01 参数化（`--route=provider/model`，含形态校验与缺省值声明）、ACCEPT-PROBE-01 探针判据（任务面板按真实作业身份定位：注册名称与命令两分判、命令原文对照反例）。未实施：ACCEPT-DOC-LINK-01 跨文档锚点检查器（仓库内无对应装置，9.3 标题锚点稳定性暂无自动护栏）。待执行：ACCEPT-MODEL-PROBE-01 与 ACCEPT-PROBE-01 的现场轮、ACCEPT-PEER-COMMENT-01 注释口径修订的核对。
-- 本轮改动面的实例级验证未跑：创建认领／分册／两步核实的现场轮（隔离实例真机）与 `acceptance-017 --route` 现场执行属实例验证档，受控测试全绿不替代（分层口径见本章首）。
+- 装置与检查器判据修订（判据定位 8.4）——已实施：ACCEPT-DOC-CHECK-01（check-docs 历史措辞词面命中降人工候选、不判红，C10/C10b 反例入套件）、ACCEPT-MODEL-PROBE-01 参数化（`--route=provider/model`，含形态校验与缺省值声明）、ACCEPT-PROBE-01 探针判据（任务面板按真实作业身份定位：注册名称与命令两分判、命令原文对照反例）。未实施：ACCEPT-DOC-LINK-01 跨文档锚点检查器（仓库内无对应装置，9.3 标题锚点稳定性暂无自动护栏）。ACCEPT-MODEL-PROBE-01 与 ACCEPT-PROBE-01 的现场轮已于 2026-11-12 执行（读数见下条）；ACCEPT-PEER-COMMENT-01 注释口径修订的核对待执行。
+- 现场轮分项读数（2026-11-12，隔离临时实例＋受控模型；宿主＝rc.5 安装树（releases/dsh-0.2.1-rc.5）、候选＝adapt/dsh-0.2.1 工作树 897c549、依赖经 file: 装于独立 HOME；结论仅在该条件成立，不覆盖真实设备、辅助技术与 Linux——仍列本节缺口）：
+  - probe-r32-run-interruptible 全量 17/17 通过（证据 `.local/evidence/logs/r32-run-interruptible.json`）：(a) 插话即时性 24–38 ms、handle 形状、earlyByUser 注记；(b) GUI 停止 20–24 ms、aborted 形状如实、作业存活＋完成通知恰 1 条；(c) 注册名称＝description、卡面不含命令原文、双读差分、结算后名称保留、调用记录含原文；(d) 第 11 条「进程启动前被拒」＋上限 10＋出路；(e) 预算内原样输出；(f) 插话路径通知恰 1／短命令 0。
+  - acceptance-017 agent 相位 `--route=zai/glm-5.3` 8/8 通过：白名单开→显式路由被接受（requested 锚）→子会话 subagent/descriptor＋assistant 序列实证 zai/glm-5.3→同会话开关关→selectionDisabled 可读拒绝＋查询工具双向差异→开关开回→实时恢复→收尾恢复原值回读一致。
+  - probe-batch-window 全过（证据 `.local/evidence/logs/probe-batch-window-021.json`）：两波各 14 个错峰作业标记全部到达（零丢失，消息载体＋结构化附着）；领取窗口 W1 [3,2,1]、W2 [3,2,1,2,2,2]，全部 ≤10、未触延后说明配额（配额路径由套件层 T8／RN-A…G 锚定，实例层如实登记未触发）；next-step 领取移除计数在案。
+  - 实例配置边界（读数适用条件）：模型经 profile 层三行供应（llm-pi-ai zai、agent-default-model zai/glm-5.3-flash low、subagent-model-selection-settings zai 白名单）；CLI `--patch` 叠层会锁 subagent-model-selection-settings 的 settings/update（宿主报 overridden）——acceptance-017 须在无 CLI 叠层实例上执行，这是 ACCEPT-MODEL-PROBE-01 现场执行方式的重要边界。
+- 现场轮校准记录（验证工具修订、非产品变更；修复先于上列读数）：①r32 完成通知计数改双通道锚——宿主 tool-jobs 英文通知＋本包 delivery.completionItem 两语消息，只锚宿主通道会把本包合法送达计 0；②r32 判据 c-5 改结构化解析 tool/call 的 JSON 字符串 arguments 后逐字段比对——裸串匹配因双层转义必假红；③acceptance-017 agent 相位三腿共用整段转录，OFF 腿「拒绝且不再 requested」判据在第一腿成功后结构性必红——改为按腿已知结果条数切片判定（腿间窗口化）。
+- 本轮改动面的实例级验证剩余项：创建认领／分册／两步核实的现场轮（隔离实例真机）属实例验证档，受控测试全绿不替代（分层口径见本章首）；`acceptance-017 --route` 现场执行已完成（读数见上）。
 - 产品负责人事项（登记于 ISSUES.md「待产品负责人决定」节，本包只写边界）：无主公开作业的正文消费方式（第一主体已消费正文的回放取舍，2.6）、必要环境与交付范围（Linux／真实辅助技术等未验面的处置）、官方设置控件的图标取舍（5.5）。
 
 **发布状态**：统一包未创建完整标签或 Release，相应安装及发布验证尚未完成。rc.5 兼容验收与离线树核验是发布前的局部验证，不等于本轮发布通过。远端 CI 矩阵以实际 Actions 执行结果为准，本地 CI 结构检查不替代远端执行。发布与固定安装应从已提交状态打包；标签和 Release 发布需另行授权，分支推送不等于正式发布。
