@@ -314,7 +314,8 @@ const PROSE_ALLOWLIST = {
     { needle: 'agent.ctx.tools.register unavailable', why: '操作者一侧诊断（会话遮蔽注册降级的 warn 前缀——PRESET-ISOLATION-02 防御路径，不进模型上下文）' },
     { needle: 'shared description stays session-neutral', why: '同上（遮蔽注册失败降级行的说明尾段——共享定义回落基础文本的操作者侧交代）' },
     { needle: 'async-tools: job_output hide', why: 'cordis effect 卸载标签（行卸载时摘限制句柄的登记名，宿主日志一侧，不进模型上下文）' },
-    { needle: 'async-tools: tool:jobs prompt shadow', why: 'cordis effect 卸载标签（提示遮蔽段处置句柄的登记名，进 Fiber 树与宿主日志，不进模型上下文——与 async-tools: job_output hide、host.js 的 host snapshot source 同类）' }
+    { needle: 'async-tools: tool:jobs prompt shadow', why: 'cordis effect 卸载标签（提示遮蔽段处置句柄的登记名，进 Fiber 树与宿主日志，不进模型上下文——与 async-tools: job_output hide、host.js 的 host snapshot source 同类）' },
+    { needle: 'async-tools: foreign job events', why: 'cordis effect 卸载标签（外来作业事件订阅的处置句柄登记名，进 Fiber 树与宿主日志，不进模型上下文——与 async-tools: job_output hide 同类）' }
   ],
   'delivery.js': [
     { needle: 'listener attach failed', why: '操作者一侧 stderr 诊断（log() 通道——attachClaimedListener 三监听（claimed/discarded/turn-stopping）各自挂接失败的防御路径，事件名与错误文本来自变量插值，不进模型上下文）' },
@@ -322,7 +323,10 @@ const PROSE_ALLOWLIST = {
     { needle: 'settled read', why: '同上（结算读取失败的 warn 行）' },
     { needle: 'incremental read', why: '同上（增量读取失败的 warn 行）' },
     { needle: 'completion delivery for', why: '同上（完成消息投递失败/registry miss 的 warn 行——owner 与错误文本来自变量插值，两条同前缀合并登记）' },
-    { needle: 'post-settle delivery for', why: '同上（#settleReady 加固 catch 的 warn 行——结算后补投失败的防御路径，jobId 与错误文本来自变量插值）' }
+    { needle: 'post-settle delivery for', why: '同上（#settleReady 加固 catch 的 warn 行——结算后补投失败的防御路径，jobId 与错误文本来自变量插值）' },
+    { needle: 'foreign job event handling failed', why: '同上（外来作业事件订阅处理的防御 catch——noteForeignEvent 整体吞错的 log 行，错误文本来自变量插值，不进模型上下文）' },
+    { needle: 'background job', why: '宿主逐字同形判定常量（§2.3 正文去向判别器匹配 dsh-tool-jobs 完成通知的前缀模板 `background job ${id}`——匹配的是宿主通知文本，不是本包文案；双语化即失配）' },
+    { needle: 'Read its output with job_output.', why: '宿主逐字同形判定常量（同判别器的状态形态标记——dsh-tool-jobs fitCompletionNotice 的逐字子串，匹配宿主通知文本；截断形态标记 `\\nDone; job_output.` 无纯空白词边界、不触句子判据，无 entries）' }
   ],
   // 宿主副本豁免类：assertRoutes 三条 + fold 空名单 throw 一条，全部是宿主
   // `dsh-tool-subagent` 源码的逐字同形串——verify/check-agent-policy.mjs 逐行互锚检查

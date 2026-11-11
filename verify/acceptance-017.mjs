@@ -14,6 +14,12 @@
  * node verify/acceptance-017.mjs control   # 对照预设工具清单（建 1 个会话）
  * ```
  *
+ * 模型选择相位的目标路由经 `--route=provider/model` 显式传入（缺省 zai/glm-5.3
+ * ＝本部署验证实例已配置的路由）：白名单改写、会话提示词与全部断言按该值驱动。
+ * 传入路由在实例的供应商目录中不可用时，该相位判据如实失败——环境不足的
+ * 停止点，不为通过检查换用未知可用性的模型。改共享白名单前后按第 3 节纪律
+ * 保存原值、收尾整值恢复并回读比对。
+ *
  * ## 证据口径
  *
  * - 工具清单取自 `session/page` 里的 **`request/header`** 事件，也就是**真正发给模型的
@@ -53,6 +59,20 @@ mkdirSync(LOG_DIR, { recursive: true });
 
 const phase = process.argv[2] ?? 'face';
 const tokenArg = process.argv.find((a) => a.startsWith('--token='));
+
+// 模型选择阶段的目标路由（公开参数，`--route=provider/model`）。默认 zai/glm-5.3
+// 是**本部署验证实例**实际配置的路由；其他环境把实际可用的准确路由显式传入，
+// 白名单、提示词与全部断言都按该值驱动。路由在实例的供应商目录中不可用时，
+// 本相位的判据会如实失败——那是环境不足的停止点，不要为通过检查改用未知
+// 可用性的模型（公开模板见 verify/patches/model-routing.example.yml）。
+const routeArg = process.argv.find((a) => a.startsWith('--route='));
+const ROUTE = typeof routeArg === 'string' ? routeArg.slice('--route='.length).trim() : 'zai/glm-5.3';
+const ROUTE_SLASH = ROUTE.indexOf('/');
+const ROUTE_PROVIDER = ROUTE_SLASH > 0 ? ROUTE.slice(0, ROUTE_SLASH) : '';
+const ROUTE_MODEL = ROUTE_SLASH > 0 ? ROUTE.slice(ROUTE_SLASH + 1) : '';
+if (ROUTE_PROVIDER === '' || ROUTE_MODEL === '' || ROUTE_MODEL.includes('/')) {
+  throw new Error(`--route 需要 provider/model 形态（收到 "${ROUTE}"）`);
+}
 
 const lines = [];
 /** 打印并留档（不把输出接进 PowerShell 管道——本机沙箱会拒）。 */
@@ -504,10 +524,11 @@ async function phaseAgent() {
   say(`模型选择白名单改前：enabled=${String(selBefore.value.enabled)} allowedModels=${JSON.stringify(selBefore.value.allowedModels ?? [])}`);
   try {
     // 指定路由只在"模型选择开"时可用（需求 §2.3.2）；验证实例出厂 enabled=false，
-    // 先开白名单（含 zai/glm-5.3——用户指定的子代理路由）。
+    // 先开白名单（含目标路由——由 --route 参数驱动，默认即本部署实例的路由）。
+    say(`模型选择阶段目标路由：${ROUTE}`);
     await rpc('settings/update', {
       ns: SEL_NS,
-      patch: { enabled: true, allowedModels: [{ provider: 'zai', model: 'glm-5.3' }] }
+      patch: { enabled: true, allowedModels: [{ provider: ROUTE_PROVIDER, model: ROUTE_MODEL }] }
     });
     const policy = await rpc('settings/describe', {});
     const nsNames = policy.namespaces.map((n) => n.ns ?? n.namespace ?? n.id);
@@ -519,29 +540,29 @@ async function phaseAgent() {
     sessionIds.agent = sid;
     await ask(sid, [
       'Follow these steps in order and do nothing else:',
-      '1) async_agent with prompt: `Reply with exactly one line: ROUTED` and provider `zai`, model `glm-5.3`',
-      '2) call async_list_subagent_models with query `zai` (no other arguments)',
+      `1) async_agent with prompt: \`Reply with exactly one line: ROUTED\` and provider \`${ROUTE_PROVIDER}\`, model \`${ROUTE_MODEL}\``,
+      `2) call async_list_subagent_models with query \`${ROUTE_PROVIDER}\` (no other arguments)`,
       '3) reply with exactly one line: ROUTE_DONE'
     ].join('\n'), 300000);
     const transcript = await page(sid);
     const { results } = parseEvents(transcript);
     // 判据本体在 `verify/agent-judgements.mjs` 的纯函数里（取数在这里，判据在那里）。
-    const routing = judgeAgentRouting(results, 'zai', 'glm-5.3');
+    const routing = judgeAgentRouting(results, ROUTE_PROVIDER, ROUTE_MODEL);
     record('指定路由的 async_agent 调用被接受（note 锚 requested 标记）',
       routing.ok, routing.detail);
     record('async_list_subagent_models 判 async_agent 目标允许显式选择（现读口径：开）',
-      results.some((r) => queryVerdictAllowed(r) && r.includes('zai')),
+      results.some((r) => queryVerdictAllowed(r) && r.includes(ROUTE_PROVIDER)),
       `结果条数=${String(results.length)}`);
 
     // 真机判据的强形态：不满足于工具 note 的自述——从 subagent/catalog 事件拿
-    // childId，翻**子会话**转录，断言子代理的 assistant 消息真的产生自 zai/glm-5.3。
+    // childId，翻**子会话**转录，断言子代理的 assistant 消息真的产生自目标路由。
     const catalog = (transcript.records ?? [])
       .filter((r) => r.event?.type === 'subagent/catalog')
       .map((r) => r.event.data);
     const childId = catalog.length > 0 ? catalog[catalog.length - 1].childId : undefined;
     const childMode = catalog.length > 0 ? catalog[catalog.length - 1].mode : undefined;
     if (childId === undefined) {
-      record('子会话转录显示子代理真的跑在 zai/glm-5.3 上', false, 'transcript 里没有 subagent/catalog 事件，拿不到 childId');
+      record(`子会话转录显示子代理真的跑在 ${ROUTE} 上`, false, 'transcript 里没有 subagent/catalog 事件，拿不到 childId');
     } else {
       // 子会话 id 是**裸 UUID**（不带 `session-` 前缀），且必须用 subagent 寻址（见 `pageChild`）。
       const childSessionId = String(childId);
@@ -554,8 +575,8 @@ async function phaseAgent() {
         .map((r) => r.event)
         .find((e) => e?.type === 'subagent/descriptor');
       const routed = `${String(descriptor?.data?.agentProvider ?? '?')}/${String(descriptor?.data?.agentModel ?? '?')}`;
-      record('子会话转录显示子代理真的跑在 zai/glm-5.3 上',
-        descriptor?.data?.agentProvider === 'zai' && descriptor?.data?.agentModel === 'glm-5.3',
+      record(`子会话转录显示子代理真的跑在 ${ROUTE} 上`,
+        descriptor?.data?.agentProvider === ROUTE_PROVIDER && descriptor?.data?.agentModel === ROUTE_MODEL,
         `descriptor 路由=${routed}；assistant 模型序列=${models.join(', ') || '(无 assistant 消息)'}`);
       extra.agentChild = { childId, childMode, routed, models };
     }
@@ -568,13 +589,13 @@ async function phaseAgent() {
     await rpc('settings/update', { ns: SEL_NS, patch: { enabled: false } });
     await ask(sid, [
       'Follow these steps in order and do nothing else:',
-      '1) async_agent with prompt: `Reply with exactly one line: OFF_ATTEMPTED` and provider `zai`, model `glm-5.3`',
-      '2) call async_list_subagent_models with query `zai` (no other arguments)',
+      `1) async_agent with prompt: \`Reply with exactly one line: OFF_ATTEMPTED\` and provider \`${ROUTE_PROVIDER}\`, model \`${ROUTE_MODEL}\``,
+      `2) call async_list_subagent_models with query \`${ROUTE_PROVIDER}\` (no other arguments)`,
       '3) reply with exactly one line: OFF_DONE'
     ].join('\n'), 300000);
     const transcriptOff = await page(sid);
     const resultsOff = parseEvents(transcriptOff).results;
-    const routingOff = judgeAgentRouting(resultsOff, 'zai', 'glm-5.3');
+    const routingOff = judgeAgentRouting(resultsOff, ROUTE_PROVIDER, ROUTE_MODEL);
     record('同一会话内开关关：下一次指定路由调用得到可读拒绝（selectionDisabled／routeRecheckFailed 锚）',
       (routingOff.sawDisabled || routingOff.sawRecheck) && !routingOff.sawRequested, routingOff.detail);
     record('同一会话内开关关：async_list_subagent_models 判不允许显式选择（双向差异）',
@@ -585,15 +606,15 @@ async function phaseAgent() {
     // ② 开回：同一会话再调一次指定路由——必须再次被接受（拒绝不是缓存/sticky）。
     await rpc('settings/update', {
       ns: SEL_NS,
-      patch: { enabled: true, allowedModels: [{ provider: 'zai', model: 'glm-5.3' }] }
+      patch: { enabled: true, allowedModels: [{ provider: ROUTE_PROVIDER, model: ROUTE_MODEL }] }
     });
     await ask(sid, [
       'Follow these steps in order and do nothing else:',
-      '1) async_agent with prompt: `Reply with exactly one line: ROUTED_AGAIN` and provider `zai`, model `glm-5.3`',
+      `1) async_agent with prompt: \`Reply with exactly one line: ROUTED_AGAIN\` and provider \`${ROUTE_PROVIDER}\`, model \`${ROUTE_MODEL}\``,
       '2) reply with exactly one line: ON_AGAIN_DONE'
     ].join('\n'), 300000);
     const transcriptOn = await page(sid);
-    const routingOn = judgeAgentRouting(parseEvents(transcriptOn).results, 'zai', 'glm-5.3');
+    const routingOn = judgeAgentRouting(parseEvents(transcriptOn).results, ROUTE_PROVIDER, ROUTE_MODEL);
     record('同一会话内开关开回：指定路由调用再次被接受（实时恢复，note 锚 requested）',
       routingOn.sawRequested, routingOn.detail);
     extra.agentOn = { results: routingOn.count };

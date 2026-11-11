@@ -78,9 +78,10 @@ export const OUR_ANCHORS = [
   ['O9', /^\s*return projections\.stateOf\(session, POLICY_KEY\)\?\.map\(\(route\) => \(\{ \.\.\.route \}\)\);/m, 'policyOf 包装（init null 折 undefined）'],
   ['O12', /^\s*export const POLICY_EVENT = 'subagent\/model-selection-policy';/m, '事件类型**值**锚（标识符锚不住串值改错）'],
   // O13/O14 补齐设计 §3.3 锚清单里的「fold 返回值」与「schema 内层字段类型」两项；
-  // 行号对应现行 lib/agent-policy.js（provider/model 在 :74-75，fold 的 return 在 :83）。
-  ['O13', /^ {4}return allowedModels;$/m, 'fold 返回值（首条策略事件折出路由表）', 83],
-  ['O14', /^ {4}provider: z\.string\(\)\.min\(1\),\r?\n {4}model: z\.string\(\)\.min\(1\)$/m, 'provider/model 字段类型（z.string().min(1)）', 74]
+  // 行号对应现行 lib/agent-policy.js（provider/model 在 :76-77，fold 的 return 在 :85
+  // ——policyStateOf 三态哨兵读（§3.6.6）随 NATIVE-FALLBACK 附在其后，重排时须重锚）。
+  ['O13', /^ {4}return allowedModels;$/m, 'fold 返回值（首条策略事件折出路由表）', 85],
+  ['O14', /^ {4}provider: z\.string\(\)\.min\(1\),\r?\n {4}model: z\.string\(\)\.min\(1\)$/m, 'provider/model 字段类型（z.string().min(1)）', 76]
 ];
 
 /** 每行行首偏移（含首行 0）。行号钉版锚取「从该行行首起」的文本切片。 */

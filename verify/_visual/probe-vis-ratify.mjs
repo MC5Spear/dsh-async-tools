@@ -72,10 +72,28 @@ const log = (msg) => console.log(`[probe] ${msg}`);
 const results = [];
 const shots = [];
 let failed = 0;
+let unverified = 0;
+let unverifiedRequired = 0;
+/**
+ * 记一条判据。`ok` 三态：true=已证明通过；false=已证明失败；null=未验证留痕
+ * （观察通道失明等）。**汇总不把「无失败」等同「全部验证完成」**——必需项未
+ * 验证时另记 `unverifiedRequired`，终判不得给出整体通过（VISUAL-PROBE-022）。
+ */
 function check(name, ok, detail = '') {
   results.push({ name, ok, detail, at: new Date().toISOString() });
-  if (ok !== true && ok !== null) failed += 1;
+  if (ok === true) { /* pass */ } else if (ok === false) failed += 1; else unverified += 1;
   console.log(`  ${ok === true ? 'PASS  ' : ok === false ? 'FAIL  ' : '留痕  '}${name}${detail === '' ? '' : `\n          ${detail}`}`);
+}
+/**
+ * 记一条**必需但未验证**的判据（如观察通道失明时的视口内/命中/裁切条件）：
+ * 不生成虚假 PASS（判据名不得宣称条件成立），也不计入失败——它阻塞整体
+ * 通过结论，直到在观察通道可用的视图（如 768 宽）取得证据。
+ */
+function checkUnverified(name, detail = '') {
+  results.push({ name, ok: null, required: true, detail, at: new Date().toISOString() });
+  unverified += 1;
+  unverifiedRequired += 1;
+  console.log(`  未验证 ${name}${detail === '' ? '' : `\n          ${detail}`}`);
 }
 const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
 function killTree(pid) {
@@ -614,20 +632,39 @@ try {
       // 留痕观察，几何锚定证据由 768 承载（装置迁移，非判据放松）。
       const colOffViewport = collapsed.colRect !== null
         && (collapsed.colRect.l < -0.5 || collapsed.colRect.r > collapsed.vw + 0.5);
-      check(`BADGE ${tag} 徽标盒 ≤52px×高 ≥28px 且左缘不裁切（≥图标列左缘＋svg 在按钮盒内＋无 hidden/clip 祖先真裁切＋视口内）`,
+      // 视口无关的固定几何（尺寸、列内位置、svg 含于盒）任何时候都直接判——
+      // 观察通道失明不放掉已证明的部分。
+      check(`BADGE ${tag} 徽标盒 ≤52px×高 ≥28px（视口无关几何）＋svg 在按钮盒内＋不越图标列左缘`,
         collapsed.rect.w <= 52 && collapsed.rect.h >= 28 && collapsed.withinCol === true
-          && (colOffViewport || collapsed.inViewport === true)
-          && collapsed.svgInBox === true && (colOffViewport || collapsed.ancestorClipped === ''),
-        `rect=${JSON.stringify(collapsed.rect)}（宽=${String(collapsed.rect.w)}px 高=${String(collapsed.rect.h)}px，列左缘=${String(collapsed.colLeft)}） 视口=${String(collapsed.vw)}×${String(collapsed.vh)}${colOffViewport ? '（侧栏列滚出视口——rc.1 窄视口收起形态，视口内判据留痕）' : ''} svg在盒内=${String(collapsed.svgInBox)} 祖先裁切=${String(collapsed.ancestorClipped)} 左缘带绘制=${String(collapsed.drawnAtLeftEdge)}（记录：scrollWidth≤clientWidth=${String(collapsed.noSelfOverflowH)}）`);
+          && collapsed.svgInBox === true,
+        `rect=${JSON.stringify(collapsed.rect)}（宽=${String(collapsed.rect.w)}px 高=${String(collapsed.rect.h)}px，列左缘=${String(collapsed.colLeft)}） svg在盒内=${String(collapsed.svgInBox)} 左缘带绘制=${String(collapsed.drawnAtLeftEdge)}（记录：scrollWidth≤clientWidth=${String(collapsed.noSelfOverflowH)}）`);
+      if (colOffViewport) {
+        // 列滚出视口时「视口内／祖先真裁切」观察通道失明：记**必需未验证**而非
+        // OR 旁路的 PASS——判据名如实说未验证，几何锚定证据由 768 宽视图承载；
+        // 本宽度下的整体结论随之降为「未全验」。
+        checkUnverified(`BADGE ${tag} 徽标视口内＋无 hidden/clip 祖先真裁切（列滚出视口——观察通道失明，证据由 768 宽承载）`,
+          `视口=${String(collapsed.vw)}×${String(collapsed.vh)} 列盒=${JSON.stringify(collapsed.colRect)} 祖先裁切读数=${String(collapsed.ancestorClipped)}（读数失明，不作通过依据）`);
+      } else {
+        check(`BADGE ${tag} 徽标视口内＋无 hidden/clip 祖先真裁切`,
+          collapsed.inViewport === true && collapsed.ancestorClipped === '',
+          `视口=${String(collapsed.vw)}×${String(collapsed.vh)} 视口内=${String(collapsed.inViewport)} 祖先裁切=${String(collapsed.ancestorClipped)}`);
+      }
       check(`BADGE ${tag} 问号图标 16×16 在场（纯图标按钮）`,
         collapsed.svg !== null && collapsed.svg.w >= 14 && collapsed.svg.h >= 14,
         `svg=${JSON.stringify(collapsed.svg)} display=${String(collapsed.badgeDisplay)}`);
-      check(`BADGE ${tag} 计数泡：内联（非绝对定位）＋≥18×18＋视口内＋泡中心 elementFromPoint 命中泡/徽标（不被裁切遮挡）`,
+      check(`BADGE ${tag} 计数泡：内联（非绝对定位）＋≥18×18（视口无关几何）`,
         collapsed.count !== null && collapsed.count.inlineInside === true
-          && collapsed.count.w >= 17 && collapsed.count.h >= 17
-          && (colOffViewport || collapsed.count.inViewport === true)
-          && (colOffViewport || collapsed.count.bubbleHit === 'bubble' || collapsed.count.bubbleHit === 'badge'),
-        `count=${JSON.stringify(collapsed.count)}${colOffViewport ? '（列滚出视口——泡几何由内联含于＋判据A 承担，命中判留痕）' : ''}`);
+          && collapsed.count.w >= 17 && collapsed.count.h >= 17,
+        `count=${JSON.stringify(collapsed.count)}`);
+      if (colOffViewport) {
+        checkUnverified(`BADGE ${tag} 计数泡视口内＋泡中心 elementFromPoint 命中泡/徽标（列滚出视口——命中观察通道失明，证据由 768 宽承载）`,
+          `bubbleHit 读数=${String(collapsed.count?.bubbleHit)}（读数失明，不作通过依据）`);
+      } else {
+        check(`BADGE ${tag} 计数泡视口内＋泡中心 elementFromPoint 命中泡/徽标（不被裁切遮挡）`,
+          collapsed.count.inViewport === true
+            && (collapsed.count.bubbleHit === 'bubble' || collapsed.count.bubbleHit === 'badge'),
+          `count=${JSON.stringify(collapsed.count)}`);
+      }
       // 判据 A（新形，VIS-BADGE-01 宿主化形态）：泡盒四边含于按钮盒＋与 svg
       // 零重叠——旧形泡上凸遮边/叠图标（几何命中判据对「盖住图标」失明），
       // 须以矩形直接判；适用零至三位计数（四位及以上为登记退化，不入判）。
@@ -672,24 +709,40 @@ try {
       `title=${JSON.stringify(panel?.titleText)} aria-label=${JSON.stringify(openBadge?.ariaLabel)}`);
     check(`BADGE ${tag} --sidebar 让位 bottom=94px＋面板与徽标盒及泡盒零重叠（盒重叠几何判定，泡内联含于徽标盒）`,
       panel?.computedBottom === '94px' && panel?.sidebarClass === true && panel?.separatedFromBadge === true
-        && panel?.separatedFromCount === true && (colOffOpen || panel?.badgeCountStillVisible === true),
-      `bottom=${String(panel?.computedBottom)} sidebar类=${String(panel?.sidebarClass)} 分离(徽标)=${String(panel?.separatedFromBadge)} 分离(泡)=${String(panel?.separatedFromCount)} 泡中心命中(展开态)=${String(panel?.badgeCountStillVisible)}${colOffOpen ? '（列滚出视口——命中判留痕）' : ''} panel=${JSON.stringify(panel?.rect)} badge=${JSON.stringify(panel?.badgeRect)} 泡=${JSON.stringify(panel?.countRect)}`);
+        && panel?.separatedFromCount === true,
+      `bottom=${String(panel?.computedBottom)} sidebar类=${String(panel?.sidebarClass)} 分离(徽标)=${String(panel?.separatedFromBadge)} 分离(泡)=${String(panel?.separatedFromCount)} panel=${JSON.stringify(panel?.rect)} badge=${JSON.stringify(panel?.badgeRect)} 泡=${JSON.stringify(panel?.countRect)}`);
+    if (colOffOpen) {
+      checkUnverified(`BADGE ${tag} 展开态泡中心命中可见（列滚出视口——命中观察通道失明，证据由 768 宽承载）`,
+        `泡中心命中(展开态)读数=${String(panel?.badgeCountStillVisible)}（读数失明，不作通过依据）`);
+    } else {
+      check(`BADGE ${tag} 展开态泡中心命中可见（不被面板遮挡）`,
+        panel?.badgeCountStillVisible === true,
+        `泡中心命中(展开态)=${String(panel?.badgeCountStillVisible)}`);
+    }
     // 判据 B：面板盒×侧栏列盒零重叠——旧形 390 下面板 l=34 压进 ~52px 收起列、
     // 裁到列内图标右缘（该形态在整页截图上肉眼易漏，由机器判据直接拦截）。
     // rc.1 窄视口收起形态（列滚出视口）下面板的 fixed 包含块随 transform 祖先
-    // 位移，列坐标系内的盒重叠是宿主收起形态的产物——此时按装置边界留痕，
-    // 几何锚定证据由 768 宽（侧栏在视口内）承载。
+    // 位移，列坐标系内的盒重叠是宿主收起形态的产物——此时记**必需未验证**
+    //（不是 PASS，也不是静默留痕），几何锚定证据由 768 宽承载。
     if (colOffOpen) {
-      check(`BADGE ${tag} 判据B：面板盒与侧栏列盒零重叠（列滚出视口——rc.1 窄视口收起形态，留痕观察）`, null,
-        `panel=${JSON.stringify(panel?.rect)} 列盒=${JSON.stringify(panel?.colRect)} 相交=${String(panel?.colOverlap)}（几何锚定证据由 768 宽承载）`);
+      checkUnverified(`BADGE ${tag} 判据B：面板盒与侧栏列盒零重叠（列滚出视口——观察通道失明，证据由 768 宽承载）`,
+        `panel=${JSON.stringify(panel?.rect)} 列盒=${JSON.stringify(panel?.colRect)} 相交读数=${String(panel?.colOverlap)}（读数失明，不作通过依据）`);
     } else {
       check(`BADGE ${tag} 判据B：面板盒与侧栏列盒零重叠（两盒矩形相交即 FAIL）`,
         panel?.colOverlap === false,
         `panel=${JSON.stringify(panel?.rect)} 列盒=${JSON.stringify(panel?.colRect)} 相交=${String(panel?.colOverlap)}`);
     }
-    check(`BADGE ${tag} 面板宽度钳制生效（--sidebar：min(340px, 100vw-76px)）且不超视口`,
-      panel?.widthClamped === true && (colOffOpen || panel?.leftNonNegative === true) && (colOffOpen || panel?.rightWithinViewport === true),
-      `computedWidth=${String(panel?.computedWidth)} 实测宽=${String(panel?.rect.w)} 期望上限=min(340, ${String(cfg.w)}-76)=${String(Math.min(340, cfg.w - 76))} left=${String(panel?.rect.l)} right=${String(panel?.rect.r)}/${String(panel?.vw)}${colOffOpen ? '（列滚出视口——vw 钳制值仍按视口宽成立；位置判据随包含块留痕）' : ''}`);
+    check(`BADGE ${tag} 面板宽度钳制生效（--sidebar：min(340px, 100vw-76px)；vw 钳制值按视口宽直接判）`,
+      panel?.widthClamped === true,
+      `computedWidth=${String(panel?.computedWidth)} 实测宽=${String(panel?.rect.w)} 期望上限=min(340, ${String(cfg.w)}-76)=${String(Math.min(340, cfg.w - 76))}`);
+    if (colOffOpen) {
+      checkUnverified(`BADGE ${tag} 面板左缘 ≥0 且右缘在视口内（列滚出视口——包含块位移，位置判据未验证，证据由 768 宽承载）`,
+        `left=${String(panel?.rect.l)} right=${String(panel?.rect.r)}/${String(panel?.vw)}（坐标随 transform 包含块位移，不作通过依据）`);
+    } else {
+      check(`BADGE ${tag} 面板左缘 ≥0 且右缘在视口内`,
+        panel?.leftNonNegative === true && panel?.rightWithinViewport === true,
+        `left=${String(panel?.rect.l)} right=${String(panel?.rect.r)}/${String(panel?.vw)}`);
+    }
     await shotOf(`panel-${tag}.png`, { width: cfg.w, height: cfg.h, fullPage: false });
     await ensureCollapsed();
   }
@@ -754,11 +807,20 @@ const sceneOf = (name) => {
   }
   return '';
 };
+const passedCount = results.filter((r) => r.ok === true).length;
 writeFileSync(join(LOGS, 'vis-ratify.json'), JSON.stringify({
   at: new Date().toISOString(), repo, head, hostVersion, failed, results,
+  counts: { passed: passedCount, failed, unverified, unverifiedRequired },
   shots, sceneNotes: Object.fromEntries(shots.map((n) => [n, sceneOf(n)]))
 }, null, 2));
 writeFileSync(join(LOGS, 'instance-stdio.log'), instanceStdio.stdout + instanceStdio.stderr);
 log(`证据落盘：${join(LOGS, 'vis-ratify.json')}（截图 ${String(shots.length)} 张在 shots/）`);
-console.log(`\n判定：${failed === 0 ? '全部通过' : `存在 FAIL（${String(failed)} 项）`}`);
-process.exit(failed === 0 ? 0 : 1);
+// 汇总三分类：通过／失败／未验证（必需未验证单列）——「无失败」不等于「全部
+// 验证完成」；必需项未验证（观察通道失明等）时不得发出整体通过结论。
+const verdictText = failed > 0
+  ? `存在 FAIL（${String(failed)} 项）`
+  : unverifiedRequired > 0
+    ? `未全验（必需未验证 ${String(unverifiedRequired)} 项——观察通道失明条件需在通道可用的视图补证后才能整体通过）`
+    : '全部通过（无失败且无必需未验证项）';
+console.log(`\n判定：${verdictText}（通过 ${String(passedCount)}／失败 ${String(failed)}／未验证 ${String(unverified)}，其中必需未验证 ${String(unverifiedRequired)}）`);
+process.exit(failed > 0 ? 1 : unverifiedRequired > 0 ? 3 : 0);

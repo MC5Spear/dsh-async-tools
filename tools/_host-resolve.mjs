@@ -1,13 +1,16 @@
 /**
  * 开发期解析钩子：把宿主包名重新锚定到能真正读到它们的 node_modules。
  *
- * 插件部署到 profile 后，`@deepseek-ai/*` 由共享 node_modules 提供（DSH 宿主
- * 安装树形态：全部 `@deepseek-ai/*` 包从同一棵 node_modules 解析——本钩子的
- * 单锚点假设只覆盖这一形态；部署改成分包隔离的 node_modules 时锚点策略需重议）；
- * 安装时 `autoInstallPeers:false`，仓库内安装依赖（本地开发或 CI 的本地安装）不
- * 会带入 `@deepseek-ai/*` peer——需要真实解析宿主 peer 的运行形态（离线单测、
- * 直跑宿主树）用本钩子换锚点；已把宿主包整体装进本地 node_modules 的形态不需要：
- *   node --import ./tools/_host-hooks.mjs --test "test/*.test.mjs"
+ * 只服务**开发与 CI 的离线运行**（`node --import ./tools/_host-hooks.mjs --test …`）：
+ * 仓库内安装只装 dependencies，十一条 peer 全部 optional、不会自动进本地
+ * node_modules；需要真实解析宿主 peer 的离线单测用本钩子把 `@deepseek-ai/*`／zod
+ * 指向 `DSAT_HOST_MODULES` 所指的宿主安装树。
+ *
+ * 它**不代表**插件部署后的实际装载形态：真实部署里插件从 bundle 安装锚取得
+ * peer（宿主 installation scope 路由），直接依赖优先用 profile 本地副本——
+ * 与本钩子的单树锚点不是同一机制。单锚点假设（全部 `@deepseek-ai/*` 从同一棵
+ * node_modules 解析）只覆盖「把钩子指向某一棵宿主树」这一用法；部署形态变化
+ * 时锚点策略需重议，实际装载决议由 `verify/probe-runtime-peers.mjs` 另行观测。
  *
  * 0.2.2 适配线：本包的九个 `@deepseek-ai/dsh*` peer 共用同一支持集合
  * （当前为单值 `0.2.2-rc.1`，以包清单原文为准），

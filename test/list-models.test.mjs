@@ -111,7 +111,7 @@ function listEnv({
   llmMode = 'ok', selection = { enabled: true, allowedModels: ROUTES }, projection = 'absent',
   schemas = {}, backend = 'ok', systemPrompt = 'native', agentLang = 'en',
   identity = 'ours', creationProvider = 'spawn', catalog = {},
-  creationAgentPreset, step = 'ok'
+  creationAgentPreset, step = 'ok', parentRoute = 'absent'
 } = {}) {
   const calls = { listProviders: 0, listModels: [], resolveModelInfo: [], current: 0, stateOf: 0, getProvider: 0, startActivation: 0, toolsGet: 0, executable: [] };
   const failingProviders = new Set();
@@ -215,7 +215,22 @@ function listEnv({
       }
     };
 
-  const EXEC_AGENT = { id: 'parent-1', session: { id: 'sess-1' } };
+  // 父路由形态（§3.6.6 缺席回退）：宿主 parentAgentOptionsForDelegation 读
+  // `agent.session.requestHeader()?.config`——'absent'＝无请求头（回退到
+  // agent.options，本夹具恒空 ⇒ 无父路由）；'zai'＝请求头携带准确父路由；
+  // 'throw'＝请求头读取抛错（回退判未确认的腿）。
+  const requestHeader = parentRoute === 'throw'
+    ? () => { throw new Error('request header down'); }
+    : (parentRoute === 'absent'
+      ? () => undefined
+      : () => ({ config: parentRoute }));
+  const EXEC_AGENT = {
+    id: 'parent-1',
+    // 真实 Agent 恒有 options 字段：宿主 parentAgentOptionsForDelegation 在请求头
+    // config 在场时会解构 parent.options（缺席即 TypeError，属夹具失真）。
+    options: {},
+    session: { id: 'sess-1', requestHeader }
+  };
 
   // 身份段（设计 §3.7）：async_agent 的创建行配置视图与工具对象。`identity`
   // 控制 `tools.get` 读口形态：'ours'=返回登记在册的创建行工具（对象同一性
@@ -964,11 +979,53 @@ hostTest('目标适用性——原生工具三段证据链：参数／身份／�
   const ours = await toolA.execute({ target_tool: 'async_agent' }, envA.exec);
   assert.equal(ours.verdict, 'not-allowed', 'async_agent 口径只看现读设置');
 
-  // ③ 投影无记录：不允许（组合时多半未启用模型选择设置）。
-  const envB = listEnv({ projection: null, schemas: { native: true } });
-  const b = await createListModelsTool(envB.ctx, envB.view).execute({ target_tool: 'subagent' }, envB.exec);
-  assert.equal(b.verdict, 'not-allowed');
-  assert.match(b.basis, /no model-selection policy recorded for this session/);
+  // ③ 投影三态（§3.6.6）：已注册无名单（null）走缺席回退——有效许可集合＝恰
+  //    父路由一条（与宿主 assertAllowedModelSelection 同源）；父路由缺席＝
+  //    已确认限制；键未注册（undefined）＝身份依据①不成立，未确认。
+  const envB = listEnv({
+    projection: null,
+    schemas: { native: true },
+    parentRoute: { provider: 'zai', model: 'glm-5.3' }
+  });
+  // 供应商内浏览（根列表是供应商行）：条目级 selectable 验证需要模型条目。
+  const b = await createListModelsTool(envB.ctx, envB.view)
+    .execute({ target_tool: 'subagent', provider: 'zai' }, envB.exec);
+  assert.equal(b.verdict, 'allowed', '无名单＋父路由在场：缺席回退允许恰父路由');
+  assert.match(b.basis, /limited to the exact parent route zai\/glm-5\.3/);
+  const bGlm = b.entries.find((entry) => entry.provider === 'zai' && entry.id === 'glm-5.3');
+  const bFlash = b.entries.find((entry) => entry.provider === 'zai' && entry.id === 'glm-5.3-flash');
+  assert.equal(bGlm.selectable, true, '父路由＝唯一可选条目');
+  assert.equal(bFlash.selectable, false, '名单缺席时其余路由一律不可选');
+  assert.equal(b.example.model, 'glm-5.3', '示例只按获准的父路由生成');
+
+  // §3.6.8：缺席回退形态的父路由现值与「无名单」事实进版本令牌——父路由
+  // 变化使令牌失效（不拼接新旧页）。
+  const route = { provider: 'zai', model: 'glm-5.3' };
+  const envTok = listEnv({ projection: null, schemas: { native: true }, parentRoute: route });
+  const tokTool = createListModelsTool(envTok.ctx, envTok.view);
+  const tok1 = await tokTool.execute({ target_tool: 'subagent' }, envTok.exec);
+  route.model = 'glm-5.3-flash';
+  const tok2 = await tokTool.execute({ target_tool: 'subagent' }, envTok.exec);
+  assert.notEqual(tok1.version, tok2.version, '父路由现值参与版本令牌');
+
+  const envB2 = listEnv({ projection: null, schemas: { native: true } });
+  const b2 = await createListModelsTool(envB2.ctx, envB2.view).execute({ target_tool: 'subagent' }, envB2.exec);
+  assert.equal(b2.verdict, 'not-allowed', '无名单且无父路由：没有路由可经缺席回退');
+  assert.match(b2.basis, /this subject has no parent-side route/);
+
+  const envB3 = listEnv({
+    projection: null,
+    schemas: { native: true },
+    parentRoute: 'throw'
+  });
+  const b3 = await createListModelsTool(envB3.ctx, envB3.view).execute({ target_tool: 'subagent' }, envB3.exec);
+  assert.equal(b3.verdict, 'unconfirmed', '父路由读取失败：回退判据未确认，不猜');
+  assert.match(b3.basis, /parent route could not be read to apply the absent-list fallback/);
+
+  const envB4 = listEnv({ projection: 'absent', schemas: { native: true } });
+  const b4 = await createListModelsTool(envB4.ctx, envB4.view).execute({ target_tool: 'subagent' }, envB4.exec);
+  assert.equal(b4.verdict, 'unconfirmed', '键未注册：身份依据①不成立（不再判为已确认限制）');
+  assert.match(b4.basis, /projection key is not registered in this composition/);
 
   // ④ 投影读取抛错：适用性未确认（不猜）。
   const envC = listEnv({ projection: 'throw', schemas: { native: true } });

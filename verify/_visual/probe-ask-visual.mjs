@@ -19,7 +19,9 @@
  *
  * 红线：只操作本装置自建的隔离实例，不连接、不改动任何既有实例（开发用或常驻服务）。--patch 只带 zai-glm.yml
  * 模型路由。证据：`.local/evidence/ask-visual/{logs,shots}`。退出码 0＝全部通过、
- * 1＝存在 FAIL、2＝装置故障（FAULT，输出区分）。
+ * 1＝存在 FAIL、2＝装置故障（FAULT，输出区分）、3＝未全验（无 FAIL 但存在必需
+ * 未验证项——如媒体仿真无效时 16px 实页双档；汇总三分类，无失败不冒称全部
+ * 验证完成）。
  */
 
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
@@ -68,10 +70,27 @@ const log = (msg) => console.log(`[probe] ${msg}`);
 const results = [];
 const shots = [];
 let failed = 0;
+let unverified = 0;
+let unverifiedRequired = 0;
+/**
+ * 记一条判据。`ok` 三态：true=已证明通过；false=已证明失败；null=未验证留痕。
+ * 汇总不把「无失败」等同「全部验证完成」——必需项未验证另记（VISUAL-PROBE-022）。
+ */
 function check(name, ok, detail = '') {
   results.push({ name, ok, detail, at: new Date().toISOString() });
-  if (ok !== true && ok !== null) failed += 1;
+  if (ok === true) { /* pass */ } else if (ok === false) failed += 1; else unverified += 1;
   console.log(`  ${ok === true ? 'PASS  ' : ok === false ? 'FAIL  ' : '留痕  '}${name}${detail === '' ? '' : `\n          ${detail}`}`);
+}
+/**
+ * 记一条**必需但未验证**的判据（如媒体仿真不驱动 pointer/hover 时 16px 实页
+ * 双档无证明力）：不生成虚假 PASS、不计失败，但阻塞整体通过结论——静态样式
+ * 与互引不能变成实页通过证据。
+ */
+function checkUnverified(name, detail = '') {
+  results.push({ name, ok: null, required: true, detail, at: new Date().toISOString() });
+  unverified += 1;
+  unverifiedRequired += 1;
+  console.log(`  未验证 ${name}${detail === '' ? '' : `\n          ${detail}`}`);
 }
 const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
 function killTree(pid) {
@@ -1062,12 +1081,12 @@ try {
         fineFont === '13px' && Number((/(\d+(?:\.\d+)?)/.exec(coarseFont ?? '') ?? [])[1] ?? 0) >= 16,
         `细指针档=${String(fineFont)} 粗指针档=${String(coarseFont)}`);
     } else {
-      check('AV-7c 输入字号双档（媒体特性仿真）', null,
-        `本环境的媒体仿真不驱动 pointer/hover 特性（coarse 仿真下 matchMedia('(pointer: fine)') 仍 ${String(fineStillMatches)}）——按观察项留痕：细指针档读数=${String(fineFont)}（环境档值，无切换证明力）；双档断言由 T24①＋SK-2 承担`);
+      checkUnverified('AV-7c 输入字号双档（媒体仿真无效——16px 实页证明缺失）',
+        `本环境的媒体仿真不驱动 pointer/hover 特性（coarse 仿真下 matchMedia('(pointer: fine)') 仍 ${String(fineStillMatches)}）——必需未验证，非通过：细指针档读数=${String(fineFont)}（环境档值，无切换证明力）；静态双档形态由 T24① 承担，实页双档需仿真有效的环境补证`);
     }
   } catch (mediaErr) {
-    check('AV-7c 输入字号双档（媒体特性仿真）', null,
-      `本环境不支持 pointer/hover 媒体仿真（${String(mediaErr)}）——按观察项留痕，双档断言由 T24①＋SK-2 承担`);
+    checkUnverified('AV-7c 输入字号双档（媒体仿真不可用——16px 实页证明缺失）',
+      `本环境不支持 pointer/hover 媒体仿真（${String(mediaErr)}）——必需未验证，非通过；静态双档形态由 T24① 承担`);
   }
   await page.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxPoints: 1 });
   // tapVia 复用已命中的合成方法（环境只支持某一方法时，固定另一种会假红）
@@ -1231,5 +1250,14 @@ writeFileSync(join(LOGS, 'ask-visual.json'), JSON.stringify({
   shots, sceneNotes: Object.fromEntries(shots.map((n) => [n, sceneOf(n)]))
 }, null, 2));
 log(`证据落盘：${join(LOGS, 'ask-visual.json')}（截图 ${String(shots.length)} 张在 shots/）`);
-console.log(`\n判定：${failed === 0 ? '全部通过' : `存在 FAIL（${String(failed)} 项）`}`);
-process.exit(failed === 0 ? 0 : 1);
+// 汇总三分类：通过／失败／未验证（必需未验证单列）——「无失败」不等于「全部
+// 验证完成」；必需项未验证（媒体仿真无效的 16px 实页双档等）时不得发出整体
+// 通过结论。
+const avPassed = results.filter((r) => r.ok === true).length;
+const avVerdict = failed > 0
+  ? `存在 FAIL（${String(failed)} 项）`
+  : unverifiedRequired > 0
+    ? `未全验（必需未验证 ${String(unverifiedRequired)} 项——需在观察通道可用的环境补证后才能整体通过）`
+    : '全部通过（无失败且无必需未验证项）';
+console.log(`\n判定：${avVerdict}（通过 ${String(avPassed)}／失败 ${String(failed)}／未验证 ${String(unverified)}，其中必需未验证 ${String(unverifiedRequired)}）`);
+process.exit(failed > 0 ? 1 : unverifiedRequired > 0 ? 3 : 0);

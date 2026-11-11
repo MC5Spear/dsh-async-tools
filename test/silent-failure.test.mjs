@@ -14,7 +14,7 @@
  * | 判据 | 挡的缺陷形态 |
  * |---|---|
  * | 1 捕获形四模式 + 管道一票否决 | 把管道也当捕获形 ⇒ cmdlet 管道大量误触发（可失败 ①） |
- * | 2 签名 1 四条件缺一即无 + 裸调用对照 | 半截条件 ⇒ 出路（裸调用重试）自己都触发提醒 |
+ * | 2 签名 1 条件逐一缺一即无 + 探针对照；退出码 0＝合法空输出 | 半截条件 ⇒ 不产出；出路（独立探针）自己拿到输出不触发提醒 |
  * | 3 空白算空 | `  \n  ` 被当成"有输出" ⇒ 签名 1 失明 |
  * | 4 cmdlet 误发接受 + 条件式措辞 | 文案直陈失败 ⇒ 裁定接受的误发情形变成谎报（可失败 ②） |
  * | 5 提权跑不产出 | 提权重试完还提醒 ⇒ 提示变成噪声 |
@@ -132,17 +132,25 @@ test('R28 判据1：捕获形四模式任一命中，管道一票否决，多语
   assert.equal(hasCaptureForm('npm run x -- --flag=1'), false, '参数内等号不误中');
 });
 
-test('R28 判据2：签名 1 四条件逐一缺失即无产出；裸调用对照不产出', () => {
+test('R28 判据2：签名 1 条件逐一缺失即无产出；退出码 0＝合法空输出不出 note（ACCEPT-SILENT-01 第一步机器侧核对）', () => {
   const hit = {
     proc: { sandbox: { mode: 'workspace-write' } },
     collector: collector(''),
     command: 'node x.mjs 2>&1',
+    exitCode: 1,
     escalated: false,
     escalationModes: ['workspace-write', 'danger-full-access'],
     guard: true,
     lang: 'en'
   };
-  assert.equal(silentFailureNotes(hit).length, 1, '四条件齐 ⇒ 命中');
+  assert.equal(silentFailureNotes(hit).length, 1, '全条件齐（退出码非 0）⇒ 命中');
+  // 第一步核对的机器侧形态：exitCode===0＝合法空输出——直接不出 note。
+  assert.deepEqual(silentFailureNotes({ ...hit, exitCode: 0 }), [],
+    '退出码 0 ⇒ 合法空输出，不出 note、不诱导任何核实');
+  // 退出码未知（缺省 undefined/null）保持提示——保守方向。
+  assert.equal(silentFailureNotes({ ...hit, exitCode: undefined }).length, 1,
+    '退出码未知 ⇒ 仍提示（note 内含 $LASTEXITCODE 核实指引）');
+  assert.equal(silentFailureNotes({ ...hit, exitCode: null }).length, 1, 'null 同未知');
   // 逐一缺一（其余保持命中姿态）。
   assert.deepEqual(silentFailureNotes({ ...hit, command: 'node x.mjs' }), [],
     '缺捕获形 ⇒ 不产出');
@@ -156,9 +164,9 @@ test('R28 判据2：签名 1 四条件逐一缺失即无产出；裸调用对照
     '提权跑的死法归提权语境（判据 5 同断）⇒ 不产出');
   assert.deepEqual(silentFailureNotes({ ...hit, escalationModes: [] }), [],
     '无约束执行器的部署 ⇒ 不产出');
-  // 裸调用对照：出路本身（裸调用重试）不得触发提醒。
+  // 核实探针对照：裸探针（非捕获形）拿到输出 ⇒ 不产出。
   assert.deepEqual(silentFailureNotes({ ...hit, command: 'node x.mjs', collector: collector('ok') }), [],
-    '裸调用重试拿到输出 ⇒ 不产出');
+    '独立探针拿到输出 ⇒ 不产出');
 });
 
 test('R28 判据3：纯空白结算算"空"（设计钉死口径）', () => {
@@ -185,20 +193,28 @@ test('R28 判据4：cmdlet 误报范围被接受，且文案必须是条件式�
     lang: 'en'
   });
   assert.equal(notes.length, 1, '裁定接受的误发范围要有用例钉住');
-  // 条件式措辞锚：不断言失败，正向替代（裸调用重试 / sandbox_permissions）必须在场。
-  assert.match(notes[0], /If the output you expected is missing/, '条件式开头（"若"）——直陈式必红');
-  assert.match(notes[0], /may have been killed at process creation/, '推测语气，不是断言');
-  assert.match(notes[0], /treat it as "did not run"/, '解读口径：按「没跑」处理');
-  assert.match(notes[0], /Retry it once as a bare call/, '正向替代 1：裸调用重试');
-  assert.match(notes[0], /sandbox_permissions/, '正向替代 2：提权重试（本组合声明了提权字段）');
+  // 两步核实措辞锚（ACCEPT-SILENT-01）：两种解释并陈、不断言「没跑」、不诱导
+  // 重跑原命令；核实次序（机器侧退出码已过——note 只剩模型侧指引）与三条件
+  // 重跑决策必须在场；旧「按没跑处理／裸调用重试验证」直断形态必须绝迹。
+  assert.match(notes[0], /Silent-failure guard \(execution unconfirmed\)/, '执行未确认定性（非断言）');
+  assert.match(notes[0], /Two readings remain possible/, '两种解释并陈');
+  assert.match(notes[0], /the empty output alone proves neither/, '空输出不证明任何一种');
+  assert.match(notes[0], /Verify in order/, '核实次序在场');
+  assert.match(notes[0], /probe the execution channel with a separate, harmless command/,
+    '独立无害探针查通道（不以重跑原命令作通道检查）');
+  assert.match(notes[0], /not itself the channel check/, '重跑原命令≠通道核实');
+  assert.doesNotMatch(notes[0], /treat it as "did not run"/, '旧直断「按没跑处理」必须绝迹');
+  assert.doesNotMatch(notes[0], /Retry it once as a bare call/, '旧「裸调用重试验证」诱导必须绝迹');
   const zh = silentFailureNotes({
     proc: { sandbox: { mode: 'workspace-write' } }, collector: collector(''),
-    command: 'Get-ChildItem 2>&1', escalationModes: ['workspace-write'], guard: true, lang: 'zh'
+    command: 'Get-ChildItem 2>&1', exitCode: 1, escalationModes: ['workspace-write'], guard: true, lang: 'zh'
   });
-  assert.match(zh[0], /若你预期的输出缺失/, 'zh 条件式开头');
-  assert.match(zh[0], /可能在进程创建层被杀/, 'zh 推测语气');
-  assert.match(zh[0], /裸调用重试一次/, 'zh 正向替代 1');
-  assert.match(zh[0], /sandbox_permissions/, 'zh 正向替代 2');
+  assert.match(zh[0], /执行未确认/, 'zh 定性');
+  assert.match(zh[0], /两种解释都成立/, 'zh 两解释并陈');
+  assert.match(zh[0], /核实次序/, 'zh 核实次序');
+  assert.match(zh[0], /不带捕获形的探针命令/, 'zh 独立探针');
+  assert.match(zh[0], /重跑原命令本身不是通道核实/, 'zh 重跑≠通道核实');
+  assert.doesNotMatch(zh[0], /按「没跑」处理/, 'zh 旧直断绝迹');
 });
 
 test('R28 判据5：获批提权跑完的死法归提权语境，签名 1 不产出', () => {
@@ -237,18 +253,20 @@ test('R28 判据6：签名 2 锚对矩阵——同对两枚都在场才命中，
   });
   assert.equal(noEsc.length, 1, '无沙箱盖章、无执行器、输出非空——锚对在仍出直陈式');
   assert.match(noEsc[0], /visible denial signature/, '直陈式：说明这是可见拒绝签名');
-  assert.match(noEsc[0], /once as a bare call/, '出路 1（两档共有）：裸调用重试');
+  assert.match(noEsc[0], /a real refusal, not a capture artifact/, '真实拒绝定性（不是捕获假象）');
+  assert.match(noEsc[0], /A bare call to see the underlying error is a verification step/,
+    '出路 1（两档共有）：裸调用＝核实动作');
   assert.match(noEsc[0], /offers no sandbox_permissions escalation/,
     '无提权档：明说本组合没有提权入口（否定形态）');
-  assert.doesNotMatch(noEsc[0], /retry it with sandbox_permissions/,
-    '无提权档不得给「带 sandbox_permissions 重试」的正向指引');
+  assert.doesNotMatch(noEsc[0], /may use sandbox_permissions/,
+    '无提权档不得给正向提权指引');
   const withEsc = silentFailureNotes({
     proc: {}, collector: collector('failed to run: Access is denied'),
     command: 'anything', escalationModes: ['workspace-write'], guard: true, lang: 'en'
   });
   assert.equal(withEsc.length, 1, '同输入换声明提权目标——仍出直陈式');
-  assert.match(withEsc[0], /retry it with sandbox_permissions/,
-    '有提权档：正向指路（与否定档互斥的整句锚）');
+  assert.match(withEsc[0], /may use sandbox_permissions when the rerun genuinely needs the wider mode/,
+    '有提权档：重跑确需更宽模式时的正向指引（与否定档互斥的整句锚）');
   assert.doesNotMatch(withEsc[0], /offers no sandbox_permissions escalation/,
     '有提权档不得再出现「没有提权入口」的否定句');
 });
@@ -324,7 +342,7 @@ hostTest('R28 判据9：前台出口——note 拼在标记之后且居尾；无
   const lines = result.note.split('\n');
   assert.match(result.note, /\[sandbox: file access denied under workspace-write mode\]/, 'R11 标记在场（同位）');
   const markerIdx = lines.findIndex((l) => l.includes('[sandbox:'));
-  const silentIdx = lines.findIndex((l) => l.includes('Silent-failure guard:'));
+  const silentIdx = lines.findIndex((l) => l.includes('Silent-failure guard'));
   assert.ok(silentIdx > markerIdx, '静默行与 R11 标记同位（notes 数组）且拼在其后');
   assert.equal(silentIdx, lines.length - 1, '静默行居 note 尾部');
   assert.match(lines[silentIdx], /visible denial signature/, '签名 2 直陈式');
@@ -337,7 +355,7 @@ hostTest('R28 判据9：前台出口——note 拼在标记之后且居尾；无
   const pending2 = createRunTool(conf2.ctx, config)
     .execute({ command: 'node x.mjs 2>&1', description: 'run node' }, exec);  quiet.settle();
   const r2 = await pending2;
-  assert.match(r2.note, /may have been killed at process creation/, '签名 1 条件式提醒到达模型可见文本');
+  assert.match(r2.note, /killed at process creation/, '签名 1 提醒（两解释并陈形）到达模型可见文本');
 
   // 开关关：无任何 note ⇒ note 键不得出现（"没有内容时不能写 note: ''"的口径）。
   const conf3 = confinedCtx();
@@ -378,8 +396,8 @@ hostTest('R28 判据10：后台出口——detail 尾部拼静默行，开关在
   // 判据 10 只要求 note 行居尾 + 结算时刻现读，不触碰后台首行既有格式。
   assert.ok(flippedOn.detail.startsWith('exit code: 1\n'), '退出码行在场（detail 首行，后台口径无方括号）');
   const onLines = flippedOn.detail.split('\n');
-  assert.equal(onLines.at(-1).includes('Silent-failure guard:'), true, '静默行居 detail 尾部');
-  assert.match(flippedOn.detail, /may have been killed at process creation/, '结算时刻读到的开关 = 开');
+  assert.equal(onLines.at(-1).includes('Silent-failure guard'), true, '静默行居 detail 尾部');
+  assert.match(flippedOn.detail, /Two readings remain possible/, '结算时刻读到的开关 = 开');
 
   // 反向：注册时刻开、结算前关 ⇒ 不产出（"下一次生效"对后台作业同样成立）。
   const conf2 = confinedCtx();
@@ -557,7 +575,7 @@ hostTest('F3b（§6.2 归属比对→名单匹配→PRESET-ISOLATION-02 会话�
     .execute({ command: 'node x.mjs 2>&1', description: 'run node' }, exec);
   quiet2.settle();
   const r2 = await pending2;
-  assert.match(r2.note, /Silent-failure guard:/, '会话预设∈名单 ⇒ 前台诊断在场');
+  assert.match(r2.note, /Silent-failure guard \(execution unconfirmed\):/, '会话预设∈名单 ⇒ 前台诊断在场');
   assert.doesNotMatch(matchTool.description, warnAnchor, '执行后共享描述仍基础文本');
 
   // ③ 读取失败（presetForSession 抛错）⇒ 失效安全＝关：诊断不产生；遮蔽 getter 退基础
@@ -648,8 +666,9 @@ hostTest('R28 判据12：c 段经 ctx.inject 注册 systemPrompt（预设过滤�
   seedSnapshot(resolveConfig({ silentFailureGuard: true, agentLang: 'en' }));
   const en = entry.text(assembly);
   assert.equal(en, t('en', 'discipline.block'), 'en 段文本 = 词典键逐字（真机验收锚句同源）');
-  assert.match(en, /run it once as a bare call/);
-  assert.match(en, /If output you expected is missing/, '处置锚在「预期的输出缺失」上（无输出设计的捕获形命令不误判）');
+  assert.match(en, /Empty output alone proves neither reading/);
+  assert.match(en, /exit code 0 means a legitimately empty output/, '第一步核实：退出码 0＝合法空输出');
+  assert.match(en, /probe the execution channel with a separate, harmless command/, '第二步：独立探针查通道');
   assert.match(en, /killed at process creation/);
   assert.match(en, /4294967295/, '杀软击杀隐藏 PowerShell 的判别特征在场（退出码 4294967295）');
   assert.match(en, /-Width/, '杀软纪律：改写法在场（-Width／经变量传值）');
@@ -657,8 +676,9 @@ hostTest('R28 判据12：c 段经 ctx.inject 注册 systemPrompt（预设过滤�
   seedSnapshot(resolveConfig({ silentFailureGuard: true, agentLang: 'zh' }));
   const zh = entry.text(assembly);
   assert.equal(zh, t('zh', 'discipline.block'), 'zh 段文本 = 词典键逐字');
-  assert.match(zh, /裸调用重试一次/);
-  assert.match(zh, /若预期的输出缺失/, '处置条件句在场（与 note.silentCapture 同口径，防回潮无条件断言）');
+  assert.match(zh, /空输出本身不证明任何一种解释/);
+  assert.match(zh, /退出码 0＝合法空输出/, 'zh 第一步核实锚');
+  assert.match(zh, /不带捕获形的探针命令/, 'zh 第二步探针锚');
   assert.match(zh, /进程创建层被杀/);
   assert.match(zh, /4294967295/);
   // 复位模块级快照（test:inproc 下共享单例，不得泄漏到其它套件）。
@@ -960,7 +980,7 @@ realLayerTest('A-F12 回归：c 段注册落在宿主组稿会收集的 global �
   const own = await ctx.systemPrompt.assemble({ agent: ownAgent, scope: ownAgent });
   const disciplineOwn = own.contexts.find((c) => c.name === 'async-tools:discipline');
   assert.notEqual(disciplineOwn, undefined, 'assemble({agent, scope}) 收集到纪律段 context');
-  assert.match(String(disciplineOwn.text), /run it once as a bare call/,
+  assert.match(String(disciplineOwn.text), /probe the execution channel with a separate, harmless command/,
     '本包预设会话：text 现求得纪律文本（en 锚在场）');
   const other = await ctx.systemPrompt.assemble({ agent: otherAgent, scope: otherAgent });
   const disciplineOther = other.contexts.find((c) => c.name === 'async-tools:discipline');
@@ -984,7 +1004,7 @@ realLayerTest('A-F12 回归：c 段注册落在宿主组稿会收集的 global �
     'contexts 线的快照头（宿主 joinContextSections 的固定标题）');
   assert.match(snapshotText, /Execution discipline for this deployment/,
     '模型可见位置：快照线含纪律段（开 + 本包预设）');
-  assert.match(snapshotText, /run it once as a bare call/, '快照线含 en 锚');
+  assert.match(snapshotText, /exit code 0 means a legitimately empty output/, '快照线含 en 锚');
   const promptText = renderPrompt(onAgain);
   assert.doesNotMatch(promptText, /Execution discipline for this deployment/,
     'sections 线（system prompt 采样位置）**不含**纪律段——它是 context，双线各归其位');

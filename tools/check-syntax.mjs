@@ -1,5 +1,5 @@
 /**
- * 语法检查：对 `lib/`、`test/`、`tools/` 下的每个源文件做一次语法解析，失败即非零退出。
+ * 语法检查：对 `lib/`、`test/`、`tools/`、`verify/` 下的每个源文件做一次语法解析，失败即非零退出。
  *
  * 用法：`node tools/check-syntax.mjs`（`npm run check`）。
  *
@@ -13,16 +13,17 @@
  */
 import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join, relative } from 'node:path';
 
 /** 包根目录。 */
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 
 /** 需要检查的目录与扩展名（`verify/` 含 `_visual/` 探针——它们不进 `npm test`
- * 也不进分发清单，正是"从没被解析过"的高危区：0.2.2 线曾漏进一个嵌套模板
- * 语法错，`check` 与 `npm test` 两道门都拦不住，直到盲测前才被盲审抓出）。 */
-const TARGETS = [
+ * 也不进分发清单，正是"从没被解析过"的高危区：嵌套模板语法错在这里出现过，
+ * 而 `check` 与 `npm test` 两道门都拦不住）。导出供 test/check-syntax.test.mjs
+ * 的覆盖守卫消费；主流程只在直接执行时运行。 */
+export const TARGETS = [
   ['lib', '.js'],
   ['test', '.mjs'],
   ['tools', '.mjs'],
@@ -31,10 +32,10 @@ const TARGETS = [
 
 /**
  * 额外单文件。浏览器半边（设置卡片）住在包根的 `client.js`，
- * 不在 `lib/`/`test/`/`tools/` 任何一个目录下——漏检等于"这个文件从没被解析过"。
- * 保留这个机制：将来再加非这三个目录的交付文件时往这里补。
+ * 不在 TARGETS 任何一个目录下——漏检等于"这个文件从没被解析过"。
+ * 保留这个机制：将来再加非目录内交付文件时往这里补。
  */
-const EXTRA_FILES = ['client.js'];
+export const EXTRA_FILES = ['client.js'];
 
 /**
  * CommonJS 文件：`node --check` 默认按 `.js` + 最近的 package.json（`"type": "module"`）
@@ -56,36 +57,43 @@ function collect(dir, extension) {
     .map((path) => relative(ROOT, join(ROOT, path)).replaceAll('\\', '/'));
 }
 
-const files = [
-  ...TARGETS.flatMap(([dir, extension]) => collect(dir, extension)),
-  ...EXTRA_FILES
-].sort();
-const failures = [];
+/** 主流程：逐文件解析检查（直接执行时运行；导入侧由测试消费 TARGETS 等）。 */
+export function main() {
+  const files = [
+    ...TARGETS.flatMap(([dir, extension]) => collect(dir, extension)),
+    ...EXTRA_FILES
+  ].sort();
+  const failures = [];
 
-for (const file of files) {
-  if (CJS_FILES.has(file)) {
-    // client.js 为何不能走 `node --check`（按 ESM 误判、且不接受 `--input-type`）：见 CJS_FILES 的 JSDoc。
-    try {
-      // eslint-disable-next-line no-new-func -- 只解析，不调用。
-      new Function(readFileSync(join(ROOT, file), 'utf8'));
-      console.log(`OK    ${file}（CJS 解析）`);
-    } catch (error) {
-      failures.push({ file, output: error instanceof Error ? error.message : String(error) });
+  for (const file of files) {
+    if (CJS_FILES.has(file)) {
+      // client.js 为何不能走 `node --check`（按 ESM 误判、且不接受 `--input-type`）：见 CJS_FILES 的 JSDoc。
+      try {
+        // eslint-disable-next-line no-new-func -- 只解析，不调用。
+        new Function(readFileSync(join(ROOT, file), 'utf8'));
+        console.log(`OK    ${file}（CJS 解析）`);
+      } catch (error) {
+        failures.push({ file, output: error instanceof Error ? error.message : String(error) });
+      }
+      continue;
     }
-    continue;
+    const result = spawnSync(process.execPath, ['--check', join(ROOT, file)], { encoding: 'utf8' });
+    if (result.status !== 0) {
+      failures.push({ file, output: `${result.stdout ?? ''}${result.stderr ?? ''}`.trim() });
+      continue;
+    }
+    console.log(`OK    ${file}`);
   }
-  const result = spawnSync(process.execPath, ['--check', join(ROOT, file)], { encoding: 'utf8' });
-  if (result.status !== 0) {
-    failures.push({ file, output: `${result.stdout ?? ''}${result.stderr ?? ''}`.trim() });
-    continue;
+
+  if (failures.length > 0) {
+    console.error(`\n${failures.length} 个文件语法检查失败：`);
+    for (const failure of failures) console.error(`\n--- ${failure.file} ---\n${failure.output}`);
+    process.exitCode = 1;
+  } else {
+    console.log(`\n${files.length} 个文件语法检查通过。`);
   }
-  console.log(`OK    ${file}`);
 }
 
-if (failures.length > 0) {
-  console.error(`\n${failures.length} 个文件语法检查失败：`);
-  for (const failure of failures) console.error(`\n--- ${failure.file} ---\n${failure.output}`);
-  process.exitCode = 1;
-} else {
-  console.log(`\n${files.length} 个文件语法检查通过。`);
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
 }

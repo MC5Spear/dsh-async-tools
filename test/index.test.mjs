@@ -785,6 +785,89 @@ test('T20b：遮蔽段与宿主 tool:jobs 原文同步——前缀逐字互锚�
   assert.ok(zh.includes('尚未交付') && zh.includes('不必再次领取'), 'zh 档收窄事实在场');
 });
 
+test('T19b：外来作业事件订阅——agent/created 在主体自身 agent.ctx 上以 {owner} 过滤调 jobs.events.subscribe；退订挂 agent.ctx.effect；订阅失败不炸装载、降级枚举（ACCEPT-FOREIGN-RESULT-022 观察入口③）', async (t) => {
+  const host = await loadHost();
+  if (host === undefined || Context === undefined) {
+    t.skip(HOST_SKIP_REASON);
+    return;
+  }
+  // 装置＝T19 的受控装载形：假 Agent 的 agent.ctx 捕获 jobs.events.subscribe 与
+  // effect 调用。订阅段在隐藏登记（名册判据＋restrict）之后——假 Agent 须先过
+  // 名册判据（tools.view 名册含 async_wait）才到达订阅挂点。
+  const { ctx } = makeContext(Context);
+  const warns = [];
+  ctx.logger = { info() {}, warn: (message) => warns.push(message) };
+  const fork = ctx.plugin(
+    { name: host.name, inject: host.inject, Config: host.Config, apply: host.apply },
+    { toolName: 'async_run' }
+  );
+  await activate(fork);
+  const subscribes = [];
+  const unsubscribes = [];
+  const effects = [];
+  const fakeAgent = {
+    id: 'agent-evsub',
+    ctx: {
+      tools: {
+        view() { return { visible: new Map([['async_wait', {}], ['async_run', {}]]) }; },
+        restrict() { return () => {}; }
+      },
+      jobs: {
+        events: {
+          subscribe(filter, handler) {
+            subscribes.push({ filter, handler });
+            return () => { unsubscribes.push(filter); };
+          }
+        }
+      },
+      // cordis 的 effect 首参是**处置 runner**：处置时调用 runner、其返回值再
+      // 作为 disposer 调用（cordis `_execute`——`runner.execute.call(this)` →
+      // collect）——假 effect 按同款两段式语义建模。
+      effect(runner) {
+        effects.push(() => {
+          const disposer = runner();
+          if (typeof disposer === 'function') disposer();
+        });
+      }
+    }
+  };
+  ctx.emit('agent/created', { agent: fakeAgent });
+  // ① 主体自身的 agent.ctx 上恰一次订阅，过滤形为 {owner: <主体 id>}——宿主
+  // EventHub 按该过滤送达主体自有作业与无主公开作业的 registered/settled
+  //（无主事件送达全部 {owner} 订阅者，设计 §2.3 观察入口③）。
+  assert.equal(subscribes.length, 1, 'agent/created ⇒ 恰一次 jobs.events.subscribe');
+  assert.deepEqual(subscribes[0].filter, { owner: 'agent-evsub' }, '订阅过滤＝{owner: 主体 id}');
+  assert.equal(typeof subscribes[0].handler, 'function', '订阅登记事件处理回调');
+  // ② 退订处置经 agent.ctx.effect 登记（随 Agent 世代回收；不挂行 ctx——行
+  // 卸载不摘在世 Agent 的观察）。产品登记形 `() => unsubscribe`＝「处置时交出
+  // 退订函数」——触发登记的处置即验证退订确实被调用。
+  assert.equal(effects.length, 2, 'restrict 句柄＋退订句柄都挂 agent.ctx.effect');
+  for (const dispose of effects) dispose();
+  assert.equal(unsubscribes.length, 1, 'effect 处置触发退订（订阅句柄挂 agent.ctx.effect）');
+  // ③ 订阅失败（subscribe 抛错）不炸装载：created 监听器不外抛（dsh-agent 按
+  // reject 处理会阻断 Agent 创建）、隐藏不被连坐（restrict 照挂）、warn 降级
+  // ——外来观察回落到 §2.6 对账枚举路径（wait-delivery FD 系列锚定的既有
+  // 通道，不在此重复断言）。
+  const faultRestrict = [];
+  const faultAgent = {
+    id: 'agent-evsub-fault',
+    ctx: {
+      tools: {
+        view() { return { visible: new Map([['async_wait', {}]]) }; },
+        restrict(policy) { faultRestrict.push(policy); return () => {}; }
+      },
+      jobs: { events: { subscribe() { throw new Error('hub down'); } } },
+      effect() {}
+    }
+  };
+  assert.doesNotThrow(() => ctx.emit('agent/created', { agent: faultAgent }),
+    '订阅失败不外抛（不阻断 Agent 创建）');
+  assert.equal(faultRestrict.length, 1, '订阅失败不连坐隐藏（restrict 照挂）');
+  assert.ok(warns.some((message) => message.includes('foreign job event subscription skipped')),
+    '订阅失败按 warn 降级（外来观察回落枚举发现）');
+  await fork.dispose();
+});
+
 test('T3c：快照在场时行级委托键不丢——agent_preset 照常暴露（§2.3.1，P1 回归锁）', async (t) => {
   const host = await loadHost();
   const Context = await loadCordis();
