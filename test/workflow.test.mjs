@@ -6,8 +6,9 @@
  *   'async-workflow'、owner=会话 id；meta.description 进 progress 行；
  * - **引擎同步抛不冒充准入拒绝**：run() 内的同步错误按原样重抛（诚实工具错误：
  *   什么都没跑），宿主 start 的准入错误才包装成可读拒绝；
- * - **首次等待＝五信号竞速**：结算/插话/迟到作答/abort/预算——任何信号
- *   只结束等待，run.cancel 只属于 job_kill（abort 不接）；
+ * - **首次等待＝四信号竞速**：结算/插话/abort/预算——任何信号只结束等待，
+ *   run.cancel 只属于 job_kill（abort 不接）；迟到作答是非目标消息、不提前
+ *   结束等待（正文留收件箱，见本文件迟到作答用例）；
  * - **宿主保真**：renderWorkflowResult 文本、jobOutcomeOf 三支、
  *   mirror 的 log 通道事件、recorder 的四类会话记录、append 失败永久停录。
  *

@@ -260,16 +260,21 @@ test('C9b check-docs：档案里的退役机制名合法（责任豁免的第二
   assert.match(out, /历史叙述词 \d+ 处、退役机制名 [1-9]\d* 处（档案合法，留痕）/, `退役名命中必须计数留痕，实际：${out.slice(-300)}`);
 });
 
-test('C10 check-docs：现行文档里的历史叙述词仍然必红（四态之②：责任豁免不外溢）', async (t) => {
+test('C10 check-docs：现行文档里的历史叙述词列人工候选、不判红（合法迁移条件反例）', async (t) => {
   const box = await sandbox();
   t.after(box.cleanup);
-  // 场景：现行文档（CONTRIBUTING.md）里出现历史叙述词——责任模型只豁免档案，
-  // 现行档"清零"口径不变；若角色建模把现行档也放过，这条就是那个反例。
-  appendFileSync(join(box.dir, 'CONTRIBUTING.md'), '\n这是一处勘误。\n', 'utf8');
+  // 场景：现行文档（CONTRIBUTING.md）里出现历史叙述词，且是**合法形态**——
+  // 迁移条件本来就要提「先前版本」。词面判据分不开合法提及与真失效内容，
+  // 所以只列人工候选（留痕让「查过」可分辨）、退出 0；真失效事实的判红由
+  // 有明确依据的退役机制名判据承担（成对反例 C10b：现行档退役名必红）。
+  appendFileSync(
+    join(box.dir, 'CONTRIBUTING.md'),
+    '\n从先前版本的行配置迁移时，已有合法覆盖继续生效；勘误记录入档案。\n',
+    'utf8'
+  );
   const { code, out } = box.runChecker();
-  assert.equal(code, 1, `现行文档的历史叙述词必须失败，实际退出 ${String(code)}：${out.slice(-300)}`);
-  assert.match(out, /WARN\s+现行\s+CONTRIBUTING\.md/, `输出必须按现行角色点名 CONTRIBUTING，实际：${out.slice(-300)}`);
-  assert.match(out, /历史叙述词 1 处（现行文档应清零）/, `输出必须报历史叙述词命中，实际：${out.slice(-300)}`);
+  assert.equal(code, 0, `合法的历史叙述词候选不得判红，实际退出 ${String(code)}：${out.slice(-300)}`);
+  assert.match(out, /历史叙述词候选 [1-9]\d* 处（人工判断：L\d+「(先前版本|勘误)」/, `候选必须带词与行号留痕，实际：${out.slice(-300)}`);
 });
 
 test('C10b check-docs：现行文档里的退役机制名仍然必红（退役判据的现行侧反例）', async (t) => {

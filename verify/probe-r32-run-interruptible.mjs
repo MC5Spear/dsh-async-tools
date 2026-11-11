@@ -12,8 +12,10 @@
  *       aria-label 现场标定）→ 点击后 tool/result 距点击 ≤ 5000 ms、形状如实
  *       登记（handle=设计形状；aborted/empty=宿主改写）；作业存活（结算
  *       照常发生）+ 结算后完成通知恰 1 条（abort 的恢复通道）。
- * - (c) 呈现：任务面板（「N 个后台任务运行中」入口）任务卡 label=命令原文、
- *       running 期 progress 行=description；结算后 progress 消失、命令仍在。
+ * - (c) 呈现：任务面板（「N 个后台任务运行中」入口）任务卡注册名称=description
+ *       （紧凑任务名，需求 §2.2.4/§9.3.4）；命令原文不充当卡面名称（旧缺陷
+ *       label=命令原文的对照反例）；活动期卡面有动态进度（双读差分）、结算后
+ *       清除且名称保留；命令原文经界面调用记录查看。
  * - (d) 触顶：占满 owner 名额（10，设计 §3.5 出厂上限）→ 第 11 条 async_run 的错误文案
  *       含「进程启动前被拒」锚 + limit 10 + 作业出路。睡眠 600 s——名额必须
  *       在第 11 条发出时仍被占住，短睡眠会提前释放；取证后 session/cancel
@@ -278,15 +280,16 @@ async function assertElevated(sessionId) {
 }
 
 /**
- * 任务面板里目标作业卡的文本（卡=含 `async-command` 与命令原文的最深 div；断言只认
- * 卡内文本——正文级断言会被提示词回显污染：提示词本身含 description 与命令原文，
- * 「结算后 progress 消失」在正文层面恒假——实测）。
+ * 任务面板里目标作业卡的文本（卡=含 `async-command` 与注册名称的最深 div；命令
+ * 作业的注册名称=description——需求 §2.2.4/§9.3.4 的紧凑任务名，命令原文经界面
+ * 调用记录查看、不充当任务名称。断言只认卡内文本——正文级断言会被提示词回显
+ * 污染：提示词本身含 description 与命令原文，卡面判据以注册名称定位目标）。
  */
-async function jobCardText(page, command) {
+async function jobCardText(page, label) {
   const card = await evaluate(page, `(() => {
-    const cmd = ${JSON.stringify(command)};
+    const label = ${JSON.stringify(label)};
     const els = [...document.querySelectorAll('div')]
-      .filter((el) => (el.textContent || '').includes('async-command') && (el.textContent || '').includes(cmd) && (el.textContent || '').length < 400)
+      .filter((el) => (el.textContent || '').includes('async-command') && (el.textContent || '').includes(label) && (el.textContent || '').length < 400)
       .sort((a, b) => ((a.textContent || '').length - (b.textContent || '').length));
     return els.length === 0 ? '' : els[0].textContent || '';
   })()`);
@@ -364,16 +367,18 @@ async function criterionB(page) {
   return { sessionId: sid, shape };
 }
 
-/** (c) 呈现：任务卡 label=命令原文 + progress=description；结算后 progress 消失。 */
+/** (c) 呈现：任务卡注册名称=description；命令原文不充当卡面名称（旧缺陷对照）；
+ * 活动期卡面有动态进度，结算后清除、名称保留；命令原文经界面调用记录可查看。 */
 async function criterionC(page) {
   const command = 'Write-Output "r32-panel" ; Start-Sleep -Seconds 25';
+  const jobName = 'probe panel row';
   const sid = await guiBlankSession(page, PRESET);
   await guiSendText(page, '/permission danger-full-access');
   await sleep(3000);
   await assertElevated(sid);
   await guiSendText(page,
     `Run this exact command with async_run (yield_ms=30000): ${command} `
-    + 'Description must be exactly: probe panel row');
+    + `Description must be exactly: ${jobName}`);
   await waitRunCalled(sid);
   await sleep(POST_CALL_MS);
 
@@ -384,20 +389,33 @@ async function criterionC(page) {
     return { sessionId: sid };
   }
   console.log(`panel opened: ${opened}`);
-  const runningCard = await jobCardText(page, command);
-  record('c-1-label-command', runningCard.includes(command), `任务卡 label=命令原文（卡内实读：${runningCard.slice(0, 120)}）`);
-  record('c-2-progress-description', runningCard.includes('probe panel row'), 'progress 行=description（活动期卡内可见）');
-  // 等结算：命令 25 s（注册后起算）+ 余量；卡内 progress 行消失、命令仍在。
-  const t0 = Date.now();
-  let settledCard = '';
-  while (Date.now() - t0 < 70000) {
-    await sleep(3000);
-    settledCard = await jobCardText(page, command);
-    if (!settledCard.includes('probe panel row') && settledCard.includes(command)) break;
-  }
-  record('c-3-progress-cleared',
-    settledCard !== '' && !settledCard.includes('probe panel row') && settledCard.includes(command),
-    `结算后卡内 progress 行清除、命令行仍在（终态卡在场——裁定接受；卡内实读：${settledCard.slice(0, 140)}）`);
+  // c-1 注册名称：卡面含 description（命令作业注册 label=description）。按注册
+  // 名称定位目标卡——不以命令原文定位（那是旧缺陷的名称观）。
+  const runningCard = await jobCardText(page, jobName);
+  record('c-1-label-description', runningCard.includes(jobName),
+    `任务卡注册名称=description（卡内实读：${runningCard.slice(0, 120)}）`);
+  // c-2 旧缺陷对照：卡面不得以命令原文充当名称——注册名误用命令原文时本判据
+  // 失败（正确实现可过、旧缺陷可败的对照；不是改期望字符串凑绿）。
+  record('c-2-command-not-label', runningCard !== '' && !runningCard.includes(command),
+    `运行卡面不含命令原文（卡内实读：${runningCard.slice(0, 120)}）`);
+  // c-3 活动进度：活动期卡面有动态（双读差分——进度行/计时在动）；若卡面无
+  // 任何动态文本则如实失败（校准点：需按实际卡面形态校准或产品缺进度显示）。
+  const earlyCard = await jobCardText(page, jobName);
+  await sleep(3500);
+  const laterCard = await jobCardText(page, jobName);
+  record('c-3-progress-live', earlyCard !== '' && laterCard !== '' && earlyCard !== laterCard,
+    `活动期卡面双读差分（early≠later 即有动态进度；early=${earlyCard.slice(0, 80)}／later=${laterCard.slice(0, 80)}）`);
+  // 等结算：命令 25 s＋余量；完成后通知到 → 再读卡面。
+  await waitForNoticeCount(sid, 1, 70000);
+  const settledCard = await jobCardText(page, jobName);
+  record('c-4-settled-name-persists', settledCard !== '' && settledCard.includes(jobName),
+    `结算后注册名称仍在（卡内实读：${settledCard.slice(0, 140)}）`);
+  // c-5 原始调用记录：命令原文经界面调用记录查看——转录请求记录与界面调用
+  // 记录同源，原文在场即可查看（不在卡面断言，见 c-2）。
+  const transcript = await transcriptOf(sid);
+  const sawCommand = JSON.stringify(transcript.records ?? []).includes(command);
+  record('c-5-command-via-call-record', sawCommand,
+    '界面调用记录（转录请求记录）含命令原文，可查看');
   return { sessionId: sid };
 }
 

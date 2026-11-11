@@ -12,6 +12,8 @@ This third-party plugin is unaffiliated with DeepSeek. It is personally maintain
 
 ## Before installing
 
+**The current 0.2.9 candidate has not passed release acceptance.** The table is the package’s declared host admission set, not proof that every behavior has been verified. The remote maintenance branch may still contain an earlier source revision with the same version. For this candidate, ask the maintainer for an accessible exact commit or artifact, and retain its source; matching version numbers alone do not establish identical implementation.
+
 | Component | Current applicable version |
 | --- | --- |
 | Plugin version | `0.2.9+dsh.0.2.1-rc` |

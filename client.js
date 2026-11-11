@@ -2199,12 +2199,12 @@ var ASK_CSS = ""
   // 计数泡（内联形态）：error 底＋白字维持警示语义；泡是徽标内联组成员
   // （flex:none），四边含于按钮盒内、不与图标相交。对比度：
   // 12px 数字是普通文字——出厂 error 令牌两主题都配白字不足（浅 red-600
-  // #ec1313 白字 4.50 临界、深 red-400 #f25a5a 白字 3.29），按 VIS-CONTRAST-01
-  // 授权的组件级语义色加深底：浅色混黑 8%（实算 5.19:1）、深色令牌更亮需
-  // 混黑 38%（实算 7.20:1）；color-mix 用法与宿主 bVCLcG_arrow 同款，深色
-  // 档选择器 body[data-ds-dark-theme] 与宿主 onboarding 同款；混黑/白字用
+  // #ec1313 白字 4.50 临界、深 red-400 #f25a5a 白字 3.29），组件级语义色
+  // 加深底补足：浅色混黑 8%（实算 5.19:1）、深色令牌更亮需混黑 38%（实算
+  // 7.20:1）；color-mix 用法与宿主 bVCLcG_arrow 同款，深色档选择器
+  // body[data-ds-dark-theme] 与宿主 onboarding 同款；混黑/白字用
   // achromatic 关键字（black/white）而非十六进制字面量——颜色仍取主题令牌
-  // 现值，且守住「卡片不得写死颜色」的 T14 判据；不覆盖宿主全局变量。
+  // 现值，不写死颜色、不覆盖宿主全局变量。
   + ".ats-ask-count{flex:none;min-width:18px;"
   + "height:18px;line-height:18px;text-align:center;padding:0 3px;"
   + "border-radius:999px;"

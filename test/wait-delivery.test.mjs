@@ -27,6 +27,10 @@ import { checkedTool, inboxPayload } from './_helpers.mjs';
 // 静态闭包触达宿主链，与 workflow/wait 同走 loadOfflineSafe 动态装载。
 const deliveryModule = await loadOfflineSafe('../lib/delivery.js');
 const { ledger, resetDeliveryLedger, projectBatchEntry, terminalFacts } = deliveryModule ?? {};
+// PJ 系列（PUBLIC-JOB-01 分册）直接消费 JobTarget 的入账/读取面——同样走
+// 动态守卫装载（wait-job-target 静态依赖 delivery 的宿主链）。
+const waitJobTargetModule = await loadOfflineSafe('../lib/wait-job-target.js');
+const { JobTarget } = waitJobTargetModule ?? {};
 
 // 宿主链动态守卫：lib/workflow.js、lib/wait.js（→ dsh-tools）与真注册表依赖
 // （@deepseek-ai/cordis、@deepseek-ai/dsh-jobs-local——后者是宿主树内层包，不在本包
@@ -267,6 +271,53 @@ hostTest('R57 真实注册表③：无 result 的普通命令作业——增量�
 
     const second = await rig.waiter.execute(waitArgs(jobId), rig.exec());
     assert.equal(second.output, '', '消费式游标：第二次读取无新增量');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+// ── R57 真实注册表④（ACCEPT-BATCH-01，设计 §2.6 创建认领）──────────────────
+// 并发双创建：两个 execute 同时在途（引擎悬置）⇒ 两个在途创建认领。首创建直付
+// 后窗口不关（次认领在场），次创建直付吃**同批余量**（预算按开着的批次扣减，
+// 不是旧形态的「首创建返回即关批、次创建拿新批全额」）；末个认领注销才复查＋
+// 关批，续段在下一载体恢复全额预算交回。
+hostTest('R57 真实注册表④：并发双创建同窗——首创建直付后窗口不关，次创建吃同批余量；末个认领注销才关批', async () => {
+  const { omittedMiddle } = await import('../lib/output.js');
+  const rig = await buildRig('cre2', [], { maxResultChars: 60 });
+  try {
+    // 两个并发创建：引擎悬置、两个 execute 都未返回（在途创建认领双在场）。
+    const p1 = rig.workflow.execute(WF_ARGS, rig.exec());
+    const p2 = rig.workflow.execute(WF_ARGS, rig.exec());
+    // 注册表按启动序给行：[jobA, jobB]（完成载体不再带 job_id，从清单行锚定）。
+    const rows = rig.ctx.jobs.list(rig.parent.id).map((row) => row.id);
+    assert.equal(rows.length, 2, '两个并发创建各起一行（前置）');
+    const [jobA, jobB] = rows;
+    const jsonA = JSON.stringify('A'.repeat(50)); // 52 字符 ≤ 批预算 60
+    const jsonB = JSON.stringify('B'.repeat(50)); // 52 字符，仅余 8 可付
+    rig.finisher(0, 'A'.repeat(50));
+    const r1 = await p1;
+    assert.equal(r1.status, 'completed', '首创建直付结算（前置）');
+    assert.notEqual(r1.truncated, true, '首创建拿本批全额：52 ≤ 60 不截断（前置）');
+    assert.ok(r1.result.includes('A'.repeat(50)), '首创建正文完整直付（前置）');
+    // 修前形态：首创建返回后 activeWaits 空 ⇒ closeBatchIfIdle 即关批；修后
+    // 在途创建认领压住关批——批次仍开，次创建的直付落进同一批。
+    const subject = ledger.subjects.get(rig.parent.id);
+    assert.notEqual(subject.batch, null, '次创建在途 ⇒ 窗口不关（批次仍开）——本断言钉住关批判定扩容');
+    rig.finisher(1, 'B'.repeat(50));
+    const r2 = await p2;
+    assert.equal(r2.status, 'completed', '次创建直付结算（前置）');
+    assert.match(r2.result, new RegExp(`\\[output truncated: ${String(jsonB.length - 8)} chars omitted\\]`),
+      `次创建吃同批余量 8（省略 ${String(jsonB.length - 8)}）——旧形态拿新批全额 60 不截断，本断言必红`);
+    assert.equal(subject.batch, null, '末个认领注销 ⇒ 复查后关批');
+    // 续段恢复：关批后的下一载体（wait）以新批全额预算交回次创建被省略的中段。
+    const again = await rig.waiter.execute(waitArgs(jobB), rig.exec());
+    assert.equal(again.status, 'completed');
+    const expectedMiddle = omittedMiddle(jsonB, 8);
+    assert.ok(expectedMiddle.length > 0, '前置：确实有省略中段');
+    assert.equal(again.output, expectedMiddle, '续段＝省略中段原文（新批全额，不再截断）');
+    // 首创建已全额直付：无续段可领。
+    const again1 = await rig.waiter.execute(waitArgs(jobA), rig.exec());
+    assert.equal(again1.output, '', '全额直付后无新增内容（不重复交付）');
   } finally {
     await rig.dispose();
   }
@@ -3375,6 +3426,110 @@ hostTest('REC-E：字符预算耗尽但条目未满——空正文条目仍按�
     '两条都投：预算只约束非空正文（修前把空正文也按预算延后）');
   assert.match(textOf(rig.calls.inject[0]), /XXXXXXXX/, '非空正文消耗预算');
   assert.match(textOf(rig.calls.inject[1]), /job-rec-e2/, '空正文以状态行同窗交付');
+});
+
+// ── CRE 系列（ACCEPT-BATCH-01，设计 §2.6「批次与窗口」：创建认领）──────────
+// 创建类调用（async_run/async_workflow）在 execute 同步前缀登记「在途创建」；
+// 窗口成员＝活等待∪在途创建。认领在场：closeBatchIfIdle 不关批、#deliverIfNoWait
+// 让位；认领清空＝窗口空闲，先让位终局复查、后关批（与等待返回路径同序）。
+
+hostTest('CRE-1：创建认领压窗口——等待返回不复查、关批不生效；认领清空才复查＋关批', async () => {
+  const rig = sRig({ budget: 8 });
+  const waitToken = ledger.claimWait(rig.OWNER);
+  const creation = ledger.claimCreation(rig.OWNER, 'run');
+  // 就绪条目在活等待下延后（不直投）。
+  await rig.readyJob('job-cre-a', 'XY');
+  assert.equal(rig.calls.inject.length, 0, '活等待在场 ⇒ 就绪条目不直投（前置）');
+  // 等待载体领取：装配开批（批次对象在场、预算被消耗）。
+  const { delivered } = ledger.collectBatch(rig.OWNER, {});
+  assert.equal(delivered.length, 1, '等待载体装配成功（前置）');
+  const subject = ledger.subjects.get(rig.OWNER);
+  assert.notEqual(subject.batch, null, '装配后批次在场（前置）');
+  // 认领在场：等待返回不触发让位复查。
+  await ledger.releaseWait(waitToken, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 0, '在途创建压住让位复查——不投完成消息');
+  // 认领在场：关批不生效（窗口未空闲）。
+  ledger.closeBatchIfIdle(rig.OWNER);
+  assert.notEqual(subject.batch, null, '在途创建压住关批——批次仍开');
+  // 认领清空＝窗口空闲：复查（无待投）＋关批。
+  await ledger.releaseCreation(creation, rig.OWNER);
+  assert.equal(subject.batch, null, '认领清空 ⇒ 复查后关批（下一批恢复全额预算）');
+});
+
+hostTest('CRE-2：同窗多创建——逐个注销不复查，末个注销才让位终局复查', async () => {
+  const rig = sRig({ budget: 4000 });
+  const c1 = ledger.claimCreation(rig.OWNER, 'run');
+  const c2 = ledger.claimCreation(rig.OWNER, 'workflow');
+  await rig.readyJob('job-cre-b1', 'BODY-ONE');
+  await rig.readyJob('job-cre-b2', 'BODY-TWO');
+  assert.notEqual(c1, c2, '认领令牌互异');
+  await ledger.releaseCreation(c1, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 0, '仍有在途创建 ⇒ 窗口不空闲、不复查');
+  await ledger.releaseCreation(c2, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 2, '末个认领注销 ⇒ 让位终局复查投全部就绪条目');
+  assert.match(textOf(rig.calls.inject[0]), /BODY-ONE/, '条目 1 正文在场');
+  assert.match(textOf(rig.calls.inject[1]), /BODY-TWO/, '条目 2 正文在场');
+});
+
+hostTest('CRE-3：窗口空闲序＝先复查后关批——复查在旧批上只产延后注记，关批后下一载体全预算交续段', async () => {
+  const { omittedMiddle } = await import('../lib/output.js');
+  const rig = sRig({ budget: 8 });
+  const waitToken = ledger.claimWait(rig.OWNER);
+  const creation = ledger.claimCreation(rig.OWNER, 'run');
+  // 16 字符正文、预算 8：复查交截断完成消息（首 8 字符），中段恰 8 字符＝
+  // 单批全额——关批后下一载体以新批全额预算完整交回（不二次截断）。
+  await rig.readyJob('job-cre-c', 'HEAD' + 'm'.repeat(8) + 'TAIL');
+  await ledger.releaseWait(waitToken, rig.OWNER);
+  await ledger.releaseCreation(creation, rig.OWNER);
+  const entry = ledger.jobs.get('job-cre-c');
+  assert.equal(rig.calls.inject.length, 1, '让位复查投一条截断完成消息');
+  assert.equal(entry.deliveredFact.partial, true, 'partial 事实（前置：截断交付）');
+  const expectedMiddle = omittedMiddle('HEAD' + 'm'.repeat(8) + 'TAIL', 8);
+  assert.equal(entry.buffer, expectedMiddle, '省略中段按原文留缓冲');
+  assert.equal(ledger.subjects.get(rig.OWNER).batch, null,
+    '复查后批次已关（关批在复查之后）——下一载体恢复全额预算');
+  const { delivered } = ledger.collectBatch(rig.OWNER, {});
+  assert.equal(delivered.length, 1, '续段条目进批（partial 例外）');
+  assert.equal(delivered[0].text, expectedMiddle, '续段＝省略中段原文');
+  assert.equal(delivered[0].truncated, false, '全额预算：续段完整交付（F8 的账本级镜像）');
+});
+
+hostTest('CRE-4：回合收尾清扫中止认领——只清集合成员、不触发交付；未中止认领存活', async () => {
+  const rig = sRig({ budget: 4000 });
+  const abortCtl = new AbortController();
+  const aborted = ledger.claimCreation(rig.OWNER, 'run', abortCtl.signal);
+  const live = ledger.claimCreation(rig.OWNER, 'run');
+  await rig.readyJob('job-cre-d', 'BODY-SWEEP');
+  abortCtl.abort();
+  const stop = rig.listeners.get('agent/turn-stopping');
+  assert.equal(typeof stop, 'function', '装置挂有 turn-stopping 监听（前置）');
+  stop({ agent: { id: rig.OWNER } });
+  const subject = ledger.subjects.get(rig.OWNER);
+  assert.ok(!subject.inFlightCreations.has(aborted), '中止认领被清扫');
+  assert.ok(subject.inFlightCreations.has(live), '未中止认领存活（悬挂调用的 finally 是正规出口）');
+  assert.equal(rig.calls.inject.length, 0, '清扫不触发交付');
+  // 存活认领仍压窗口；其注销（execute 真正退出）是复查的正规出口。
+  await ledger.releaseCreation(live, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 1, '末个认领注销 ⇒ 复查投递（幂等：清扫后注销对空集）');
+  assert.match(textOf(rig.calls.inject[0]), /BODY-SWEEP/, '正文经正规出口交付');
+});
+
+hostTest('CRE-5：注销幂等与主体隔离——未知主体/重复注销 no-throw；认领集合按主体互不影响', async () => {
+  const rig = sRig({ budget: 8 });
+  // 未知主体：subjects 无此键 ⇒ 直接返回，不抛。
+  await ledger.releaseCreation({}, 'nobody');
+  const token = ledger.claimCreation(rig.OWNER, 'run');
+  await ledger.releaseCreation(token, rig.OWNER);
+  await ledger.releaseCreation(token, rig.OWNER); // 幂等重注：空集上再删一次无效果
+  assert.equal(ledger.subjects.get(rig.OWNER).inFlightCreations.size, 0, '重复注销不残留');
+  // 主体隔离：另一主体的认领不压本主体窗口。
+  const other = ledger.claimCreation('at-s-other', 'run');
+  await rig.readyJob('job-cre-e', 'BODY-ISO');
+  const waitToken = ledger.claimWait(rig.OWNER);
+  await ledger.releaseWait(waitToken, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 1, '他主体认领不压本主体让位复查');
+  assert.match(textOf(rig.calls.inject[0]), /BODY-ISO/, '正文照常交付');
+  await ledger.releaseCreation(other, 'at-s-other');
 });
 
 hostTest('REC-F：无活等待的读取失败——注记三要素（真实结局＋失败标记＋重试出路）经完成消息可见，不置已交付事实（REL-READ-02）', async () => {
@@ -6555,6 +6710,72 @@ hostTest('T-FD-1 真实注册表：外来作业静默结算→发现交付，一
   } finally {
     await rig.dispose();
   }
+});
+
+// ── PJ 系列（ACCEPT-PUBLIC-JOB-01，设计 §2.6「宿主所有权与交付分账」）────────
+// 无主公开作业按「主体×作业」分册：第二主体经自身可见性证实后建自己的分册
+//（自己的预算/游标/份额），不再被「属他会话」拒绝；有主作业单条记录，可见性
+// 拒绝统一走目标解析查无口径（error.foreignJob 词典键删除）；宿主一次性
+// result 与读取游标全局唯一——第二主体只得此后增量。
+
+hostTest('PJ-1：无主公开作业分册——第二主体不拒、各自条目独立；一次性 result 全局唯一', async () => {
+  resetDeliveryLedger();
+  // 受控宿主形：清单对任意 caller 都给同一无主行；读取一次性 result 只随首次
+  // 终态读取交付（与 dsh-jobs-local 契约同形），此后只剩增量。
+  let resultServed = false;
+  const ctx = {
+    jobs: {
+      list: () => [{ id: 'pub-1', status: 'completed', exitCode: 0 }],
+      read: async () => (resultServed
+        ? { chunks: [] }
+        : (resultServed = true, { chunks: [{ channel: 'stdout', text: 'PUBLIC-BODY' }], result: 'PUBLIC-RESULT' }))
+    }
+  };
+  const config = Object.freeze({ maxResultChars: 100, agentLang: 'en' });
+  const row = { id: 'pub-1', status: 'completed', exitCode: 0, owner: undefined };
+  const first = new JobTarget({ ctx, config, jobId: 'pub-1', owner: 'pj-s1', t, lang: 'en' });
+  const second = new JobTarget({ ctx, config, jobId: 'pub-1', owner: 'pj-s2', t, lang: 'en' });
+  assert.equal(first.snapshot().state, 'found', '前置：主体一可见');
+  // 第二主体等待同一无主作业：不再被「属他会话」拒绝（修前 error.foreignJob
+  // 必红），各自建分册条目。
+  first.ensureRegistered(row);
+  second.ensureRegistered(row);
+  const e1 = ledger.entryFor('pub-1', 'pj-s1');
+  const e2 = ledger.entryFor('pub-1', 'pj-s2');
+  assert.ok(e1 !== undefined && e2 !== undefined, '两主体各有一条目（分册不拒）');
+  assert.notEqual(e1, e2, '分册条目互异（预算/游标/份额按主体维护）');
+  assert.equal(ledger.jobs.get('pub-1'), undefined, '无主作业不占裸键（有主命名空间不受污染）');
+  // 一次性 result 全局唯一：主体一首次终态读取拿全量；主体二只剩「此后增量」
+  //——无新内容，终态照常交付、正文为空（不为空输出伪造或重复旧正文）。
+  const r1 = await first.readSettled(row);
+  assert.equal(r1.text, 'PUBLIC-BODY\nPUBLIC-RESULT', '主体一：正文＋一次性 result 并入缓冲（前置）');
+  const r2 = await second.readSettled(row);
+  assert.equal(r2.terminal.status, 'completed', '主体二：终态事实照常');
+  assert.equal(r2.text, '', '主体二：一次性 result 已被主体一消费——只得此后增量（此处为空）');
+  // 幂等：同主体重复 ensureRegistered 不重复建册。
+  second.ensureRegistered(row);
+  assert.equal(ledger.entryFor('pub-1', 'pj-s2'), e2, '幂等入账（同主体不重复建册）');
+});
+
+hostTest('PJ-2：有主作业可见性拒绝走查无口径——error.foreignJob 词典键绝迹', async () => {
+  resetDeliveryLedger();
+  // 他主有主行（owner 字段在场且非本主体）：ensureRegistered 按查无口径拒绝
+  //（与入口校验同词 error.unknownJob——宿主 jobs.list(caller) 过滤后正常不可见，
+  // 此为防御路径的口径统一）。
+  const ctx = {
+    jobs: {
+      list: () => [{ id: 'own-9', status: 'running', owner: 'pj-owner-9' }],
+      read: async () => ({ chunks: [] })
+    }
+  };
+  const config = Object.freeze({ maxResultChars: 100, agentLang: 'en' });
+  const target = new JobTarget({ ctx, config, jobId: 'own-9', owner: 'pj-s1', t, lang: 'en' });
+  assert.throws(() => target.ensureRegistered({ id: 'own-9', status: 'running', owner: 'pj-owner-9' }),
+    /unknown job "own-9"/, '他主有主条目按查无口径拒绝（修前为 foreignJob 文案）');
+  assert.equal(ledger.entryFor('own-9', 'pj-s1'), undefined, '拒绝零落账');
+  // 词典键删除锚：两语的 error.foreignJob 都不再注册（t 的缺键形态＝抛错）。
+  assert.throws(() => t('en', 'error.foreignJob'), /missing text key/, 'en 档 error.foreignJob 已删除');
+  assert.throws(() => t('zh', 'error.foreignJob'), /missing text key/, 'zh 档 error.foreignJob 已删除');
 });
 
 // T-RC-1（真 agent-loop 装置，设计 §5.2）：真 AgentLoop 插件装载（注册真 inbox

@@ -1,5 +1,5 @@
 /**
- * `async_list_subagent_models` 的单元测试（需求 §2.3.4 路由查询，设计 §3.7）。
+ * `async_list_subagent_models` 的单元测试（需求 §2.3.4 路由查询，设计 §3.6）。
  *
  * 假件纪律：
  * - 假 `llm` 只实现 `listProviders` / `listModels` / `resolveModelInfo`，全部
@@ -9,12 +9,12 @@
  *   登记（入口 applyWith 同款），创建行 `subagentProvider` 与查询行配置分离——
  *   「按创建行判后端」的两行分离形态在这里可失败；
  * - 假 `subagents` 只实现 `getProvider`（async_agent 目标的后端段证据，设计
- *   §3.7）与拒绝性 `startActivation`（只读纪律探针）；
+ *   §3.6）与拒绝性 `startActivation`（只读纪律探针）；
  * - 假 `subagentModelSelection`（现读口径）与假 `sessionProjections`（原生投影）
  *   分开配置——async_agent 与原生目标的两条口径差别用例直接对比；
  * - 假 `systemPrompt.assemble`（身份依据②的组稿桩）按当前原生行名渲染
  *   `tool:<名>` 段——段在场／缺席／抛错／服务缺席四种形态对应身份段的
- *   可证／遮蔽／读取失败（设计 §3.7 双依据）。
+ *   可证／遮蔽／读取失败（设计 §3.6 双依据）。
  */
 import assert from 'node:assert/strict';
 import { hostTestByProbe, hostTestFor, loadOfflineSafe } from './_host-gate.mjs';

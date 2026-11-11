@@ -67,7 +67,8 @@ import { LOCAL_DIR } from './_local-config.mjs';
 /**
  * 文档责任表（设计 §8.3 按文件责任适用判据）：每份公开文档登记 `{file, role}`。
  *
- * - `current`：现行规范文档，承载"现在是什么"——历史叙述词与退役机制名清零。
+ * - `current`：现行规范文档，承载"现在是什么"——退役机制名（有技术标识证据）
+ *   判红；历史叙述词只列人工候选（合法迁移条件与真失效内容靠词面分不开）。
  * - `archive`：历史档案，职责就是记录过去——历史叙述词与退役机制名在其条目内
  *   合法（档案记录的是当时的状态，退役名在旧条目里本来就是"当时的现役名"），
  *   两类命中都按份计数写进输出留痕（不是静默跳过，也不进退出码）；围栏配对等
@@ -97,7 +98,11 @@ const ROLE_LABEL = { current: '现行', archive: '档案' };
 /** 责任表里的全部文件（不分角色——未分类/幽灵对账与铺盘覆盖每一份）。 */
 const FILES = DOCUMENTS.map((doc) => doc.file);
 
-/** 历史叙述词：现行文档不该有这些。 */
+/** 历史叙述词：词面命中只说明「这里在讲历史」，而讲历史不必然是缺陷——迁移
+ *  条件、旧值覆盖的合法声明都在现行文档里提到过去。词面命中降为**人工候选**
+ *  （列词与行号，由维护者按职责与上下文逐条判断），不直接判红；有明确依据的
+ *  失效事实检查（退役机制名的技术标识判据）仍按证据判红。
+ */
 const HISTORICAL_WORDS = /勘误|原写|先前版本|已作废|曾经|以前是|此前误/g;
 
 /**
@@ -216,9 +221,10 @@ export function checkDocs(root = process.cwd(), { quiet = false } = {}) {
     problem(file, '名单里的这份登记文档在盘上不存在——名单与现实漂移了，检查会静默失去作用');
   }
 
-  // ── 登记文档：围栏配对（全角色）+ 历史叙述词与退役机制名（按责任）──────
+  // ── 登记文档：围栏配对（全角色）+ 历史叙述词候选与退役机制名（按责任）────
   const archiveHits = new Map();
   const retiredHits = new Map();
+  const candidateHits = new Map();
   for (const { file, role } of DOCUMENTS) {
     let text;
     try {
@@ -229,12 +235,18 @@ export function checkDocs(root = process.cwd(), { quiet = false } = {}) {
     }
     const fences = countFences(text);
     if (fences % 2 !== 0) problem(file, `代码围栏 ${String(fences)} 个（不配对）`);
-    const hits = [...text.matchAll(HISTORICAL_WORDS)].length;
+    const hits = [...text.matchAll(HISTORICAL_WORDS)].map((m) => ({
+      word: m[0],
+      line: text.slice(0, m.index).split('\n').length
+    }));
     if (role === 'archive') {
       // 档案：历史叙述词合法——不进 problemsByFile（不影响退出码），按份计数留痕。
-      archiveHits.set(file, hits);
-    } else if (hits > 0) {
-      problem(file, `历史叙述词 ${String(hits)} 处（现行文档应清零）`);
+      archiveHits.set(file, hits.length);
+    } else if (hits.length > 0) {
+      // 现行文档：历史叙述词是**人工候选**，不是判红项——合法迁移条件与真失效
+      // 内容靠词面分不开（成对反例见 test/check-docs.test.mjs C10/C10b），交给
+      // 维护者按上下文判断；留痕让「查过」与「没查」在输出上可分辨。
+      candidateHits.set(file, hits);
     }
     const retired = retiredMechanisms(text);
     if (role === 'archive') {
@@ -280,7 +292,11 @@ export function checkDocs(root = process.cwd(), { quiet = false } = {}) {
       const trace = role === 'archive'
         ? `  历史叙述词 ${String(archiveHits.get(file) ?? 0)} 处、退役机制名 ${String(retiredHits.get(file) ?? 0)} 处（档案合法，留痕）`
         : '';
-      say(`OK    ${tag}  ${file.padEnd(28)} ${String(readFileSync(join(root, file)).length).padStart(6)}B${trace}`);
+      const candidates = candidateHits.get(file);
+      const candTrace = candidates === undefined
+        ? ''
+        : `  历史叙述词候选 ${String(candidates.length)} 处（人工判断：${candidates.slice(0, 3).map((c) => `L${String(c.line)}「${c.word}」`).join('、')}${candidates.length > 3 ? ' 等' : ''}——迁移条件等合法提及不算缺陷，失效内容应改写）`;
+      say(`OK    ${tag}  ${file.padEnd(28)} ${String(readFileSync(join(root, file)).length).padStart(6)}B${trace}${candTrace}`);
     } else {
       say(`WARN  ${tag}  ${file}`);
       for (const item of list) say(`            ${item}`);

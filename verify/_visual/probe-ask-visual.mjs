@@ -989,7 +989,9 @@ try {
       : !(sr.right <= cr.left + 0.5 || cr.right <= sr.left + 0.5 || sr.bottom <= cr.top + 0.5 || cr.bottom <= sr.top + 0.5);
     return { box: [Math.round(r.width), Math.round(r.height)], inside, overlap,
       gapX: sr === null || cr === null ? null : Math.round((cr.left - sr.right) * 10) / 10,
-      count: cr === null ? null : `${String(Math.round(cr.width))}x${String(Math.round(cr.height))}` };
+      // 注意外层已是 evaluate 的模板字符串——这里必须用拼接，嵌套反引号会
+      // 提前终止外层模板（整文件因此解析失败）。
+      count: cr === null ? null : String(Math.round(cr.width)) + 'x' + String(Math.round(cr.height)) };
   })()`);
   check('AV-9g 徽标宿主化几何：盒 ≤52×≥28、计数泡内联含于盒且与 svg 零重叠（间隙 ≥2px）',
     badgeGeom !== null && badgeGeom.box[0] <= 52 && badgeGeom.box[1] >= 28

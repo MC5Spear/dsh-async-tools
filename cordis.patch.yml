@@ -13,9 +13,11 @@
 # 这一行**不得携带 `toolName`**：带了就会把它变成工具行——宿主侧的工具进
 # **全局工具层**，每个预设都会默认带上（需求 §3.2）。`test/two-planes.test.mjs` 的 T5
 # 反向锁死本文件不得出现 `toolName`。
-# 预算字段的 `config:` 是**合法**的：它是"改出厂值"的正式入口（组合层，
-# schema 默认值 < 本行 config < 设置卡片的 volatile 提交；需要重启生效——组合树
-# 在启动时构建一次）。默认留空。
+# 宿主行若要改出厂设置值，行 config 的设置键必须嵌套在 `settings:` 下（平铺
+# 在 config 根层是 0.2.5 旧形态，MIGRATE-01 迁移警告的对象，值会被静默回落
+# 默认）。校验与出厂默认都来自本包的设置 schema（schemastery，经宿主配置服务
+# 装配）：优先级 schema 默认 < 本行 config < 设置卡片的 volatile 提交；行
+# config 需要重启生效——组合树在启动时构建一次。本文件默认不带 config。
 #
 # 宿主行的**快照链零服务依赖**（`'loader/volatile-update'` 是 loader 派发给本
 # fiber 的事件，监听挂在宿主行自己的 ctx 上即可），但 `lib/index.js` 的静态
