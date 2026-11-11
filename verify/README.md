@@ -83,7 +83,7 @@ npm run check:alias-tokens
 | [`check-agent-policy.mjs`](<check-agent-policy.mjs>) | 用固定锚集核对本包 `lib/agent-policy.js` 的形状副本与宿主 `dsh-tool-subagent` 现行源逐字同形（有限锚集，宿主侧 H1–H8 对本包侧 O1–O14，其中两锚按行号定位）——锚内文本任一侧变动（含宿主升版改形而本包未跟）即红，锚外漂移不红；同一锚集固定「无投影注册、无采样」的现行事实；不注册投影、不锚定采样链——派生路径现读宿主模型选择服务（`subagentModelSelection.current()`），会话投影只用于原生目标的适用性判断；同形不证明语义等价，也不代替实际指定路由验证 |
 | [`d05-readme-composition.mjs`](<d05-readme-composition.mjs>) | 用户参考 delegation 组示例（cordis:group＋workflow-ptc 引擎行＋async_workflow 行）的进程内装载语义：工具进组、workflowEngine 组隔离、缺引擎行可读拒绝＋零作业；带引擎组合的纯编排成功以真机 dsh-async 预设转录为证（进程内树无 ptcRuntime 提供者，不伪造激活）；需要宿主锚 |
 | [`check-junctions.mjs`](<check-junctions.mjs>) | 开发树接线目标与声明版本核对；dsh* 接受支持集合内任一 rc，但要求四条同 rc、全部 junction 指向同一棵宿主树；缺席、错树、错版、混 rc 分开，不证明内存已加载同一模块 |
-| [`../tools/check-host-compat.mjs`](<../tools/check-host-compat.mjs>) | 宿主兼容声明与**给定宿主树**的解析来源：官方 `evaluatePluginCompatibility` 放行支持集合四项（`0.2.1-rc.2`／`rc.3`／`rc.4`／`rc.5`）、拒载集合外边界（并确认拒载来自九条 peer、无 `engines.dsh`、无版本豁免），再核对九个 dsh peer 与 cordis／timer 两个 peer 在宿主树顶层、九个 dsh peer 同 rc；dependencies 叶子按 `--leaf-layout` 判（host 全同树；profile 允许同版本地副本）。支持集合只读包清单 peer 原文，不另存版本表。**不覆盖**已安装插件在真实 runtime 实际取得的 peer 路径——那由运行期观测核对，不用本检查的通过代替 |
+| [`../tools/check-host-compat.mjs`](<../tools/check-host-compat.mjs>) | 宿主兼容声明与**给定宿主树**的解析来源：官方 `evaluatePluginCompatibility` 放行支持集合（当前单值 `0.2.2-rc.1`）、拒载集合外边界（正式 `0.2.1` 与旧线 rc、`0.2.2-alpha.2`／`-alpha.3`、尚未纳入的正式 `0.2.2`、`0.2.3`；并确认拒载来自九条 peer、无 `engines.dsh`、无版本豁免），再核对九个 dsh peer 与 cordis／timer 两个 peer 在宿主树顶层、九个 dsh peer 同 rc；dependencies 叶子按 `--leaf-layout` 判（host 全同树；profile 允许同版本地副本）。支持集合只读包清单 peer 原文，不另存版本表。**不覆盖**已安装插件在真实 runtime 实际取得的 peer 路径——那由运行期观测核对，不用本检查的通过代替 |
 | [`probe-runtime-peers.mjs`](<probe-runtime-peers.mjs>) | 运行时依赖同源探针（原 COMPAT-01，已关闭）：打包候选 tgz（产物进 `.local/`）→ 系统临时目录独立 home → 官方 CLI 安装 → 带 resolve 钩子起随机端口隔离实例 → RPC 驱动一轮真实会话（懒装载在此触发）→ 三层取证。**前提：Node ≥22.15（module.registerHooks）。**①observed：装载期插件文件实际发起的解析（实测仅配置模块在主线程装载——直接依赖就近取 profile 副本、版本须与宿主同名包一致；工具模块在宿主 **Worker 线程**装载，外部进程的 resolve 钩子观测不到 Worker 内解析——这是观测边界，不是缺陷）；②运行装载决议复算：以宿主公开导出 `createRuntimeResolution` 同函数同输入同盘状态复算——对九项 DSH peer（profile 无本地候选、必走装载路由，installation scope 条目即 interception 路由）是装载映射的直接证据，`resolveBundleDir` 的安装锚优先序即宿主「bundle 永取同一安装、绝不取 profile 本地副本」契约；对直接依赖只测其本地副本缺席时的回退条目（实际装载走本地副本优先，dsh-app-boot `routeScoped`）；③标准链 follow：自动复现「裸解析」形态（直接依赖命中 profile 副本、peer 缺席），只作参考不判 FAIL。边界：复算的输入是磁盘状态，不证明 Worker 运行中未发生其他改写；工具真实运行成功作功能面互证。zod 回退条目在部分宿主树上首命中嵌套副本（该观察仅及本地依赖缺席的回退条件）时探针如实报 FAIL——该 FAIL 属宿主决议表回退形态的观察（正常安装形态不触发），不用改本包消除。四档宿主树已同款取证：rc.5 于 2026-11-03 首发，rc.2 同日换树复跑，rc.3／rc.4 于 2026-11-04 换树补齐（实测记录见[设计 §9.3](<../docs/design.md#93-实例验证按宿主分列>)） |
 | [`diff-trees.mjs`](<diff-trees.mjs>) | 安装树包级字节差异，属于调研，不以零差异代替行为回归 |
 | [`check-facts-anchors.mjs`](<check-facts-anchors.mjs>) | 维护者事实条目四字段及文件／行号可解析性，不判引用语义正确；缺来源与坏引用分开 |
@@ -95,7 +95,7 @@ npm run check:alias-tokens
 
 ### 主题别名检查的来源确认
 
-`check:alias-tokens` 不连接实例，但不是只读本仓就能完成的检查。它每次从宿主模块树枚举主题定义，不检查主题包版本。先确认来源属于支持集合内的一个宿主版本（`0.2.1-rc.2`、`0.2.1-rc.3`、`0.2.1-rc.4`、`0.2.1-rc.5` 之一；rc.5 已完成兼容验收），再运行：
+`check:alias-tokens` 不连接实例，但不是只读本仓就能完成的检查。它每次从宿主模块树枚举主题定义，不检查主题包版本。先确认来源属于支持集合内的宿主版本（当前为 `0.2.2-rc.1`），再运行：
 
 1. 选定目标宿主模块树的 `node_modules`。核对该树下 `@deepseek-ai/dsh-client-ui-theme/package.json` 的版本就是这个宿主版本，并确认主题源是同一树下的 `@deepseek-ai/dsh-client-ui-theme/lib/client.js`。没有匹配的源时，先取得正确来源，不以另一宿主替代本线结论。
 2. 在运行命令的终端显式设置 `DSAT_HOST_MODULES` 为该模块树的绝对路径，再运行 `npm run check:alias-tokens`。此脚本不加载 `_host-hooks`，也不通过本机配置把 `hostModules` 转成环境变量；只填写本机配置文件不够。

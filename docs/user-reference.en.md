@@ -13,24 +13,24 @@ Find the task you need:
 
 | Component | Current applicable version |
 | --- | --- |
-| Plugin version | `0.2.9+dsh.0.2.1-rc` |
-| Supported dsh host versions | `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4`, `0.2.1-rc.5` |
+| Plugin version | `0.2.10+dsh.0.2.2` |
+| Supported dsh host versions | `0.2.2-rc.1` |
 
-“Host” means the DSH instance loading the plugin. Only these four versions can load the package, not the final `0.2.1`, `0.2.0`, `0.2.2`, or an unlisted rc.
+“Host” means the DSH instance loading the plugin. Only the version listed above can load the package, not the final `0.2.2`, older `0.2.2` pre-releases (alphas), the `0.2.1`/`0.2.0` lines, or an unlisted rc.
 
-Node.js 24 is recommended. Although the package declares Node `>=20`, DSH's commander 15 dependency needs at least `22.12.0`, so Node 20 is not a suitable choice on that basis. Other dependencies may require more. Before choosing a version other than Node.js 24, confirm that all dependencies of the target DSH version work on it.
+Node.js `24.9.0` or newer is required (the package manifest declares `engines` `>=24.9.0`). DSH's commander 15 dependency needs at least `22.12.0`, which rules out lower versions on that basis alone. Other dependencies may require more. Before choosing a version other than Node.js 24.9, confirm that all dependencies of the target DSH version work on it.
 
 ### Prerequisites for reusing host dependencies
 
 At runtime, this package uses dependencies supplied by DSH; no separate host installation is needed. These shared dependencies are declared as peer dependencies in the package manifest. Since 0.2.9, they retain their compatible-version requirements but are marked optional to prevent automatic installation by the package manager. The package also directly depends on `@deepseek-ai/schemastery` and `zod`. It has no `preinstall`, `install`, `postinstall`, or `prepare` installation scripts of its own.
 
-A profile is a DSH runtime configuration. On supported rc.2–rc.5 versions, new profiles disable `autoInstallPeers` (automatic peer installation) by default; no configuration change is needed before installation. Since 0.2.9, installing or upgrading this package does not require disabling that option in an existing profile either.
+A profile is a DSH runtime configuration. On the supported `0.2.2-rc.1`, new profiles disable `autoInstallPeers` (automatic peer installation) by default; no configuration change is needed before installation. Since 0.2.9, installing or upgrading this package does not require disabling that option in an existing profile either.
 
 Existing profiles can retain old dependency copies, lockfiles, or installation scripts from other plugins. Before changing those items, ask the instance administrator to check their purpose and source; upgrading this package does not clean the entire profile. Follow [installation script-approval troubleshooting](<#installation-script-approval-troubleshooting>) if a script prompt appears.
 
 ### Usage limits and saving results
 
-Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Full real-host rechecking on rc.3/rc.4 is also incomplete. Before using these environments, check the features needed in a separate test session, particularly command permissions, waiting, and result delivery.
+Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Before using these environments, check the features needed in a separate test session, particularly command permissions, waiting, and result delivery.
 
 The pending-question panel has not been verified with a real OS input method, screen reader, or touchscreen. When relying on these input methods, first confirm that choices and submissions work. If the panel is unusable, open the original session and reply there.
 
@@ -44,7 +44,7 @@ The package is not distributed through npm. Use the GUI steps below; dependency 
 2. Paste the following into the package name/address field, then select **Install**:
 
    ```text
-   github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
+   github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.2
    ```
 
 3. Select **Enable now** after installation succeeds. If already enabled, confirm its enabled status instead. If installation requests permission to run scripts, follow [script-approval troubleshooting](<#installation-script-approval-troubleshooting>) first.
@@ -55,7 +55,7 @@ The package is not distributed through npm. Use the GUI steps below; dependency 
 Alternatively, install from a terminal:
 
 ```powershell
-dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
+dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.2
 ```
 
 `web` is the target profile's name; substitute the appropriate name for another profile. After installation, likewise confirm it is enabled and complete the loading checks above.
@@ -68,7 +68,7 @@ The address follows a moving maintenance branch. For repeatable installation:
 
 ### Installation troubleshooting
 
-If source retrieval fails, check the repository address and branch or commit, then the network and proxy. If it still fails, ask the maintainer supplying the installation source about available artifacts. Omitting `#adapt/dsh-0.2.1` does not automatically select the correct host adaptation.
+If source retrieval fails, check the repository address and branch or commit, then the network and proxy. If it still fails, ask the maintainer supplying the installation source about available artifacts. Omitting `#adapt/dsh-0.2.2` from the address does not automatically select the correct host adaptation.
 
 #### Installation script-approval troubleshooting
 
@@ -88,7 +88,7 @@ The table lists packages seen in older installation prompts and what their scrip
 
 | Package and version | Script purpose |
 | --- | --- |
-| `@deepseek-ai/dsh-subprocess-local@0.2.1-rc.5` | `postinstall` only sets mode `0755` on node-pty's Unix `spawn-helper`; that file is usually absent on Windows. |
+| `@deepseek-ai/dsh-subprocess-local@0.2.2-rc.1` | `postinstall` only sets mode `0755` on node-pty's Unix `spawn-helper`; that file is usually absent on Windows. |
 | `@google/genai@2.21.0` | `preinstall` only echoes a no-op message; it does not build anything. |
 | `koffi@3.1.1` | Tries loading a precompiled binary first; only falls back to a CMake build if loading fails. |
 | `node-pty@1.2.0-beta.15` | Checks for precompiled files and uses node-gyp if they are missing or a source build is explicitly requested. `postinstall` copies Windows ConPTY files and cleans the build directory. |
@@ -627,7 +627,7 @@ Use a development link only when editing plugin source; do not link a stable dep
 ```powershell
 git clone https://github.com/MC5Spear/dsh-async-tools.git
 cd dsh-async-tools
-git checkout adapt/dsh-0.2.1
+git checkout adapt/dsh-0.2.2
 npm install
 dsh plugin --profile web add <absolute-clone-directory>
 ```

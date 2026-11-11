@@ -100,6 +100,9 @@ function toolSchemas({
  * @param {object} [options.schemas] 可见工具投影（toolSchemas 的选项）。
  * @param {'ok'|'missing'|'no-options'|'no-continuable'|'throw'} [options.backend]
  *   后端注册表形态。
+ * @param {'ok'|'outside'|'unavailable'|'throws'|'false'} [options.step] 步骤许可层
+ *   形态（§3.6.7，默认 'ok'——`exec.toolSet` 在场且 `tools.executable` 恒真，
+ *   即"调用发生在模型步骤内且目标当次可执行"的直通形态）。
  * @param {'native'|'shadow'|'throws'|'absent'} [options.systemPrompt] 身份依据②
  *   的组稿形态（默认 'native'——非空段命中）。
  * @param {'en'|'zh'} [options.agentLang] 语言档。
@@ -108,9 +111,9 @@ function listEnv({
   llmMode = 'ok', selection = { enabled: true, allowedModels: ROUTES }, projection = 'absent',
   schemas = {}, backend = 'ok', systemPrompt = 'native', agentLang = 'en',
   identity = 'ours', creationProvider = 'spawn', catalog = {},
-  creationAgentPreset
+  creationAgentPreset, step = 'ok'
 } = {}) {
-  const calls = { listProviders: 0, listModels: [], resolveModelInfo: [], current: 0, stateOf: 0, getProvider: 0, startActivation: 0, toolsGet: 0 };
+  const calls = { listProviders: 0, listModels: [], resolveModelInfo: [], current: 0, stateOf: 0, getProvider: 0, startActivation: 0, toolsGet: 0, executable: [] };
   const failingProviders = new Set();
   // 目录覆盖（R6-F01 碰撞用例：provider/model 含斜杠的目录形状）——缺省用
   // 模块级常量夹具。
@@ -234,6 +237,8 @@ function listEnv({
     },
     tools: {
       schemas() { return toolSchemas(schemas); },
+      // 步骤许可层（§3.6.7）：'unavailable' 形态不提供 executable（宿主旧形态
+      // 缺该读口）；其余形态按 step 选项现判并记录三参调用。
       ...(identity === 'no-get' ? {} : {
         get(name) {
           calls.toolsGet += 1;
@@ -241,6 +246,15 @@ function listEnv({
           if (identity === 'ours') return name === 'async_agent' ? asyncAgentTool : undefined;
           if (identity === 'foreign') return { name, foreign: true };
           return undefined;
+        }
+      }),
+      ...(step === 'unavailable' ? {} : {
+        // rc.1 宿主契约：executable 返回可执行定义或 undefined（定义在场即
+        // 许可）——假件按同形返回（'false' 形态＝步骤工具集中查无该目标）。
+        executable(name, scope, toolSet) {
+          calls.executable.push({ name, scope, toolSet });
+          if (step === 'throws') throw new Error('step permission check exploded');
+          return step === 'false' ? undefined : { name, fakeDefinition: true };
         }
       })
     },
@@ -250,8 +264,16 @@ function listEnv({
 
   const view = makeConfigView(() => resolveConfig({ agentLang }));
 
+  // 步骤许可层的工具执行对象：'outside' 形态不带 toolSet（调用在模型步骤之外、
+  // 宿主未解析步骤工具集）；其余形态带哨兵 toolSet。
+  const stepToolSet = Symbol('step-toolset');
+  const exec = {
+    agent: EXEC_AGENT,
+    ...(step === 'outside' ? {} : { toolSet: stepToolSet })
+  };
+
   return {
-    ctx, view, calls, failingProviders, exec: { agent: EXEC_AGENT },
+    ctx, view, calls, failingProviders, exec, stepToolSet,
     /** 就地翻转选择服务状态（实时口径的可失败判据）。 */
     setSelection(state) { selection = state; },
     /** 就地换投影形态（原生目标口径）。 */
@@ -260,6 +282,84 @@ function listEnv({
     setBackend(form) { backend = form; }
   };
 }
+
+hostTest('步骤许可层五态（§3.6.7）：条件真直通；条件假降不允许；步骤外／读口缺席／核对失败降未确认；上层两档原样透传', async () => {
+  // ① 条件真：上层「允许选择」原样直通——依据仍是策略口径、示例照常生成
+  //    （取模型列表模式，示例来自页面条目）。
+  const envOk = listEnv({ step: 'ok' });
+  const toolOk = checkedTool(createListModelsTool(envOk.ctx, envOk.view));
+  const ok = await toolOk.execute({ target_tool: 'async_agent', provider: 'zai' }, envOk.exec);
+  assert.equal(ok.verdict, 'allowed');
+  assert.match(ok.basis, /current dsh model-selection settings/, '条件真不换依据（步骤层静默直通）');
+  assert.notEqual(ok.example, undefined, '条件真仍生成调用示例');
+  assert.deepEqual(envOk.calls.executable.map((c) => c.name), ['async_agent'], 'executable 收到目标名');
+  assert.equal(envOk.calls.executable[0].toolSet, envOk.stepToolSet, 'executable 收到 exec.toolSet 同一对象');
+  assert.equal(envOk.calls.executable[0].scope, envOk.exec.agent, 'executable 收到调用方作用域');
+
+  // ② 条件假：「不允许选择（当前步骤条件不满足）」，已确认集合与示例一并撤下，
+  //    目录照常返回。
+  const envFalse = listEnv({ step: 'false' });
+  const toolFalse = checkedTool(createListModelsTool(envFalse.ctx, envFalse.view));
+  const denied = await toolFalse.execute({ target_tool: 'async_agent' }, envFalse.exec);
+  assert.equal(denied.verdict, 'not-allowed');
+  assert.match(denied.basis, /step condition is not met in the current model step/);
+  assert.equal(denied.example, undefined, '条件假不生成示例');
+  assert.equal(denied.total, 2, '目录照常返回');
+
+  // ③ 步骤外（exec 无 toolSet）：「适用性未确认」并注明 outside-step。
+  const envOut = listEnv({ step: 'outside' });
+  const toolOut = checkedTool(createListModelsTool(envOut.ctx, envOut.view));
+  const outside = await toolOut.execute({ target_tool: 'async_agent' }, envOut.exec);
+  assert.equal(outside.verdict, 'unconfirmed');
+  assert.match(outside.basis, /carries no resolved step tool set/);
+  assert.equal(outside.example, undefined);
+  assert.deepEqual(envOut.calls.executable, [], '步骤外根本不调 executable');
+
+  // ④ executable 读口缺席（宿主旧形态）：「适用性未确认」executable-unavailable。
+  const envNoExe = listEnv({ step: 'unavailable' });
+  const toolNoExe = checkedTool(createListModelsTool(envNoExe.ctx, envNoExe.view));
+  const unavailable = await toolNoExe.execute({ target_tool: 'async_agent' }, envNoExe.exec);
+  assert.equal(unavailable.verdict, 'unconfirmed');
+  assert.match(unavailable.basis, /exposes no executable\(name, scope, toolSet\)/);
+
+  // ⑤ executable 抛错：「适用性未确认」并带原因。
+  const envThrows = listEnv({ step: 'throws' });
+  const toolThrows = checkedTool(createListModelsTool(envThrows.ctx, envThrows.view));
+  const failed = await toolThrows.execute({ target_tool: 'async_agent' }, envThrows.exec);
+  assert.equal(failed.verdict, 'unconfirmed');
+  assert.match(failed.basis, /current-step permission check threw: step permission check exploded/);
+
+  // ⑥ 透传档一：上层「不允许选择」（开关关）时本层不顶替——即便步骤内条件真。
+  const envPassNot = listEnv({ selection: { enabled: false, allowedModels: ROUTES } });
+  const toolPassNot = checkedTool(createListModelsTool(envPassNot.ctx, envPassNot.view));
+  const passthrough = await toolPassNot.execute({ target_tool: 'async_agent' }, envPassNot.exec);
+  assert.equal(passthrough.verdict, 'not-allowed');
+  assert.doesNotMatch(passthrough.basis, /step/, '上层更具体的限制原样保留（依据不含步骤口径）');
+  assert.deepEqual(envPassNot.calls.executable, [], '上层已判不允许时不再核对步骤条件');
+
+  // ⑦ 透传档二：上层「适用性未确认」且步骤外——不双重降档，原因仍是上层的。
+  const envPassUn = listEnv({ selection: 'absent', step: 'outside' });
+  const toolPassUn = checkedTool(createListModelsTool(envPassUn.ctx, envPassUn.view));
+  const upper = await toolPassUn.execute({ target_tool: 'async_agent' }, envPassUn.exec);
+  assert.equal(upper.verdict, 'unconfirmed');
+  assert.doesNotMatch(upper.basis, /step tool set/, '上层未确认原因原样保留（不被步骤外口径顶替）');
+});
+
+hostTest('步骤许可层中文档（§3.6.7／§5.3）：四条降档依据随 agentLang 双语', async () => {
+  const forms = [
+    [/无法判定目标在当前步骤的许可/, { step: 'outside' }],
+    [/无法判定目标在当前步骤的许可/, { step: 'unavailable' }],
+    [/当前步骤许可核对抛错/, { step: 'throws' }],
+    [/条件不满足，本步骤内不可选择/, { step: 'false' }]
+  ];
+  for (const [re, opts] of forms) {
+    const env = listEnv({ ...opts, agentLang: 'zh' });
+    const tool = checkedTool(createListModelsTool(env.ctx, env.view));
+    const result = await tool.execute({ target_tool: 'async_agent' }, env.exec);
+    assert.match(tool.output.render({}, result)[0].text, re);
+    assert.match(result.basis, re);
+  }
+});
 
 hostTest('供应商浏览：默认第 1 页 20 条、稳定排序、页脚与下一页提示（§2.3.4）', async () => {
   const env = listEnv();
@@ -1315,6 +1415,15 @@ realCordisTest('原生目标身份：同名遮蔽（投影在场＋组稿段空�
     ctx.provide('sessionProjections', { stateOf: () => [{ provider: 'p', model: 'm' }] });
     await ctx.plugin(SystemPrompt);
     await ctx.plugin(ToolRuntime);
+    // rc.1 起 ToolRuntime 的工具目录经「执行器」渲染——组稿评估工具提供方时
+    // 会调 selectExecutor(scope).describe(definitions)（无执行器即抛
+    // TOOL_EXECUTOR_UNAVAILABLE；dsh 基座把执行器拆成独立插件行，装置里以
+    // 最小执行器补位。本测试只关心 section 面，替身不带任何段、不描述工具）。
+    ctx.tools.setExecutor({
+      sections: [],
+      describe: () => ({ schemas: [] }),
+      async execute() { throw new Error('rig: execution not exercised'); }
+    });
     return ctx;
   };
   const llm = {
@@ -1322,6 +1431,10 @@ realCordisTest('原生目标身份：同名遮蔽（投影在场＋组稿段空�
     listModels: async () => [{ id: 'm', name: 'M' }],
     resolveModelInfo: async (provider, id) => ({ provider, id, name: id })
   };
+  const CALLER = { id: 'parent', session: { id: 'parent' } };
+  // rc.1 步骤工具集来自 tools.resolve()（无条件注册即录取）——装置用真接口
+  // 产 toolSet，exec 携带后步骤许可层经真 tools.executable 直通。
+  const stepToolSetOf = (ctx) => ctx.tools.resolve({ agent: CALLER, signal: new AbortController().signal });
 
   // ① R3-F05 反例（真实 ToolRuntime）：无关工具以出厂名 `subagent` 注册
   //    （形状同形）＋会话投影在场——仅按名称即认 allowed 即为缺陷形态；双
@@ -1341,7 +1454,7 @@ realCordisTest('原生目标身份：同名遮蔽（投影在场＋组稿段空�
   }));
   try {
     const shadow = await createListModelsTool(shadowCtx, makeConfigView(() => resolveConfig({ agentLang: 'en' })))
-      .execute({ provider: 'p', model: 'm', target_tool: 'subagent' }, { agent: { id: 'parent', session: { id: 'parent' } } });
+      .execute({ provider: 'p', model: 'm', target_tool: 'subagent' }, { agent: CALLER, toolSet: await stepToolSetOf(shadowCtx) });
     assert.equal(shadow.verdict, 'unconfirmed', '同名遮蔽＋投影在场仍不得判允许（R3-F05 反例翻转）');
     assert.equal(shadow.example, undefined, '身份不可证不生成适用示例');
     assert.match(shadow.basis, /no non-empty "tool:<name>" section/);
@@ -1368,7 +1481,7 @@ realCordisTest('原生目标身份：同名遮蔽（投影在场＋组稿段空�
   nativeCtx.systemPrompt.section({ name: 'tool:subagent', text: 'native subagent creation tool', order: 500 });
   try {
     const native = await createListModelsTool(nativeCtx, makeConfigView(() => resolveConfig({ agentLang: 'en' })))
-      .execute({ provider: 'p', model: 'm', target_tool: 'subagent' }, { agent: { id: 'parent', session: { id: 'parent' } } });
+      .execute({ provider: 'p', model: 'm', target_tool: 'subagent' }, { agent: CALLER, toolSet: await stepToolSetOf(nativeCtx) });
     assert.equal(native.verdict, 'allowed', '双依据齐备（投影在场＋组稿段非空）的原生目标判允许');
     assert.equal(native.example.model, 'm', '允许目标生成适用示例');
   } finally {

@@ -38,7 +38,7 @@ test('支持集合：九条 dsh peer 同串，集合外宿主不在集合内', (
   assert.equal(support.dshPeers.length, 9);
   assert.ok(support.members.length > 0);
   for (const member of support.members) assert.match(member, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
-  for (const outside of ['0.2.1', '0.2.0', '0.2.2', '0.2.1-rc.6']) assert.ok(!support.members.includes(outside));
+  for (const outside of ['0.2.2', '0.2.1', '0.2.1-rc.5', '0.2.2-alpha.2', '0.2.2-alpha.3', '0.2.3']) assert.ok(!support.members.includes(outside), `${outside} 不在支持集合内`);
   assert.equal(manifest.engines?.dsh, undefined, '包清单不得声明 engines.dsh——它会顶替九条 peer 单独决定');
 });
 
@@ -54,14 +54,14 @@ test('清单反例：单条 peer 不同串、声明 engines.dsh、peer 条数不
       if (name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-')) copy.peerDependencies[name] = range;
     }
   };
-  assert.notDeepEqual(mutate((copy) => { copy.peerDependencies['@deepseek-ai/dsh-tools'] = '0.2.1-rc.4'; }), []);
-  assert.notDeepEqual(mutate((copy) => { copy.engines = { ...copy.engines, dsh: '0.2.1-rc.4' }; }), []);
+  assert.notDeepEqual(mutate((copy) => { copy.peerDependencies['@deepseek-ai/dsh-tools'] = '0.2.2-rc.2'; }), []);
+  assert.notDeepEqual(mutate((copy) => { copy.engines = { ...copy.engines, dsh: '0.2.2-rc.2' }; }), []);
   assert.notDeepEqual(mutate((copy) => { delete copy.peerDependencies['@deepseek-ai/dsh-shell-env']; }), []);
   // 范围写法不是精确项：`*` 会让集合外版本也被放行。
-  assert.notDeepEqual(mutate((copy) => { setAll(copy, '0.2.1-rc.2 || *'); }), []);
-  assert.notDeepEqual(mutate((copy) => { setAll(copy, '^0.2.1-rc.2'); }), []);
+  assert.notDeepEqual(mutate((copy) => { setAll(copy, '0.2.2-rc.1 || *'); }), []);
+  assert.notDeepEqual(mutate((copy) => { setAll(copy, '^0.2.2-rc.1'); }), []);
   // 同一版本重复列不等于支持集合。
-  assert.notDeepEqual(mutate((copy) => { setAll(copy, '0.2.1-rc.2 || 0.2.1-rc.2'); }), []);
+  assert.notDeepEqual(mutate((copy) => { setAll(copy, '0.2.2-rc.1 || 0.2.2-rc.1'); }), []);
   // optional 标记防回退：整键删除、缺一条、或任一条取值使 peer 退回必选（如 false、非布尔值），
   // 开启自动补齐的 profile 会重新补装宿主依赖树（安装纪律守卫，与准入无关）。
   // 多出无关键不在 peerDependencies 内，pnpm 不会为它补装、不产生该后果；但键集合漂移仍按清单纪律报问题。
@@ -79,15 +79,15 @@ hostTest('真实宿主树：官方准入、集合外拒载、九个 peer 同树�
 });
 
 hostTest('宿主树版本与显式要求不符即失败（防止作业装了另一棵树的宿主）', async () => {
-  const other = support.members.find((version) => version !== manifestVersionOfTree());
-  assert.ok(other !== undefined, '集合内至少还有一个不同版本可供反例');
-  const result = await checkHostCompat({ root: ROOT, hostRoot, hostVersion: other, quiet: true });
+  // 0.2.2 适配线当前集合单值——反例用同线另一 rc：判据红在「树内版本 ≠ 显式
+  // 要求」上，不依赖集合内多成员。
+  const result = await checkHostCompat({ root: ROOT, hostRoot, hostVersion: '0.2.2-rc.9', quiet: true });
   assert.equal(result.code, 1, result.out);
   assert.match(result.out, /不一致/);
 });
 
 hostTest('集合外宿主版本按失败处理，不进入解析来源段', async () => {
-  const result = await checkHostCompat({ root: ROOT, hostRoot, hostVersion: '0.2.1', quiet: true });
+  const result = await checkHostCompat({ root: ROOT, hostRoot, hostVersion: '0.2.2-alpha.2', quiet: true });
   assert.equal(result.code, 1, result.out);
   assert.match(result.out, /不在支持集合内/);
 });

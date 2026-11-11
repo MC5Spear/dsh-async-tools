@@ -171,10 +171,28 @@ function skipDirsFrom(ignoreText) {
 }
 
 /**
+ * 仓根 `.git` 文件形态（git 链接工作树的指针文件）是否**确为**单行 `gitdir:` 指针：
+ * 可读、恰一行、以 `gitdir: ` 开头。只有过了这层内容校验才豁免——同名但内容
+ * 不是指针的文件（例如借 `.git` 名藏真实泄漏）必须照常进入扫描。
+ *
+ * @param {string} path - 候选文件路径。
+ * @returns {boolean} 是合法 worktree 指针才 `true`。
+ */
+function isWorktreePointer(path) {
+  let text;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch {
+    return false;
+  }
+  return /^gitdir: [^\r\n]+\r?\n?$/.test(text);
+}
+
+/**
  * 遍历仓库，收集参与判据的文件。
  *
  * @param {string} root - 仓根。
- * @param {Set<string>} skip - 目录跳过表。
+ * @param {Set<string>} skip - 目录跳过表（只对**目录**生效）。
  * @returns {string[]} 相对仓根的路径（`/` 分隔），按字典序。
  */
 function walk(root, skip) {
@@ -192,6 +210,12 @@ function walk(root, skip) {
         if (skip.has(entry.name)) continue;
         visit(join(dir, entry.name));
       } else if (entry.isFile()) {
+        // 目录跳过表不豁免文件。唯一例外：仓根 `.git` 为**文件**时是 git 链接
+        // 工作树（worktree）的指针（真 clone 的 `.git` 目录已在上面按目录跳过），
+        // 先过内容校验（恰一行、`gitdir: ` 开头）才豁免——版本库元数据不是
+        // 内容，混进指纹扫描会把本机盘路径误报成公开面泄漏（0.2.2 开发树在
+        // 链接工作树上）；其余任何同名/同形文件照常逐行扫描。
+        if (dir === root && entry.name === '.git' && isWorktreePointer(join(dir, entry.name))) continue;
         out.push(relative(root, join(dir, entry.name)).split(sep).join('/'));
       }
     }

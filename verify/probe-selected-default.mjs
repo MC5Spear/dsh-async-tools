@@ -46,7 +46,7 @@
  * ## 用法
  *
  *   node verify/probe-selected-default.mjs --service-root <宿主服务根> \
- *     --host-subdir <宿主树目录名，如 dsh-0.2.1-rc.5> [--repo <本仓路径>] [--keep]
+ *     --host-subdir <宿主树目录名，如 dsh-0.2.2-rc.1> [--repo <本仓路径>] [--keep]
  *
  * `--service-root` 必填（或设 `DSAT_SERVICE_ROOT`）。探针以
  * `<serviceRoot>/patches/zai-glm.yml` 作为实例模型路由 patch（实例就绪链需
@@ -84,7 +84,7 @@ process.on('unhandledRejection', (reason) => { fail(`未处理的 Promise 拒绝
 const serviceRootArg = argOf('service-root') ?? process.env.DSAT_SERVICE_ROOT;
 if (serviceRootArg === undefined || serviceRootArg.trim() === '') fail('缺少 --service-root（或环境变量 DSAT_SERVICE_ROOT）：指向装有各宿主树的根目录');
 const serviceRoot = resolve(serviceRootArg);
-const hostSubdir = argOf('host-subdir') ?? 'dsh-0.2.1-rc.5';
+const hostSubdir = argOf('host-subdir') ?? 'dsh-0.2.2-rc.1';
 const hostRoot = join(serviceRoot, hostSubdir);
 let hostVersion;
 try {
@@ -117,10 +117,13 @@ const enDictOk = (() => {
   const m = clientJs.match(/uninstallRisk: "Uninstall risk[^"]*"/);
   return clientJs.includes('t("uninstallRisk")') && m !== null && m[0].includes('agent-preset/not-found') && m[0].toLowerCase().includes('clear') && m[0].includes('available preset') && m[0].toLowerCase().includes('switch');
 })();
-// 时机构词：首页用「停用或卸载前」、用户参考用「移除前」——三种动词形态都认
-// （需求 565 的语义是「卸载前切换」，本仓文档按受众用词）。
-const zhDoc = (t) => t !== null && t.includes('agent-preset/not-found') && t.includes('默认预设') && (t.includes('清空') || t.includes('重选')) && /(卸载|停用|移除)前/.test(t);
-const enDoc = (t) => t !== null && t.includes('agent-preset/not-found') && t.toLowerCase().includes('default preset') && t.toLowerCase().includes('before') && t.includes('available preset');
+// 时机构词两腿（需求 565 的语义是「卸载前切换」，文档按受众与时点用两种表述）：
+// 预告式「停用/卸载/移除前」（首页用）与补救式「移除后…」（用户参考的操作列表
+// 用——步骤顺序本身表达时序，0.2.1 与 0.2.2 线两版文档均为补救式）。原中文判据
+// 只认预告式而英文判据认裸 before（可被无关段落的 before 误中），中英不对称；
+// 现两侧同口径：预告式构词或补救式短语，各自语言。
+const zhDoc = (t) => t !== null && t.includes('agent-preset/not-found') && t.includes('默认预设') && (t.includes('清空') || t.includes('重选')) && (/(卸载|停用|移除)前/.test(t) || t.includes('移除后'));
+const enDoc = (t) => t !== null && t.includes('agent-preset/not-found') && t.toLowerCase().includes('default preset') && (/before (disabling|uninstalling|removal|removing)/i.test(t) || /after removal/i.test(t)) && t.includes('available preset');
 judge('SD-0a 设置页词典键两语在场（含错误码与清选/重选动作）', zhDictOk && enDictOk,
   `中文 ${String(zhDictOk)}／英文 ${String(enDictOk)}（渲染与主题可读性属 GUI 面不装置）`);
 judge('SD-0b 中文使用说明指引在场（首页＋用户参考）', zhDoc(readRepoText('README.md')) && zhDoc(readRepoText(join('docs', 'user-reference.md'))), '');

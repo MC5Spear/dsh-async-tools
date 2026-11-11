@@ -19,11 +19,14 @@ import { join, relative } from 'node:path';
 /** 包根目录。 */
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 
-/** 需要检查的目录与扩展名。 */
+/** 需要检查的目录与扩展名（`verify/` 含 `_visual/` 探针——它们不进 `npm test`
+ * 也不进分发清单，正是"从没被解析过"的高危区：0.2.2 线曾漏进一个嵌套模板
+ * 语法错，`check` 与 `npm test` 两道门都拦不住，直到盲测前才被盲审抓出）。 */
 const TARGETS = [
   ['lib', '.js'],
   ['test', '.mjs'],
-  ['tools', '.mjs']
+  ['tools', '.mjs'],
+  ['verify', '.mjs']
 ];
 
 /**

@@ -5,9 +5,13 @@
 # loader 拥有：本包从 bundles 移除即预设消失，无清理代码（设计 §7.1）。
 #
 # 基线 = 随支持集合内宿主发布的 shipped standard 预设补丁（需求 §7.3；基线位置由
-# tools/validate-preset.mjs 按需求读取，不硬编码本机路径）。当前四个受支持宿主
-#（rc.2–rc.5）的随包基线相同，按 0.2.1-rc.4 出处核读并经 rc.2/rc.5 哈希核对。
-# 相对基线的改动（设计 §3.5"两者相对基线的共同差异"，逐条给依据）：
+# tools/validate-preset.mjs 按需求读取，不硬编码本机路径）。当前受支持宿主为
+# 0.2.2-rc.1，基线按其随包补丁核读。0.2.2 基线自身相对旧线的四处漂移按基线逐字
+# 随迁、不算本包改动：tool-fs 行新增 config.applyPatch: false（补丁写路径默认
+# 关闭）；delegation 组不再挂 tool-subagent-list-agents 行；tool-subagent 行
+# config 的 modelSelectionSettings 键改为 modelSelection＋modelDiscovery；插件
+# 管理 manager 行表达式化（profileContext 条件）。相对基线的改动（设计 §3.5
+# "两者相对基线的共同差异"，逐条给依据）：
 #   1. tool-bash 无条件 disabled: true——禁同步 shell（需求 §3.1），两平台工具清单
 #      一致（需求 §3.3）；
 #   2. 不挂 tool-pwsh 行——前台同步 shell 到期杀进程树，与异步语义冲突（需求 §3.1）；
@@ -25,8 +29,9 @@
 #      config 逐字保留以便翻转）。
 #      被禁入口的功能出路 = async_agent / async_workflow，或按宿主规则换预设开新会话
 #      （需求 §3.1 末条）；workflow-ptc（引擎服务，为 async_workflow 提供编排引擎）与
-#      tool-subagent-control / -list-agents（非阻塞检查／管理侧，需求 §3.1"保留宿主
-#      非阻塞的检查、消息和停止管理工具"）保留在场；
+#      tool-subagent-control（非阻塞检查／管理侧，需求 §3.1"保留宿主非阻塞的检查、
+#      消息和停止管理工具"）保留在场；tool-subagent-list-agents 行随 0.2.2 基线
+#      整行移除（宿主把子代理清单并入 control 侧），本包按基线随迁；
 #   5. persona 与基线逐字一致：prefix 保留基线身份句、不增不改（宿主原生身份句
 #      不承载本包内容）；异步工作纪律、后台委托强制规则与提问角色纪律（需求
 #      §3.1、§9.1）由宿主半边注册的 systemPrompt section 运行时注入——语言档随
@@ -40,8 +45,9 @@
 #      pending 等待（Cordis 原生机制），注册失败沿 fiber 抛出时**可选行只是启动
 #      警告**、不拖垮进程（dsh-app-boot 的 activationDiagnostic）。validate-preset
 #      ⑥ 守护「预设行不带 disabled 护栏」这条）。
-# 其余行（含 time-context、tool-schedule、plan-mode 文案、tool-plugin-manager 与
-# tool-plugin-market 的基线禁用态、workflow-ptc 等）与基线逐字一致，以免行为漂移。
+# 其余行与基线逐字一致，以免行为漂移（time-context、tool-schedule、plan-mode 文案、
+# workflow-ptc 等；插件管理两行随 0.2.2 基线形态——manager 行 profileContext 条件
+# 表达式、market 行布尔禁用）。
 - insert:
     - id: preset-dsh-async
       name: '@deepseek-ai/dsh-agent-preset'
@@ -98,6 +104,9 @@
               owningPreset: dsh-async
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
+            config:
+              # 0.2.2 基线形态：补丁写路径默认关闭（applyPatch:false 随基线逐字）。
+              applyPatch: false
           - id: tool-fs-search
             name: '@deepseek-ai/dsh-tool-fs-search'
             config:
@@ -161,8 +170,6 @@
             config:
               - id: tool-subagent-control
                 name: '@deepseek-ai/dsh-tool-subagent-control'
-              - id: tool-subagent-list-agents
-                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
               # 宿主单发／派生委托入口禁用（需求 §3.1：委托入口收归本包——派生
               # 入口唯一化为 async_agent，等待纪律单点；config 逐字保留以便翻转）。
               # 公共参数已同形收进 async_agent（需求 §2.3.1：cwd / provider+model /
@@ -170,13 +177,16 @@
               # agent_preset 恒不暴露。宿主行的 agentOptions / maxDepth 行级默认
               # 与全功能入口仍以换预设开新会话为出路（需求 §3.1 末条）；路由
               # 名单以 async_list_subagent_models 实时口径查询（需求 §2.3.4）。
+              # config 键随 0.2.2 基线改为 modelSelection＋modelDiscovery
+              # （旧键 modelSelectionSettings 在 0.2.2 宿主 Config 中不存在）。
               - id: tool-subagent
                 name: '@deepseek-ai/dsh-tool-subagent'
                 disabled: true
                 config:
                   provider: spawn
                   toolName: subagent
-                  modelSelectionSettings: true
+                  modelSelection: true
+                  modelDiscovery: true
               - id: tool-subagent-fork
                 name: '@deepseek-ai/dsh-tool-subagent'
                 disabled: true
@@ -212,9 +222,12 @@
               searchTimeoutMs: 60000
           - id: present
             name: '@deepseek-ai/dsh-tool-present'
+          # ── 插件管理两行：0.2.2 基线形态——manager 行 profileContext 条件表达式
+          #    （profileContext 在场＝创造上下文即启用，会话上下文禁用）、market 行
+          #    布尔禁用（需求 §7.3）──
           - id: tool-plugin-manager
             name: '@deepseek-ai/dsh-plugin-manager/tools'
-            disabled: true
+            disabled: !!js "!ctx.get('profileContext')"
           - id: tool-plugin-market
             name: '@deepseek-ai/dsh-plugin-market/tools'
             disabled: true

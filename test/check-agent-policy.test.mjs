@@ -84,7 +84,7 @@ test('explicitHostSource：--host-file 优先，环境源次之，空值等于�
       hostPath: join('synthetic-modules', '@deepseek-ai', 'dsh-tool-subagent', 'lib', 'index.js'),
       source: 'env'
     },
-    '环境源按 0.2.1 树的结构性缺省拼出宿主源路径'
+    '环境源按 0.2.2 树的结构性缺省拼出宿主源路径'
   );
   assert.equal(explicitHostSource({ env: {} }), undefined, '没有显式来源');
   assert.equal(
@@ -127,7 +127,11 @@ test('resolveHostSource：本机环境缺席是文档化跳过，配置在场但
 
   const noTree = await resolveHostSource({ env: {}, root: empty.root });
   assert.equal(noTree.status, 'no-tree', '配置在场却没有树来源，不许静默跳过');
-  assert.match(noTree.reason, /DSAT_HOST_MODULES/);
+  // 0.2.2 线消息改指 evidenceTree['022'] 与 hostModules 两个配置出口
+  //（消息改指本线 '022' 证据档——显式来源仍可经 DSAT_HOST_MODULES 环境变量
+  // 覆盖；no-tree 分支只在环境变量缺席时经本机配置到达）。
+  assert.match(noTree.reason, /evidenceTree\['022'\]/);
+  assert.match(noTree.reason, /hostModules/);
 
   assert.deepEqual(
     await resolveHostSource({ env: {}, root: wired.root }),
@@ -136,7 +140,7 @@ test('resolveHostSource：本机环境缺席是文档化跳过，配置在场但
       hostPath: join('synthetic-modules', '@deepseek-ai', 'dsh-tool-subagent', 'lib', 'index.js'),
       source: 'local'
     },
-    '没有显式来源时仍从本机配置的 evidenceTree[\'021\'] 取树'
+    '没有显式来源时仍从本机配置的 evidenceTree[\'022\'] 取树'
   );
 });
 

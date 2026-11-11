@@ -6261,14 +6261,16 @@ tzwGate('T-ZW-1 实测：真栈 listChildren 热/冷路径采样＋混合五目�
       }
       return session.snapshotEvents();
     };
-    const proto = root.sessions.prepare('tzw-proto', { meta: { cwd: tmp } });
+    const proto = root.sessions.create('tzw-proto', { meta: { cwd: tmp } });
     const seed = buildCorpus(proto);
     const hot = root.sessions.create('tzw-hot', { seed, meta: { cwd: tmp } });
     // 冷语料：四个独立落盘会话（各全量 N 条）——每次观察都是完整的
     // stat→读取→解析→投影路径（不走活会话，不走观察缓存）。
     const persistence = root.sessionPersistence;
     for (let k = 0; k < 4; k += 1) {
-      const p = root.sessions.prepare(`tzw-cold-${k}`, { meta: { cwd: tmp } });
+      // rc.1：prepare 返回未 enter 的会话（append 拒绝「outside a SessionStore」）；
+      // 语料容器与热会话统一走 create（= prepare + enter + announce，append 可用）。
+      const p = root.sessions.create(`tzw-cold-${k}`, { meta: { cwd: tmp } });
       const events = buildCorpus(p);
       const handle = await persistence.create(p.header, { inheritedEventCount: 0 });
       await handle.append(events);
@@ -6601,8 +6603,13 @@ trcGate('T-RC-1 真 agent-loop 装置：真投影折叠＋真实事件时序驱�
     // 真 inbox 投影由真插件注册（非测试自带替身）；初始空态。
     assert.deepEqual(root.sessionProjections.stateOf(session, 'inbox'),
       { 'next-turn': [], 'next-step': [] }, '真 inbox 投影在场');
-    assert.ok(root.sessionProjections.stateOf(session, 'turnBoundary') !== undefined,
-      '真 turnBoundary 投影在场');
+    // rc.1 适配事实：turnBoundary 不再是会话投影——真 AgentLoop 只注册 inbox，
+    // turn 边界读取迁移到 agents 服务的 turnBoundaryOf（rc.1 dsh-agent-loop
+    // lib/index.js「agents.turnBoundaryOf(session)」；本装置 agents 为占位假件，
+    // 服务方法不在装置面，按「投影缺席」锚定迁移事实，④段的 turn-stopping
+    // 事件时序断言不受影响——账本消费的是宿主事件而非投影）。
+    assert.equal(root.sessionProjections.stateOf(session, 'turnBoundary'), undefined,
+      'rc.1 起 turnBoundary 不是会话投影（迁移到 agents.turnBoundaryOf）');
 
     // ② 真折叠：与 ReactLoopInbox.mutate 同形的持久 splice（insert）。
     const notice = { id: 'trc1-m1', kind: 'notice', source: { kind: 'async-tools-job-result' } };

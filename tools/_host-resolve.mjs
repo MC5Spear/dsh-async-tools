@@ -9,10 +9,10 @@
  * 直跑宿主树）用本钩子换锚点；已把宿主包整体装进本地 node_modules 的形态不需要：
  *   node --import ./tools/_host-hooks.mjs --test "test/*.test.mjs"
  *
- * 0.2.1 兼容线：本包的九个 `@deepseek-ai/dsh*` peer 共用同一支持集合
- * （`0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5`，以包清单原文为准），
- * `@deepseek-ai/schemastery` 需要 `~3.18.5` 的 `.volatile()`——把
- * `DSAT_HOST_MODULES` 指向集合内任一宿主安装树的 node_modules 即可。
+ * 0.2.2 适配线：本包的九个 `@deepseek-ai/dsh*` peer 共用同一支持集合
+ * （当前为单值 `0.2.2-rc.1`，以包清单原文为准），
+ * `@deepseek-ai/schemastery` 需要 `~3.19.0` 的 `.volatile()`——把
+ * `DSAT_HOST_MODULES` 指向集合内宿主安装树的 node_modules 即可。
  * 落到旧版本运行树时 `.volatile is not a function` 就是「锚点错了」的
  * 诚实信号，而不是静默用错版本。
  *

@@ -29,7 +29,7 @@
  * ## 用法（须 danger-full-access 或非受限环境——CDP 无头浏览器在受限沙箱档必早夭）
  *
  *   node verify/_visual/probe-gui-persist.mjs --service-root <宿主服务根> \
- *     [--host-subdir dsh-0.2.1-rc.5] [--repo <本仓路径>] [--keep]
+ *     [--host-subdir dsh-0.2.2-rc.1] [--repo <本仓路径>] [--keep]
  *
  * 红线：本装置全部用自建临时实例，不连接、不改动任何既有实例（开发用或常驻服务）。
  * 证据：`.local/evidence/gui-persist/{logs,shots}`。退出 0＝全部通过、1＝存在 FAIL、
@@ -72,7 +72,7 @@ const fail = (msg) => {
 const serviceRootArg = argOf('service-root') ?? process.env.DSAT_SERVICE_ROOT;
 if (serviceRootArg === undefined || serviceRootArg.trim() === '') fail('缺少 --service-root（或环境变量 DSAT_SERVICE_ROOT）');
 const serviceRoot = resolve(serviceRootArg);
-const hostSubdir = argOf('host-subdir') ?? 'dsh-0.2.1-rc.5';
+const hostSubdir = argOf('host-subdir') ?? 'dsh-0.2.2-rc.1';
 const repo = resolve(argOf('repo') ?? process.cwd());
 const hostRoot = join(serviceRoot, hostSubdir);
 let hostVersion;

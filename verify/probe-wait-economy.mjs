@@ -41,7 +41,7 @@
  * ## 用法
  *
  *   node verify/probe-wait-economy.mjs --service-root <宿主服务根> \
- *     --host-subdir <宿主树目录名，如 dsh-0.2.1-rc.5> [--repo <本仓路径>] [--keep]
+ *     --host-subdir <宿主树目录名，如 dsh-0.2.2-rc.1> [--repo <本仓路径>] [--keep]
  *
  * `--service-root` 必填（或设 `DSAT_SERVICE_ROOT`）。探针以
  * `<serviceRoot>/patches/zai-glm.yml` 作为实例模型路由 patch——该文件由本机
@@ -81,7 +81,7 @@ process.on('unhandledRejection', (reason) => { fail(`未处理的 Promise 拒绝
 const serviceRootArg = argOf('service-root') ?? process.env.DSAT_SERVICE_ROOT;
 if (serviceRootArg === undefined || serviceRootArg.trim() === '') fail('缺少 --service-root（或环境变量 DSAT_SERVICE_ROOT）：指向装有各宿主树的根目录');
 const serviceRoot = resolve(serviceRootArg);
-const hostSubdir = argOf('host-subdir') ?? 'dsh-0.2.1-rc.5';
+const hostSubdir = argOf('host-subdir') ?? 'dsh-0.2.2-rc.1';
 const hostRoot = join(serviceRoot, hostSubdir);
 let hostVersion;
 try {

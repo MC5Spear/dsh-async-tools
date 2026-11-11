@@ -310,3 +310,27 @@ for (const rel of ['README.en.md', 'docs/user-reference.md', 'docs/user-referenc
     assert.ok(dirty.findings.some((finding) => finding.file === rel && finding.family === '引用'), dirty.out);
   });
 }
+
+test('P18 worktree 指针豁免：仅仓根单行 `gitdir:` 指针文件跳过，借名与子目录同名文件照扫', () => {
+  // 三腿钉住豁免形态（0.2.2 线新增：开发树在 git 链接工作树上，仓根 `.git` 是
+  // 指针文件而非目录——豁免必须**先过内容校验**，不能按名整文件排除）：
+  // ① 仓根 `.git` 为合法单行指针 → 豁免，指针里的本机路径不进扫描；
+  // ② 仓根 `.git` 内容不是指针（借名藏泄漏）→ 必须照扫并报指纹；
+  // ③ 子目录里的 `.git` 文件（worktree 指针只会长在仓根）→ 不豁免。
+  const legit = inspect({
+    extra: { '.git': 'gitdir: D:/P/dsh-async-tools/.git/worktrees/alpha2\n' }
+  });
+  try {
+    assert.equal(legit.code, 0, `合法 worktree 指针必须整文件豁免：\n${legit.out}`);
+  } finally {
+    legit.cleanup();
+  }
+  assertCaught(
+    { extra: { '.git': "export const P = 'D:\\\\P\\\\leak';\n" } },
+    '指纹', /开发盘路径/, '借 `.git` 名藏的泄漏内容不得因文件名被整文件豁免'
+  );
+  assertCaught(
+    { extra: { 'sub/.git': 'gitdir: D:/P/dsh-async-tools/.git/worktrees/alpha2\n' } },
+    '指纹', /开发盘路径/, '子目录同名文件不在豁免面（指针只长在仓根）——内容里的盘路径必须被扫到'
+  );
+});

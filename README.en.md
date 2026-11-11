@@ -14,12 +14,12 @@ This third-party plugin is unaffiliated with DeepSeek. It is personally maintain
 
 | Component | Current applicable version |
 | --- | --- |
-| Plugin version | `0.2.9+dsh.0.2.1-rc` |
-| Supported dsh host versions | `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4`, `0.2.1-rc.5` |
+| Plugin version | `0.2.10+dsh.0.2.2` |
+| Supported dsh host versions | `0.2.2-rc.1` |
 
-“Host” means the DSH instance loading the plugin. **Only these four DSH versions can load this package**, not the final `0.2.1` or an unlisted rc. Node.js 24 is recommended; see the [runtime prerequisites](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>) before choosing another runtime.
+“Host” means the DSH instance loading the plugin. **Only the DSH version listed above can load this package**, not the final `0.2.2`, older `0.2.2` pre-releases (alphas), the `0.2.1` line, or an unlisted rc. Node.js 24.9 or newer is required; see the [runtime prerequisites](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>) before choosing another runtime.
 
-Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Full real-host rechecking on rc.3/rc.4 is also incomplete. Before relying on these environments, check the features needed in a separate test session.
+Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Before relying on these environments, check the features needed in a separate test session.
 
 For IME, screen-reader, or touch-based answers, and for result recovery after a canceled tool call, also read [usage limits and saving results](<docs/user-reference.en.md#usage-limits-and-saving-results>).
 
@@ -35,7 +35,7 @@ Install through the GUI:
 2. Paste this into the package name/address field:
 
    ```text
-   github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
+   github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.2
    ```
 
 3. Select **Install**, then **Enable now** on the success page. If already enabled, confirm its enabled status instead.
@@ -46,7 +46,7 @@ Install through the GUI:
 Alternatively, install from a terminal:
 
 ```powershell
-dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
+dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.2
 ```
 
 `web` is the target profile's name; substitute the appropriate name for another profile. After installation, likewise confirm it is enabled and check loading as above.
@@ -110,7 +110,7 @@ AI maintainers include:
 
 ## Documentation and licensing
 
-See the [user reference](<docs/user-reference.en.md>) for operating details. Development, requirements, design, verification, and changelog documents are in Chinese and are not shipped with the package. They are available in the [source repository](<https://github.com/MC5Spear/dsh-async-tools/tree/adapt/dsh-0.2.1>). To check an installation, use the commit from its installation address rather than the latest contents of the moving branch.
+See the [user reference](<docs/user-reference.en.md>) for operating details. Development, requirements, design, verification, and changelog documents are in Chinese and are not shipped with the package. They are available in the [source repository](<https://github.com/MC5Spear/dsh-async-tools/tree/adapt/dsh-0.2.2>). To check an installation, use the commit from its installation address rather than the latest contents of the moving branch.
 
 The project uses the [MIT license](<LICENSE>). Both presets and some subagent-policy helpers adapt DeepSeek Harness material. The packaged [third-party notices](<THIRD_PARTY_NOTICES.md>) contain sources, upstream copyright, and the full MIT text.
 

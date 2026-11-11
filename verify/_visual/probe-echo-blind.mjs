@@ -22,7 +22,7 @@
  *
  * ## 用法（须 danger-full-access 或非受限环境——CDP 无头浏览器在受限沙箱必早夭）
  *   node verify/_visual/probe-echo-blind.mjs --service-root <宿主服务根> \
- *     [--host-subdir dsh-0.2.1-rc.5] [--repo <本仓路径>] [--keep]
+ *     [--host-subdir dsh-0.2.2-rc.1] [--repo <本仓路径>] [--keep]
  *
  * 红线：只操作本装置自建的隔离实例，不连接、不改动任何既有实例。--patch 只带
  * zai-glm.yml 模型路由。证据：`.local/evidence/echo-blind/`（manifest.json＋
@@ -58,7 +58,7 @@ const fail = (msg) => {
 const serviceRootArg = argOf('service-root') ?? process.env.DSAT_SERVICE_ROOT;
 if (serviceRootArg === undefined || serviceRootArg.trim() === '') fail('缺少 --service-root（或环境变量 DSAT_SERVICE_ROOT）');
 const serviceRoot = resolve(serviceRootArg);
-const hostSubdir = argOf('host-subdir') ?? 'dsh-0.2.1-rc.5';
+const hostSubdir = argOf('host-subdir') ?? 'dsh-0.2.2-rc.1';
 const repo = resolve(argOf('repo') ?? process.cwd());
 const hostRoot = join(serviceRoot, hostSubdir);
 let hostVersion;

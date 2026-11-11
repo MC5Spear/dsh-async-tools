@@ -138,9 +138,10 @@ function fakeServices(agent, {
 } = {}) {
   return {
     sessions: { get: (id) => (id === agent.id ? { id } : undefined) },
-    sessionProjections: { stateOf: (session, key) => {
-      if (presetThrows) throw new Error('projection boom');
-      return session.id === agent.id && key === 'agentPreset' ? preset : undefined;
+    // 0.2.2 起预设读取走 agentPresets.presetForSession(session)（设计 §1.3）。
+    agentPresets: { presetForSession: (session) => {
+      if (presetThrows) throw new Error('preset read boom');
+      return session.id === agent.id ? preset : undefined;
     } },
     agents: roots === null ? undefined : { roots: () => {
       if (rootThrows) throw new Error('roots boom');
@@ -223,7 +224,7 @@ function mountListener({ timer, clock, config, services }) {
   // 注意：ask 配置必须走 applyHostHalf 的**第二参**——attachSnapshotSource 会用它
   // 重播种模块快照（先 seedSnapshot 会被这次覆盖成 toolName-only 的默认关档）。
   applyHostHalf(f.ctx, resolveConfig(config));
-  const askInject = injectFns.get('sessions,sessionProjections,agents');
+  const askInject = injectFns.get('sessions,agentPresets,agents');
   assert.ok(typeof askInject === 'function', 'ask 三服务子 scope 必须注册');
   let captured = null;
   askInject({
@@ -237,18 +238,19 @@ function mountListener({ timer, clock, config, services }) {
 // ── 判定序（J1–J5，经真实接线观察 next() 语义）────────────────────────────
 
 hostTest('readSessionPreset＋isPresetBound（F3 范围判定基件，PRESET-BIND-01）：三态读取路径 + 名单匹配 + 失效安全方向＝关', () => {
-  // 与 shouldTakeover 判定②同一条读取路径（sessions.get → stateOf('agentPreset')），
-  // 供 lib/jobs.js 的 guardPresetFor／组稿纪律复用——三处口径必须一致。
+  // 与 shouldTakeover 判定②同一条读取路径（sessions.get →
+  // agentPresets.presetForSession(session)），供 lib/jobs.js 的 guardPresetFor／
+  // 组稿纪律复用——三处口径必须一致。
   const scope = (preset, session = { id: 's1' }) => ({
     sessions: { get: (id) => (id === 's1' ? session : undefined) },
-    sessionProjections: { stateOf: () => preset }
+    agentPresets: { presetForSession: () => preset }
   });
   assert.equal(readSessionPreset(scope('dsh-async'), 's1'), 'dsh-async', '读得会话实际预设 id');
   assert.equal(readSessionPreset(scope('standard'), 's1'), 'standard', '非本包预设照常读得（匹配交名单）');
   assert.equal(readSessionPreset(scope('dsh-async'), 's-other'), undefined, '会话查无 ⇒ undefined');
   assert.equal(readSessionPreset({}, 's1'), undefined, '服务缺席 ⇒ undefined（失效安全＝关）');
   assert.equal(
-    readSessionPreset({ sessions: { get: () => { throw new Error('boom'); } }, sessionProjections: {} }, 's1'),
+    readSessionPreset({ sessions: { get: () => { throw new Error('boom'); } }, agentPresets: {} }, 's1'),
     undefined, '读取抛错 ⇒ undefined（不把异常泄给诊断路径）'
   );
   // 名单匹配（需求 9.4.1：按会话当前实际预设 ID 匹配）：缺席配置 → 默认两名单；

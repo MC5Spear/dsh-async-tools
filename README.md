@@ -14,12 +14,12 @@
 
 | 项目 | 当前适用版本 |
 | --- | --- |
-| 插件版本 | `0.2.9+dsh.0.2.1-rc` |
-| 支持的宿主版本 | `0.2.1-rc.2`、`0.2.1-rc.3`、`0.2.1-rc.4`、`0.2.1-rc.5` |
+| 插件版本 | `0.2.10+dsh.0.2.2` |
+| 支持的宿主版本 | `0.2.2-rc.1` |
 
-“宿主”指加载插件的 DSH。**只有表中四个 DSH 版本可以加载本包**，正式 `0.2.1` 和未列出的 rc 也不能加载。建议使用 Node.js 24；选择其他运行时前，先看[运行时前提](<docs/user-reference.md#1-安装身份与前提>)。
+“宿主”指加载插件的 DSH。**只有表中的 DSH 版本可以加载本包**，正式 `0.2.2`、`0.2.2` 预发布旧形态（alpha）、旧线 `0.2.1` 及未列出的 rc 也不能加载。需要 Node.js 24.9 或更高版本；选择其他运行时前，先看[运行时前提](<docs/user-reference.md#1-安装身份与前提>)。
 
-Linux 的命令执行和单次提权尚未实机验证，macOS、远程执行环境也没有验证结论。rc.3／rc.4 尚未完成全部功能的实机复验；在这些环境中使用前，先在独立测试会话中确认所需功能。
+Linux 的命令执行和单次提权尚未实机验证，macOS、远程执行环境也没有验证结论。在这些环境中使用前，先在独立测试会话中确认所需功能。
 
 依赖输入法、读屏或触屏作答时，以及需要从取消的工具调用中恢复结果时，还需注意[使用限制与结果保存](<docs/user-reference.md#使用限制与结果保存>)。
 
@@ -35,7 +35,7 @@ Linux 的命令执行和单次提权尚未实机验证，macOS、远程执行环
 2. 在包名／地址输入框中粘贴：
 
    ```text
-   github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
+   github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.2
    ```
 
 3. 点击“安装”。成功后点击“立即启用”；已启用时确认启用状态即可。
@@ -46,7 +46,7 @@ Linux 的命令执行和单次提权尚未实机验证，macOS、远程执行环
 也可在终端安装：
 
 ```powershell
-dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
+dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.2
 ```
 
 命令中的 `web` 是目标 profile 的名称；使用其他 profile 时换成对应名称。安装后同样确认已启用，再按上面步骤核对加载结果。
@@ -110,7 +110,7 @@ async_wait(targets=[{kind:"job", id:"<返回的job_id>"}], wait_ms=30000)
 
 ## 文档与许可
 
-操作细节见[用户参考](<docs/user-reference.md>)。开发、需求、设计、验证和变更记录使用中文，不随安装包分发；可在[源码仓库](<https://github.com/MC5Spear/dsh-async-tools/tree/adapt/dsh-0.2.1>)中阅读。需要核对某次安装时，使用与安装地址对应的提交，不使用移动分支的最新内容代替。
+操作细节见[用户参考](<docs/user-reference.md>)。开发、需求、设计、验证和变更记录使用中文，不随安装包分发；可在[源码仓库](<https://github.com/MC5Spear/dsh-async-tools/tree/adapt/dsh-0.2.2>)中阅读。需要核对某次安装时，使用与安装地址对应的提交，不使用移动分支的最新内容代替。
 
 本项目采用 MIT 许可，见[许可](<LICENSE>)。两份预设及部分子代理策略助手改编自 DeepSeek Harness；来源、上游版权和 MIT 许可全文见随包分发的[第三方通知](<THIRD_PARTY_NOTICES.md>)。
 

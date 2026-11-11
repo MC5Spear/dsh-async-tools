@@ -17,7 +17,7 @@
  * dsh-async-create 专属用例：P1 基线绿、P2/P3 基线行缺/多、P4 派生入口翻活、
  * P5 plugin-manager 回归布尔禁用（⑧b）、P6 词典纪律锚句（⑤b）、P7 pwsh 挂回、
  * P8 tool-bash 表达式、P9 未知 config.id、P10 护栏、P11 互斥判据复合、
- * P12 嵌套行缺失、P13 toolName、P14 期望集与 0.2.1 兼容线证据树对账、
+ * P12 嵌套行缺失、P13 toolName、P14 期望集与 0.2.2 适配线证据树对账、
  * P15 provider 形态、P16 词典公共纪律段同源。
  * 第五行工具与禁用改动专属用例：P17 tool-workflow 翻活、P18 dsh-async 的
  * tool-subagent 翻活、P19 删 async-workflow 行、P20 async-workflow 挪出
@@ -71,11 +71,14 @@ const baselineCreate = readFileSync(PATCH_CREATE, 'utf8');
  *  （与 `tools/_host-resolve.mjs` 同一套候选），**不写死机器路径**——公开仓的 CI 用
  *  `npm install @deepseek-ai/dsh@<精确宿主版本>`（支持集合逐宿主）提供这个包。
  *
- *  基线文件按宿主代际而变：0.2.1 兼容线（支持集全体）两份基线字节相同
- *  （standard 6799 B／cordis 7406 B，锚点取哪边期望集都一致）；集合外的
- *  0.2.0-rc.2 树为 7511／8089 B（不同代基线）。P14 的期望集钉在 0.2.1
- *  兼容线（文件头 P14 定义），锚宿主是其他代际时对账不适用——用例内按锚内
- *  dsh 版本做代际检查、显式 NOTE 跳过，不静默、不冒充对账通过。 */
+ *  基线文件按宿主代际而变：0.2.2 适配线（首轮 0.2.2-rc.1）的基线相对 0.2.1
+ *  兼容线有四处漂移（tool-fs 增 config.applyPatch、delegation 组移除
+ *  tool-subagent-list-agents 行、tool-subagent 行 config 改 modelSelection＋
+ *  modelDiscovery 键、插件管理 manager 行表达式化）；0.2.1 线树（standard/
+ *  cordis 6799／7406 B）与 0.2.0-rc.2 树（7511／8089 B）都是不同代基线。
+ *  P14 的期望集钉在 0.2.2 适配线（文件头 P14 定义），锚宿主是其他代际时对账
+ *  不适用——用例内按锚内 dsh 版本做代际检查、显式 NOTE 跳过，不静默、不冒充
+ *  对账通过。 */
 const WEB_APP_PRESETS = candidateModules(process.env.DSH_HOME ?? join(homedir(), '.dsh'))
   .map((dir) => join(dir, '@deepseek-ai', 'dsh-web-app', 'presets'))
   .find((dir) => existsSync(join(dir, 'standard.patch.yml')));
@@ -142,7 +145,7 @@ hostTest('validate-preset：合法补丁必须通过（基线，防止断言恒�
 hostTest('validate-preset：dsh-async-create 基线必须通过（P1，R26）', async () => {
   const result = await validatePatch(PATCH_CREATE, { quiet: true });
   assert.equal(result.ok, true, `创造补丁基线应当通过，失败行：\n${result.lines.filter((l) => l.includes('FAIL')).join('\n')}`);
-  assert.ok(result.lines.some((l) => l.includes('顶层 26 行 + 嵌套 11 行')), '③ 的对账读数必须是 26+11（0.2.1 基线 + 四行顶层 async 工具行；delegation 组 6 行 + async-workflow）');
+  assert.ok(result.lines.some((l) => l.includes('顶层 26 行 + 嵌套 10 行')), '③ 的对账读数必须是 26+10（0.2.2 基线 + 四行顶层 async 工具行；delegation 组 5 行 + async-workflow——list-agents 行随 0.2.2 基线移除）');
 });
 
 hostTest('validate-preset：tool-bash 被改成平台表达式必须拦住（需求 §3.3：Linux 也要无条件禁用）', async () => {
@@ -310,27 +313,36 @@ hostTest('validate-preset：tool-subagent 翻回启用必须拦住（P4，⑧ �
 });
 
 hostTest('validate-preset：tool-plugin-manager 回归布尔禁用必须拦住（P5，⑧b 基线同形）', async () => {
-  const block = (disabled) => `          - id: tool-plugin-manager\n            name: '@deepseek-ai/dsh-plugin-manager/tools'\n            disabled: ${disabled}\n`;
+  const block = (rowId, disabled) => `          - id: ${rowId}\n            name: '@deepseek-ai/dsh-plugin-manager/tools'\n            disabled: ${disabled}\n`;
   const expr = '!!js "!ctx.get(\'profileContext\')"';
   // 反例方向一（create）：基线条件表达式被换回布尔 true——创造上下文中插件
   // 管理入口整个锁死（需求 §7.3.2：保留基线启用条件）。
   const toBoolean = await validateMutation((text) => text
-    .replace(block(expr), block('true')),
+    .replace(block('tool-plugin-manager', expr), block('tool-plugin-manager', 'true')),
     PATCH_CREATE, baselineCreate);
   assert.equal(toBoolean.ok, false, '回归布尔禁用必须被拦');
   assert.ok(toBoolean.lines.some((l) => l.includes('tool-plugin-manager.disabled') && l.includes('基线禁用形态逐字同形')),
     `报错必须指向 ⑧b 的基线同形判据，实得：${toBoolean.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
   // 反例方向二（create）：表达式本身被改——判据逐字，不是「是表达式即可」。
   const exprDrift = await validateMutation((text) => text
-    .replace(block(expr), block('!!js "!ctx.get(\'pluginContext\')"')),
+    .replace(block('tool-plugin-manager', expr), block('tool-plugin-manager', '!!js "!ctx.get(\'pluginContext\')"')),
     PATCH_CREATE, baselineCreate);
   assert.equal(exprDrift.ok, false, '表达式漂移必须被拦（逐字判据）');
   assert.ok(exprDrift.lines.some((l) => l.includes('tool-plugin-manager.disabled') && l.includes('基线禁用形态逐字同形')));
-  // 反例方向三（dsh-async 侧）：布尔禁用被换成条件表达式——standard 基线两行布尔。
-  const toExpr = await validateMutation((text) => text
-    .replace(block('true'), block(expr)));
-  assert.equal(toExpr.ok, false, 'dsh-async 的插件管理行必须保持 standard 基线布尔禁用');
-  assert.ok(toExpr.lines.some((l) => l.includes('tool-plugin-manager.disabled') && l.includes('基线禁用形态逐字同形')));
+  // 反例方向三（dsh-async 侧，0.2.2 基线按行分形）：manager 行表达式被换回
+  // 布尔——standard 基线该行已表达式化，回归布尔即漂移。
+  const managerToBoolean = await validateMutation((text) => text
+    .replace(block('tool-plugin-manager', expr), block('tool-plugin-manager', 'true')));
+  assert.equal(managerToBoolean.ok, false, 'dsh-async 的 manager 行必须保持 standard 基线的表达式形态');
+  assert.ok(managerToBoolean.lines.some((l) => l.includes('tool-plugin-manager.disabled') && l.includes('基线禁用形态逐字同形')));
+  // 反例方向四（dsh-async 侧）：market 行布尔禁用被换成条件表达式——standard
+  // 基线该行保持布尔，与 manager 行分形（market 是文件末行，替换串不带尾随
+  // 换行以免因行尾形态失配而漏变异）。
+  const marketToExpr = await validateMutation((text) => text
+    .replace("- id: tool-plugin-market\n            name: '@deepseek-ai/dsh-plugin-market/tools'\n            disabled: true",
+      "- id: tool-plugin-market\n            name: '@deepseek-ai/dsh-plugin-market/tools'\n            disabled: !!js \"!ctx.get('profileContext')\""));
+  assert.equal(marketToExpr.ok, false, 'dsh-async 的 market 行必须保持 standard 基线的布尔禁用');
+  assert.ok(marketToExpr.lines.some((l) => l.includes('tool-plugin-market.disabled') && l.includes('基线禁用形态逐字同形')));
 });
 
 hostTest('validate-preset：词典唯一入口锚句被删必须拦住（P6，⑤b，create 变体）', async () => {
@@ -432,15 +444,16 @@ hostTest('validate-preset：创造补丁 toolName 写错必须拦住（P13，④
 
 hostTest('validate-preset：期望集必须与 shipped 基线的真实行集合逐条比对（P14，防快照漂移）', async () => {
   const { load } = await loadYaml();
-  // 代际检查（P14 按定义只对 0.2.1 兼容线证据树对账）：锚宿主的 dsh 版本不是
-  // 0.2.1 线（如误把集合外的 0.2.0-rc.2 树当锚——其基线 7511/8089 B，与期望集
-  // 不同代）时，逐条比对会把「基线代际差」误报成快照漂移。显式 NOTE 后跳过
-  // 整组对账：不静默、不冒充对账通过；期望集仍在 0.2.1 线锚（本机与 CI 的
-  // 主验锚，线内两树基线字节相同）上被本用例钉死。
+  // 代际检查（P14 按定义只对 0.2.2 适配线证据树对账）：锚宿主的 dsh 版本不是
+  // 0.2.2 线（如误把 0.2.1 兼容线树当锚——其 delegation 组仍挂 list-agents 行、
+  // tool-subagent 行仍是 modelSelectionSettings 旧键，与期望集不同代）时，逐条
+  // 比对会把「基线代际差」误报成快照漂移。显式 NOTE 后跳过整组对账：不静默、
+  // 不冒充对账通过；期望集仍在 0.2.2-rc.1 锚（本机与 CI 的主验锚）上被本用例
+  // 钉死。
   const anchorDsh = JSON.parse(readFileSync(
     join(WEB_APP_PRESETS, '..', '..', 'dsh', 'package.json'), 'utf8')).version;
-  if (!anchorDsh.startsWith('0.2.1')) {
-    console.log(`NOTE P14 期望集钉在 0.2.1 兼容线基线；当前锚宿主 dsh@${anchorDsh} 的基线为另一代，逐条对账不适用，跳过（防把代际差误报成快照漂移）。`);
+  if (!anchorDsh.startsWith('0.2.2')) {
+    console.log(`NOTE P14 期望集钉在 0.2.2 适配线基线；当前锚宿主 dsh@${anchorDsh} 的基线为另一代，逐条对账不适用，跳过（防把代际差误报成快照漂移）。`);
     return;
   }
   for (const { configId, baselineFile, baselineName } of RECONCILE) {
@@ -539,13 +552,35 @@ hostTest('validate-preset：组内行重复必须拦住', async () => {
 });
 
 hostTest('validate-preset：组内行换序必须拦住', async () => {
-  const result = await validateMutation((text) => text
-    .replace("              - id: tool-subagent-control\n                name: '@deepseek-ai/dsh-tool-subagent-control'\n              - id: tool-subagent-list-agents\n",
-      "              - id: tool-subagent-list-agents\n                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'\n              - id: tool-subagent-control\n"),
-    PATCH_CREATE, baselineCreate);
-  assert.equal(result.ok, false, '组内行换序必须被拦（基线行序是「逐项按序」承诺的一半）');
-  assert.ok(result.lines.some((l) => l.includes('嵌套行序与基线期望不一致')),
-    '报错必须指向嵌套行序判据');
+  // 0.2.2 基线移除 tool-subagent-list-agents 行后，以 tool-subagent ↔
+  // tool-subagent-fork 相邻两行互换为换序反例（两份补丁同款行文本）。
+  const subagentBlock = "              - id: tool-subagent\n                name: '@deepseek-ai/dsh-tool-subagent'\n                disabled: true\n                config:\n                  provider: spawn\n                  toolName: subagent\n                  modelSelection: true\n                  modelDiscovery: true\n";
+  const forkBlock = "              - id: tool-subagent-fork\n                name: '@deepseek-ai/dsh-tool-subagent'\n                disabled: true\n                config:\n                  provider: fork\n                  toolName: subagent_fork\n";
+  for (const [path, text] of [[PATCH, baseline], [PATCH_CREATE, baselineCreate]]) {
+    const result = await validateMutation((t) => t
+      .replace(subagentBlock + forkBlock, forkBlock + subagentBlock),
+      path, text);
+    assert.equal(result.ok, false, '组内行换序必须被拦（基线行序是「逐项按序」承诺的一半）');
+    assert.ok(result.lines.some((l) => l.includes('嵌套行序与基线期望不一致')),
+      '报错必须指向嵌套行序判据');
+  }
+});
+
+hostTest('validate-preset：tool-fs 基线随迁键 applyPatch 漂移必须拦住（⑩，两份补丁）', async () => {
+  for (const [path, text] of [[PATCH, baseline], [PATCH_CREATE, baselineCreate]]) {
+    const drift = await validateMutation((t) => t
+      .replace('              applyPatch: false', '              applyPatch: true'),
+      path, text);
+    assert.equal(drift.ok, false, 'applyPatch 值漂移必须被拦（0.2.2 基线随迁的逐字判据）');
+    assert.ok(drift.lines.some((l) => l.includes('tool-fs') && l.includes('键值漂移')),
+      '报错必须指向 ⑩ 的 tool-fs 逐字判据');
+    const killed = await validateMutation((t) => t
+      .replace("            config:\n              # 0.2.2 基线形态：补丁写路径默认关闭（applyPatch:false 随基线逐字）。\n              applyPatch: false\n", ''),
+      path, text);
+    assert.equal(killed.ok, false, '删 applyPatch 键（整个 config 块）必须被拦');
+    assert.ok(killed.lines.some((l) => l.includes('tool-fs') && l.includes('缺键')),
+      '报错必须指向 ⑩ 的缺键判据');
+  }
 });
 
 hostTest('validate-preset：workflow-ptc 的 provider 改掉必须拦住（P15，⑨；两份补丁都守）', async () => {

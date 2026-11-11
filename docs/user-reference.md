@@ -13,24 +13,24 @@
 
 | 项目 | 当前适用版本 |
 | --- | --- |
-| 插件版本 | `0.2.9+dsh.0.2.1-rc` |
-| 支持的宿主版本 | `0.2.1-rc.2`、`0.2.1-rc.3`、`0.2.1-rc.4`、`0.2.1-rc.5` |
+| 插件版本 | `0.2.10+dsh.0.2.2` |
+| 支持的宿主版本 | `0.2.2-rc.1` |
 
-“宿主”指加载插件的 DSH。只有表中四个版本可以加载本包；正式 `0.2.1`、`0.2.0`、`0.2.2` 和未列出的 rc 都不能加载。
+“宿主”指加载插件的 DSH。只有表中版本可以加载本包；正式 `0.2.2`、`0.2.2` 预发布旧形态（alpha）、`0.2.1`／`0.2.0` 线和未列出的 rc 都不能加载。
 
-建议使用 Node.js 24。包清单虽声明 Node `>=20`，但 DSH 的 commander 15 依赖至少需要 `22.12.0`，不能据此选择 Node 20。其他依赖还可能有更高要求；选择 Node.js 24 以外的版本时，先确认目标 DSH 的全部依赖可用。
+需要 Node.js `24.9.0` 或更高版本（包清单 `engines` 声明 `>=24.9.0`）。DSH 的 commander 15 依赖至少需要 `22.12.0`，不能据此选择更低的 Node。其他依赖还可能有更高要求；选择 Node.js 24.9 以外的版本时，先确认目标 DSH 的全部依赖可用。
 
 ### 依赖复用前提
 
 本包运行时使用 DSH 已提供的依赖，无需另装一套宿主。这些共享依赖在包清单中称为 peer 依赖；0.2.9 起，本包保留其兼容版本要求，但将其声明为可选，避免包管理器自动补装。另有 `@deepseek-ai/schemastery` 和 `zod` 两项直接依赖。本包自身没有 `preinstall`、`install`、`postinstall` 或 `prepare` 安装脚本。
 
-profile 是 DSH 的运行配置。支持的 rc.2–rc.5 在新 profile 中默认关闭 `autoInstallPeers`（自动补齐 peer 依赖），无需先改配置。0.2.9 起，安装或升级本包也不要求已有 profile 关闭该选项。
+profile 是 DSH 的运行配置。受支持的 `0.2.2-rc.1` 在新 profile 中默认关闭 `autoInstallPeers`（自动补齐 peer 依赖），无需先改配置。0.2.9 起，安装或升级本包也不要求已有 profile 关闭该选项。
 
 已有 profile 可能保留旧依赖副本、锁文件或其他插件的安装脚本。需要调整这些内容时，先请实例管理员核对用途和来源；升级本包不代替清理整个 profile。遇到脚本授权提示时，按[安装脚本授权排查](<#安装脚本授权排查>)处理。
 
 ### 使用限制与结果保存
 
-Linux 的命令执行和单次提权尚未实机验证；macOS、远程执行环境没有验证结论。rc.3／rc.4 尚未完成全部功能的实机复验。在这些环境中使用前，先用独立测试会话确认所需功能，尤其是命令权限、等待和结果送达。
+Linux 的命令执行和单次提权尚未实机验证；macOS、远程执行环境没有验证结论。在这些环境中使用前，先用独立测试会话确认所需功能，尤其是命令权限、等待和结果送达。
 
 待答面板尚未用真实操作系统输入法、读屏软件或触屏完成验证。需要这些输入方式时，先确认能够完成选择和提交；面板不可用时，可打开原会话直接回复。
 
@@ -44,7 +44,7 @@ Linux 的命令执行和单次提权尚未实机验证；macOS、远程执行环
 2. 在包名／地址输入框粘贴以下地址，再点击“安装”：
 
    ```text
-   github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
+   github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.2
    ```
 
 3. 安装成功后点击“立即启用”；已启用时确认启用状态即可。若提示“需要允许安装脚本”，先按[授权排查](<#安装脚本授权排查>)处理。
@@ -55,7 +55,7 @@ Linux 的命令执行和单次提权尚未实机验证；macOS、远程执行环
 也可在终端安装：
 
 ```powershell
-dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
+dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.2
 ```
 
 `web` 是目标 profile 的名称；使用其他 profile 时换成对应名称。安装后同样确认已启用，并完成上面的加载检查。
@@ -68,7 +68,7 @@ dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
 
 ### 安装排查
 
-取不到源码时，核对仓库地址、分支或提交号，再检查网络和代理。仍无法获取时，向提供安装来源的维护者询问可用安装件。省略地址中的 `#adapt/dsh-0.2.1`，不会自动选择正确的宿主适配版本。
+取不到源码时，核对仓库地址、分支或提交号，再检查网络和代理。仍无法获取时，向提供安装来源的维护者询问可用安装件。省略地址中的 `#adapt/dsh-0.2.2`，不会自动选择正确的宿主适配版本。
 
 #### 安装脚本授权排查
 
@@ -88,7 +88,7 @@ dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
 
 | 包与版本 | 脚本作用 |
 | --- | --- |
-| `@deepseek-ai/dsh-subprocess-local@0.2.1-rc.5` | `postinstall` 只为 node-pty 的 Unix `spawn-helper` 设置 `0755` 权限；Windows 通常没有对应文件。 |
+| `@deepseek-ai/dsh-subprocess-local@0.2.2-rc.1` | `postinstall` 只为 node-pty 的 Unix `spawn-helper` 设置 `0755` 权限；Windows 通常没有对应文件。 |
 | `@google/genai@2.21.0` | `preinstall` 只输出一条 no-op 提示，不执行构建。 |
 | `koffi@3.1.1` | 先尝试加载预编译二进制，失败时才使用 CMake 构建。 |
 | `node-pty@1.2.0-beta.15` | 检查预编译文件；文件缺失或显式要求源码构建时，使用 node-gyp。`postinstall` 复制 Windows ConPTY 文件并清理构建目录。 |
@@ -627,7 +627,7 @@ DSH 组合由插件“行”组成，每行用 name 选择插件，用 config �
 ```powershell
 git clone https://github.com/MC5Spear/dsh-async-tools.git
 cd dsh-async-tools
-git checkout adapt/dsh-0.2.1
+git checkout adapt/dsh-0.2.2
 npm install
 dsh plugin --profile web add <克隆目录的绝对路径>
 ```

@@ -4,8 +4,8 @@ This project includes portions derived from [DeepSeek Harness](https://github.co
 
 The derived portions include:
 
-- The standard and Cordis preset compositions and prompt text from `@deepseek-ai/dsh-web-app` `0.2.1-rc.2`, adapted in `presets/dsh-async.patch.yml` and `presets/dsh-async-create.patch.yml`.
-- The subagent model-selection projection, route validation, and option-merging helpers from `@deepseek-ai/dsh-tool-subagent` `0.2.1-rc.2`, adapted in `lib/agent-policy.js` and `lib/agent.js`.
+- The standard and Cordis preset compositions and prompt text from `@deepseek-ai/dsh-web-app` `0.2.2-rc.1`, adapted in `presets/dsh-async.patch.yml` and `presets/dsh-async-create.patch.yml`.
+- The subagent model-selection projection, route validation, and option-merging helpers from `@deepseek-ai/dsh-tool-subagent` `0.2.1-rc.2` (line-identical in `0.2.2-rc.1`), adapted in `lib/agent-policy.js` and `lib/agent.js`.
 
 The following upstream copyright and permission notice applies to those portions. The project's own MIT License is provided in [LICENSE](<LICENSE>).
 

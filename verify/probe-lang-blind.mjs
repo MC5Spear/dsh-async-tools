@@ -36,7 +36,7 @@
  * ## 用法
  *
  *   node verify/probe-lang-blind.mjs --service-root <宿主服务根> \
- *     --host-subdir <宿主树目录名，如 dsh-0.2.1-rc.5> [--repo <本仓路径>] [--keep]
+ *     --host-subdir <宿主树目录名，如 dsh-0.2.2-rc.1> [--repo <本仓路径>] [--keep]
  *
  * 证据落盘 .local/evidence/lang-blind/（manifest.json＋分节 JSON）。退出码：
  * 0＝装置跑完采集序列（CAP/GAP 均为合法产出）；2＝装置自身故障（FAULT）。
@@ -86,7 +86,7 @@ process.on('unhandledRejection', (reason) => { fail(`未处理的 Promise 拒绝
 const serviceRootArg = argOf('service-root') ?? process.env.DSAT_SERVICE_ROOT;
 if (serviceRootArg === undefined || serviceRootArg.trim() === '') fail('缺少 --service-root（或环境变量 DSAT_SERVICE_ROOT）');
 const serviceRoot = resolve(serviceRootArg);
-const hostSubdir = argOf('host-subdir') ?? 'dsh-0.2.1-rc.5';
+const hostSubdir = argOf('host-subdir') ?? 'dsh-0.2.2-rc.1';
 const hostRoot = join(serviceRoot, hostSubdir);
 let hostVersion;
 try {

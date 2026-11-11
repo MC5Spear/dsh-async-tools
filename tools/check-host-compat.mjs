@@ -1,10 +1,11 @@
 /**
  * 宿主兼容声明与解析来源检查（设计 7.3、8.2“版本与客户端”）。
  *
- * 判据分两部分，都在**离线**形态下完成，可放进 CI 的四宿主矩阵：
+ * 判据分两部分，都在**离线**形态下完成，可放进 CI 的宿主矩阵（0.2.2 适配线
+ * 首轮为单宿主 `0.2.2-rc.1`，随支持集合扩展逐宿主追加）：
  *
  * 1. **官方准入判定**：用宿主自带的 `evaluatePluginCompatibility`（`@deepseek-ai/dsh-app-boot`）
- *    读本包清单——支持集合内四个版本全部放行（返回 `undefined`），集合外边界全部拒载，
+ *    读本包清单——支持集合内版本全部放行（返回 `undefined`），集合外边界全部拒载，
  *    且拒载来自九条 dsh peer 而不是 `engines.dsh`。支持集合只有一个权威来源：包清单的
  *    dsh peer 原文；本脚本不另存一份版本表。
  * 2. **宿主树解析来源**：从显式给定的宿主安装树解析九个 dsh peer 与 peer 形态的配套依赖
@@ -53,18 +54,25 @@ const MODULE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dshPeerName = (name) => name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-');
 
 /**
- * 支持集合成员必须是**精确 rc 版本串**（本线 `0.2.1-rc.N`）。
- * 范围写法（`*`、`^0.2.1`、`>=0.2.1-rc.2`）都不是精确项：有它们就没有“支持集合”可言，
- * 而且 `*` 会让宿主兼容判定放行集合外版本。
+ * 支持集合成员必须是**精确版本串**：本线的 rc（`0.2.2-rc.N`）与已纳入的正式
+ * 版（`0.2.2`）都算精确项（当前集合单值 `0.2.2-rc.1`，随支持集合扩展逐项追加
+ * ——正式 `0.2.2` 纳入后属合法成员，不得误报）。
+ * 范围写法（`*`、`^0.2.2`、`>=0.2.2-rc.1`）都不是精确项：有它们就没有“支持集合”可言，
+ * 而且 `*` 会让宿主兼容判定放行集合外版本。预发布旧形态（`0.2.2-alpha.N`）与
+ * 尚未纳入的正式 `0.2.2` 同为集合外，由 REJECTED_BOUNDARIES 举证。
  */
-const EXACT_MEMBER = /^0\.2\.1-rc\.\d+$/;
+const EXACT_MEMBER = /^0\.2\.2(?:-rc\.\d+)?$/;
 
-/** 本包必须放行的宿主版本来自 peer 原文；集合外边界用来证明拒载真的发生。 */
+/** 本包必须放行的宿主版本来自 peer 原文；集合外边界用来证明拒载真的发生
+ * （0.2.2 适配线：上一版本线正式版与旧线 rc、本线预发布旧形态、尚未纳入的
+ * 正式版、下一版本线）。 */
 const REJECTED_BOUNDARIES = [
-  ['0.2.1', '正式版'],
-  ['0.2.0', '上一版本线'],
-  ['0.2.2', '下一版本线'],
-  ['0.2.1-rc.6', '未列入集合的新 rc']
+  ['0.2.1', '正式版（上一版本线）'],
+  ['0.2.1-rc.5', '旧线 rc'],
+  ['0.2.2-alpha.2', '本线预发布旧形态'],
+  ['0.2.2-alpha.3', '本线预发布旧形态'],
+  ['0.2.2', '尚未纳入的正式版'],
+  ['0.2.3', '下一版本线']
 ];
 
 /**
@@ -141,7 +149,7 @@ export function readSupportSet(manifest) {
       const inexact = members.filter((item) => !EXACT_MEMBER.test(item));
       if (inexact.length > 0) {
         problems.push(`peer 支持集合含非精确项 ${inexact.map((item) => JSON.stringify(item)).join('、')}`
-          + '——集合成员必须逐项为 0.2.1-rc.N，范围写法（如 * / ^0.2.1）不算支持集合');
+          + '——集合成员必须逐项为 0.2.2-rc.N 或已纳入的正式 0.2.2，范围写法（如 * / ^0.2.2）不算支持集合');
       }
       if (new Set(members).size !== members.length) problems.push('peer 支持集合重复列同一版本');
     }
@@ -249,10 +257,11 @@ export async function checkHostCompat({ root = MODULE_ROOT, hostRoot, hostVersio
   }
   const { evaluatePluginCompatibility } = await import(pathToFileURL(appBoot.entry).href);
 
-  // 官方判定的未满足项字段按宿主代际而异：支持集（0.2.1 线）叫 `requirements`
-  //（含 engines.dsh 决定），集合外的 0.2.0-rc.2 树叫 `peers`。检查器取宿主树自己
-  // 的判定实现，归一两种形态——否则把它指向集合外树时会在「宿主版本不在支持
-  // 集合内」这条**正确失败**出现之前先 TypeError 崩溃，可读失败变崩溃。两者都
+  // 官方判定的未满足项字段按宿主代际而异：0.2.1 线支持集叫 `requirements`
+  //（含 engines.dsh 决定），0.2.0-rc.2 树叫 `peers`，0.2.2 线树以实测形态为准
+  //（rc.1 实测仍为 `requirements`）。检查器取宿主树自己的判定实现，归一各
+  // 形态——否则把它指向集合外树时会在「宿主版本不在支持集合内」这条**正确
+  // 失败**出现之前先 TypeError 崩溃，可读失败变崩溃。已知形态全部
   // 缺席＝形态再变，同样按可读失败暴露。
   const unmetOf = (issue) => issue.requirements ?? issue.peers ?? null;
 

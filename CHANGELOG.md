@@ -7,6 +7,31 @@
 > `0.2.2` 是本仓的**首个公开发布版本**。它之前的版本线（`0.1.5`–`0.2.1`）用于内部开发与
 > 真机验证，**从未公开发布**；下表只记它们的实质变化，不记过程。
 
+## [0.2.10] — 未发布 · 完整标识 `0.2.10+dsh.0.2.2`（分支 `adapt/dsh-0.2.2`）
+
+首轮适配 DSH `0.2.2-rc.1`，同批并入 0.2.1 维护线的待答面板三处界面修复；另含本线开发侧的公开范围检查器工作树 `.git` 豁免修正与视觉探针语法修复。
+
+### 升级先看
+
+1. **换宿主。** 本版只允许 DSH `0.2.2-rc.1` 加载；正式 `0.2.2`、旧 alpha 预发布、`0.2.1` 线及其 rc 都不能加载。需要 Node.js `24.9.0` 或更高版本。
+2. **安装地址换分支。** 安装来源改为 `github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.2`；旧地址安装到的是 0.2.1 线的 0.2.9，不随本分支变化。
+3. **`async_list_subagent_models` 的步骤外判定。** 宿主 0.2.2 引入步骤级许可：调用发生在工具调用步骤之外、或读取许可失败时，条目与总判定可能显示 `unconfirmed`（`stepOutside`／`stepExecutableUnavailable`／`stepCheckFailed`），并附原因；步骤内且许可为假时显示 `not-allowed`（`stepConditionFalse`）。纯目录查询不受影响。
+
+### 宿主适配（0.2.2-rc.1）
+
+- 九个 `@deepseek-ai/dsh*` peer 从旧线四版本集合改为精确单值 `0.2.2-rc.1`；配套 peer `@deepseek-ai/cordis` `~4.1.0`、`@deepseek-ai/cordis-plugin-timer` `~1.2.0`，直接依赖 `@deepseek-ai/schemastery` `~3.19.0`（zod 维持 `~4.6.7`）；`engines.node` 升至 `>=24.9.0`。兼容检查器、CI 宿主矩阵、开发树 junction 期望与预设校验的基线对账同步换到 0.2.2 线锚。
+- Agent 预设读取迁移到宿主新服务：`agentPreset` 一律经 `agentPresets.presetForSession(session)` 读取（提问接管、宿主页、后台结算等全部消费点），旧投影键 `subagentModelSelectionPolicy` 仅在宿主已知弃用路径上按登记消费。
+- `async_list_subagent_models` 增加步骤许可层（判定口径见上文"升级先看"第 3 条）；上层"不允许／未确认"判定原样透传，降级结果不带路由示例。
+- 两份预设按 0.2.2-rc.1 shipped 基线随迁四处漂移：`tool-fs` 新增 `applyPatch: false`；delegation 组不再挂 `tool-subagent-list-agents` 行；`tool-subagent` 行 config 键改为 `modelSelection`＋`modelDiscovery`；standard 基线插件管理 manager 行改 profileContext 条件表达式（market 行保持布尔，cordis 基线两行均为表达式）。
+- 公开范围检查器对 linked worktree 仓根 `.git` 指针文件的豁免修正：真 clone 的 `.git` 目录照旧跳过；worktree 的单行 `gitdir:` 指针文件先过内容校验（可读、恰一行、以 `gitdir:` 开头）才豁免，且豁免面仅限仓根——借 `.git` 名藏其他内容、或子目录里的同名文件仍逐行扫描（判据见 `test/public-surface.test.mjs` P18）。
+- `verify/_visual/probe-ask-visual.mjs`（AV-9g 徽标几何段）修复嵌套模板字符串导致的整文件语法错误——该错自 0.2.1 线同源文件原样移植而来，当时 `check-syntax` 范围不含 `verify/`、`npm test` 不含 `_visual`，两道门均未拦住；本线已把 `verify/**/*.mjs` 纳入 `check-syntax` 覆盖。
+
+### 待答面板修复（自 0.2.1 维护线同批并入）
+
+- 角标布局：徽标改宿主化尺寸体系（≤52px 高、内容居中、无边框），计数气泡内联且不再绝对定位；溢出遮字与容器错位消除。
+- 自定义输入字号：输入框基础字号 16px（触屏可读），仅精确指针设备降到 13px；自定义输入宽度保底 6em。
+- 按钮尺寸：提交与跳过均达 44×44 命中区（border-box），键盘焦点环覆盖提交／跳过／延时／跳转／关闭。
+
 ## [0.2.9] — 未发布 · 完整标识 `0.2.9+dsh.0.2.1-rc`（分支 `adapt/dsh-0.2.1`）
 
 ### 升级先看

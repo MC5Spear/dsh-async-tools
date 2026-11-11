@@ -2,9 +2,10 @@
 #
 # 为什么是**两个形态**：
 #
-# - `with-host`：按支持集合展开**四宿主矩阵**（rc.2 / rc.3 / rc.4 / rc.5，共四个
-#   作业），每个作业显式安装该精确宿主版本，跑**全量**测试套件与全部检查器。
-#   集合里的一个宿主通过不等于集合通过，所以不能用一个宿主的绿代替其余三个。
+# - `with-host`：按支持集合展开**宿主矩阵**（0.2.2 适配线首轮为单值
+#   `0.2.2-rc.1`，随支持集合扩展逐宿主追加作业），每个作业显式安装该精确宿主
+#   版本，跑**全量**测试套件与全部检查器。集合里的一个宿主通过不等于集合
+#   通过，所以矩阵按成员逐个展开，不能用一个宿主的绿代替集合其余成员。
 # - `offline`：**故意不装**宿主，跑离线形态——需要宿主锚的用例必须**自跳过并打印理由**，
 #   而不是整片崩掉。守卫的唯一来源是 `test/_host-gate.mjs`（动态 import 只吞
 #   `@deepseek-ai/` 的 `ERR_MODULE_NOT_FOUND`，其余错误原样红，防假跳过）；
@@ -13,12 +14,14 @@
 #   pass + skip = 在线形态总用例数、每条 skip 都带统一理由。
 #
 # **九条 dsh peer 必须逐个钉到 `matrix.dsh`，别删这项。**
-# 本包九个 `@deepseek-ai/dsh*` 的 peer 声明是**支持集合**（`rc.2 || rc.3 || rc.4 || rc.5`）。
-# 交给 npm 从集合里自选时，它取最高的一个（rc.5）——于是 rc.2 / rc.3 / rc.4 作业会装出
-# 「rc.2 的 dsh + rc.5 的其余八个」这种混代树，用例照样跑，读数却不属于任何单个
-# 宿主版本。所以这里把九个包全部写成 `@<版本>` 显式安装（并带 `--no-save`，否则
-# npm 会把精确版本写回包清单、把支持集合改成作业版本），装完后逐个核对版本，
-# 再用 `tools/check-host-compat.mjs` 断言九个 peer 与配套 peer 在宿主树上同代同树。
+# 本包九个 `@deepseek-ai/dsh*` 的 peer 声明是**支持集合**（当前为单值
+# `0.2.2-rc.1`）。单值时代没有 npm 自选歧义，但保持逐包显式钉版形态：集合
+# 一旦扩展（OR 原文），交给 npm 从集合里自选时它会取最高的一个——装出
+# 「低成员的 dsh + 最高成员的其余八个」这种混代树，用例照样跑，读数却不属于
+# 任何单个宿主版本。所以这里把九个包全部写成 `@<版本>` 显式安装（并带
+# `--no-save`，否则 npm 会把精确版本写回包清单、把支持集合改成作业版本），
+# 装完后逐个核对版本，再用 `tools/check-host-compat.mjs` 断言九个 peer 与
+# 配套 peer 在宿主树上同代同树。
 #
 # **`--legacy-peer-deps` 是离线作业的要害，别删。**
 # 本包的九个 `@deepseek-ai/dsh*` 是 `peerDependencies`，而 **npm 7+ 默认自动安装 peer**：
@@ -57,20 +60,23 @@ jobs:
       matrix:
         # Node 24（测试工具链口径）：测试命令需要 `--test-isolation`（Node 22 线无此
         # flag）与 `node --test "test/*.test.mjs"` 的 glob 位置参数（Node 21+ 才支持）；
-        # 开发与本机基线即 24。engines >=20 是插件运行时口径，不约束 CI 测试工具链。
+        # 开发与本机基线即 24。engines >=24.9.0（0.2.2 线）是插件运行时口径，
+        # 不约束 CI 测试工具链。
         node: ['24']
-        # 支持集合的四个精确宿主（需求 7.3）。新增 rc 时先扩 peer 集合，再在这里加一项。
-        dsh: ['0.2.1-rc.2', '0.2.1-rc.3', '0.2.1-rc.4', '0.2.1-rc.5']
+        # 支持集合的精确宿主（需求 7.3；0.2.2 适配线首轮单值）。新增成员时先扩
+        # peer 集合，再在这里加一项。
+        dsh: ['0.2.2-rc.1']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
 
-      # 九个 dsh 包逐个钉到精确版本；不能只钉 `@deepseek-ai/dsh`，其余八个会按 OR
-      # 集合取最高项，装出混代树（文件头有完整理由）。
+      # 九个 dsh 包逐个钉到精确版本；不能只钉 `@deepseek-ai/dsh`，集合一旦
+      # 扩展成 OR 原文，其余八个会按集合取最高项，装出混代树（文件头有完整理由）。
       # **`--no-save` 不可少**：不加它，npm 会把实际装的精确版本写回包清单的
-      # peerDependencies，支持集合（OR 原文）当场被改成作业版本，T15 与安装说明随之失真。
+      # peerDependencies，支持集合原文当场被改成作业版本（单值时代际无差，集合
+      # 扩展后即失真），T15 与安装说明随之失真。
       # 安装只改 node_modules，不改包清单；下一步核对这一点。
       - name: 装依赖（九个 dsh 包显式钉到 ${{ matrix.dsh }}）
         shell: pwsh
@@ -82,20 +88,21 @@ jobs:
           npm install --no-save --ignore-scripts @packages
           if ($LASTEXITCODE -ne 0) { throw "安装 $dsh 依赖失败（exit $LASTEXITCODE）" }
 
-      - name: 断言包清单未被安装改写（九条 peer 仍是 OR 支持集合）
+      - name: 断言包清单未被安装改写（九条 peer 同值且等于 ${{ matrix.dsh }}）
         shell: pwsh
         run: |
+          $dsh = '${{ matrix.dsh }}'
           $manifest = Get-Content 'package.json' -Raw | ConvertFrom-Json
           $declared = $manifest.peerDependencies.'@deepseek-ai/dsh'
           $bad = @()
-          if ($declared -notmatch '\|\|') { $bad += "dsh peer 已不是支持集合：$declared" }
+          if ($declared -ne $dsh) { $bad += "dsh peer 不等于矩阵值 $dsh：$declared" }
           foreach ($name in @('dsh', 'dsh-jobs', 'dsh-llm', 'dsh-sandbox', 'dsh-shell',
             'dsh-shell-env', 'dsh-subagent', 'dsh-typert-protocol', 'dsh-tools')) {
             $range = $manifest.peerDependencies."@deepseek-ai/$name"
             if ($range -ne $declared) { $bad += "peer @deepseek-ai/$name 与 dsh 不一致：$range" }
           }
           if ($bad.Count -gt 0) { throw "作业改写了包清单：$($bad -join '；')" }
-          Write-Host "包清单未被改写 ✔ 九条 peer 仍是同一支持集合（本作业安装 ${{ matrix.dsh }}）"
+          Write-Host "包清单未被改写 ✔ 九条 peer 同值且等于本作业版本 $dsh"
 
       - name: 断言宿主锚在场且九个 dsh 包版本全等 ${{ matrix.dsh }}
         shell: pwsh
@@ -165,7 +172,8 @@ jobs:
       matrix:
         # Node 24（测试工具链口径）：测试命令需要 `--test-isolation`（Node 22 线无此
         # flag）与 `node --test "test/*.test.mjs"` 的 glob 位置参数（Node 21+ 才支持）；
-        # 开发与本机基线即 24。engines >=20 是插件运行时口径，不约束 CI 测试工具链。
+        # 开发与本机基线即 24。engines >=24.9.0（0.2.2 线）是插件运行时口径，
+        # 不约束 CI 测试工具链。
         node: ['24']
     steps:
       - uses: actions/checkout@v4

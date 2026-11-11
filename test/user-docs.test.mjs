@@ -23,15 +23,15 @@ test('用户资料：本线真实基线', () => {
 const cases = [
   ['仅英文默认值写错但其它位置保留正确值', box => box.edit('docs/user-reference.en.md', text => text.replace(/^(\|\s*`?defaultYieldMs`?\s*\|[^|]+\|)\s*`?20000`?\s*\|/m, '$1 20001 |'))],
   ['仅中文版本错误', box => box.edit('README.md', text => text.replaceAll(JSON.parse(readFileSync(join(box.root, 'package.json'))).version, '0.0.0-invalid'))],
-  ['支持集合只写一个宿主而正确集合仍在正文别处', box => box.edit('docs/user-reference.en.md', text => {
-    const members = JSON.parse(readFileSync(join(box.root, 'package.json'))).peerDependencies['@deepseek-ai/dsh'].split('||').map(item => item.trim());
-    const changed = text.replace(/^(\| Supported dsh host versions \|) [^|]+\|/m, `$1 ${members.at(-1)} |`);
+  ['支持集合写成待准可以外的版本成员而正确值仍在正文别处', box => box.edit('docs/user-reference.en.md', text => {
+    const declared = JSON.parse(readFileSync(join(box.root, 'package.json'))).peerDependencies['@deepseek-ai/dsh'];
+    const changed = text.replace(/^(\| Supported dsh host versions \|) [^|]+\|/m, '$1 `0.2.2-rc.2` |');
     assert.notEqual(changed, text, '必须实际改动支持集合身份行');
-    return changed + `\nSupported hosts elsewhere: ${members.join(' and ')}.\n`;
+    return changed + `\nSupported hosts elsewhere: ${declared}.\n`;
   })],
-  ['支持集合同一宿主写三遍（去重后只剩一项）', box => box.edit('docs/user-reference.en.md', text => {
-    const members = JSON.parse(readFileSync(join(box.root, 'package.json'))).peerDependencies['@deepseek-ai/dsh'].split('||').map(item => item.trim());
-    const changed = text.replace(/^(\| Supported dsh host versions \|) [^|]+\|/m, `$1 ${Array.from({ length: members.length }, () => members[0]).join(', ')} |`);
+  ['支持集合写成旧线 OR 集合（单值线不得回退成多成员）', box => box.edit('docs/user-reference.en.md', text => {
+    const changed = text.replace(/^(\| Supported dsh host versions \|) [^|]+\|/m,
+      '$1 `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4`, `0.2.1-rc.5` |');
     assert.notEqual(changed, text, '必须实际改动支持集合身份行');
     return changed;
   })],

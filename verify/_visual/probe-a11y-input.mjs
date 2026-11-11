@@ -34,7 +34,7 @@
  *
  * ## 用法（须 danger-full-access 或非受限环境——CDP 无头浏览器在受限沙箱档必早夭）
  *   node verify/_visual/probe-a11y-input.mjs --service-root <宿主服务树> \
- *     [--host-subdir dsh-0.2.1-rc.5] [--repo <本仓路径>] [--keep]
+ *     [--host-subdir dsh-0.2.2-rc.1] [--repo <本仓路径>] [--keep]
  *
  * 红线：只操作本装置自建的隔离实例，不连接、不改动任何既有实例（开发用或常驻服务）。--patch 只带 zai-glm.yml
  * 模型路由。证据：`.local/evidence/a11y-input/{logs,shots}`。退出码 0＝全部
@@ -70,7 +70,7 @@ const fail = (msg) => {
 const serviceRootArg = argOf('service-root') ?? process.env.DSAT_SERVICE_ROOT;
 if (serviceRootArg === undefined || serviceRootArg.trim() === '') fail('缺少 --service-root（或环境变量 DSAT_SERVICE_ROOT）');
 const serviceRoot = resolve(serviceRootArg);
-const hostSubdir = argOf('host-subdir') ?? 'dsh-0.2.1-rc.5';
+const hostSubdir = argOf('host-subdir') ?? 'dsh-0.2.2-rc.1';
 const repo = resolve(argOf('repo') ?? process.cwd());
 const hostRoot = join(serviceRoot, hostSubdir);
 let hostVersion;
@@ -615,11 +615,43 @@ try {
   check('SK-1 多行输入软键盘语义：textarea 无键盘动作暗示 enterkeyhint（白名单仅容空／enter——Enter＝换行不被 send/go/next 一类导航键劫持）；inputmode 记录',
     skAttrs.length >= 2 && noEnterHint === true,
     `样本=${String(skAttrs.length)} enterkeyhint=${JSON.stringify([...new Set(skAttrs.map((a) => a.enterkeyhint))])} inputmode=${JSON.stringify([...new Set(skAttrs.map((a) => a.inputmode))])}`);
-  // SK-2：字号 ≥16px（iOS 聚焦自动放大预防——<16px 即触发聚焦缩放）——设计
-  // 令牌现状按观察项量测留痕（是否调字号属产品决定，见问题清单 VIS-OBS-01）。
-  const sizes = skAttrs.map((a) => Number((/(\d+(?:\.\d+)?)/.exec(a.fontSize ?? '') ?? [])[1] ?? 0));
-  check('SK-2 输入框字号量测（≥16px 防 iOS 聚焦自动放大——现状不足按观察项留痕，产品决定在 VIS-OBS-01）',
-    null, `fontSize=${JSON.stringify([...new Set(skAttrs.map((a) => a.fontSize))])} px=${JSON.stringify(sizes)}`);
+  // SK-2（VIS-INPUT-01 两档机制）：模拟媒体特性断双档——细指针＋可悬停 →
+  // 13px（与题干/选项标题同级）；粗指针／不可悬停 → ≥16px（安全档，iOS 聚焦
+  // 自动放大预防——<16px 即触发聚焦缩放；不可判环境同落安全档）。仿真不支持
+  // 的环境降级为观察项（安全档下限由 T24① 承担）。
+  const readSkFont = () => evaluate(page, `(() => {
+    const q = document.querySelector('.ats-ask-panel .ats-ask-q');
+    const i = q?.querySelector('textarea.ats-ask-input');
+    return i === null || i === undefined ? null : getComputedStyle(i).fontSize;
+  })()`);
+  try {
+    await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'pointer', value: 'fine' }, { name: 'hover', value: 'hover' }] });
+    await sleep(120);
+    const fineFont = await readSkFont();
+    await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'pointer', value: 'coarse' }, { name: 'hover', value: 'none' }] });
+    await sleep(120);
+    const coarseFont = await readSkFont();
+    // 仿真有效性前置（与 probe-ask-visual AV-7c 同源装置事实，2026-11-11
+    // _diag-media 实验）：本机 headless Edge 的 setEmulatedMedia 调用成功但
+    // **不驱动** pointer/hover 媒体特性——coarse 仿真下 matchMedia 仍 fine、
+    // 字号恒为环境档值。不检测有效性会把观察通道失明误判成产品双档失效。
+    const coarseMatches = await evaluate(page, `matchMedia('(pointer: coarse)').matches`);
+    const fineStillMatches = await evaluate(page, `matchMedia('(pointer: fine)').matches`);
+    await page.send('Emulation.setEmulatedMedia', { features: [] });
+    await sleep(120);
+    const sizes = skAttrs.map((a) => Number((/(\d+(?:\.\d+)?)/.exec(a.fontSize ?? '') ?? [])[1] ?? 0));
+    if (coarseMatches === true) {
+      check('SK-2 输入框字号双档（pointer:fine+hover:hover → 13px；coarse/none → ≥16px 防 iOS 聚焦缩放）',
+        fineFont === '13px' && Number((/(\d+(?:\.\d+)?)/.exec(coarseFont ?? '') ?? [])[1] ?? 0) >= 16,
+        `细指针档=${String(fineFont)} 粗指针档=${String(coarseFont)}（仿真前自然态 fontSize=${JSON.stringify([...new Set(skAttrs.map((a) => a.fontSize))])} px=${JSON.stringify(sizes)}）`);
+    } else {
+      check('SK-2 输入框字号双档（媒体特性仿真）', null,
+        `本环境的媒体仿真不驱动 pointer/hover 特性（coarse 仿真下 matchMedia('(pointer: fine)') 仍 ${String(fineStillMatches)}）——按观察项留痕：细指针档读数=${String(fineFont)}（环境档值，无切换证明力）；双档断言由 T24①＋SK-2 静态形态承担（自然态 fontSize=${JSON.stringify([...new Set(skAttrs.map((a) => a.fontSize))])}）`);
+    }
+  } catch (mediaErr) {
+    check('SK-2 输入框字号双档（媒体特性仿真）', null,
+      `本环境不支持 pointer/hover 媒体仿真（${String(mediaErr)}）——按观察项留痕；安全档下限由 T24① 承担`);
+  }
   // SK-3：键盘遮屏近似（视口高度收缩 390×400）——可达性按「**逐题逐控件**
   // 各自滚入」判（首跑定因：一次滚到底只证 Q2 尾部；盲测定因：两题读数若在
   // 同一次 evaluate 里连滚连读，读数来自不同滚动位、不能同帧共存——改为每题

@@ -517,7 +517,7 @@ test('T10：宿主侧的 volatile 提交必须真的到达预设工具的描述'
   const bus = await import('../lib/refresh-bus.js');
   const { readSnapshot, clearSnapshot } = await import('../lib/settings.js');
   const { Context } = cordisModule;
-  const { createVolatile, updateVolatile } = cosmokitModule;
+  const { updateVolatile, volatileEntries } = cosmokitModule;
   clearSnapshot();
 
   const registeredTools = new Map();
@@ -530,6 +530,9 @@ test('T10：宿主侧的 volatile 提交必须真的到达预设工具的描述'
     timer: { timeout: () => () => {}, interval: () => () => {} },
     // 模型选择的第七服务：挂载级假件只需"无 policy"初值形态。
     sessionProjections: { stateOf: () => null },
+    // 第十服务（rc.1 新增，静态等待）：会话预设目录——挂载级假件只需
+    // "无预设"形态（readSessionPreset 的域读入口 presetForSession）。
+    agentPresets: { presetForSession: () => null },
     // 第八服务：公开 Agent 注册表（挂载级假件只需"查无驻留"形态）。
     agents: { get: () => undefined },
     // 第九服务：会话当前有效目录（挂载级假件返回固定目录即可）。
@@ -571,22 +574,31 @@ test('T10：宿主侧的 volatile 提交必须真的到达预设工具的描述'
     `宿主角色不得注册工具（实际有 ${[...registeredTools.keys()].join('、')}）`);
   assert.ok(readSnapshot() !== undefined, '宿主行装载必须首播快照');
 
-  // ③ volatile 提交：照 loader `_commitVolatile` 的同款方式**原地**改 Ref
-  //    （`updateVolatile(ref, createVolatile(newValue))`，`cosmokit/lib/index.js:149-151`），
-  //    再在 **fiber 自己的 ctx** 上派发事件（loader 也是 `fiber.ctx.emit`，cordis 的
-  //    事件向上冒泡，从根 ctx 派发到不了 fiber 的监听）——快照必须重播、描述必须就地刷新。
-  assert.equal(typeof hostFork.config.settings?.get, 'function',
-    'fiber.config 的 settings 子树必须是 Ref（Schema.resolve 包的 createVolatile）——不是的话就地提交链不成立');
+  // ③ volatile 提交：照 loader `_commitVolatile` 的同款步骤（rc.1 形态，
+  //    cordis-plugin-loader/lib/index.js）——活 Ref 住在 fiber.effectiveConfig
+  //    （= apply 第二参的同一对象；fiber.config 只是原始输入），提交＝
+  //    `fiber.rawConfig = 新raw` → `candidate = fiber.resolveConfig(raw)`
+  //    （waterfall + schema 解析，settings 解析回 volatile Ref）→
+  //    `updateVolatile(ref, candidate.settings)` 原地改 Ref → 在 fiber 自己的
+  //    ctx 上派发事件（cordis 事件向上冒泡，从根 ctx 派发到不了 fiber 的监听）
+  //    ——快照必须重播、描述必须就地刷新。
+  const settingsEntry = volatileEntries(hostFork.effectiveConfig)
+    .find(({ path }) => path.join('.') === 'settings');
+  assert.ok(settingsEntry !== undefined,
+    'fiber.effectiveConfig 的 settings 子树必须是活 Ref（Schema.resolve 包的 createVolatile）——不是的话就地提交链不成立');
   const before = tool.description;
-  updateVolatile(hostFork.config.settings, createVolatile({
-    ...hostFork.config.settings.get(),
+  const nextSettings = {
+    ...settingsEntry.ref.get(),
     maxWaitMs: 130000,
     defaultYieldMs: 5000,
     // 出厂 minYieldMs=20000 会把 defaultYieldMs=5000 顶爆组合校验（快照重播
     // 拒绝、保旧值）——显式给出合法下限，测的仍是「提交→重播→描述刷新」链。
     minYieldMs: 1000
-  }));
-  hostFork.ctx.emit('loader/volatile-update');
+  };
+  hostFork.rawConfig = { settings: nextSettings };
+  const candidate = hostFork.resolveConfig(hostFork.rawConfig);
+  updateVolatile(settingsEntry.ref, candidate.settings);
+  hostFork.ctx.emit('loader/volatile-update', [['settings']]);
   // 快照重播是同步的（先于 refresh-bus 的动态 import）；描述刷新要等微任务+宏任务。
   assert.equal(readSnapshot().maxWaitMs, 130000, '事件派发后快照必须同步重播');
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -638,42 +650,42 @@ test('T11（R6）：包清单事实必须自洽', () => {
     '同上：peerDependencies 也不得依赖 dsh-async-tools-host');
 });
 
-test('T13：静态 inject 九项服务；设置链不引入任何服务依赖', () => {
-  // 唯一的静态 `inject` 在 `lib/index.js`（工具角色的九项固定依赖，宿主行共用；
+test('T13：静态 inject 十项服务；设置链不引入任何服务依赖', () => {
+  // 唯一的静态 `inject` 在 `lib/index.js`（工具角色的十项固定依赖，宿主行共用；
   // `sessionProjections` 是模型选择的白名单读取，`workingDirectory` 是 async_run
-  // 的会话当前有效目录）。
-  // `settings` / `agentPresets` 不得出现在其中：写了就等于要求"这个部署必须有它们"，
-  // 缺一个就让整行不激活 → 升级成 dsh 启动失败。设置快照链**不依赖任何
-  // 服务**（宿主行的活配置经 apply 的第二参取得——cordis 没有 `ctx.config` 访问口，
-  // volatile 提交监听挂在宿主行自己的 ctx 上），所以这两个名字没有
-  // 存在的理由。
+  // 的会话当前有效目录，`agentPresets` 是 rc.1 宿主核心提供的会话预设目录
+  // （0.2.2 起静态等待——预设读取的三消费点都要它，与 sessions 同级的核心
+  // 服务，缺席即宿主形态不完整，整行不激活是正确口径）。
+  // `settings` 不得出现在其中：写了就等于要求"这个部署必须有它们"，缺一个
+  // 就让整行不激活 → 升级成 dsh 启动失败。设置快照链**不依赖任何服务**
+  // （宿主行的活配置经 apply 的第二参取得——cordis 没有 `ctx.config` 访问口，
+  // volatile 提交监听挂在宿主行自己的 ctx 上），所以这个名字没有存在的理由。
   const code = stripComments(read('lib/index.js'));
   const injectMatch = code.match(/export const inject\s*=\s*(\[[^\]]*\])/);
   assert.ok(injectMatch !== null, '入口必须显式声明 inject');
   const declared = JSON.parse(injectMatch[1].replace(/'/g, '"'));
-  for (const name of ['settings', 'agentPresets']) {
-    assert.ok(
-      !declared.includes(name),
-      `静态 inject 不得包含 ${name}：缺该服务的部署会让整行不激活，升级成 dsh 启动失败`
-    );
+  assert.equal(declared.includes('settings'), false,
+    '静态 inject 不得包含 settings：缺该服务的部署会让整行不激活，升级成 dsh 启动失败');
+  for (const name of ['tools', 'jobs', 'shell', 'shellEnv', 'subagents', 'timer', 'sessionProjections', 'agentPresets', 'agents', 'workingDirectory']) {
+    assert.ok(declared.includes(name), `静态 inject 必须包含 ${name}`);
   }
   // 宿主半边没有 `ctx.get`（设置快照不查服务）、也不等任何服务；有
   // 运行时 `ctx.inject`：纪律段只等 systemPrompt（预设过滤两服务经
   // `ctx.get` 在 text 内**组稿期现读**——需求 §6.3：c 防线按目标会话实际预设
   // 过滤；不进等待名单，服务缺席 ⇒ 空串 ⇒ 段不出现，失效安全 = 关）与提问接线的
-  // 三服务段（ask 批次登记要读会话/投影/子代理）。静态 inject 列表依旧不动、
-  // 快照链依旧零服务依赖。除此之外的任何服务等待仍然禁止——`settings`/`agentPresets`
+  // 三服务段（ask 批次登记要读会话/预设目录/子代理）。静态 inject 列表依旧不动、
+  // 快照链依旧零服务依赖。除此之外的任何服务等待仍然禁止——`settings`
   // 那类"缺服务整行不激活"的等待形态没有回潮的理由。
   const hostCode = stripComments(read('lib/host.js'));
   const hostInjects = [...hostCode.matchAll(/ctx\.inject\(\s*(\[[^\]]*\])/g)].map((m) => m[1]);
   assert.deepEqual(hostInjects,
-    ["['systemPrompt']", "['sessions', 'sessionProjections', 'agents']"],
+    ["['systemPrompt']", "['sessions', 'agentPresets', 'agents']"],
     '宿主半边只允许 R28 纪律段与 R30 提问接线两个运行时注入；其余服务等待仍禁止（快照链零服务依赖）');
-  // 宿主半边的 `ctx.get` 只服务于纪律段 text 的预设过滤（sessions/sessionProjections
+  // 宿主半边的 `ctx.get` 只服务于纪律段 text 的预设过滤（sessions/agentPresets
   // 两服务的现读，各一处）——设置快照链（`attachSnapshotSource`）依旧零服务读取，
   // 其它任何服务探测都没有存在的理由。
   const hostGets = [...hostCode.matchAll(/ctx\.get\(\s*'([^']+)'\s*\)/g)].map((m) => m[1]);
-  assert.deepEqual([...new Set(hostGets)].sort(), ['sessionProjections', 'sessions'],
+  assert.deepEqual([...new Set(hostGets)].sort(), ['agentPresets', 'sessions'],
     '宿主半边 ctx.get 只许读预设过滤两服务（组稿期现读，缺席=关）');
 });
 
@@ -1940,10 +1952,10 @@ test('T23（PRESET-BIND-01·需求 9.4.2）：预设绑定块——目录四态/
   unmount();
 });
 
-test('T24（VIS-INPUT-01/VIS-BADGE-RAIL）：待答面板字号与命中区——24px 最低与 44px 增强分开；窄槽徽标几何', async () => {
-  // 布局级判据：从样式表原文解析可计算尺寸（字号、命中区、槽宽、面板避让
-  // 公式）。这不替代真机渲染测量——真实浏览器合成、触屏命中与非 Windows
-  // 布局的结论由视觉验收另行安排。
+test('T24（VIS-INPUT-01/VIS-BADGE-01/VIS-ACTION-TIER-01，设计 §8.2.5）：待答面板两档字号、命中区档位与徽标几何', async () => {
+  // 布局级判据：从样式表原文解析可计算尺寸（两档字号、命中区档位、槽宽、
+  // 面板避让公式）。这不替代真机渲染测量——真实浏览器合成、触屏命中与
+  // 非 Windows 布局的结论由视觉验收另行安排（设计 §8.2.5 末段）。
   const { makePrimitivesDouble } = await import('./_primitives-double.mjs');
   const reactStub = {
     createElement: () => undefined, useState: () => [undefined, () => {}],
@@ -1957,51 +1969,134 @@ test('T24（VIS-INPUT-01/VIS-BADGE-RAIL）：待答面板字号与命中区—�
   const css = product.ASK_CSS;
   assert.ok(typeof css === 'string' && css.length > 0, 'ASK_CSS 必须导出（浏览器外可判的样式原文）');
 
-  /** 取某选择器的声明表（同名后写覆盖先写——与层叠一致；选择器逐字匹配）。 */
-  const rule = (selector) => {
-    const found = {};
-    const pattern = new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\{([^}]*)\\}', 'g');
-    for (const match of css.matchAll(pattern)) {
-      for (const decl of match[1].split(';')) {
-        const at = decl.indexOf(':');
-        if (at > 0) found[decl.slice(0, at).trim()] = decl.slice(at + 1).trim();
+  // ── 分区解析（设计 §8.2.5）：先切 @media 块、条件串原样保留，块内块外
+  // 各自成表——扁平全文匹配会被「后写覆盖」把媒体块降档吞进基础档读数，
+  // 分区才能分别断言两档。规则按「选择器清单＋声明表」解析；选择器匹配按
+  // 子串进行（复合选择器与逗号清单同样命中），不得收窄成精确全串匹配。
+  const segments = [];
+  {
+    let cursor = 0;
+    for (;;) {
+      const at = css.indexOf('@media', cursor);
+      if (at === -1) {
+        segments.push({ media: null, start: cursor, end: css.length });
+        break;
       }
+      const open = css.indexOf('{', at);
+      const condition = css.slice(at + '@media'.length, open).trim();
+      let depth = 1;
+      let end = open + 1;
+      while (depth > 0 && end < css.length) {
+        if (css[end] === '{') depth += 1;
+        else if (css[end] === '}') depth -= 1;
+        end += 1;
+      }
+      segments.push({ media: null, start: cursor, end: at });
+      segments.push({ media: condition, start: open + 1, end: end - 1 });
+      cursor = end;
+    }
+  }
+  const allRules = [];
+  for (const segment of segments) {
+    const re = /([^{}]+)\{([^{}]*)\}/g;
+    const text = css.slice(segment.start, segment.end);
+    let match;
+    while ((match = re.exec(text)) !== null) {
+      const decls = {};
+      for (const decl of match[2].split(';')) {
+        const colon = decl.indexOf(':');
+        if (colon > 0) decls[decl.slice(0, colon).trim()] = decl.slice(colon + 1).trim();
+      }
+      allRules.push({ media: segment.media, selector: match[1], decls, index: segment.start + match.index });
+    }
+  }
+  /** 取某选择器（恰为该单选择器的规则）在指定分区（null=媒体块外）的声明表；同名后写覆盖先写。 */
+  const rule = (selector, media = null) => {
+    const found = {};
+    for (const r of allRules) {
+      if (r.media !== media || r.selector !== selector) continue;
+      Object.assign(found, r.decls);
     }
     return found;
   };
   const px = (value) => Number.parseFloat(value);
 
-  // ① VIS-INPUT-01：待答输入 ≥16px——iOS Safari 对小于 16px 的聚焦输入自动
-  //    放大页面；到 16px 即不触发（不禁缩放，见 ⑤）。
-  assert.ok(px(rule('.ats-ask-input')['font-size']) >= 16,
-    '待答输入字号必须 ≥16px（VIS-INPUT-01：避免 iOS 聚焦缩放）');
+  // ① VIS-INPUT-01 两档字号（默认安全档＋细指针可悬停降档）。
+  const baseInput = rule('.ats-ask-input', null);
+  assert.ok(px(baseInput['font-size']) >= 16,
+    `基础档（媒体块外）待答输入字号必须 ≥16px（当前 ${String(baseInput['font-size'])}）——VIS-INPUT-01 默认安全档`);
+  // 全表恰一个 @media 块、条件串逐字钉死（防更宽媒体查询绕开安全默认档）。
+  const mediaSegments = segments.filter((s) => s.media !== null);
+  assert.equal(mediaSegments.length, 1, 'ASK_CSS 恰一个 @media 块（两档机制不允许多媒体块绕档）');
+  assert.equal(mediaSegments[0].media, '(pointer:fine) and (hover:hover)',
+    `媒体块条件必须逐字为 (pointer:fine) and (hover:hover)（当前：${String(mediaSegments[0].media)}）`);
+  const mediaInput = rule('.ats-ask-input', mediaSegments[0].media);
+  assert.equal(mediaInput['font-size'], '13px',
+    `降档分区（媒体块内）待答输入字号必须 =13px（当前 ${String(mediaInput['font-size'])}）`);
+  // 媒体块位置断言：分区解析不查先后，另设断言——媒体块须晚于块外基础规则，
+  // 置于其前则浏览器层叠不生效、运行时降档失效而静态断言仍绿。
+  const mediaInputRule = allRules.find((r) => r.media !== null && r.selector === '.ats-ask-input');
+  const baseInputRule = allRules.find((r) => r.media === null && r.selector === '.ats-ask-input');
+  assert.ok(mediaInputRule !== undefined && baseInputRule !== undefined
+    && mediaInputRule.index > baseInputRule.index,
+    '媒体块在样式表中的位置必须晚于块外基础 .ats-ask-input 规则（层叠生效前提）');
+  // 防绕档：两区之外不得再有作用于该输入的任何 font-size 声明——扫描范围
+  // 含复合选择器（如 .ats-ask-custom .ats-ask-input，特异性更高会压过两档）；
+  // 逗号清单拆分后按子串判断。
+  const touchesInput = (selectorList) => selectorList.split(',')
+    .some((item) => item.includes('.ats-ask-input'));
+  const extra = allRules.filter((r) => touchesInput(r.selector)
+    && Object.prototype.hasOwnProperty.call(r.decls, 'font-size')
+    && !(r.media === null && r.selector === '.ats-ask-input')
+    && !(r.media === mediaSegments[0].media && r.selector === '.ats-ask-input'));
+  assert.equal(extra.length, 0,
+    `除基础档与降档两处外不得再有待答输入的 font-size 声明（发现：${extra.map((r) => `${r.selector}@${r.media ?? '无媒体块'}`).join('；')}）`);
 
-  // ② 交互控件最低命中区 24px（显式 min-height 下限；box-sizing 让它量外框）。
+  // ② 24px 辅助档（不同排、不同档的辅助按钮维持 24；徽标与「不答」分别归
+  //    ④/③ 专属档，不在本组）。
   for (const selector of ['.ats-ask-opt', '.ats-ask-optctl', '.ats-ask-extend', '.ats-ask-jump',
-    '.ats-ask-dismiss', '.ats-ask-skip', '.ats-ask-badge']) {
+    '.ats-ask-dismiss']) {
     const box = rule(selector);
     assert.ok(Number.isFinite(px(box['min-height'])) && px(box['min-height']) >= 24,
-      `${selector} 必须显式 min-height ≥24px（最低命中区）`);
+      `${selector} 必须显式 min-height ≥24px（24px 辅助档）`);
     assert.equal(box['box-sizing'], 'border-box', `${selector} 命中区按外框计（border-box）`);
   }
 
-  // ③ 主要按钮（提交）增强目标 44px——与 ② 的 24px 最低分开处理。
-  assert.ok(px(rule('.ats-ask-submit')['min-height']) >= 44,
-    '主要按钮（提交）必须 min-height ≥44px（增强目标，与最低命中区分开）');
-  assert.equal(rule('.ats-ask-submit')['box-sizing'], 'border-box',
-    '44px 量的是外框高度（border-box）');
+  // ③ 44px 操作档：提交与不答同排同高——min-height 数值相等且 ≥44（不以缩
+  //    小提交点击区换取外观一致，同档抬升；issues.md ASK-ACTION-SIZE 边界）。
+  const submit = rule('.ats-ask-submit');
+  const skip = rule('.ats-ask-skip');
+  assert.ok(px(submit['min-height']) >= 44, '提交必须 min-height ≥44px（44px 操作档）');
+  assert.equal(submit['box-sizing'], 'border-box', '提交 44px 量的是外框高度（border-box）');
+  assert.ok(px(skip['min-height']) >= 44, '不答必须 min-height ≥44px（44px 操作档）');
+  assert.equal(skip['box-sizing'], 'border-box', '不答 44px 量的是外框高度（border-box）');
+  assert.equal(submit['min-height'], skip['min-height'], '提交与不答必须同档同高（min-height 数值相等）');
 
-  // ④ VIS-BADGE-RAIL：窄图标列（宿主实测约 52px 且 overflow:hidden）下徽标
-  //    槽位不塌缩出列。盒宽 = 左内边距 + 图标 16px + 右内边距 + 双侧边框；
-  //    padding 几何（4px/30px/图标 16px）是 VIS-BADGE-01 定下的窄列适配，
-  //    本测钉住任何后续改动不把盒宽顶出 52px。
+  // ④ 徽标（VIS-BADGE-01 宿主化形态）：固定 50px 盒（≤52px 窄列）、28px 与
+  //    底栏同排等高、无边框、内联组居中；计数泡内联含于盒内（无绝对定位）。
   const badge = rule('.ats-ask-badge');
-  const badgeIcon = rule('.ats-ask-badge svg');
-  const pads = badge.padding.split(/\s+/);
-  const badgeWidth = px(pads[3]) + px(badgeIcon.width) + px(pads[1]) + 2 * px(badge.border);
-  assert.ok(badgeWidth <= 52,
-    `徽标盒宽必须 ≤52px（当前 ${String(badgeWidth)}px：padding ${pads.join(' ')} + 图标 ${String(badgeIcon.width)} + 边框）——超出即窄列内裁切`);
-  assert.ok(px(badge['min-height']) >= 24, '徽标命中区高度 ≥24px（含计数泡在内的整钮即点击区）');
+  assert.ok(badge.width !== undefined && px(badge.width) <= 52,
+    `徽标盒宽必须为固定值 ≤52px（当前 ${String(badge.width)}）——超出即窄列内裁切`);
+  assert.ok(px(badge['min-height']) >= 28, '徽标同排等高 min-height ≥28px（含计数泡在内的整钮即点击区）');
+  assert.equal(badge.border, 'none', '徽标无外框（宿主底栏控件视觉语言）');
+  assert.equal(badge['justify-content'], 'center', '内联组在固定盒内居中（防图标偏左回归——该形态可过其余断言与真机判据 A）');
+  assert.equal(badge.padding, '0', '徽标盒内边距为 0（固定盒宽度语义）');
+  assert.ok(Number.isFinite(px(badge.gap)) && px(badge.gap) === 3, '图标与计数泡间距 3px（999 组宽 ≤50 的验算前提）');
+  const count = rule('.ats-ask-count');
+  for (const absent of ['position', 'top', 'right', 'left', 'bottom']) {
+    assert.equal(count[absent], undefined, `计数泡不得再有 ${absent} 声明（内联形态，防绝对定位回归）`);
+  }
+  assert.equal(count['font-size'], '12px', '计数数字 12px（与侧栏文字同级可辨）');
+  assert.ok(px(count['min-width']) >= 18, '计数泡 min-width ≥18px');
+  assert.equal(count.padding, '0 3px', '计数泡内边距 0 3px（999 组宽 ≤50 的验算前提）');
+  assert.equal(rule('.ats-ask-badge svg').width, '16px', '徽标图标 16px');
+
+  // ④′ 三行可见锚（VIS-INPUT-01）：自定义输入 min-height 以 em 计且 ≥5.5em
+  //    （实现 6em：13px 档 78−13=65 ≥ 3×19.5=58.5、16px 档 96−13=83 ≥ 72）。
+  const customInput = rule('.ats-ask-custom .ats-ask-input');
+  const emMatch = String(customInput['min-height']).match(/^([\d.]+)em$/);
+  assert.ok(emMatch !== null && Number.parseFloat(emMatch[1]) >= 5.5,
+    `自定义输入 min-height 须为 em 单位且 ≥5.5em（当前 ${String(customInput['min-height'])}）`);
 
   // ⑤ 窄视口（约 360px 宽）面板避让：sidebar 座位宽度公式 min(340px, 100vw − 76px)
   //    + 右锚 16px ⇒ 面板左缘恒 ≥60px，躲开实测约 56px 的侧栏收起列（+4px 净空）。
@@ -3264,6 +3359,7 @@ async function makeApplyRig(t, rawConfig) {
   ctx.provide('subagents', { listChildren: async () => [], interrupt: () => {}, getProvider: () => undefined });
   ctx.provide('timer', { timeout: () => () => {}, interval: () => () => {} });
   ctx.provide('sessionProjections', { stateOf: () => null });
+  ctx.provide('agentPresets', { presetForSession: () => null });
   ctx.provide('agents', { get: () => undefined });
   ctx.provide('workingDirectory', { ensure: async () => 'D:\\work' });
   const fork = ctx.plugin(

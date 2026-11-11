@@ -24,7 +24,7 @@
  *
  * 用法：node verify/check-agent-policy.mjs [--host-file <tool-subagent index.js>]
  *
- * 宿主源按 `--host-file` > 环境变量 `DSAT_HOST_MODULES` > 本机配置 `evidenceTree['021']`
+ * 宿主源按 `--host-file` > 环境变量 `DSAT_HOST_MODULES` > 本机配置 `evidenceTree['022']`
  * 取（`explicitHostSource` / `resolveHostSource`）。前两者是**显式来源**：给了就不装载
  * 本机配置——干净公开副本（无 `.local/`）与 CI 里都能独立执行，运行期留下的 `.local/`
  * 祖先也不改变结论。没有显式来源时保留本机配置的原有加载合同（整个不在 → 文档化跳过；
@@ -45,7 +45,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
 
 /**
- * 宿主源在 0.2.1 线树里的相对位置。
+ * 宿主源在 0.2.2 线树里的相对位置（两线同路径；形状锚按当前锚树核对）。
  *
  * 树根**不在这里**——它经 `tools/_local-config.mjs` 从本机侧读（或环境变量
  * `DSAT_HOST_MODULES`）。写死树根会让仓内多处各写一份，漏改一处不会有任何检查器红。
@@ -115,7 +115,7 @@ export function analyzeAgentPolicy(texts, { hostAnchors = HOST_ANCHORS, ourAncho
     report.push(`${id} MISSING ${label}：${why}`);
   };
   if (texts.hostText === null) {
-    red('HOST', '宿主源文件', '读不到（0.2.1 树缺席或路径不对——缺树即红，不许静默跳过）');
+    red('HOST', '宿主源文件', '读不到（0.2.2 树缺席或路径不对——缺树即红，不许静默跳过）');
   } else {
     for (const [id, re, label] of hostAnchors) {
       if (re.test(texts.hostText)) report.push(`${id} OK       ${label}`);
@@ -173,7 +173,7 @@ export function explicitHostSource({ hostFile, env = process.env } = {}) {
  *   | {status: 'absent', reason: string}
  *   | {status: 'no-tree', reason: string}>}
  *   `absent` = 本机环境整个不在（调用方按文档化跳过，退出码 0）；`no-tree` = 本机配置
- *   在场却没有 `evidenceTree['021']` 来源（调用方按红退出，缺树不许静默跳过）。
+ *   在场却没有 `evidenceTree['022']` 来源（调用方按红退出，缺树不许静默跳过）。
  *   `.local/` 在场而配置损坏（`LocalConfigInvalid`）不折成状态，原样抛出。
  */
 export async function resolveHostSource({ hostFile, env = process.env, root = ROOT } = {}) {
@@ -187,16 +187,16 @@ export async function resolveHostSource({ hostFile, env = process.env, root = RO
     if (error instanceof LocalPlaneAbsent) return { status: 'absent', reason: error.message };
     throw error;
   }
-  const tree021 = config.evidenceTree['021'];
-  if (tree021 === undefined) {
+  const tree022 = config.evidenceTree['022'];
+  if (tree022 === undefined) {
     return {
       status: 'no-tree',
-      reason: '宿主锚无来源：配置里既没有 evidenceTree[\'021\']，也没有 hostModules。\n'
-        + `二选一：在 ${LOCAL_DIR}/config.mjs 里写 hostModules，或设环境变量 DSAT_HOST_MODULES；`
+      reason: '宿主锚无来源：配置里既没有 evidenceTree[\'022\']，也没有 hostModules。\n'
+        + `二选一：在 ${LOCAL_DIR}/config.mjs 里写 hostModules（0.2.2 线树的 node_modules），或写 evidenceTree['022']；`
         + '也可以临时用 --host-file <路径> 覆盖。'
     };
   }
-  return { status: 'host', hostPath: join(tree021, ...HOST_REL), source: 'local' };
+  return { status: 'host', hostPath: join(tree022, ...HOST_REL), source: 'local' };
 }
 
 // CLI 尾：只在作为主模块运行时执行（变异看守 import 纯函数时不自跑）。

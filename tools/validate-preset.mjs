@@ -42,15 +42,19 @@
  *    与取回通道，否则红；
  * 8. 期望集 `disabledBoolean` 列的每行必须在场且布尔 `disabled: true`（两套同为
  *    四行：tool-bash / tool-subagent / tool-subagent-fork / tool-workflow——插件
- *    管理两行走 ⑧b；0.2.1 基线已无 codex / claude-code / ralph 行）；
+ *    管理两行走 ⑧b；0.2.2 基线沿用无 codex / claude-code / ralph 的形态，且
+ *    delegation 组不再挂 tool-subagent-list-agents 行）；
  * 8b. 插件管理两行（`tool-plugin-manager` / `tool-plugin-market`）的 `disabled`
- *     与各自基线禁用形态逐字同形：dsh-async（standard 基线）两行布尔 `true`；
- *     dsh-async-create（cordis 基线）两行 `!ctx.get('profileContext')` 表达式
- *     字符串——改布尔或改表达式必红（需求 §3.1、§7.3.2：创造上下文中插件管理
- *     入口在场，不得锁死）；
+ *     与各自基线禁用形态**按行**逐字同形（0.2.2 基线）：dsh-async（standard
+ *     基线）manager 行 `!ctx.get('profileContext')` 表达式字符串＋market 行
+ *     布尔 `true`；dsh-async-create（cordis 基线）两行均为表达式字符串——
+ *     改布尔或改表达式必红（需求 §3.1、§7.3.2：创造上下文中插件管理入口
+ *     在场，不得锁死）；
  * 9. `workflow-ptc` 行在场且 `config.provider === 'spawn'`（形态守卫 + 供电）；
- * 10. 禁用行 `tool-subagent` / `tool-subagent-fork` 的 config 键值逐字锁死
- *     （删键/改值/加键必红）；
+ * 10. 禁用行 `tool-subagent` / `tool-subagent-fork` 与基线随迁行 `tool-fs` 的
+ *     config 键值逐字锁死（删键/改值/加键必红；tool-fs 的 `applyPatch: false`
+ *     与 tool-subagent 的 `modelSelection`＋`modelDiscovery` 是 0.2.2 基线
+ *     漂移的逐字锚）；
  * 11. `lib/text.js` 两档 `tool.workflow.p2` 都含指向 `async_agent` 的门槛锚句
  *     （删句必红）。
  *
@@ -114,24 +118,34 @@ const ASYNC_ROW_IDS = ['async-run', 'async-wait', 'async-agent', 'async-list-mod
 /** toolName 五值（判据④：顶层四行 + delegation 组内第五行 async_workflow；WAIT-01 合并等待入口）。 */
 const EXPECTED_TOOL_NAMES = ['async_run', 'async_wait', 'async_agent', 'async_list_subagent_models', 'async_workflow'];
 
-/** 嵌套行序列（两基线同构：planning 1 + compaction 3 + delegation 6；0.2.1 基线
- * 的 delegation 组不再挂 codex / claude-code / ralph 行；组在 tool-workflow 行后
- * 多一行 async-workflow——行位判据）。 */
+/** 嵌套行序列（两基线同构：planning 1 + compaction 3 + delegation 5；0.2.2 基线
+ * 的 delegation 组不再挂 tool-subagent-list-agents 行（随 rc.1 整行移除，与
+ * codex / claude-code / ralph 的早前移除同理）；组在 tool-workflow 行后多一行
+ * async-workflow——行位判据）。 */
 const NESTED_ROWS = [
   'plan-mode',
   'compaction-basic', 'command-compact', 'tool-result-pruner',
-  'tool-subagent-control', 'tool-subagent-list-agents', 'tool-subagent', 'tool-subagent-fork',
+  'tool-subagent-control', 'tool-subagent', 'tool-subagent-fork',
   'workflow-ptc', 'tool-workflow', 'async-workflow'
 ];
 
-/** 禁用行 config 逐字期望（键与值都锁死——删键/改值必红；与 0.2.1 基线同形，
- * 无 backgroundMode 键）。 */
+/** 禁用行 config 逐字期望（键与值都锁死——删键/改值必红；与 0.2.2-rc.1 基线
+ * 同形：tool-subagent 行的 config 键为 modelSelection＋modelDiscovery——旧键
+ * modelSelectionSettings 在 0.2.2 宿主 Config 中不存在；无 backgroundMode 键）。 */
 const SUBAGENT_CONFIG_VERBATIM = {
   'tool-subagent': {
-    provider: 'spawn', toolName: 'subagent', modelSelectionSettings: true
+    provider: 'spawn', toolName: 'subagent', modelSelection: true, modelDiscovery: true
   },
   'tool-subagent-fork': {
     provider: 'fork', toolName: 'subagent_fork'
+  }
+};
+
+/** 基线随迁行的 config 逐字期望（0.2.2 基线漂移：tool-fs 行新增
+ * applyPatch: false——补丁写路径默认关闭；随基线逐字，键值漂移必红）。 */
+const BASELINE_DRIFT_CONFIG_VERBATIM = {
+  'tool-fs': {
+    applyPatch: false
   }
 };
 
@@ -205,7 +219,12 @@ export const EXPECTATIONS = {
     ],
     baselineNested: NESTED_ROWS,
     disabledBoolean: ['tool-bash', 'tool-subagent', 'tool-subagent-fork', 'tool-workflow'],
-    pluginRowsDisabled: true,
+    // ⑧b 按行期望（0.2.2 基线形态）：standard 基线 manager 行 profileContext
+    // 条件表达式＋market 行布尔禁用；cordis 基线两行均表达式。
+    pluginRowsDisabled: {
+      'tool-plugin-manager': PROFILE_CONTEXT_EXPR,
+      'tool-plugin-market': true
+    },
     forbidden: ['@deepseek-ai/dsh-tool-pwsh', '@deepseek-ai/dsh-workflow-worker-thread'],
     personaBaselineIdentity: true,
     disciplineAnchors: {
@@ -248,7 +267,10 @@ export const EXPECTATIONS = {
     disabledBoolean: [
       'tool-bash', 'tool-subagent', 'tool-subagent-fork', 'tool-workflow'
     ],
-    pluginRowsDisabled: PROFILE_CONTEXT_EXPR,
+    pluginRowsDisabled: {
+      'tool-plugin-manager': PROFILE_CONTEXT_EXPR,
+      'tool-plugin-market': PROFILE_CONTEXT_EXPR
+    },
     forbidden: ['@deepseek-ai/dsh-tool-pwsh', '@deepseek-ai/dsh-workflow-worker-thread'],
     personaBaselineIdentity: true,
     disciplineAnchors: {
@@ -526,23 +548,24 @@ export async function validatePatch(patchPath, { quiet = false, expectation } = 
   }
 
   // ── ⑧b 插件管理两行与各自基线禁用形态逐字同形 ──────────────────────────
-  // standard 基线两行布尔禁用；cordis 基线两行 profileContext 条件表达式——
-  // 创造上下文（profileContext 在场）中插件管理与市场入口按基线启用，换成布尔
-  // 禁用会把入口整个锁死（需求 §3.1、§7.3.2）。`!!js` 表达式解析为字符串，
-  // 布尔与表达式在此可区分——改任一侧必红。
+  // 0.2.2 基线形态：standard 基线 manager 行 profileContext 条件表达式＋market
+  // 行布尔禁用（rc.1 起 manager 行表达式化）；cordis 基线两行 profileContext
+  // 条件表达式——创造上下文（profileContext 在场）中插件管理与市场入口按基线
+  // 启用，换成布尔禁用会把入口整个锁死（需求 §3.1、§7.3.2）。`!!js` 表达式
+  // 解析为字符串，布尔与表达式在此可区分——按行逐字比对，改任一侧必红。
   let pluginRowsOk = true;
   for (const rowId of PLUGIN_ROWS) {
     const target = allRows.find((child) => child?.id === rowId);
     if (target === undefined) {
       fail(`子清单缺 ${rowId} 行（基线行不得静默缺失）`);
       pluginRowsOk = false;
-    } else if (target.disabled !== exp.pluginRowsDisabled) {
-      fail(`${rowId}.disabled 必须与基线禁用形态逐字同形（${exp.configId} 基线 = ${JSON.stringify(exp.pluginRowsDisabled)}），实为 ${JSON.stringify(target.disabled)}`);
+    } else if (target.disabled !== exp.pluginRowsDisabled[rowId]) {
+      fail(`${rowId}.disabled 必须与基线禁用形态逐字同形（${exp.configId} 基线 = ${JSON.stringify(exp.pluginRowsDisabled[rowId])}），实为 ${JSON.stringify(target.disabled)}`);
       pluginRowsOk = false;
     }
   }
   if (pluginRowsOk) {
-    emit(`OK    ⑧b 插件管理两行与基线禁用形态逐字同形（${exp.configId}：disabled = ${JSON.stringify(exp.pluginRowsDisabled)}）`);
+    emit(`OK    ⑧b 插件管理两行与基线禁用形态逐字同形（${exp.configId}：manager = ${JSON.stringify(exp.pluginRowsDisabled['tool-plugin-manager'])}，market = ${JSON.stringify(exp.pluginRowsDisabled['tool-plugin-market'])}）`);
   }
 
   // ── ⑨ workflow-ptc 在场且 provider === 'spawn'（形态守卫） ────────────────
@@ -555,10 +578,11 @@ export async function validatePatch(patchPath, { quiet = false, expectation } = 
     emit(`OK    ⑨ workflow-ptc 在场且 provider === ${JSON.stringify(exp.workflowPtcProvider)}（供电行）`);
   }
 
-  // ── ⑩ 禁用行 config 逐字（翻活已由 ⑧ 红；此处锁死 config 键值——
-  //      删键/改值必红；两份补丁同款检查） ──
+  // ── ⑩ 禁用行与基线随迁行的 config 逐字（翻活已由 ⑧ 红；此处锁死 config
+  //      键值——删键/改值必红；两份补丁同款检查。tool-fs 行是 0.2.2 基线随迁
+  //      漂移〔applyPatch: false〕的逐字锚） ──
   let verbatimOk = true;
-  for (const [rowId, expectedConfig] of Object.entries(SUBAGENT_CONFIG_VERBATIM)) {
+  for (const [rowId, expectedConfig] of Object.entries({ ...SUBAGENT_CONFIG_VERBATIM, ...BASELINE_DRIFT_CONFIG_VERBATIM })) {
     const target = allRows.find((child) => child?.id === rowId);
     if (target === undefined) { fail(`子清单缺 ${rowId} 行（⑩ 逐字检查无从谈起）`); verbatimOk = false; continue; }
     const actualConfig = target.config ?? {};
@@ -575,7 +599,7 @@ export async function validatePatch(patchPath, { quiet = false, expectation } = 
       verbatimOk = false;
     }
   }
-  if (verbatimOk) emit('OK    ⑩ tool-subagent / -fork 禁用行 config 逐字（键值零漂移）');
+  if (verbatimOk) emit('OK    ⑩ tool-subagent / -fork 禁用行与 tool-fs 基线随迁行 config 逐字（键值零漂移）');
 
   // ── ⑪ async_workflow 描述门槛锚句（两档文案都必须指向
   //      async_agent 作一两个委托的出路——删句必红） ─────────────────────

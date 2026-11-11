@@ -799,9 +799,10 @@ test('Config 根接受委托行级键：agentOptions／agentPreset／allowedAgen
 
 test('internal/config 原料层：本包候选的显式空允许集合抛错拒绝；缺席与外来候选照常续链（S01，设计 §5.1）', () => {
   setConfigValidationArmed(false);
-  // 原料层＝cordis `Fiber._resolveConfig` 每次 resolve（装载、重挂、volatile
+  // 原料层＝cordis `Fiber.resolveConfig` 每次 resolve（装载、重挂、volatile
   // 就地提交）先流经的 internal/config waterfall——原始候选在 schema 解析
-  // 之前经过本监听，本包词典文案在这里**先行**拒绝；schema 层（原生同形
+  // 之前经过本监听（rc.1 起候选经 next() 内层返回值流转，监听首参是 fiber），
+  // 本包词典文案在这里**先行**拒绝；schema 层（原生同形
   // `.min(1).default(void 0)`，见上一条用例）兜住不经 fiber 咽喉的解析
   // （config-editor 落盘前 resolve、客户端草稿校验）。抛错 → resolve 中断：
   // 装载／重挂 fiber 置 inactive，volatile 提交 loader 捕获记 warn、refs
@@ -814,30 +815,29 @@ test('internal/config 原料层：本包候选的显式空允许集合抛错拒�
   const wiring = attachSnapshotSource(ctx, resolveConfig({}));
   const listener = listeners.get('internal/config');
   assert.ok(typeof listener === 'function', '接线注册 internal/config 监听');
-  const SENTINEL = Symbol('next');
-  const next = () => SENTINEL;
+  // rc.1 监听形态：监听器收到 `(fiber, next)`，原料候选经 next() 的内层返回值
+  // 流转（链尾 fallback 携带 resolveConfig 的入参）；装置以 next 返回值模拟
+  // fallback raw，透传断言用对象身份锚定。
+  const call = (candidate) => listener({}, () => candidate);
 
   // 本包候选＋显式空数组 → 抛错（可读文案＝词典英文档）。
   assert.throws(
-    () => listener({ toolName: 'async_agent', settings: {}, allowedAgentPresets: [] }, next),
+    () => call({ toolName: 'async_agent', settings: {}, allowedAgentPresets: [] }),
     /allowedAgentPresets must contain at least one preset id when present/
   );
   // 「空数组＋默认预设并存」同拒——不存在折叠后单独接受默认预设的形态。
   assert.throws(
-    () => listener({ toolName: 'async_agent', settings: {}, allowedAgentPresets: [], agentPreset: 'reviewer' }, next),
+    () => call({ toolName: 'async_agent', settings: {}, allowedAgentPresets: [], agentPreset: 'reviewer' }),
     /at least one preset id when present/
   );
-  // 缺席键（未配置）与合法非空集合照常放行续链。
-  assert.equal(listener({ toolName: 'async_agent', settings: {} }, next), SENTINEL, '缺席＝未配置，放行续链');
-  assert.equal(
-    listener({ toolName: 'async_agent', settings: {}, allowedAgentPresets: ['reviewer'] }, next),
-    SENTINEL, '非空集合放行续链'
-  );
+  // 缺席键（未配置）与合法非空集合照常放行续链（透传＝同一对象身份）。
+  const absent = { toolName: 'async_agent', settings: {} };
+  assert.equal(call(absent), absent, '缺席＝未配置，放行续链');
+  const nonEmpty = { toolName: 'async_agent', settings: {}, allowedAgentPresets: ['reviewer'] };
+  assert.equal(call(nonEmpty), nonEmpty, '非空集合放行续链');
   // 外来候选不进本包判据（归属甄别先于空数组判据）。
-  assert.equal(
-    listener({ toolName: 'subagent', allowedAgentPresets: [] }, next),
-    SENTINEL, '外来候选直接续链（不是我们的行）'
-  );
+  const foreign = { toolName: 'subagent', allowedAgentPresets: [] };
+  assert.equal(call(foreign), foreign, '外来候选直接续链（不是我们的行）');
 
   wiring.dispose();
   setConfigValidationArmed(false);
@@ -979,7 +979,10 @@ async function getChain() {
         standin, ctx, loader, settings, readSnapshot, readDegraded, clearSnapshot, clearDegraded,
         entry: loader.resolve('include:f04-host'),
         ns: 'f04-host',
-        liveSettings: () => loader.resolve('include:f04-host')?.fiber?.config?.settings?.get?.()
+        // rc.1 起 apply 第二参＝fiber.effectiveConfig（volatile Ref 活在此处）；
+        // fiber.config 只存原始输入（loader `_commitVolatile` 原地改 effectiveConfig
+        // 里的 Ref——活值读点必须取 effectiveConfig）。
+        liveSettings: () => loader.resolve('include:f04-host')?.fiber?.effectiveConfig?.settings?.get?.()
       };
     })();
   }
@@ -1365,32 +1368,39 @@ test('进程内（真实链）：启动损坏布尔→降级运行、原值显�
     assert.equal(decodeTB.ok, true,
       `降级态表单可渲染（客户端复活副本携带同一布尔基线，等值草稿放行）：${decodeTB.message ?? ''}`);
 
+    // ── rc.1 装置事实：settings.update 每次落盘都经 app-boot reconcile 全树
+    // 重挂——运行时行（loader.create 的行不在 profile 组合层）携带非法 raw 时，
+    // 重挂 resolve 在降级基线之外再判一次（rc.5 无此环节），行被打死且 remove
+    // 摘不净、后续任何主行写入都报 "entry did not activate"。因此 tb 行的使命
+    // 到启动段断言为止：**在任何主行写入之前**拆除（state=2 时 dispose 正常），
+    // 降级期守护与基线等值重放的演示全部迁到主行（文件层行，重挂与就地提交
+    // 同一持久 raw，降级基线两侧等值放行）。
+    entryTB.parent.remove('f04-host-tb');
+    // 合法种子写入：主行落到 defaultWaitMs=32000（合法提交经武装/容忍态放行）。
+    await settings.update(ns, { settings: { defaultWaitMs: 32000 } });
+    assert.equal(chain.readSnapshot()?.defaultWaitMs, 32000, '基线段种子写入生效');
+
     // 降级期守护：与基线不同的非法提交照常拒于落盘前（运行中拒绝与启动降级分离）。
     const patchBefore = existsSync(settings.documentPath) ? readFileSync(settings.documentPath, 'utf8') : null;
     await assert.rejects(
-      () => settings.update('f04-host-tb', { settings: { askTakeover: 'DIFFERENT_INVALID' } }),
+      () => settings.update(ns, { settings: { askTakeover: 'DIFFERENT_INVALID' } }),
       (error) => /type violation/.test(error.message) && /askTakeover/.test(error.message)
         && /DIFFERENT_INVALID/.test(error.message),
       '降级期间与基线不同的非法提交照常拒绝'
     );
     assert.equal(existsSync(settings.documentPath) ? readFileSync(settings.documentPath, 'utf8') : null, patchBefore,
       '拒绝不落盘');
-    // 主行（合法行）在降级态下的运行中拒绝同样有效：非法新输入与启动保守处理分离。
+    // 主行在降级态下的运行中拒绝同样有效：非法新输入与启动保守处理分离。
     const mainGuardBefore = liveSettings()?.silentFailureGuard;
     await assert.rejects(
       () => settings.update(ns, { settings: { silentFailureGuard: 'junk' } }),
       /\[async-tools\] type violation: silentFailureGuard must be a boolean, got string "junk"/,
-      '降级期间其他行的非法新输入同样拒绝'
+      '降级期间主行的非法新输入同样拒绝'
     );
     assert.equal(liveSettings()?.silentFailureGuard, mainGuardBefore, '主行活 Ref 不动');
 
-    // ── 基线段：放行类写入迁到主行（运行时行不可组合持久化）。先移除 tb，
-    // 避免成功落盘的 reconcile 拆行时其处置器清空快照；再用与启动段同形的
-    // 布尔损坏值构造降级基线（结构与 apply 侧 setConfigValidationDegraded
-    // 写入的基线一致：已解析值、非法候选原样在内）。
-    entryTB.parent.remove('f04-host-tb');
-    await settings.update(ns, { settings: { defaultWaitMs: 32000 } });
-    assert.equal(chain.readSnapshot()?.defaultWaitMs, 32000, '基线段种子写入生效');
+    // ── 基线段：用与启动段同形的布尔损坏值构造降级基线（结构与 apply 侧
+    // setConfigValidationDegraded 写入的基线一致：已解析值、非法候选原样在内）。
     const boolBaseline = resolveSettingsValue({
       settings: { ...BASE_SETTINGS, defaultWaitMs: 32000, askTakeover: 'INVALID_BOOLEAN', silentFailureGuard: 'not-a-boolean' }
     });

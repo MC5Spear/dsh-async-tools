@@ -6,7 +6,7 @@
  * 文本原样落卷；判定权在盲测代理。只记 CAP/GAP；唯一状态改写 agentLang，
  * 收尾恢复原值。「Run this single step:」装置指令排除出断言域。
  *
- * 用法：node verify/probe-lang-err.mjs --service-root <根> --host-subdir dsh-0.2.1-rc.5
+ * 用法：node verify/probe-lang-err.mjs --service-root <根> --host-subdir dsh-0.2.2-rc.1
  * 证据落盘 .local/evidence/lang-err/。退出码 0＝跑完；2＝FAULT。
  */
 import { spawn, spawnSync } from 'node:child_process';
@@ -38,7 +38,7 @@ const fail = (msg) => {
 process.on('uncaughtException', (e) => { fail(String(e?.stack ?? e)); });
 process.on('unhandledRejection', (r) => { fail(String(r)); });
 const serviceRoot = resolve(argOf('service-root') ?? fail('缺少 --service-root'));
-const hostSubdir = argOf('host-subdir') ?? 'dsh-0.2.1-rc.5';
+const hostSubdir = argOf('host-subdir') ?? 'dsh-0.2.2-rc.1';
 const hostRoot = join(serviceRoot, hostSubdir);
 const log = (m) => console.log(`[probe] ${m}`);
 mkdirSync(join(repo, '.local'), { recursive: true });

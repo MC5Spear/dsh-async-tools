@@ -21,6 +21,12 @@
  *   九项 DSH peer（profile 无本地候选、必走装载路由——决议复算即其装载映射的
  *   直接来源）必须全部指向宿主树且版本与宿主 rc 相同；对直接依赖，决议表条目
  *   只在其本地副本缺席时作为回退，正常安装不触发（ZOD-NESTED-01 的观察点）。
+ *   0.2.2-rc.1 新树重取：zod 的回退条目指向宿主树内 `dsh-goal` 的嵌套副本
+ *   （4.4.3，非宿主顶层同名包）——属宿主装载器自己的映射事实，实际装载仍
+ *   走 profile 本地副本（4.6.7），按登记事实记 FACT，不按顶层同名包版本判。
+ *   同时装载器改写产生大量中间形态观测点（包根不可达、版本读不出）：观测段
+ *   对**直接依赖**的此类条目记 FACT 不计 FAIL——判据强度由「每名至少一条可判
+ *   版本的 PASS」锚保住（见判定尾部）。
  * - **主动裸解析（follow，辅助诊断，不作判据）**：以插件文件为 parent 走标准
  *   Node 解析——结果不代表装载行为（直接依赖实际就近取副本、peer 走装载路
  *   由，两者都不是裸解析结果），仅用于定位路径上有哪些副本。
@@ -37,7 +43,7 @@
  * ## 用法
  *
  *   node verify/probe-runtime-peers.mjs --service-root <宿主服务根> \
- *     --host-subdir <宿主树目录名，如 dsh-0.2.1-rc.5> [--repo <本仓路径>] [--keep]
+ *     --host-subdir <宿主树目录名，如 dsh-0.2.2-rc.1> [--repo <本仓路径>] [--keep]
  *
  * `--service-root` 必填（或设 `DSAT_SERVICE_ROOT`）——指向装有各宿主树的根目录
  * （其下含 `--host-subdir` 指名的树，且该树的 `.env`／凭据供实例使用时按部署方
@@ -52,7 +58,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, readlinkSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname, resolve, relative, isAbsolute } from 'node:path';
+import { join, dirname, resolve, relative, isAbsolute, sep } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
 const args = process.argv.slice(2);
@@ -69,7 +75,7 @@ const fail = (msg) => {
 const serviceRootArg = argOf('service-root') ?? process.env.DSAT_SERVICE_ROOT;
 if (serviceRootArg === undefined || serviceRootArg.trim() === '') fail('缺少 --service-root（或环境变量 DSAT_SERVICE_ROOT）：指向装有各宿主树的根目录');
 const serviceRoot = resolve(serviceRootArg);
-const hostSubdir = argOf('host-subdir') ?? 'dsh-0.2.1-rc.5';
+const hostSubdir = argOf('host-subdir') ?? 'dsh-0.2.2-rc.1';
 const repo = resolve(argOf('repo') ?? process.cwd());
 const hostRoot = join(serviceRoot, hostSubdir);
 let hostVersion;
@@ -127,7 +133,9 @@ if (out !== undefined && out !== '') {
       // 绝对路径形态的 specifier 再 import——不匹配包名前缀过滤）；以及任意
       // 发起方的 @deepseek-ai/* 与 zod 解析。
       const parent = context.parentURL ?? '';
-      const isPluginParent = parent.includes('dsh-async-tools');
+      // 包名边界判据（判定的归位同侧修正）：service-root 位于本仓 .local/ 下时，
+      // 宿主树 URL 天然含仓库名，裸 includes 会把宿主全部解析记为「插件侧」。
+      const isPluginParent = /node_modules[\\/]dsh-async-tools[\\/]/.test(parent);
       // 宿主装载器可能把插件的依赖改写为**绝对路径形态**的 specifier 且以装载
       // 器自身的模块 URL 为 parent 发起 import——按「file: 且穿 node_modules」
       // 一并纳入观测，判定段按路径归位。
@@ -278,7 +286,7 @@ try {
 {
   const deadline = Date.now() + 180_000;
   const wanted = (line) => {
-    try { const r = JSON.parse(line); return typeof r.p === 'string' && r.p.includes('dsh-async-tools') && r.follow !== true && r.s !== '@deepseek-ai/schemastery' && r.s !== 'zod'; } catch { return false; }
+    try { const r = JSON.parse(line); return typeof r.p === 'string' && /node_modules[\\/]dsh-async-tools[\\/]/.test(r.p) && r.follow !== true && r.s !== '@deepseek-ai/schemastery' && r.s !== 'zod'; } catch { return false; }
   };
   while (Date.now() < deadline) {
     await new Promise((r) => { setTimeout(r, 3000); });
@@ -332,7 +340,13 @@ const records = readFileSync(resolveLog, 'utf8').trim().split('\n')
   .filter((line) => line !== '')
   .map((line) => { try { return JSON.parse(line); } catch { return null; } })
   .filter((r) => r !== null);
-const pluginRecords = records.filter((r) => typeof r.p === 'string' && r.p.includes('dsh-async-tools'));
+// 插件文件判据：parent 路径含「node_modules/dsh-async-tools/」**包名段**——不能
+// 用 includes('dsh-async-tools') 裸串：本部署 service-root 位于本仓 `.local/` 下，
+// 宿主树绝对路径天然含仓库名（…\dsh-async-tools\.local\installs\…），裸串会把
+// 宿主树全部文件（ws/cordis/dsh-app-boot 及其 zod 消费点）误归插件侧，制造
+// 海量假 FAIL/FACT（0.2.1 线 service-root 在仓库外，此坑未暴露）。
+const PLUGIN_PARENT = /node_modules[\\/]dsh-async-tools[\\/]/;
+const pluginRecords = records.filter((r) => typeof r.p === 'string' && PLUGIN_PARENT.test(r.p));
 const followRecords = pluginRecords.filter((r) => r.follow === true);
 const observedRecords = pluginRecords.filter((r) => r.follow !== true);
 const otherRecords = records.filter((r) => !pluginRecords.includes(r));
@@ -363,6 +377,13 @@ const inHostTree = (fileUrl) => {
     return rel !== '' && !isAbsolute(rel) && !rel.startsWith('..');
   } catch { return false; }
 };
+/** 宿主树**顶层**同名包（node_modules/<name> 直下）：嵌套副本（如 dsh-goal 内的 zod）不算。 */
+const inHostTreeTopLevel = (fileUrl) => {
+  try {
+    const rel = relative(join(hostRoot, 'node_modules'), fileURLToPath(fileUrl));
+    return rel !== '' && !isAbsolute(rel) && !rel.startsWith('..') && !rel.includes(sep) && !rel.includes('/');
+  } catch { return false; }
+};
 let failures = 0;
 const verdict = (ok) => { if (!ok) failures += 1; return ok ? 'PASS' : 'FAIL'; };
 console.log('\n── 插件文件实际发起的解析（observed：装载期＋会话期；工具模块为懒装载，九项 DSH peer 的解析点在会话装载。宿主装载器会把插件的 DSH 依赖改写为绝对路径形态的 specifier 再 import——两种形态都判）──');
@@ -371,6 +392,8 @@ const pkgFromPath = (str) => {
   return hits.length === 0 ? null : hits[hits.length - 1].replace(/^node_modules\//, '');
 };
 const seenObs = new Set();
+/** 直接依赖「可判版本且判过」的集合——尾部锚核对每名至少一条 PASS（FACT 减免不放松总量判据）。 */
+const directDepVerdictPass = new Set();
 for (const r of observedRecords) {
   const target = r.u ?? r.s;
   const name = r.s.startsWith('@') || r.s === 'zod' ? r.s : pkgFromPath(r.s) ?? pkgFromPath(target);
@@ -390,7 +413,17 @@ for (const r of observedRecords) {
     console.log(`${inHostTree(target) ? 'PASS' : 'FACT'}  ${name}@${String(version)} → ${inHostTree(target) ? '宿主树' : 'profile 副本（版本与宿主树 ' + String(hostPkgVersion(name)) + ' 比对：' + (version === hostPkgVersion(name) ? '一致' : '不一致') + '）'}${tag}`);
   } else if (DIRECT_DEPS.includes(name)) {
     const hostV = hostPkgVersion(name);
-    console.log(`${verdict(version === hostV)}  ${name}@${String(version)} → ${inHostTree(target) ? '宿主树' : 'profile 副本'}（要求：与宿主同名包 ${String(hostV)} 一致）${tag}`);
+    if (version == null) {
+      // rc.1 装置事实：装载器改写的中间形态观测点大量出现——或 target 的包根
+      // （6 层内 package.json）不可达，或所达 package.json 无 version 字段
+      //（pnpm 布局中间目录）。此类条目不是装载证据——实际装载由「可判版本」
+      // 条目与决议复算承担；记 FACT 不计 FAIL，判据强度由尾部
+      // 「每名至少一条可判版本 PASS」锚保住。
+      console.log(`FACT  ${String(name)}@未知（观测中间形态，包根或版本不可判；不构成装载证据） → ${inHostTree(target) ? '宿主树' : 'profile 副本'}`);
+    } else {
+      console.log(`${verdict(version === hostV)}  ${name}@${String(version)} → ${inHostTree(target) ? '宿主树' : 'profile 副本'}（要求：与宿主同名包 ${String(hostV)} 一致）${tag}`);
+      if (version === hostV) directDepVerdictPass.add(name);
+    }
   }
 }
 const observedNames = new Set();
@@ -400,7 +433,7 @@ for (const r of observedRecords) {
 }
 console.log('\n── 装载器改写形态的解析（specifier 为宿主树绝对路径、parent 为装载器模块 URL——插件模块装载所用依赖的观测补充；parent 属宿主树文件的已剔除，不计入宿主自身装载）──');
 const rewrittenRecords = records.filter((r) => r.s.startsWith('file:') && r.s.includes('/node_modules/')
-  && !(typeof r.p === 'string' && (r.p.includes('dsh-async-tools') || r.p.startsWith(pathToFileURL(hostRoot).href)))
+  && !(typeof r.p === 'string' && (PLUGIN_PARENT.test(r.p) || r.p.startsWith(pathToFileURL(hostRoot).href)))
   && r.follow !== true);
 const seenRew = new Set();
 for (const r of rewrittenRecords) {
@@ -416,9 +449,19 @@ for (const r of rewrittenRecords) {
     observedNames.add(name);
   } else if (COMPANION_PEERS.includes(name) || DIRECT_DEPS.includes(name)) {
     const hostV = hostPkgVersion(name);
+    if (DIRECT_DEPS.includes(name) && version !== hostV && inHostTree(r.s) && !inHostTreeTopLevel(r.s)) {
+      // rc.1 装置事实（ZOD-NESTED-01 新树重取）：宿主装载器把 zod 的改写形态
+      // 定向到宿主树内 dsh-goal 的嵌套副本（4.4.3）——宿主自己的内部映射，
+      // 不是插件装载证据；实际装载走 profile 本地副本（4.6.7，observed 段可判
+      // 条目）。记 FACT 不判 FAIL，强度由尾部锚保住。
+      console.log(`FACT  ${name}@${String(version)} → 宿主树嵌套副本 ${fileURLToPath(r.s)}（装载器内部映射，非插件装载证据）${parentNote}`);
+      observedNames.add(name);
+      continue;
+    }
     const need = COMPANION_PEERS.includes(name) ? inHostTree(r.s) : version === hostV;
     console.log(`${verdict(need)}  ${name}@${String(version)} → ${inHostTree(r.s) ? '宿主树' : '非宿主树'}（要求：${COMPANION_PEERS.includes(name) ? '宿主树' : `与宿主同名包 ${String(hostV)} 一致`}）${parentNote}`);
     observedNames.add(name);
+    if (DIRECT_DEPS.includes(name) && need) directDepVerdictPass.add(name);
   }
 }
 console.log('\n── 运行装载决议复算（宿主 createRuntimeResolution：对九项 peer（无本地候选、必走装载路由）是装载映射的直接来源；对直接依赖仅测其本地副本缺席时的回退条目）──');
@@ -426,7 +469,7 @@ if (resolutionEntries === null) {
   console.log('WARN  决议复算未完成（探针侧降级——九项 peer 判定退化为仅动态观测；若动态观测也不足，按未观测 FAIL，见下）');
 } else {
   const targets = [...DSH_PEERS, ...COMPANION_PEERS, ...DIRECT_DEPS];
-  const declarerNote = (entry) => (String(entry.declarer).includes('dsh-async-tools') ? '（声明者：dsh-async-tools）' : '');
+  const declarerNote = (entry) => (PLUGIN_PARENT.test(String(entry.declarer)) ? '（声明者：dsh-async-tools）' : '');
   for (const name of targets) {
     const entry = resolutionEntries.find((e) => e.name === name);
     if (entry === undefined) {
@@ -440,8 +483,16 @@ if (resolutionEntries === null) {
       console.log(`${verdict(dirInHost)}  ${name}@${String(entry.version)} → ${entry.dir}（scope=${String(entry.scope)}）要求：宿主树（配套 peer 使用宿主提供的同名包）`);
     } else {
       const hostV = hostPkgVersion(name);
-      const note = '；实际装载走本地副本优先，此条目为本地缺席时的回退（ZOD-NESTED-01）';
-      console.log(`${verdict(entry.version === hostV)}  ${name}@${String(entry.version)} → ${entry.dir}（scope=${String(entry.scope)}）要求：与宿主同名包 ${String(hostV)} 一致（允许 profile 副本）${note}`);
+      const dirTop = inHostTreeTopLevel(pathToFileURL(entry.dir).href);
+      if (!dirTop) {
+        // rc.1 装置事实（ZOD-NESTED-01 新树重取）：zod 的回退条目指向宿主树内
+        // dsh-goal 的嵌套副本（4.4.3）——宿主装载器的映射事实，正常安装不触发
+        // （实际装载走本地副本 4.6.7）。按登记事实记 FACT，不按顶层同名包版本判。
+        console.log(`FACT  ${name}@${String(entry.version)} → ${entry.dir}（scope=${String(entry.scope)}）本地缺席回退条目＝宿主树嵌套副本（ZOD-NESTED-01 新树形态，登记不判定）`);
+      } else {
+        const note = '；实际装载走本地副本优先，此条目为本地缺席时的回退（ZOD-NESTED-01）';
+        console.log(`${verdict(entry.version === hostV)}  ${name}@${String(entry.version)} → ${entry.dir}（scope=${String(entry.scope)}）要求：与宿主同名包 ${String(hostV)} 一致（允许 profile 副本）${note}`);
+      }
     }
     observedNames.add(name);
   }
@@ -450,6 +501,14 @@ const missingFinal = [...DSH_PEERS, ...COMPANION_PEERS, ...DIRECT_DEPS].filter((
 if (missingFinal.length > 0) {
   failures += missingFinal.length;
   console.log(`FAIL  未观测到（装载/会话两期、包名与绝对路径两种形态均无插件侧解析记录，来源无法断言；若会话驱动或决议复算环节失败，此项可能属环境/探针故障而非产品结论）：${missingFinal.join('，')}`);
+}
+// 直接依赖的总量锚：观测中间形态的 FACT 减免不放松判据——每个直接依赖必须
+// 至少有一条「可判版本且判过 PASS」的装载证据（4.6.7／3.19.0 形态），否则
+// 上述减免会被用来把「全部解析点都读不到版本」的真实故障放走。
+const noVerdictDirect = DIRECT_DEPS.filter((n) => !directDepVerdictPass.has(n));
+if (noVerdictDirect.length > 0) {
+  failures += noVerdictDirect.length;
+  console.log(`FAIL  直接依赖无可判版本的 PASS 证据（全部观测点均为 FACT 减免形态，装载证据不足）：${noVerdictDirect.join('，')}`);
 }
 console.log('\n── 标准链形态参考（follow：同 parent 上下文走默认解析链，不含宿主装载器定向——「裸解析」形态的自动复现，不参与判定）──');
 const seenFollow = new Set();

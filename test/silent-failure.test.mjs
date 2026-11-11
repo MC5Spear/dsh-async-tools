@@ -67,7 +67,7 @@ function confinedCtx(presetOf = 'dsh-async') {
   // 同款桩）：缺了会得到 `TypeError: ctx.get is not a function`，断言本体根本执行不到。
   // F3 范围判定（需求 §6.3（范围）＋9.4（名单））：结果诊断只对「会话实际预设
   // ∈ 绑定名单」的调用主体生效——桩按 guardPresetFor 的读取路径（sessions.get →
-  // sessionProjections.stateOf('agentPreset')）把调用主体映射到指定预设
+  // agentPresets.presetForSession(session)）把调用主体映射到指定预设
   //（默认 dsh-async，在默认名单内；范围负面对照传别的预设＋收窄名单）。
   f.ctx.get = (key) => {
     if (key === 'sandboxPolicy') {
@@ -78,7 +78,7 @@ function confinedCtx(presetOf = 'dsh-async') {
     }
     return undefined;
   };
-  f.ctx.sessionProjections = { stateOf: () => presetOf };
+  f.ctx.agentPresets = { presetForSession: () => presetOf };
   return f;
 }
 
@@ -87,7 +87,7 @@ function confinedCtx(presetOf = 'dsh-async') {
  * `installRunDescriptionShadow`，随后派发一次 `agent/created`，返回该 Agent 的
  * 遮蔽定义（经 `agent.ctx.tools.register` 捕获）、Agent 侧 effect 与行侧撤销器。
  * @param {object} rowFake - `confinedCtx()`/`fakeCtx()` 返回的行装置（须先装
- *   sessions/sessionProjections 桩——遮蔽 getter 经 `guardPresetFor` 读它们）。
+ *   sessions/agentPresets 桩——遮蔽 getter 经 `guardPresetFor` 读它们）。
  * @param {object} tool - `buildRunTool` 产出的共享定义对象。
  * @param {object} configView - 活配置视图。
  * @param {string} [agentId] - Agent id（桩按会话对象把它映射到预设）。
@@ -293,7 +293,7 @@ hostTest('R28 判据8：开关关 ⇒ 三防线同断（行为差异，不是存
   snapHost.ctx.inject = (list, fn) => { injectFns.set(list.join(','), fn); };
   snapHost.ctx.effect = () => {};
   snapHost.ctx.get = (key) => (key === 'sessions' ? { get: () => ({ id: 'session-1' }) }
-    : key === 'sessionProjections' ? { stateOf: () => 'dsh-async' } : undefined);
+    : key === 'agentPresets' ? { presetForSession: () => 'dsh-async' } : undefined);
   applyHostHalf(snapHost.ctx, resolveConfig({ silentFailureGuard: false }));
   const captured = {};
   // 执行纪律 section 与 c 段同一回调注册（此处只验 c 段开为空；section 不受
@@ -432,7 +432,7 @@ hostTest('F3（范围判定·后台）：结算时刻主体不在本包预设 �
   // 失效安全方向＝关：sessions 服务整个缺席（无预设可读）——同样不产生诊断。
   const bare = confinedCtx();
   bare.ctx.get = (key) => (key === 'sandboxPolicy' ? { resolve: () => ({ mode: 'workspace-write' }) } : undefined);
-  bare.ctx.sessionProjections = undefined;
+  bare.ctx.agentPresets = undefined;
   bare.ctx.timer.timeout = (callback) => { const h = setTimeout(callback, 0); return () => clearTimeout(h); };
   const quiet3 = fakeProc({ text: '', exitCode: 1, status: 'running', autoResolve: false });
   quiet3.proc.sandbox = { mode: 'workspace-write' };
@@ -560,11 +560,11 @@ hostTest('F3b（§6.2 归属比对→名单匹配→PRESET-ISOLATION-02 会话�
   assert.match(r2.note, /Silent-failure guard:/, '会话预设∈名单 ⇒ 前台诊断在场');
   assert.doesNotMatch(matchTool.description, warnAnchor, '执行后共享描述仍基础文本');
 
-  // ③ 读取失败（stateOf 抛错）⇒ 失效安全＝关：诊断不产生；遮蔽 getter 退基础
+  // ③ 读取失败（presetForSession 抛错）⇒ 失效安全＝关：诊断不产生；遮蔽 getter 退基础
   //    文本、不外抛（created 监听器失败会被宿主按 reject 处理，任何故障都不得
   //    放大成会话不可用）。
   const broken = confinedCtx('dsh-async');
-  broken.ctx.sessionProjections = { stateOf() { throw new Error('projection read failed'); } };
+  broken.ctx.agentPresets = { presetForSession() { throw new Error('preset read failed'); } };
   const quiet3 = fakeProc({ text: '', exitCode: 1, status: 'running', autoResolve: false });
   quiet3.proc.sandbox = { mode: 'workspace-write' };
   broken.installShellExecute(() => Promise.resolve(quiet3.proc));
@@ -596,18 +596,18 @@ hostTest('R28 判据12：c 段经 ctx.inject 注册 systemPrompt（预设过滤�
   // section 行为矩阵见下一条用例）；ask 接线另立。
   f.ctx.inject = (list, fn) => { injectLists.push(list); injectFns.set(list.join(','), fn); };
   f.ctx.effect = (dispose) => { effects.push(dispose); };
-  // text 内现读（`ctx.get('sessions')` / `ctx.get('sessionProjections')`）的桩：
+  // text 内现读（`ctx.get('sessions')` / `ctx.get('agentPresets')`）的桩：
   // 按用例改写两服务的返回（get 键 = 组稿目标 agent id，真实 dsh-session 语义）。
   let sessionsService = { get: () => ({ id: 'session-1' }) };
-  let projectionService = { stateOf: () => 'dsh-async' };
+  let presetService = { presetForSession: () => 'dsh-async' };
   f.ctx.get = (key) => {
     if (key === 'sessions') return sessionsService;
-    if (key === 'sessionProjections') return projectionService;
+    if (key === 'agentPresets') return presetService;
     return undefined;
   };
   applyHostHalf(f.ctx, resolveConfig({ silentFailureGuard: false }));
   assert.equal(effects.length, 2, '快照源 + R30 ask 接线两个处置器挂到 ctx.effect');
-  assert.deepEqual(injectLists, [['systemPrompt'], ['sessions', 'sessionProjections', 'agents']],
+  assert.deepEqual(injectLists, [['systemPrompt'], ['sessions', 'agentPresets', 'agents']],
     '纪律段（context＋section）只等 systemPrompt（预设过滤经 ctx.get 现读，不进等待名单）；R30 ask 接线另立三服务子 scope');
 
   const entry = {};
@@ -634,16 +634,16 @@ hostTest('R28 判据12：c 段经 ctx.inject 注册 systemPrompt（预设过滤�
   assert.equal(entry.text(assembly), '', '快照缺席 ⇒ 空串，不抛');
   // 预设过滤（需求 §6.3）：目标会话不在本包两预设之列 ⇒ 空串（标准/评审链不吃纪律段）。
   seedSnapshot(resolveConfig({ silentFailureGuard: true, agentLang: 'en' }));
-  projectionService = { stateOf: () => 'standard' };
+  presetService = { presetForSession: () => 'standard' };
   assert.equal(entry.text(assembly), '', '预设 standard ⇒ 空串（c 段只对本包两预设生效）');
-  // sessions/sessionProjections 缺席 ⇒ 空串（服务缺席不再拦注册，段仍失效安全=关）。
-  projectionService = { stateOf: () => 'dsh-async' };
+  // sessions/agentPresets 缺席 ⇒ 空串（服务缺席不再拦注册，段仍失效安全=关）。
+  presetService = { presetForSession: () => 'dsh-async' };
   sessionsService = undefined;
   assert.equal(entry.text(assembly), '', 'sessions 服务缺席 ⇒ 空串（现读路径，失效安全=关）');
   sessionsService = { get: () => ({ id: 'session-1' }) };
-  projectionService = undefined;
-  assert.equal(entry.text(assembly), '', 'sessionProjections 服务缺席 ⇒ 空串（现读路径，失效安全=关）');
-  projectionService = { stateOf: () => 'dsh-async' };
+  presetService = undefined;
+  assert.equal(entry.text(assembly), '', 'agentPresets 服务缺席 ⇒ 空串（现读路径，失效安全=关）');
+  presetService = { presetForSession: () => 'dsh-async' };
   // 开 + en：E2E 逐字锚句必须与词典键一致。
   seedSnapshot(resolveConfig({ silentFailureGuard: true, agentLang: 'en' }));
   const en = entry.text(assembly);
@@ -671,10 +671,10 @@ hostTest('执行纪律 section：语言档现读 agentLang、变体按目标预�
   f.ctx.inject = (list, fn) => { injectFns.set(list.join(','), fn); };
   f.ctx.effect = () => {};
   let sessionsService = { get: () => ({ id: 'session-1' }) };
-  let projectionService = { stateOf: () => 'dsh-async' };
+  let presetService = { presetForSession: () => 'dsh-async' };
   f.ctx.get = (key) => {
     if (key === 'sessions') return sessionsService;
-    if (key === 'sessionProjections') return projectionService;
+    if (key === 'agentPresets') return presetService;
     return undefined;
   };
   applyHostHalf(f.ctx, resolveConfig({ silentFailureGuard: false }));
@@ -695,7 +695,7 @@ hostTest('执行纪律 section：语言档现读 agentLang、变体按目标预�
   assert.match(en, /async_agent is the ONLY delegation entry/);
   assert.match(en, /never pass run_in_background: false/, 'dsh-async 变体的前台委托禁句在场');
   // 变体按目标会话的实际预设：create 档换差异句。
-  projectionService = { stateOf: () => 'dsh-async-create' };
+  presetService = { presetForSession: () => 'dsh-async-create' };
   const createEn = entry.text(assembly);
   assert.equal(createEn, t('en', 'discipline.preset.dsh-async-create'), 'create 变体 = 对应词典键逐字');
   assert.match(createEn, /do not call them/, 'create 变体的「已禁用、不要调用」句在场');
@@ -707,15 +707,15 @@ hostTest('执行纪律 section：语言档现读 agentLang、变体按目标预�
   assert.match(zh, /唯一的委托入口/);
   assert.match(zh, /不要调用/);
   // 非名单预设 / 无 agent / 两服务缺席 ⇒ 空串。
-  projectionService = { stateOf: () => 'standard' };
+  presetService = { presetForSession: () => 'standard' };
   assert.equal(entry.text(assembly), '', '名单外预设会话 ⇒ 空串（段只对名单内预设生效）');
-  projectionService = { stateOf: () => 'dsh-async' };
+  presetService = { presetForSession: () => 'dsh-async' };
   assert.equal(entry.text({}), '', '无 agent 的组稿 ⇒ 空串');
   sessionsService = undefined;
   assert.equal(entry.text(assembly), '', 'sessions 服务缺席 ⇒ 空串');
   sessionsService = { get: () => ({ id: 'session-1' }) };
-  projectionService = undefined;
-  assert.equal(entry.text(assembly), '', 'sessionProjections 服务缺席 ⇒ 空串');
+  presetService = undefined;
+  assert.equal(entry.text(assembly), '', 'agentPresets 服务缺席 ⇒ 空串');
   // 复位模块级快照。
   clearSnapshot();
 });
@@ -725,10 +725,10 @@ hostTest('P14（PRESET-BIND-01）：纪律变体按名单选择——两内置�
   const injectFns = new Map();
   f.ctx.inject = (list, fn) => { injectFns.set(list.join(','), fn); };
   f.ctx.effect = () => {};
-  let projectionService = { stateOf: () => 'rwkv' };
+  let presetService = { presetForSession: () => 'rwkv' };
   f.ctx.get = (key) => {
     if (key === 'sessions') return { get: () => ({ id: 'session-1' }) };
-    if (key === 'sessionProjections') return projectionService;
+    if (key === 'agentPresets') return presetService;
     return undefined;
   };
   applyHostHalf(f.ctx, resolveConfig({ agentLang: 'en' }));
@@ -746,9 +746,9 @@ hostTest('P14（PRESET-BIND-01）：纪律变体按名单选择——两内置�
     // 名单含两内置 → 专用变体（变体可用集合 DISCIPLINE_PRESET_VARIANTS 决定，
     // t() 缺键即抛——不能靠缺键回退）。
     seedSnapshot(resolveConfig({ agentLang: 'en', boundPresets: ['dsh-async', 'rwkv'] }));
-    projectionService = { stateOf: () => 'dsh-async' };
+    presetService = { presetForSession: () => 'dsh-async' };
     assert.equal(entry.text(assembly), t('en', 'discipline.preset.dsh-async'), '内置预设（名单内）→ 专用变体');
-    projectionService = { stateOf: () => 'rwkv' };
+    presetService = { presetForSession: () => 'rwkv' };
     assert.equal(entry.text(assembly), t('en', 'discipline.preset.generic'), '同一名单内的自建预设 → 仍通用变体');
     // 名单不含会话预设 → 空串（P9 隔离）。
     seedSnapshot(resolveConfig({ agentLang: 'en', boundPresets: ['dsh-async'] }));
@@ -935,7 +935,7 @@ realLayerTest('A-F12 回归：c 段注册落在宿主组稿会收集的 global �
   const ctx = new Context();
   const fibers = [ctx.plugin(SystemPrompt)];
   await new Promise((r) => { setTimeout(r, 20); });
-  // sessions/sessionProjections 完全缺席：c 段注册不被缺席拦住——依赖范围只锁
+  // sessions/agentPresets 完全缺席：c 段注册不被缺席拦住——依赖范围只锁
   // systemPrompt（组稿必需服务），预设过滤两服务经 ctx.get 在 text 内现读。
   applyHostHalf(ctx, resolveConfig({ silentFailureGuard: true, agentLang: 'en' }));
   await new Promise((r) => { setTimeout(r, 20); });
@@ -949,11 +949,11 @@ realLayerTest('A-F12 回归：c 段注册落在宿主组稿会收集的 global �
     constructor(c) { super(c, 'sessions'); }
     get(id) { return presetById.has(id) ? { id } : undefined; }
   }
-  class ProjectionProbe extends Service {
-    constructor(c) { super(c, 'sessionProjections'); }
-    stateOf(session, key) { return key === 'agentPreset' ? presetById.get(session.id) : undefined; }
+  class PresetsProbe extends Service {
+    constructor(c) { super(c, 'agentPresets'); }
+    presetForSession(session) { return presetById.get(session.id); }
   }
-  fibers.push(ctx.plugin(SessionsProbe), ctx.plugin(ProjectionProbe));
+  fibers.push(ctx.plugin(SessionsProbe), ctx.plugin(PresetsProbe));
   await new Promise((r) => { setTimeout(r, 20); });
   const ownAgent = { id: 'session-1', session: 'session-1' };
   const otherAgent = { id: 'session-2', session: 'session-2' };
@@ -1009,11 +1009,11 @@ realLayerTest('执行纪律 section：注册落在宿主组稿会收集的 globa
     constructor(c) { super(c, 'sessions'); }
     get(id) { return presetById.has(id) ? { id } : undefined; }
   }
-  class ProjectionProbe extends Service {
-    constructor(c) { super(c, 'sessionProjections'); }
-    stateOf(session, key) { return key === 'agentPreset' ? presetById.get(session.id) : undefined; }
+  class PresetsProbe extends Service {
+    constructor(c) { super(c, 'agentPresets'); }
+    presetForSession(session) { return presetById.get(session.id); }
   }
-  fibers.push(ctx.plugin(SessionsProbe), ctx.plugin(ProjectionProbe));
+  fibers.push(ctx.plugin(SessionsProbe), ctx.plugin(PresetsProbe));
   await new Promise((r) => { setTimeout(r, 20); });
   const ownAgent = { id: 'session-1', session: 'session-1' };
   const otherAgent = { id: 'session-2', session: 'session-2' };

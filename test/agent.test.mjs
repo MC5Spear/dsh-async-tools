@@ -1297,6 +1297,7 @@ realCordisTest('async_agent：宿主 subagent/provider-added／removed 事件后
   for (const key of ['jobs', 'shell', 'shellEnv', 'timer', 'sessionProjections', 'workingDirectory']) {
     ctx.provide(key, f.ctx[key]);
   }
+  ctx.provide('agentPresets', { presetForSession: () => null });
   ctx.provide('agents', { get() {} });
   await ctx.plugin(SystemPrompt);
   await ctx.plugin(ToolRuntime);
@@ -1358,6 +1359,7 @@ realCordisTest('async_agent：宿主 subagent/provider-added／removed 事件后
   for (const key of ['jobs', 'shell', 'shellEnv', 'timer', 'sessionProjections', 'workingDirectory']) {
     zhCtx.provide(key, f.ctx[key]);
   }
+  zhCtx.provide('agentPresets', { presetForSession: () => null });
   zhCtx.provide('agents', { get() {} });
   await zhCtx.plugin(SystemPrompt);
   await zhCtx.plugin(ToolRuntime);

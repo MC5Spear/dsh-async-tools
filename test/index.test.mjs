@@ -29,7 +29,7 @@ import { HOST_SKIP_REASON, loadOfflineSafe } from './_host-gate.mjs';
 /** `lib/` 目录的绝对路径。 */
 const LIB_DIR = fileURLToPath(new URL('../lib/', import.meta.url));
 
-/** cordis 的 `FiberState.ACTIVE`（`@deepseek-ai/cordis` 4.0.5，`lib/types/fiber.d.ts:67-74` 的 const enum，ACTIVE = 2）。 */
+/** cordis 的 `FiberState.ACTIVE`（`@deepseek-ai/cordis` 4.1.0，`lib/types/fiber.d.ts:70` 的 const enum，ACTIVE = 2）。 */
 const ACTIVE = 2;
 
 /** 加载宿主入口（守卫式动态 import，判据见 `_host-gate.mjs`）。 */
@@ -245,7 +245,8 @@ function ctxGetLiterals(text) {
  *   缺席只影响归属判定（按非本包预设处理），工具行为其余部分照常——
  *   写进 inject 同样会把缺席升级成整行不激活。
  *
- * （`settings` 与 `agentPresets` 不在此列：`lib/` 已无调用点。）
+ * （`settings` 不在此列：`lib/` 已无调用点。`agentPresets` 0.2.2 线已进
+ *   `inject` 十项，缺席即整行不激活，也不再属可选读。）
  *
  * 除这些以外的任何名字都说明作者要么该写进 `inject`、要么该解释为什么可选——两种情况都要求人来看一眼。
  */
@@ -297,6 +298,10 @@ function makeContext(Context) {
   // 目标口径读取它；async_agent 行不再注册投影——实时口径，设计 §3.3）。
   // 投影 fold 行为由 test/agent-policy.test.mjs 专测。
   ctx.provide('sessionProjections', { stateOf: () => null });
+  // 第十服务（rc.1 新增）：会话预设目录——预设读取三消费点（提问接管、
+  // 宿主页 ask 接线、guardPresetFor）的域读入口；挂载级假件只需
+  // "无预设"形态（presetForSession 返回 null）。
+  ctx.provide('agentPresets', { presetForSession: () => null });
   // 第八服务：公开 Agent 注册表（wait-agent 三态判定消费；挂载级假件
   // 只需"查无驻留"形态）。
   ctx.provide('agents', { get: () => undefined });
@@ -308,8 +313,8 @@ function makeContext(Context) {
 
 /**
  * 等插件 fiber 进入 ACTIVE：cordis 的 `_reload()` 先 `await Promise.resolve()`
- * 才执行 `apply`（`@deepseek-ai/cordis` 4.0.5 `lib/index.js:1349-1358` 的
- * `_reload` 链），因此推有限的微任务轮次就够，
+ * 才执行 `_execute`（`@deepseek-ai/cordis` 4.1.0 `lib/index.js:668-677` 的
+ * `_reload` 链，0.2.2 线核验），因此推有限的微任务轮次就够，
  * 不是靠时间蒙。超限直接断言失败，不会静默放过一个没跑起来的插件。
  * @param {object} fork - `ctx.plugin()` 的返回值。
  */
@@ -410,7 +415,7 @@ test('T6b：`ctx.get("<字面量>")` 的第二种写法也要被看见（R3 审�
   assert.deepEqual(stale, [], `OPTIONAL_SERVICE_READS 里的这些名字已不再被读取，请清掉：${stale.join(', ')}`);
 });
 
-test('T3：inject 恰为九项服务；apply 按 config.toolName 注册工具；卸载后注销', async (t) => {
+test('T3：inject 恰为十项服务；apply 按 config.toolName 注册工具；卸载后注销', async (t) => {
   const host = await loadHost();
   if (host === undefined || Context === undefined) {
     t.skip(HOST_SKIP_REASON);
@@ -419,7 +424,7 @@ test('T3：inject 恰为九项服务；apply 按 config.toolName 注册工具；
 
   assert.deepEqual(
     host.inject,
-    ['tools', 'jobs', 'shell', 'shellEnv', 'subagents', 'timer', 'sessionProjections', 'agents', 'workingDirectory'],
+    ['tools', 'jobs', 'shell', 'shellEnv', 'subagents', 'timer', 'sessionProjections', 'agentPresets', 'agents', 'workingDirectory'],
     'inject 是与宿主组合的唯一契约，多一个少一个都是加载期错误'
   );
 
@@ -1017,10 +1022,10 @@ test('T15（R38；R44 换钉）：九个 dsh* peer 共用同一支持集合—�
   // 包清单被悄悄改写（声明漂移）。测试期望作为需求副本，与包清单的 peer 原文并存是合理的；
   // 运行期判据（准入、junction、安装说明）一律从包清单取集合。集合变化时本用例变红，
   // 提示同步需求、版本与文档。
-  const SUPPORT = '0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5';
+  const SUPPORT = '0.2.2-rc.1';
   const expected = {
-    '@deepseek-ai/cordis': '~4.0.5',
-    '@deepseek-ai/cordis-plugin-timer': '~1.1.7',
+    '@deepseek-ai/cordis': '~4.1.0',
+    '@deepseek-ai/cordis-plugin-timer': '~1.2.0',
     '@deepseek-ai/dsh': SUPPORT,
     '@deepseek-ai/dsh-jobs': SUPPORT,
     '@deepseek-ai/dsh-llm': SUPPORT,
@@ -1038,10 +1043,10 @@ test('T15（R38；R44 换钉）：九个 dsh* peer 共用同一支持集合—�
     '11 条 peer 必须全部标记 optional:true 且键集与 peerDependencies 完全一致——防止开启自动补齐（autoInstallPeers:true）的 profile 安装补装宿主依赖树；宿主准入不读该键，集合外拒载不受影响');
   assert.equal(pkg.engines?.dsh, undefined,
     '不得声明 engines.dsh——宿主在场时它会顶替九条 peer 单独决定，支持集合因此失效');
-  assert.equal(pkg.dependencies?.['@deepseek-ai/schemastery'], '~3.18.5',
+  assert.equal(pkg.dependencies?.['@deepseek-ai/schemastery'], '~3.19.0',
     'schemastery 叶子依赖形态不变（~ 窗随宿主树）');
-  assert.equal(pkg.version, '0.2.9+dsh.0.2.1-rc',
-    '本包 version 必须按需求 §7.3.1 带构建元数据全标识（核心 0.2.9 + 兼容线 dsh.0.2.1-rc）——漏元数据会让用户失去兼容信息');
+  assert.equal(pkg.version, '0.2.10+dsh.0.2.2',
+    '本包 version 必须按需求 §7.3.1 带构建元数据全标识（核心 0.2.10 + 兼容线 dsh.0.2.2）——漏元数据会让用户失去兼容信息');
 });
 
 test('T21：refreshToolDescriptions 递归同步嵌套参数说明——en→zh→en 各层同步、结构／枚举／对象身份不变', async (t) => {

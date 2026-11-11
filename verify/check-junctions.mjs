@@ -7,15 +7,17 @@
  *   dsh-tools / schemastery）逐条存在、逐条指向**同一棵**宿主树的 `@deepseek-ai` 目录；
  * - dsh* 四条接受集合内**任一** rc，但四条必须**同 rc 版本**（同树同代，不许 rc.2 与
  *   rc.4 混接）；dsh* 的版本串必须落在支持集合内，集合外版本即红；
- * - cordis、schemastery 按各自预期版本判（`4.0.5` / `3.18.5`），它们不随宿主 rc 改号；
+ * - cordis、schemastery 按各自预期版本判（`4.1.0` / `3.19.0`，0.2.2-rc.1 树实测），
+ *   它们不随宿主 rc 改号；
  * - 第七条 zod（**顶层平铺**，非 `@deepseek-ai` 域）锚同一棵树的顶层 `node_modules\zod`，
  *   版本 `4.6.7`——投影 stateSchema 的注册表契约是 zod，与宿主同一物理实例、零版本漂移。
  *
  * ## 树根从哪来
  *
  * 树根**只有一个来源**：`tools/_local-config.mjs` 从本机侧读（或环境变量
- * `DSAT_HOST_MODULES`）。`evidenceTree['021']` 的缺省值就是 `<hostModules>/@deepseek-ai`，
- * 所以"宿主锚"与"证据锚"在构造上不可能指向两棵不同的树。
+ * `DSAT_HOST_MODULES`）。`evidenceTree['022']`（0.2.2 适配线当前树）的缺省值就是
+ * `<hostModules>/@deepseek-ai`，所以"宿主锚"与"证据锚"在构造上不可能指向两棵
+ * 不同的树；双线并存的开发机在 config 里显式写 `['022']`／`['021']` 两档。
  *
  * 对账段保留，形态是断言"树的消费者不许自带树根"——
  * 下面 `TREE_CONSUMERS` 列出的每个模块都必须引用配置加载器。自带绝对路径字面量的
@@ -61,18 +63,18 @@ if (process.argv.includes('--tree') && (TREE_ARG === undefined || TREE_ARG.start
 }
 
 const config = await loadLocalPlaneOrSkip('verify/check-junctions.mjs（开发树 junction 核验）');
-const TREE = TREE_ARG ?? config.evidenceTree['021'];
+const TREE = TREE_ARG ?? config.evidenceTree['022'];
 if (TREE === undefined) {
-  console.error('宿主锚无来源：配置里既没有 evidenceTree[\'021\']，也没有 hostModules。');
-  console.error(`二选一：在 ${LOCAL_DIR}/config.mjs 里写 hostModules，或设环境变量 DSAT_HOST_MODULES；`
+  console.error('宿主锚无来源：配置里既没有 evidenceTree[\'022\']，也没有 hostModules。');
+  console.error(`二选一：在 ${LOCAL_DIR}/config.mjs 里写 hostModules（0.2.2 线树的 node_modules），或写 evidenceTree['022']；`
     + '也可以临时用 --tree <路径> 覆盖。');
   process.exit(2);
 }
 
-/** 配套依赖的期望版本：不随宿主 rc 改号，按上游各自版本判。 */
+/** 配套依赖的期望版本：不随宿主 rc 改号，按上游各自版本判（0.2.2-rc.1 树实测值）。 */
 const EXPECTED = {
-  cordis: '4.0.5',
-  schemastery: '3.18.5'
+  cordis: '4.1.0',
+  schemastery: '3.19.0'
 };
 
 /** dsh* junction：接受集合内任一 rc，但四条必须同 rc（同树同代）。 */
@@ -81,7 +83,7 @@ const DSH_JUNCTIONS = ['dsh-jobs', 'dsh-sandbox', 'dsh-subagent', 'dsh-tools'];
 /** zod 在**顶层平铺**（非 `@deepseek-ai` 域）——junction 落在 `node_modules\zod`。 */
 const ZOD = { name: 'zod', wantVersion: '4.6.7' };
 
-const TREE_TOP = dirname(TREE); // 0.2.1 树 node_modules 根（zod 顶层平铺用）
+const TREE_TOP = dirname(TREE); // 0.2.2 线树 node_modules 根（zod 顶层平铺用）
 
 /**
  * 树根的消费者：每个都**必须**从配置加载器取树，不许自带树根字面量。

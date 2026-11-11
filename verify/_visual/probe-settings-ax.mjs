@@ -21,7 +21,7 @@
  *
  * 用法（须 danger-full-access 或非受限环境——实例/浏览器子进程在受限档必 EPERM）：
  *   node verify/_visual/probe-settings-ax.mjs --service-root <宿主服务根> \
- *     [--host-subdir dsh-0.2.1-rc.5] [--repo <本仓路径>] [--keep]
+ *     [--host-subdir dsh-0.2.2-rc.1] [--repo <本仓路径>] [--keep]
  * 红线：只操作自建隔离实例；草稿不保存（uiLang 保存后复原）；证据落
  * `.local/evidence/rework3-settings-ax/`。退出 0＝全过、1＝有 FAIL、2＝装置故障。
  */
@@ -56,7 +56,7 @@ const fail = (msg) => {
 const serviceRootArg = argOf('service-root') ?? process.env.DSAT_SERVICE_ROOT;
 if (serviceRootArg === undefined || serviceRootArg.trim() === '') fail('缺少 --service-root（或环境变量 DSAT_SERVICE_ROOT）');
 const serviceRoot = resolve(serviceRootArg);
-const hostSubdir = argOf('host-subdir') ?? 'dsh-0.2.1-rc.5';
+const hostSubdir = argOf('host-subdir') ?? 'dsh-0.2.2-rc.1';
 const repo = resolve(argOf('repo') ?? process.cwd());
 const hostRoot = join(serviceRoot, hostSubdir);
 let hostVersion;

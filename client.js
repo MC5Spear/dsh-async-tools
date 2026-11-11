@@ -2062,11 +2062,11 @@ function createAskModel(ctx, remote) {
  *  视觉隐藏类 `.ats-ask-sr`（ASK-ANNOUNCE-01）只用几何裁剪，不引用任何颜色——
  *  T14 颜色守卫（test/two-planes.test.mjs）与别名 token 检查同判。
  *
- *  VIS-INPUT-01：字号与命中区按「最低条件与增强目标分开」处理——待答输入
- *  （textarea）16px 字号（<16px 时 iOS Safari 聚焦会自动放大页面）；全部交互
- *  控件显式 min-height ≥24px（最低命中区）；主要按钮（提交）min-height 44px
- *  （增强目标）。页面缩放不设限：本包不加 viewport 的 maximum-scale/
- *  user-scalable 限制（禁缩放不是放大命中区的替代手段）。
+ *  VIS-INPUT-01：字号与命中区按档分开处理——待答输入（textarea）默认 16px
+ *  安全档（<16px 时 iOS Safari 聚焦会自动放大页面），仅细指针且可悬停环境降
+ *  13px（媒体块置于基础规则之后）；交互控件 24px 辅助档，提交与不答同排
+ *  44px 操作档（VIS-ACTION-TIER-01）。页面缩放不设限：本包不加 viewport 的
+ *  maximum-scale/user-scalable 限制（禁缩放不是放大命中区的替代手段）。
  */
 var ASK_CSS = ""
   // VIS-BADGE-01：面板宽度窄视口钳制（390px 侧栏形态下 340px 固定宽会横向溢出）。
@@ -2106,7 +2106,10 @@ var ASK_CSS = ""
   + ".ats-ask-opt[data-selected='true']{background:var(--dsw-alias-interactive-bg-hover);"
   + "border-color:var(--dsw-alias-brand-primary)}"
   + ".ats-ask-opt:focus-visible,.ats-ask-optctl:focus-visible,"
-  + ".ats-ask-custom .ats-ask-input:focus-visible"
+  + ".ats-ask-custom .ats-ask-input:focus-visible,"
+  + ".ats-ask-submit:focus-visible,.ats-ask-skip:focus-visible,"
+  + ".ats-ask-extend:focus-visible,.ats-ask-jump:focus-visible,"
+  + ".ats-ask-dismiss:focus-visible"
   + "{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}"
   + ".ats-ask-mark{flex:none;width:14px;height:14px;margin-top:2px;box-sizing:border-box;"
   + "border:1.5px solid var(--dsw-alias-label-secondary);border-radius:50%}"
@@ -2130,27 +2133,35 @@ var ASK_CSS = ""
   // VIS-HOVER-01：自定义作答开关的悬停可辨识（文字色加深；无背景壳可亮）。
   + ".ats-ask-optctl:hover{color:var(--dsw-alias-state-business-primary)}"
   // 上下布局（需求 §4.2.2）：第一行选择控件与标题，输入框独占该项可用内容
-  // 宽度；多行编辑——初始可见至少三行（VIS-INPUT-01：16px 字号 × 1.5 行距 ×
-  // 3 行 + 内边距），长文本自动换行（pre-wrap），超出可见高度纵向滚动，可拖拽扩高。
-  + ".ats-ask-custom .ats-ask-input{flex:none;width:100%;min-height:5.5em;"
+  // 宽度；多行编辑——初始可见至少三行（VIS-INPUT-01 两档字号下均成立：
+  // 6em − padding 12 − 边框 1 ≥ 3 × 1.5 × 字号——13px 档 78−13=65 ≥ 58.5、
+  // 16px 档 96−13=83 ≥ 72），长文本自动换行（pre-wrap），超出可见高度纵向滚动，可拖拽扩高。
+  + ".ats-ask-custom .ats-ask-input{flex:none;width:100%;min-height:6em;"
   + "resize:vertical;overflow-y:auto;white-space:pre-wrap;word-break:break-word;"
   + "line-height:1.5;margin-bottom:0}"
   + ".ats-ask-reason{color:var(--dsw-alias-state-error-primary);font-size:12px;margin:4px 0 0}"
   + ".ats-ask-submit:disabled{opacity:.5;cursor:not-allowed}"
   + ".ats-ask-input{width:100%;box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l4);"
   + "border-radius:8px;background:var(--dsw-alias-bg-layer-3);font:inherit;"
-  // VIS-INPUT-01：待答输入 ≥16px——iOS Safari 对 <16px 的聚焦输入自动放大
-  // 页面；字号到 16px 即不触发（不得用禁用缩放替代这条）。
+  // VIS-INPUT-01 两档机制（默认安全档）：基础档 16px——iOS Safari 对 <16px
+  // 的聚焦输入自动放大页面；字号到 16px 即不触发（不得用禁用缩放替代这条）。
+  // 仅「细指针且可悬停」的环境降 13px（与题干/选项标题同级）——媒体查询只
+  // 保证指针与悬停组合、不保证设备形态，粗指针与不可判环境一律落基础档；
+  // 媒体块必须置于本基础规则之后（层叠生效前提，T24 另有位置断言）。
   + "font-size:16px;padding:6px 8px;color:var(--dsw-alias-label-primary);margin-bottom:6px}"
+  + "@media (pointer:fine) and (hover:hover){.ats-ask-input{font-size:13px}}"
   + ".ats-ask-row{display:flex;align-items:center;gap:8px}"
   + ".ats-ask-submit{border:.5px solid var(--dsw-alias-border-l4);border-radius:8px;"
   + "background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-bg-layer-3);"
-  // VIS-INPUT-01：主要按钮（提交）增强目标 44px——与 24px 最低命中区分开。
+  // VIS-ACTION-TIER-01：44px 操作档（提交）——与「不答」同排同高；主次差
+  // 异只走底色与描边。
   + "cursor:pointer;font:inherit;font-size:13px;padding:4px 12px;"
   + "min-height:44px;box-sizing:border-box}"
+  // VIS-ACTION-TIER-01：44px 操作档（不答）——与提交同排同高，不以缩小提交
+  // 点击区换取外观一致（同档抬升）；差异只走底色与描边。
   + ".ats-ask-skip{border:.5px solid var(--dsw-alias-border-l4);border-radius:8px;"
   + "background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;"
-  + "font:inherit;font-size:13px;padding:4px 12px;min-height:24px;box-sizing:border-box}"
+  + "font:inherit;font-size:13px;padding:4px 12px;min-height:44px;box-sizing:border-box}"
   + ".ats-ask-left{margin-left:auto;color:var(--dsw-alias-label-tertiary);font-size:12px}"
   + ".ats-ask-expired{color:var(--dsw-alias-state-error-primary);font-size:12px}"
   + ".ats-ask-failed{color:var(--dsw-alias-state-error-primary);font-size:12px;margin:4px 0}"
@@ -2159,25 +2170,22 @@ var ASK_CSS = ""
   + "border:.5px solid var(--dsw-alias-border-l4);border-radius:8px;"
   + "background:none;color:var(--dsw-alias-label-secondary);cursor:pointer}"
   // sidebar 座位形态：徽标长在侧栏底栏的窄图标槽——面板上移让出底栏整行。
-  // 390×844 实测底栏顶=视口底−88（徽标顶 756）：88px 只使面板底与徽标盒相接，
-  // 计数泡 top:-6px 负偏移仍使泡顶=750、与面板底角相碰；让位取 94px＝底栏 88
-  // ＋泡偏移 6，两档宽度下面板与徽标盒及泡盒均零重叠。overlay 座位维持右下角
-  // 原位（该形态无底栏徽标）。
+  // 390×844 实测底栏顶=视口底−88（徽标顶 756）；让位取 94px＝底栏 88＋净空
+  // 6（泡已内联、四边含于徽标盒内，6px 为净空余量），两档宽度下面板与徽标
+  // 盒零重叠。overlay 座位维持右下角原位（该形态无底栏徽标）。
   + ".ats-ask-panel--sidebar{bottom:94px;"
   + "width:min(340px,calc(100vw - 76px))}"
   // ── 侧栏徽标（窄图标列几何）──────────────────────────────────────────
   // 宿主窄侧栏图标列（.pI_x6G_sidebarCol）实测仅约 52px 且 overflow:hidden——
-  // 「图标＋计数并排」的 68px 盒在 390/768 两档宽度全部左缘裁切 6px，不可用。
-  // 现行形＝图标左置＋右侧 30px 净空区承载计数泡（盒约 51px ≤ 52px 列），泡
-  // 绝对定位悬于净空区上方、与图标横向不相交——一位数间隙 10px、两位数 2px
-  // （三位数会贴近图标右缘约 6px，极端计数下的可接受退化）。
-  + ".ats-ask-badge{position:relative;display:inline-flex;align-items:center;"
-  + "border:.5px solid var(--dsw-alias-border-l4);"
-  + "border-radius:8px;background:none;color:var(--dsw-alias-label-secondary);"
-  // 命中区显式钉 24px 下限（现盒高约 29px 本已达标）；宽度
-  // 几何（51px ≤ 52px 窄列）见上方侧栏徽标注释——padding 不动。
-  + "cursor:pointer;font:inherit;font-size:12px;padding:5px 30px 5px 4px;"
-  + "min-height:24px;box-sizing:border-box}"
+  // 徽标盒固定 50px ≤ 52px 列。宿主化形态（VIS-BADGE-01）：无边框透明底、与
+  // 底栏控件同排等高 28px；图标与内联计数泡作为一组在固定盒内居中（图标 16
+  // ＋间距 3＋泡：数字 12px、min-width 18、内边距 0 3px——按 UI 数字宽
+  // 6.6–7.4px 验算 999 组宽最大 47.2px ≤ 50，零至三位计数完整；四位及以上
+  // 为登记的极端退化形态，对称溢出固定盒、按列缘裁切）。
+  + ".ats-ask-badge{display:inline-flex;align-items:center;justify-content:center;"
+  + "gap:3px;width:50px;border:none;border-radius:8px;background:none;"
+  + "color:var(--dsw-alias-label-secondary);cursor:pointer;font:inherit;"
+  + "font-size:12px;padding:0;min-height:28px;box-sizing:border-box}"
   // VIS-HOVER-01：真实指针悬停的可辨识态（与宿主卡片同款 interactive-bg-hover；
   // 键盘焦点另有 focus-visible 描边，不与悬停混用同一通道）。
   + ".ats-ask-badge:hover{background:var(--dsw-alias-interactive-bg-hover);"
@@ -2188,21 +2196,20 @@ var ASK_CSS = ""
   // 语言膨胀；图形随按钮文字色（label-secondary，浅底 ≈5.8:1、深底 ≥7:1，
   // 必要图形对比达标），悬停/聚焦同步加深（继承 color）。
   + ".ats-ask-badge svg{flex:none;width:16px;height:16px}"
-  // 计数叠置泡：error 底＋白字维持警示语义；绝对定位（top/right 负偏移）不
-  // 占按钮行宽，泡外圈 2px 宿主底色描边保证压在任意内容上仍成形。对比度：
-  // 10px 数字是普通文字——出厂 error 令牌两主题都配白字不足（浅 red-600
+  // 计数泡（内联形态）：error 底＋白字维持警示语义；泡是徽标内联组成员
+  // （flex:none），四边含于按钮盒内、不与图标相交。对比度：
+  // 12px 数字是普通文字——出厂 error 令牌两主题都配白字不足（浅 red-600
   // #ec1313 白字 4.50 临界、深 red-400 #f25a5a 白字 3.29），按 VIS-CONTRAST-01
   // 授权的组件级语义色加深底：浅色混黑 8%（实算 5.19:1）、深色令牌更亮需
   // 混黑 38%（实算 7.20:1）；color-mix 用法与宿主 bVCLcG_arrow 同款，深色
   // 档选择器 body[data-ds-dark-theme] 与宿主 onboarding 同款；混黑/白字用
   // achromatic 关键字（black/white）而非十六进制字面量——颜色仍取主题令牌
   // 现值，且守住「卡片不得写死颜色」的 T14 判据；不覆盖宿主全局变量。
-  + ".ats-ask-count{position:absolute;top:-5px;right:-2px;min-width:16px;"
-  + "height:16px;line-height:16px;text-align:center;padding:0 4px;"
+  + ".ats-ask-count{flex:none;min-width:18px;"
+  + "height:18px;line-height:18px;text-align:center;padding:0 3px;"
   + "border-radius:999px;"
   + "background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 92%, black);"
-  + "color:white;font-size:10px;font-weight:600;"
-  + "box-shadow:0 0 0 2px var(--dsw-alias-bg-layer-1)}"
+  + "color:white;font-size:12px;font-weight:600}"
   + "body[data-ds-dark-theme] .ats-ask-count{"
   + "background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 62%, black)}"
   // 视觉隐藏的播报区域（ASK-ANNOUNCE-01）：几何裁剪隐藏（1px＋clip-path），
@@ -2677,10 +2684,11 @@ function AskOverlaySeat(props) {
 }
 
 /** sidebar 座位徽标（渲染条件见 askHasFace；徽标＝未处理数入口，点击展开题目）。
- * VIS-BADGE-01：宿主窄侧栏图标列仅约 52px——徽标盒约 51px（16px 问号圆环图标
- * 左置＋右侧 30px 净空区承载计数泡，几何见样式段注释），完整名称走
- * `aria-label`（屏幕阅读器与无障碍树恒可得，不依赖悬停），面板标题行
- *（.ats-ask-title）承载可见全名。`aria-expanded` 同步开合态。 */
+ * VIS-BADGE-01：宿主窄侧栏图标列仅约 52px——徽标为固定 50px 的无边框盒、
+ * 与底栏控件同排等高 28px，问号圆环图标与内联计数泡在盒内居中（几何见
+ * 样式段注释），完整名称走 `aria-label`（屏幕阅读器与无障碍树恒可得，
+ * 不依赖悬停），面板标题行（.ats-ask-title）承载可见全名。`aria-expanded`
+ * 同步开合态。 */
 function AskSidebarSeat(props) {
   var state = React.useSyncExternalStore(props.ask.store.subscribe, props.ask.store.getSnapshot);
   var openRef = React.useRef(false);
@@ -2911,8 +2919,9 @@ module.exports = {
   ASK_NAMESPACE: ASK_NAMESPACE,
   ASK_SERVICE_KEY: ASK_SERVICE_KEY,
   ASK_STATE_POLL_MS: ASK_STATE_POLL_MS,
-  /** 待答面板样式表原文（VIS-INPUT-01/VIS-BADGE-RAIL 的浏览器外判据：测试
-   *  从这里解析字号/命中区/槽宽，钉住「24px 最低与 44px 增强」的分开处理）。 */
+  /** 待答面板样式表原文（VIS-INPUT-01/VIS-BADGE-01 的浏览器外判据：测试
+   *  从这里分区解析两档字号/命中区档位/槽宽，钉住 24px 辅助档与 44px 操作档
+   *  的档位处理与徽标窄列几何）。 */
   ASK_CSS: ASK_CSS,
   passthroughCodec: passthroughCodec,
   DICTIONARIES: DICTIONARIES,

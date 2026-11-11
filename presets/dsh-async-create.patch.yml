@@ -6,9 +6,13 @@
 # loader 拥有：本包从 bundles 移除即预设消失，无清理代码（设计 §7.1）。
 #
 # 基线 = 随支持集合内宿主发布的 shipped 创造模式（cordis）预设补丁（需求 §7.3；
-# 基线位置由 tools/validate-preset.mjs 按需求读取）。当前四个受支持宿主（rc.2–rc.5）
-# 的随包基线相同，按 0.2.1-rc.4 出处核读并经 rc.2/rc.5 哈希核对。相对基线的改动
-#（设计 §3.5"两者相对基线的共同差异"，逐条给依据）：
+# 基线位置由 tools/validate-preset.mjs 按需求读取）。当前受支持宿主为 0.2.2-rc.1，
+# 基线按其随包补丁核读。0.2.2 基线自身相对旧线的四处漂移按基线逐字随迁、不算本包
+# 改动：tool-fs 行新增 config.applyPatch: false（补丁写路径默认关闭）；delegation
+# 组不再挂 tool-subagent-list-agents 行；tool-subagent 行 config 的
+# modelSelectionSettings 键改为 modelSelection＋modelDiscovery；standard 基线的
+# 插件管理 manager 行表达式化（cordis 基线两行本就是表达式、无形态变化）。相对
+# 基线的改动（设计 §3.5"两者相对基线的共同差异"，逐条给依据）：
 #   1. tool-bash 无条件 disabled: true——禁同步 shell（需求 §3.1），两平台工具清单
 #      一致（需求 §3.3）；
 #   2. 不挂 tool-pwsh 行——前台同步 shell 到期杀进程树，与异步语义冲突（需求 §3.1）；
@@ -18,7 +22,8 @@
 #      指认；防护内容按「会话实际预设 ∈ boundPresets」判定，与行声明无关）；
 #   4. tool-subagent 系委托入口（单发 / fork）置 disabled: true、config 逐字保留
 #      （需求 §3.1：派生入口唯一 = async_agent，结构性禁用强于提示词约束）；管理侧
-#      tool-subagent-control / -list-agents 与引擎服务 workflow-ptc 保持在场；
+#      tool-subagent-control 与引擎服务 workflow-ptc 保持在场——
+#      tool-subagent-list-agents 行随 0.2.2 基线整行移除，本包按基线随迁；
 #   4b. tool-workflow 置 disabled: true（需求 §3.1：编排只走 async_workflow）；
 #      async_workflow 插 delegation 组内 tool-workflow 行后——编排引擎是组内隔离服务，
 #      组外行取不到（需求 §3.2 末条、设计 §3.4）；workflow-ptc（引擎服务，提供编排引擎）
@@ -37,7 +42,8 @@
 #      不在 tool-jobs 之后）。插件管理两行（tool-plugin-manager /
 #      tool-plugin-market）保持 cordis 基线的 profileContext 条件表达式逐字——
 #      创造上下文中插件管理与市场入口按基线启用（需求 §3.1、§7.3.2）；与
-#      dsh-async 的布尔禁用形态差异源于两份基线自身不同。
+#      dsh-async 的形态差异随各自 0.2.2 基线（standard 的 manager 行同为表达式、
+#      market 行布尔；cordis 两行均表达式）。
 # 创作指导不写回 persona：基线把它交给 skill 系行承载（需求 §3.1"保留插件和预设
 # 创作功能及对应 skill 工具"）。
 - insert:
@@ -94,6 +100,9 @@
               owningPreset: dsh-async-create
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
+            config:
+              # 0.2.2 基线形态：补丁写路径默认关闭（applyPatch:false 随基线逐字）。
+              applyPatch: false
           - id: tool-fs-search
             name: '@deepseek-ai/dsh-tool-fs-search'
             config:
@@ -153,17 +162,18 @@
             config:
               - id: tool-subagent-control
                 name: '@deepseek-ai/dsh-tool-subagent-control'
-              - id: tool-subagent-list-agents
-                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
               # 宿主单发／派生委托入口禁用（需求 §3.1：派生入口唯一 = async_agent，
-              # 结构性禁用强于提示词约束；config 逐字保留以便翻转）。
+              # 结构性禁用强于提示词约束；config 逐字保留以便翻转）。config 键随
+              # 0.2.2 基线改为 modelSelection＋modelDiscovery（旧键
+              # modelSelectionSettings 在 0.2.2 宿主 Config 中不存在）。
               - id: tool-subagent
                 name: '@deepseek-ai/dsh-tool-subagent'
                 disabled: true
                 config:
                   provider: spawn
                   toolName: subagent
-                  modelSelectionSettings: true
+                  modelSelection: true
+                  modelDiscovery: true
               - id: tool-subagent-fork
                 name: '@deepseek-ai/dsh-tool-subagent'
                 disabled: true
