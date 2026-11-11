@@ -11,6 +11,8 @@ Find the task you need:
 
 ## 1. Installation identity and prerequisites
 
+**Candidate status:** this adaptation has not passed release acceptance. The table states which versions the package declares admissible, not which have completed acceptance. The public remote does not currently provide `adapt/dsh-0.2.2`; use the remote installation steps only after an accessible source is published. Before then, ask the maintainer for the matching candidate artifact and source, and test in an isolated instance.
+
 | Component | Current applicable version |
 | --- | --- |
 | Plugin version | `0.2.10+dsh.0.2.2` |
@@ -35,6 +37,8 @@ Linux command execution and one-shot permission escalation have not been verifie
 The pending-question panel has not been verified with a real OS input method, screen reader, or touchscreen. When relying on these input methods, first confirm that choices and submissions work. If the panel is unusable, open the original session and reply there.
 
 When a tool call is canceled, DSH can replace its return with a cancellation error, leaving the Agent without the result body already generated. The plugin offers [limited recovery copies](<#a-tool-result-may-not-have-arrived-request-a-recovery-copy>), but cancellation and recovery at that instant have not been verified on a real host. Save important output promptly. If recovery fails, inspect the original UI records and any retained-output paths attached to the result; do not automatically repeat a task with side effects.
+
+**Result risk for jobs created by other plugins:** on rc.1, the host can consume a final result but send only a notice directing the Agent to `job_output`. This package’s presets hide that entry, and a later `async_wait` can incorrectly report an empty body. The confirmed case occurs without an active wait, when the host sends its own settlement notice: there is no streamed output, and the final result is too long to include in that notice. Until fixed, do not treat that empty return as proof that the job produced no result. Keep the job ID and ask the instance maintainer to check producer-retained output or original records. Recovery is not guaranteed without an available copy; do not repeat a side-effecting task to reproduce its result.
 
 ### Install, pin a source, and check the version
 
@@ -72,7 +76,7 @@ If source retrieval fails, check the repository address and branch or commit, th
 
 #### Installation script-approval troubleshooting
 
-Through 0.2.8, profiles with `autoInstallPeers` enabled could install duplicate host dependencies for this package and fail with `ERR_PNPM_IGNORED_BUILDS` when their scripts were blocked. For that older-version problem, select an installation source for 0.2.9 and install again; there is no need to approve those redundant dependency scripts first.
+Through 0.2.8, profiles with `autoInstallPeers` enabled could install duplicate host dependencies for this package and fail with `ERR_PNPM_IGNORED_BUILDS` when their scripts were blocked. When moving to DSH `0.2.2-rc.1`, use an available source for this line’s `0.2.10+dsh.0.2.2` candidate, not the 0.2.9 package for DSH 0.2.1. If no matching source is available, defer installation and contact the maintainer. There is no need to approve redundant dependency scripts merely to get past the older failure.
 
 After installation succeeds, check the actual package version, settings, and both presets. Undecided approval entries from the failed attempt may disappear after successful installation. If an approval prompt remains, follow the steps below to check its cause.
 
@@ -81,7 +85,7 @@ If installation or an upgrade shows **The plugin could not be installed / Instal
 Then check the details and decide:
 
 1. Select **Show install details** and read the full package names, versions, and error. If the list is incomplete, consult those details rather than approving truncated names. `ERR_PNPM_IGNORED_BUILDS` means installation scripts were blocked.
-2. Check which version of this package is actually being installed, then identify the dependency introducing each script and whether execution is needed. This package has no installation scripts of its own; 0.2.9 no longer auto-installs host dependencies. Other plugins or existing dependencies can still need scripts. A package belonging to the host is not, by itself, a reason to approve it.
+2. Check which version of this package is actually being installed, then identify the dependency introducing each script and whether execution is needed. This package has no installation scripts of its own; since 0.2.9, including this candidate, it no longer auto-installs host dependencies. Other plugins or existing dependencies can still need scripts. A package belonging to the host is not, by itself, a reason to approve it.
 3. If the source or need is unclear, cancel or defer installation and contact the plugin maintainer or instance administrator with full package names, versions, and sanitized installation details. When the scripts are understood and trusted and continuing is the intended choice, select **Allow these scripts and retry**. Investigate unknown packages or incomplete names first.
 
 The table lists packages seen in older installation prompts and what their scripts do, for reference when checking those exact versions. Later versions may differ; use the actual installation details rather than allowing every listed script.
@@ -153,7 +157,7 @@ Wait durations use milliseconds (ms); 1000 ms is one second. The ranges below de
 | `defaultWaitMs` | number | `30000` | 1..2147483647; fractions allowed | ms | Wait example in tool guidance; never fills in a missing wait_ms |
 | `minWaitMs` | number | `20000` | 1..2147483647; fractions allowed | ms | Lower request bound for the next positive async_wait; zero-wait checks are exempt |
 | `maxWaitMs` | number | `600000` | 1..2147483647; fractions allowed | ms | Upper request bound for the next positive async_wait |
-| `pollIntervalMs` | number | `500` | 1..2147483647; fractions allowed | ms | State-check interval for new waits; affects detection speed, not the total wait budget |
+| `pollIntervalMs` | number | `500` | 1..2147483647; fractions allowed | ms | Interval for fallback child-state checks, work rechecks in untargeted waits, and retries when a child is temporarily absent from the directory; all share the call's total budget |
 | `maxResultChars` | integer | `12000` | 1..1000000 | JS String.length | Total result-content allowance for one delivery batch; see section 4 for continued reading |
 
 All numbers must be finite and satisfy:
@@ -164,7 +168,7 @@ All numbers must be finite and satisfy:
 
 A minimum is not a mandatory delay. Completion or an eligible message still returns early. Configuration changes do not restart an in-flight wait.
 
-pollIntervalMs accepts values as low as 1 ms, but the actual timer interval is at least 50 ms. Setting 1 ms does not make state queries run every millisecond.
+`pollIntervalMs` accepts values as low as 1 ms. During a suspended wait, fallback child-state checks and untargeted work rechecks use a timer interval of at least 50 ms. Retries for a child temporarily absent from the directory use the configured interval between at most three query periods, without that 50 ms floor. Queries and intervals still share the call's total budget.
 
 #### Execution, languages, and result presentation
 
@@ -356,7 +360,8 @@ async_list_subagent_models(provider="<exact ID>", model="<exact ID>", target_too
 Read these parts of the result:
 
 - `entries` contains this page's items, `mode` identifies the query type, and `total` is the match count.
-- `target` identifies the tool being assessed; `verdict` and `basis` give the conclusion and reason, explained in section 5.
+- When browsing models or searching, first inspect `target`, `verdict`, and `basis` to check whether the target supports explicit selection in this step. Then inspect each model entry's `selectable`: only `true` confirms that route is selectable for the target; `false` means it is outside the allowed list, and an absent field does not confirm permission.
+- For exact-model details, `verdict` applies to the specific route queried. When selection is allowed, `example` supplies creation arguments accepted by the target tool. Browse and search examples are generated only from selectable entries on the current page.
 - `complete=false` means some providers could not be read; `failed_providers` identifies them. total then counts only obtained results, not evidence that other providers have no models.
 - For another page, reuse the returned `next` object in the next query. It already contains the page, size, version, and filters. If the version expires, restart on page 1 instead of merging old and new pages.
 
@@ -370,7 +375,9 @@ A wait ending does not mean a task ended. Check `status` before deciding whether
 
 | State or observation | Meaning and next action |
 | --- | --- |
-| `running`, or `budget` for a positive wait | This wait's duration expired. Do independent work first; wait on the original target when the result is needed |
+| `running` in a command or workflow's initial return | The initial wait ended because of expiry, user steering, or cancellation; read `note` for the reason. Keep `job_id`. Ending the wait did not stop the task; use the returned query findings for its current state |
+| `running` from `async_wait` with explicit targets | Usually means the wait budget expired; an internal spin guard can also return early. Inspect each target's state and `note` rather than assuming every target is still running. Wait again only when the original result is still needed |
+| `budget` for an untargeted positive wait | The wait budget expired without an eligible message. Reassess whether waiting is still needed from known work states and the returned content |
 | `budget` with wait_ms=0 | The immediate check finished; this is not a wait timeout. Decide what to do from the returned content and target states |
 | `interrupted` / `message` | User steering or a processable message ended the wait early. Handle the new content; the target may still be unfinished |
 | `cancelled` or a host cancellation error | This call was canceled, not the task. Find a missing identifier with job_list or a completion message |
@@ -393,6 +400,8 @@ Job results arrive in the initial call's return, an in-flight `async_wait` retur
 
 A failed read gives an explanation and retry instructions rather than saying the result is empty. Retry the original target as instructed to continue reading unread content.
 
+Ownerless public jobs created by other plugins have a further limitation: after one caller reads through this package, a second caller who originally had access can be incorrectly told that the job belongs to another session. Keep the job ID and error for the instance maintainer to check the producer and legitimate access scope; do not create the task again or try to bypass permissions. The error does not establish that the job was originally private. Whether its body remains available depends on the host’s one-time consumption and retained copies; replay is not guaranteed.
+
 ### Shortened output or deferred entries: continue reading
 
 When a result is marked `truncated`, says its middle was omitted, or reports deferred entries, continue with a zero-wait call:
@@ -401,11 +410,15 @@ When a result is marked `truncated`, says its middle was omitted, or reports def
 async_wait(wait_ms=0)
 ```
 
-Several job results entering the next model input together share one allowance, called a delivery batch. `maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes; it is not 12000 per job. The target triggering delivery has priority, followed by readiness order. A batch contains at most 10 entries, including empty ones.
+`maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes. Results share this allowance within one internal delivery batch. The target triggering delivery has priority, followed by readiness order. A batch contains at most 10 entries, including empty ones.
+
+A current parallel-call issue affects this limit: when one caller starts commands concurrently and their directory preparation takes different amounts of time, the returns can be assigned to separate internal batches, each with the full allowance, yet enter the same next model input. In that case, `maxResultChars` is not a total bound for result content in that input. Until fixed, start commands one at a time when strict result-length control is needed; background jobs can still run concurrently.
 
 An oversized entry keeps its head and tail while its middle remains for later reading. Excess entries are deferred in full. Status, necessary error explanations, and retained-output paths are outside the body allowance. **Shortened display does not mean the content was lost.**
 
-With `fullCommandEcho=true`, background results attach command or script source. Bodies use the allowance first; source uses the remainder, retaining head and tail in a 6:4 ratio and marking omissions when too long. Source appears at most once per job in a batch. Results completed directly in the initial call and job listings do not attach it. Original UI call records are unaffected. Command listings use description, while workflows use meta.name.
+With `fullCommandEcho=true`, background results attach command or script source. Result bodies use the allowance first. Source uses the remainder only when that delivery's body fits in full. Oversized source retains its head and tail in a 6:4 ratio with an omission count; no remaining allowance produces a note that source was not attached.
+
+In normal delivery, each job's source is attached at most once, not again in later batches. **Omitted source cannot be continued through later reads**; inspect the original UI call record for the full command or script. Results completed directly in the initial call and job listings do not attach source. Original UI records are unaffected by this switch. Command listings use `description`, while workflows use `meta.name`.
 
 ### A tool result may not have arrived: request a recovery copy
 
@@ -438,8 +451,8 @@ A model route is an exact provider ID and model ID pair. Usually omit model argu
    async_list_subagent_models(provider="<provider ID>", model="<model ID>", target_tool="async_agent")
    ```
 
-2. Read `verdict` and `basis`: `allowed` means the target permits selection, `not-allowed` means it does not, and `unconfirmed` means information is insufficient. allowed does not check credentials or remote availability. Use next for further pages, restarting on page 1 if its version expires.
-3. Pass the exact queried IDs together and provide the complete task:
+2. Read `verdict` and `basis`: `allowed` means the target permits explicit selection in this step, `not-allowed` means it does not, and `unconfirmed` means information is insufficient. In browse or search results, `allowed` does not authorize every listed model: choose an entry with `selectable=true`. An exact-detail verdict applies to the route queried. Use `next` for further pages, restarting on page 1 if its version expires. Permission checks do not validate credentials or remote availability.
+3. After selecting a confirmed selectable route, pass its exact IDs together and provide the complete task. Alternatively, reuse the returned `example` arguments and add the task content:
 
    ```text
    async_agent(description="Review one isolated item", prompt="<complete task, materials, and completion criteria>",
@@ -463,7 +476,13 @@ Disabling model selection rejects explicit provider, model, or reasoning_effort.
 
 Permission always applies to a particular creation tool. Without target_tool, exactly one recognizable entry can be selected automatically; multiple or no entries give unconfirmed. A named entry invisible to the session gives not-allowed, though catalog data can still be returned.
 
+DSH 0.2.2 also checks whether the target is callable in the current model step. Registration and session visibility alone do not establish this. If the step condition is false, the verdict is `not-allowed` and `basis` explains that the condition is not met. If the call has no resolved step tool set, the permission interface is unavailable, or the check fails, the verdict is `unconfirmed` and `basis` explains the cause in text. Catalog data can still be returned, but these outcomes supply no confirmed selectable routes or creation example.
+
+When the current step condition is not met, wait for a legitimate step in which the target is permitted or ask the preset maintainer to check its conditions. For an outside-step query, have the Agent query again during a normal tool step. An unavailable interface or failed check needs investigation by the instance maintainer before retrying the same target. Do not create a task merely to change the verdict or switch tools to bypass the condition. A successful query does not replace the creation tool’s own validation and approvals.
+
 Native creation tools use their own session policy, and workflow agent() has separate rules. Do not apply async_agent permission or argument requirements to other entries. Pagination and search arguments cannot be passed to creation either. After refusal, query again for the same target rather than changing entry points to bypass limits.
+
+Native-target discovery currently has two further limits. If the native row permits model selection but the session has no recorded policy, this package incorrectly rejects every route even though rc.1’s native tool still permits the exact parent route. With several native creation aliases in one group, a later alias can receive only `unconfirmed` because it has no independent identity section. Keep the target name, parent route, and `basis` for the maintainer to investigate; do not expand allowed lists or treat an unconfirmed result as permission.
 
 For custom presets that supply child-model defaults, see [child defaults and selectable presets](<#child-defaults-and-selectable-presets>).
 
@@ -497,13 +516,17 @@ After expiry, questions can still be answered or ignored in the panel. A notific
 
 Check the panel's submission response. Explicit delivery failure reopens the question for retry as instructed; replying directly in the original session is also possible. If the panel reports that the batch or question no longer exists and the answer was not delivered, reply in the original session. If confirmation is merely missing, wait for the panel to refresh before deciding. Do not resubmit when the panel says another client has already answered.
 
-Expired records are held only in memory. Unhandled records more than 24 hours past expiry are cleared when a new question batch is intercepted. With no new batch, they can last longer, so 24 hours is not a fixed late-answer deadline. Restarting or uninstalling loses these records and returns pending questions to the host flow. Write important answers into the original session promptly.
+Panel records are held only in memory. Unhandled records more than 24 hours past expiry are cleared when a new question batch is intercepted. With no new batch, they can last longer, so 24 hours is not a fixed late-answer deadline.
+
+When the plugin's takeover service unloads normally, unfinished questions return to an available host flow; if hand-back is unavailable, they are canceled. Restarting the instance loses in-memory records and does not guarantee that the original question cards return. Expired calls are not handed back. Before restarting or uninstalling, finish pending answers or write important answers into the original session.
 
 If a question call is rejected as a whole, check that questions is an array and that no question has duplicate options with identical labels and descriptions. The same label with different descriptions is allowed. A multi-question batch is not partially handled.
 
 ### A command should have produced output, but did not
 
 `silentFailureGuard` is off by default. Enabling it adds command diagnostics, tool-description warnings, and operating instructions for presets in boundPresets. It reminds the Agent to check execution rather than replacing host execution logs.
+
+**Known issue: some warnings treat empty output as non-execution and suggest retrying the original command, even when a valid command exited successfully or already caused side effects. Keep this switch off until the issue is fixed. If such a warning appears, do not immediately rerun the command; use the checks below.**
 
 Some restricted environments silently fail commands that capture output, such as assignments to variables, subexpressions, or `2>&1`. If expected output is missing and there is no actual exit information, do not assume success from an empty result or immediately conclude that the command never ran.
 
@@ -535,7 +558,7 @@ To supply defaults for settings in section 2, edit the target profile's overlay 
 
 3. Save the file, arrange for active tasks to finish safely, then reload as required by the host. Check effective values in the settings page and a new session. User overrides saved through the form still take priority over file defaults.
 
-The 0.2.5 flat form, such as `config: { agentLang: zh }`, does not take effect on 0.2.9. Before upgrading, change it to `config: { settings: { agentLang: zh } }` and move other settings likewise. Otherwise the row can load while language, wait durations, and switches fall back to defaults. Removing user overrides cannot fix misplaced values. Load logs may list ignored flat keys; still read values back after migration.
+The 0.2.5 flat form, such as `config: { agentLang: zh }`, does not take effect on 0.2.9 or this 0.2.10 candidate. Before upgrading, change it to `config: { settings: { agentLang: zh } }` and move other settings likewise. Otherwise the row can load while language, wait durations, and switches fall back to defaults. Removing user overrides cannot fix misplaced values. Load logs may list ignored flat keys; still read values back after migration.
 
 Tools normally use the host row's shared settings. Only when that row is not connected do tools use valid tool-row settings as fallback and report a warning. If the form saved but tools report disconnected settings, repair the host row rather than duplicating settings across tool rows.
 
@@ -622,7 +645,7 @@ Only explicit model choices undergo DSH's current allowed-list check. Tool-row d
 
 ### Development links
 
-Use a development link only when editing plugin source; do not link a stable deployment to a tree being edited:
+Use a development link only when editing plugin source; do not link a stable deployment to a tree being edited. The clone/checkout commands below require the branch to have been published. Before that, obtain the matching candidate source from the maintainer:
 
 ```powershell
 git clone https://github.com/MC5Spear/dsh-async-tools.git

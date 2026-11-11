@@ -12,6 +12,8 @@ This third-party plugin is unaffiliated with DeepSeek. It is personally maintain
 
 ## Before installing
 
+**Candidate status:** this adaptation has not passed release acceptance. The versions below are the package’s declared admission set, not an acceptance result. The `adapt/dsh-0.2.2` branch is not currently available from the public remote; the remote installation steps below apply only after the maintainer publishes an accessible source. For testing before then, obtain a matching candidate artifact from the maintainer and use an isolated instance.
+
 | Component | Current applicable version |
 | --- | --- |
 | Plugin version | `0.2.10+dsh.0.2.2` |
@@ -21,7 +23,7 @@ This third-party plugin is unaffiliated with DeepSeek. It is personally maintain
 
 Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Before relying on these environments, check the features needed in a separate test session.
 
-For IME, screen-reader, or touch-based answers, and for result recovery after a canceled tool call, also read [usage limits and saving results](<docs/user-reference.en.md#usage-limits-and-saving-results>).
+For IME, screen-reader, or touch-based answers, and recovery after a canceled tool call, read [usage limits and saving results](<docs/user-reference.en.md#usage-limits-and-saving-results>). **Jobs created by other plugins also have a result-reading risk: a long final result consumed by the host but omitted from its notice can be incorrectly reported as empty by this package.** Until fixed, keep the job ID and producer-retained output; do not repeat a side-effecting task on the strength of that empty return.
 
 ## Install and confirm loading
 
@@ -93,7 +95,7 @@ Custom presets can use all features too, but tools must be mounted manually and 
 
 Open the plugin list → this package's detail page. Save applies edits, including Restore default actions. Ordinary valid saves need no restart. The [settings reference](<docs/user-reference.en.md#2-first-use-and-settings>) explains each field and its default.
 
-The pending-question panel and silent-command-failure warnings are off by default. Enable `askTakeover` and `silentFailureGuard`, respectively, when needed. Both act only on presets in `boundPresets`, which defaults to the two shipped presets.
+The pending-question panel and silent-command-failure warnings are off by default. Both act only on presets in `boundPresets`, which defaults to the two shipped presets. Enable `askTakeover` when the panel is needed. **Some current `silentFailureGuard` warnings can encourage repeating a command that already succeeded; keep it off until fixed.** If already enabled, follow [missing-output checks](<docs/user-reference.en.md#a-command-should-have-produced-output-but-did-not>) rather than immediately rerunning the command.
 
 Commands inherit the session's directory, sandbox, approvals, and permissions, and can still access the network or sensitive information. The plugin itself collects no telemetry, initiates no network requests, and does not read or write credentials. Model discovery obtains data from DSH without model inference. Output and host temporary files may contain secrets; redact before sharing.
 
@@ -110,7 +112,7 @@ AI maintainers include:
 
 ## Documentation and licensing
 
-See the [user reference](<docs/user-reference.en.md>) for operating details. Development, requirements, design, verification, and changelog documents are in Chinese and are not shipped with the package. They are available in the [source repository](<https://github.com/MC5Spear/dsh-async-tools/tree/adapt/dsh-0.2.2>). To check an installation, use the commit from its installation address rather than the latest contents of the moving branch.
+See the [user reference](<docs/user-reference.en.md>) for operating details. Development, requirements, design, verification, and changelog documents are in Chinese and are not shipped with the package. After this branch is published, they will be available in the [source repository](<https://github.com/MC5Spear/dsh-async-tools/tree/adapt/dsh-0.2.2>). Before publication, obtain the matching candidate source from the maintainer. To check an installation, use the commit from its installation address rather than the latest contents of the moving branch.
 
 The project uses the [MIT license](<LICENSE>). Both presets and some subagent-policy helpers adapt DeepSeek Harness material. The packaged [third-party notices](<THIRD_PARTY_NOTICES.md>) contain sources, upstream copyright, and the full MIT text.
 
