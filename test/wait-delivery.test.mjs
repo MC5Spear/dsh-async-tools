@@ -819,11 +819,49 @@ hostTest('R58-l：说明两档上限——单条 200 截断、留存行合计 20
     assert.ok(text.includes('BODY-TEXT'), '正文不受说明上限影响');
     const spillLineCount = (text.match(/P\d+-x+/g) ?? []).length;
     assert.ok(spillLineCount < 12, `留存行被合并（未逐条全列）；实列 ${String(spillLineCount)} 行`);
-    assert.match(text, /more spill paths omitted|留存路径未列出/, '超限给一行计数汇总（汇总回退）');
+    assert.match(text, /more spill paths omitted|留存路径未随说明列出/, '超限给一行计数汇总（汇总回退）');
     ledger.detachJob(jobId);
   } finally {
     await rig.dispose();
   }
+});
+
+// RA-SPILL-LOCATOR（验收 ACCEPT-SPILL-LOCATOR-01）：留存路径是定位数据，不是
+// 可裁剪说明——248 字符路径不再被 200 字符单行裁剪截尾（完整出现或不出现，
+// 不以省略号冒充路径）；投影条目另带全量结构化 spill_paths；说明行预算装不下
+// 的路径以计数行报告且不装路径。
+hostTest('RA-SPILL-LOCATOR：留存行完整出现或不出现——长路径不截尾、spill_paths 全量、超限走计数行', async () => {
+  const { entryNoteLines, projectBatchEntry } = await import('../lib/delivery.js');
+  const longPath = `L/${'d'.repeat(40)}/${'e'.repeat(40)}/${'f'.repeat(40)}/tail-${'g'.repeat(114)}.bin`;
+  assert.equal(longPath.length, 248, `用例前置：定位串恰 248 字符（实得 ${String(longPath.length)}）`);
+  // ① 长路径说明行：整行（前缀＋路径）完整在场——单行 >200 也不经 clampNote。
+  const lines = entryNoteLines({
+    jobId: 'rsl-1', lossy: true, spillPaths: [longPath]
+  }, 'en');
+  const spillLine = lines.find((line) => line.includes('Retained at the host-reported path:'));
+  assert.ok(spillLine !== undefined, '留存行在场');
+  assert.ok(spillLine.endsWith(longPath), `留存行尾部是完整路径（行长 ${String(spillLine.length)}，不被 200 裁剪）`);
+  assert.ok(!spillLine.includes('...'), '不用省略号冒充路径');
+  // ② 结构化投影：spill_paths 全量、逐字等于输入（可复制）。
+  const entry = projectBatchEntry({
+    jobId: 'rsl-2', terminal: { status: 'completed' }, chars: 0, truncated: false,
+    text: '', lossy: true, spillPaths: [longPath, 'short/a.bin']
+  }, 'en');
+  assert.deepEqual(entry.spill_paths, [longPath, 'short/a.bin'], 'spill_paths 全量逐字交付');
+  // ③ 额度不足对照：留存行单列预算装不下的路径不出现、以计数行报告；结构化
+  //    字段仍全量在场。
+  const many = Array.from({ length: 12 }, (_, i) => `M${i}-${'x'.repeat(200)}`);
+  const linesMany = entryNoteLines({ jobId: 'rsl-3', lossy: true, spillPaths: many }, 'en');
+  const listedMany = linesMany.filter((line) => line.includes('Retained at the host-reported path:'));
+  assert.ok(listedMany.length < many.length, `超预算留存行不全列（实列 ${String(listedMany.length)}）`);
+  assert.ok(listedMany.every((line) => /^Retained at the host-reported path: M\d+-x+$/.test(line)),
+    '列出的留存行都完整（无中途截断）');
+  assert.match(linesMany.join('\n'), /more spill paths omitted/, '超限给计数行（指向结构化字段）');
+  const entryMany = projectBatchEntry({
+    jobId: 'rsl-4', terminal: { status: 'completed' }, chars: 0, truncated: false,
+    text: '', lossy: true, spillPaths: many
+  }, 'en');
+  assert.deepEqual(entryMany.spill_paths, many, '说明行超预算不影响 spill_paths 全量');
 });
 
 hostTest('R55（判据 2b·子代理侧）：next-step 滞留目标子代理的未领取结算通知 → settled（结束优先于插话）', async () => {

@@ -21,6 +21,7 @@ import {
   POLICY_KEY,
   POLICY_STATE_VERSION,
   policyOf,
+  policyStateOf,
   policyProjectionDefinition
 } from '../lib/agent-policy.js';
 
@@ -118,4 +119,19 @@ test('policyOf：init null／键缺席折 undefined；读到路由表给深拷�
   assert.deepEqual(routes, ROUTES);
   routes[0].provider = 'mutated';
   assert.equal(policyOf(projections, session)[0].provider, 'zai', '深拷贝：外改不回写投影状态');
+});
+
+test('policyStateOf：三态不折叠——键未注册 undefined／已注册无名单 null／有名单深拷贝', () => {
+  // 键未注册：宿主 stateOf 返回 undefined，原样交回（身份依据①不成立的判据）。
+  assert.equal(policyStateOf({ stateOf: () => undefined }, makeSession()), undefined);
+  const projections = fakeProjections();
+  // 已注册、无会话名单（init 默认形态）：null 不折成 undefined——与键未注册
+  // 分开，是「组合活跃但会话未启用模型选择」与「原生插件不在组合」的区别。
+  assert.equal(policyStateOf(projections, makeSession()), null);
+  // 有名单：逐项深拷贝交回。
+  const session = makeSession({ events: [{ type: POLICY_EVENT, data: { allowedModels: ROUTES } }] });
+  const state = policyStateOf(projections, session);
+  assert.deepEqual(state, ROUTES);
+  state[0].provider = 'mutated';
+  assert.equal(policyStateOf(projections, session)[0].provider, 'zai', '深拷贝：外改不回写投影状态');
 });

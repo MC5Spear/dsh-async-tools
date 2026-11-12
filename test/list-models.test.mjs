@@ -864,17 +864,41 @@ hostTest('目标适用性——原生工具三段证据链：参数／身份／�
   const ours = await toolA.execute({ target_tool: 'async_agent' }, envA.exec);
   assert.equal(ours.verdict, 'not-allowed', 'async_agent 口径只看现读设置');
 
-  // ③ 投影无记录：不允许（组合时多半未启用模型选择设置）。
-  const envB = listEnv({ projection: null, schemas: { native: true } });
+  // ③ 投影键未注册：身份依据①不成立——自建组合可合法挂载同名同形创建工具，
+  //    投影缺席不能证明可见定义受原生策略限制，按未确认报告（不进入策略
+  //    判定；目录保留、不生成示例）。
+  const envB = listEnv({ projection: 'absent', schemas: { native: true } });
   const b = await createListModelsTool(envB.ctx, envB.view).execute({ target_tool: 'subagent' }, envB.exec);
-  assert.equal(b.verdict, 'not-allowed');
-  assert.match(b.basis, /no model-selection policy recorded for this session/);
+  assert.equal(b.verdict, 'unconfirmed');
+  assert.match(b.basis, /projection key is not registered in this composition/);
+  assert.equal(b.example, undefined, '身份未确认不生成适用于该目标的创建调用');
+
+  // ③b 已注册、无会话名单（init 默认形态）＋身份双依据齐备：该会话未启用
+  //    原生模型选择——已确认限制，不允许（原生实际权限不变）。
+  const envB2 = listEnv({ projection: null, schemas: { native: true } });
+  const b2 = await createListModelsTool(envB2.ctx, envB2.view).execute({ target_tool: 'subagent' }, envB2.exec);
+  assert.equal(b2.verdict, 'not-allowed');
+  assert.match(b2.basis, /registered but carries no session list/);
+
+  // ③c 已注册、无名单，但组稿无该名的非空段（同名遮蔽／未装载）：身份②
+  //    不成立，先于策略判定报未确认，不冒称「会话未启用模型选择」的确定拒绝。
+  const envB3 = listEnv({ projection: null, schemas: { native: true }, systemPrompt: 'shadow' });
+  const b3 = await createListModelsTool(envB3.ctx, envB3.view).execute({ target_tool: 'subagent' }, envB3.exec);
+  assert.equal(b3.verdict, 'unconfirmed');
+  assert.match(b3.basis, /no non-empty "tool:<name>" section/);
 
   // ④ 投影读取抛错：适用性未确认（不猜）。
   const envC = listEnv({ projection: 'throw', schemas: { native: true } });
   const c = await createListModelsTool(envC.ctx, envC.view).execute({ target_tool: 'subagent' }, envC.exec);
   assert.equal(c.verdict, 'unconfirmed');
   assert.match(c.basis, /could not be read: fold exploded/);
+
+  // ④b 无调用作用域（exec.agent 缺席）：参数段之后、投影读取之前即返回——
+  //    适用性未确认并给原因，不猜投影状态（8.2.4-C 反例锚）。
+  const envC2 = listEnv({ projection: [{ provider: 'zai', model: 'glm-5.3' }], schemas: { native: true } });
+  const c2 = await createListModelsTool(envC2.ctx, envC2.view).execute({ target_tool: 'subagent' }, {});
+  assert.equal(c2.verdict, 'unconfirmed');
+  assert.match(c2.basis, /no calling agent to read the session projection/);
 
   // ⑤ 参数形状不含路由键：不允许（该会话不暴露路由选择）。
   const envD = listEnv({ projection: [{ provider: 'zai', model: 'glm-5.3' }], schemas: { native: true, nativeRouteParams: false } });

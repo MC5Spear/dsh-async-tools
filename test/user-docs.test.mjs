@@ -112,6 +112,12 @@ test('等待预算等义表述：mandatory与no default value', t => {
   const result = box.run();
   assert.equal(result.code, 0, result.out);
 });
+test('等待预算等义表述：must be supplied explicitly（DOC-CHECK-02——等义改写不得被词面白名单误拒）', t => {
+  const box = sandbox(t);
+  box.edit('docs/user-reference.en.md', text => text.replace(/^\|\s*`wait_ms`\s*\|.*$/gm, '| `wait_ms` | number | Must be supplied explicitly; no default | Positive values clamped to configured limits |'));
+  const result = box.run();
+  assert.equal(result.code, 0, result.out);
+});
 test('等待预算等义四列：必填与无默认合并条件列', t => {
   const box = sandbox(t);
   box.edit('docs/user-reference.en.md', text => text.replace(/^\|\s*`wait_ms`\s*\|.*$/gm, '| `wait_ms` | number | Required; no default | Explicit budget clamped to configured limits |'));

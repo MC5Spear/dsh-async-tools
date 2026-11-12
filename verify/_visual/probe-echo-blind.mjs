@@ -257,7 +257,7 @@ const completionPred = (outTok) => (r) => r.event?.type === 'user/message'
   && r.event?.data?.source?.kind === 'async-tools-job-result' && textOfR(r).includes(outTok);
 const isAssistantR = (r) => r.event?.type === 'assistant' || r.event?.type === 'assistant/message'
   || (r.event?.type === 'message' && r.event?.data?.role === 'assistant');
-/** 滚动目标入视口并稳定（第四轮清单第 2 项：全部截图先框定目标区域）。 */
+/** 滚动目标入视口并稳定（截图纪律：先框定目标区域，不盲截全页）。 */
 async function scrollIntoViewExpr(expr) {
   await evaluate(page, `(() => { const n = ${expr}; if (n !== null && n !== undefined) n.scrollIntoView({ block: 'center' }); return true; })()`);
   await sleep(800);
@@ -507,7 +507,8 @@ try {
     await promptToolCall(sid, wfPrompt(`m1wf-off-${rand()}`, 'M1 off workflow', wfScript(OFF.oh, OFF.ot, WOFF_OUT)));
     okCall = await waitForPred(sid, callPred(OFF.oh), 120_000);
     capture('M1-b/off 前置：编排调用在转录', okCall !== null, 'm1/session-a-records.json');
-    // 交付入档等待（第四轮清单第 1 项）：两条完成消息记录落转录后再转储——
+    // 交付入档等待：两条完成消息记录落转录后再转储（过早转储会把未入库的
+    // 完成消息误判为缺失）——
     // 完成消息判据＝source.kind=async-tools-job-result 的 user/message 同条含
     // 输出 token（run＝OOUT-OFF-*；wf＝返回值尾 token OFF.ot，不命中注入指令）。
     const offRunDone = await waitForPred(sid, completionPred(OFF_OUT), 150_000);
@@ -616,7 +617,8 @@ try {
     const M2_WOUT = `WOUT2-${rand()}`;
     manifest.m2 = { session: sid, marker, tokens: T2, outToken: M2_OUT, settings: await readEchoSettings() };
     await promptToolCall(sid, `${runPrompt(`m2cmd-${rand()}`, runCmd(T2.h, T2.t, M2_OUT))} Then in the SAME turn, also call the async_workflow tool with EXACTLY: meta={"name":"m2wf-${rand()}","description":"M2 workflow"}, script=${JSON.stringify(wfScript(T2.oh, T2.ot, M2_WOUT))}. After both tools return handles, end your turn immediately. Do NOT call async_wait.`);
-    // 前置判据＝tool/call 记录（不命中注入指令文本——第四轮清单第 3 项）。
+    // 前置判据＝tool/call 记录（不命中注入指令文本——判据锚定宿主转录的事件，
+    // 不锚定我们发出的指令串本身）。
     const runCalled = await waitForPred(sid, callPred(T2.h), 90_000);
     const wfCalled = await waitForPred(sid, callPred(T2.oh), 120_000);
     capture('M2-a 前置：后台命令调用在转录', runCalled !== null, 'm2/session-b-records.json');
@@ -676,7 +678,7 @@ try {
       if (wide !== null) writeFileSync(join(EVID, 'm3', `m3-${lang}-wide.json`), JSON.stringify({ at: new Date().toISOString(), lang, wide }, null, 1));
       // CAP 判据含标签可读（rectCount>0）——标签读不出时如实 GAP，不再 CAP 空读数。
       capture(`M3-${lang === 'zh' ? 'a' : 'c'} ${lang} 宽视口字段行 DOM`, wide !== null && Number(wide?.rectCount ?? 0) > 0, `m3/m3-${lang}-wide.json`);
-      // 截图先框定目标（第四轮清单第 2 项：滚动字段行入视口再截）。
+      // 截图先框定目标：滚动字段行入视口再截（盲截全页无法定位字段行）。
       await scrollIntoViewExpr('document.querySelector(\'[data-plugin-config]\') !== null ? document.querySelector(\'.ats-help-button[aria-controls="plugin-config-fullCommandEcho-help"]\')?.closest(\'.ats-enum-field\') : null');
       await shotOf(`m3-${lang}-wide.png`, { width: 1500, height: 1000, fullPage: false });
       await expandHelp();
@@ -727,8 +729,8 @@ try {
       await promptToolCall(sid, runPrompt(`m4${tag}-${rand()}`, runCmd(tokens.h, tokens.t, outTok)));
       const called = await waitForPred(sid, callPred(tokens.h), 90_000);
       capture(`M4-${tag} 前置：命令调用在转录`, called !== null, 'm4/session-c-records.json');
-      // 结算判据＝完成消息记录同条含输出 token（第四轮清单第 1/3 项：等交付
-      // 落档再转储，断言不命中注入指令）。
+      // 结算判据＝完成消息记录同条含输出 token（等交付落档再转储，断言
+      // 不命中注入指令串）。
       const settled = await waitForPred(sid, completionPred(outTok), 150_000);
       capture(`M4-${tag} 结算观察：完成消息记录（source=async-tools-job-result＋输出 token 同条）`, settled !== null, 'm4/session-c-records.json');
       await dumpRecords(sid, [tokens.h, tokens.t, outTok, '命令原文', '已结算', 'settled'], join(EVID, 'm4', `msg-${tag}.json`));
@@ -738,7 +740,7 @@ try {
     await gotoPluginPage();
     await sleep(1000);
     const switchSel = `(() => document.querySelector('.ats-help-button[aria-controls="plugin-config-fullCommandEcho-help"]')?.closest('.ats-enum-field')?.querySelector('[role="switch"], input[type="checkbox"], button[class*="switch"]') ?? null)()`;
-    // 四帧开关截图先框定目标行（第四轮清单第 2 项）。
+    // 四帧开关截图先框定目标行（滚动入视口后再截）。
     await scrollIntoViewExpr('document.querySelector(\'.ats-help-button[aria-controls="plugin-config-fullCommandEcho-help"]\')?.closest(\'.ats-enum-field\')');
     await shotOf('m4-switch-before.png', { width: 1500, height: 1000, fullPage: false });
     const clicked = await clickBy(switchSel, 'fullCommandEcho 开关');
