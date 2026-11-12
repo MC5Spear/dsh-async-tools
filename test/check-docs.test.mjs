@@ -275,6 +275,8 @@ test('C10 check-docs：现行文档里的历史叙述词列人工候选、不判
   const { code, out } = box.runChecker();
   assert.equal(code, 0, `合法的历史叙述词候选不得判红，实际退出 ${String(code)}：${out.slice(-300)}`);
   assert.match(out, /历史叙述词候选 [1-9]\d* 处（人工判断：L\d+「(先前版本|勘误)」/, `候选必须带词与行号留痕，实际：${out.slice(-300)}`);
+  assert.match(out, /文档结构检查通过（无阻断结构问题；现行 \d+ 份退役机制名归零、历史叙述词人工候选 [1-9]\d* 处待复核/,
+    `成功摘要须区分无阻断问题与待人工复核候选、不冒称历史词归零（DOC-CHECK-03），实际：${out.slice(-300)}`);
 });
 
 test('C10b check-docs：现行文档里的退役机制名仍然必红（退役判据的现行侧反例）', async (t) => {

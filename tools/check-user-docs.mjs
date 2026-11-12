@@ -138,11 +138,21 @@ export function checkUserDocs(root = ROOT, { quiet = false, packageFiles } = {})
           if (waits.length !== 1) fail(`${file} ${tool} wait_ms 应有唯一参数行`);
           else {
             const row = waits[0];
-            const requirement = (row[2] ?? '').split(/[;；，,]/).map(value => value.trim());
-            const required = /^(?:必填|必须|是|required|yes|mandatory)$/i.test(requirement[0] ?? '');
-            const combinedNoDefault = requirement.slice(1).some(value => /^(?:无默认(?:值)?|no default(?: value)?)$/i.test(value));
+            // 必填／无默认按**语义**识别（DOC-CHECK-02）：同一事实的等义表述
+            //（如 Required 与 Must be supplied explicitly）不得被散文封闭白名单
+            // 误拒；宣称可选或有默认的行仍必拒。类型列是结构化受控值（number／
+            // 数字／数值），必填列与默认列是语义断言——按断言含义判，不按词面判。
+            const cell = row[2] ?? '';
+            const requirement = cell.split(/[;；，,]/).map(value => value.trim());
+            const requiredStem = /^(?:必填|必须|是|required|yes|mandatory)$/i;
+            const mustPhrase = /\bmust\s+(?:be\s+)?(?:supplied|provided|specified|given|set)\b/i;
+            const optionalClaim = /(?:可选|非必填|optional|有默认(?:值)?|has\s+(?:a\s+)?default|defaults\s+to)/i;
+            const required = !optionalClaim.test(cell)
+              && (requirement.some(value => requiredStem.test(value)) || mustPhrase.test(cell));
+            const noDefaultStem = /^(?:无默认(?:值)?|no default(?: value)?|没有默认(?:值)?)$/i;
+            const combinedNoDefault = requirement.slice(1).some(value => noDefaultStem.test(value));
             const noDefault = row.length >= 5
-              ? /^(?:无|无默认(?:值)?|none|no default(?: value)?)$/i.test(row[3] ?? '')
+              ? /^(?:无|无默认(?:值)?|none|no default(?: value)?)$/i.test((row[3] ?? '').trim())
               : (combinedNoDefault && !/^\d+(?:\.\d+)?$/.test(row[3] ?? '')) || /^(?:无默认(?:值)?|no default(?: value)?)(?:[;；，, .]|$)/i.test(row[3] ?? '');
             if (!/^(?:number|数字|数值)$/i.test(row[1] ?? '') || !required || !noDefault) fail(`${file} ${tool} wait_ms 必须为数字、必填且无默认值`);
           }

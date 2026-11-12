@@ -342,9 +342,13 @@ export function checkDocs(root = process.cwd(), { quiet = false } = {}) {
   const archiveDocs = DOCUMENTS.filter((doc) => doc.role === 'archive');
   const archiveHitTotal = archiveDocs.reduce((sum, doc) => sum + (archiveHits.get(doc.file) ?? 0), 0);
   const retiredHitTotal = archiveDocs.reduce((sum, doc) => sum + (retiredHits.get(doc.file) ?? 0), 0);
+  // 现行文档的人工候选总数（DOC-CHECK-03）：候选是「待人工复核」不是「已清零」，
+  // 成功摘要必须把两者分开说——无阻断结构问题 + 待复核候选计数，不冒称归零。
+  const candidateTotal = [...candidateHits.values()].reduce((sum, list) => sum + list.length, 0);
   say('');
   say(bad === 0
-    ? `文档结构检查通过（现行 ${String(currentCount)} 份历史叙述词与退役机制名归零；`
+    ? `文档结构检查通过（无阻断结构问题；现行 ${String(currentCount)} 份退役机制名归零、`
+      + `历史叙述词人工候选 ${String(candidateTotal)} 处待复核；`
       + `档案 ${String(archiveDocs.length)} 份历史叙述词 ${String(archiveHitTotal)} 处、退役机制名 ${String(retiredHitTotal)} 处留痕；`
       + `公开范围 \`docs/\` 无未分类文档；语料${corpusPresent ? ` ${String(corpus.length)} 份围栏配对` : '缺席（跳过）'}）。`
     : `${String(bad)} 份文档有告警。`);

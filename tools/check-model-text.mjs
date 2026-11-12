@@ -101,8 +101,8 @@ const ALLOWLIST = {
     { needle: '最近提交的设置未生效', why: '同上通道的 stderr 通告（emitLifecycleNotice），操作者一侧（同 volatile 提交未生效一条）' }
   ],
   // 装载期降级通告（emitLifecycleNotice → stderr）的豁免先例见 index.js 的
-  // 「设置快照缺席」组——agent-policy.js 现仅含形状副本与 policyOf，无 CJK
-  // 字面量，不设豁免组。
+  // 「设置快照缺席」组——agent-policy.js 现仅含形状副本与 policyOf／
+  // policyStateOf（均为无 CJK 字面量的纯逻辑导出），不设豁免组。
   'agent.js': [
     { needle: '以非完成结局收场', why: 'stderr 通告（emitLifecycleNotice），操作者一侧（result 观察通道）' },
     { needle: '结果通道拒绝（基础设施故障）', why: '同上通道的拒绝分支通告，操作者一侧' },

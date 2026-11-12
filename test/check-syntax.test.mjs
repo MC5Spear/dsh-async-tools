@@ -3,8 +3,8 @@
  *
  * verify/（含 `_visual/` 探针）不进 `npm test` 与 `npm pack`，但会被直接执行；
  * 语法检查的 TARGETS 一旦丢掉该目录，探针语法坏掉不会红（曾在公开探针上
- * 发生、两道门全漏）。本文件锁死 TARGETS 覆盖 verify/ 且盘上确有可扫的
- * 验证脚本；TARGETS 回退或 verify/ 清空都会让这里的断言失败。
+ * 发生、测试与语法检查两层都未拦截）。本文件锁死 TARGETS 覆盖 verify/ 且盘上
+ * 确有可扫的验证脚本；TARGETS 回退或 verify/ 清空都会让这里的断言失败。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,11 +26,11 @@ function countFiles(dir, extension) {
   return entries.filter((entry) => String(entry).endsWith(extension)).length;
 }
 
-test('S1 check-syntax：TARGETS 必须覆盖 verify/（探针不进测试与打包，只靠这里兜语法）', () => {
+test('S1 check-syntax：TARGETS 必须覆盖 verify/（探针不进测试与打包，语法检查在这里覆盖探针脚本）', () => {
   const hasVerify = TARGETS.some(([dir, extension]) => dir === 'verify' && extension === '.mjs');
   assert.equal(hasVerify, true, `TARGETS 必须含 ['verify', '.mjs']，实际：${JSON.stringify(TARGETS)}`);
   // 「登记了目录」不等于「有东西可扫」——verify/ 清空时 collect 返回空集、
-  // 检查器静默少一批文件，这里按盘上实际脚本数兜底（空转检查器形态）。
+  // 检查器静默少一批文件，这里按盘上实际脚本数核对下界（空转检查器形态）。
   const verifyCount = countFiles('verify', '.mjs');
   assert.ok(verifyCount >= 5, `verify/ 下应有至少 5 个 .mjs 脚本（实际 ${String(verifyCount)}）——目录被清空或挪走时本守卫必须红`);
 });

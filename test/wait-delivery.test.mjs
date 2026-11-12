@@ -819,11 +819,49 @@ hostTest('R58-l：说明两档上限——单条 200 截断、留存行合计 20
     assert.ok(text.includes('BODY-TEXT'), '正文不受说明上限影响');
     const spillLineCount = (text.match(/P\d+-x+/g) ?? []).length;
     assert.ok(spillLineCount < 12, `留存行被合并（未逐条全列）；实列 ${String(spillLineCount)} 行`);
-    assert.match(text, /more spill paths omitted|留存路径未列出/, '超限给一行计数汇总（汇总回退）');
+    assert.match(text, /more spill paths omitted|留存路径未随说明列出/, '超限给一行计数汇总（汇总回退）');
     ledger.detachJob(jobId);
   } finally {
     await rig.dispose();
   }
+});
+
+// RA-SPILL-LOCATOR（验收 ACCEPT-SPILL-LOCATOR-01）：留存路径是定位数据，不是
+// 可裁剪说明——248 字符路径不再被 200 字符单行裁剪截尾（完整出现或不出现，
+// 不以省略号冒充路径）；投影条目另带全量结构化 spill_paths；说明行预算装不下
+// 的路径以计数行报告且不装路径。
+hostTest('RA-SPILL-LOCATOR：留存行完整出现或不出现——长路径不截尾、spill_paths 全量、超限走计数行', async () => {
+  const { entryNoteLines, projectBatchEntry } = await import('../lib/delivery.js');
+  const longPath = `L/${'d'.repeat(40)}/${'e'.repeat(40)}/${'f'.repeat(40)}/tail-${'g'.repeat(114)}.bin`;
+  assert.equal(longPath.length, 248, `用例前置：定位串恰 248 字符（实得 ${String(longPath.length)}）`);
+  // ① 长路径说明行：整行（前缀＋路径）完整在场——单行 >200 也不经 clampNote。
+  const lines = entryNoteLines({
+    jobId: 'rsl-1', lossy: true, spillPaths: [longPath]
+  }, 'en');
+  const spillLine = lines.find((line) => line.includes('Retained at the host-reported path:'));
+  assert.ok(spillLine !== undefined, '留存行在场');
+  assert.ok(spillLine.endsWith(longPath), `留存行尾部是完整路径（行长 ${String(spillLine.length)}，不被 200 裁剪）`);
+  assert.ok(!spillLine.includes('...'), '不用省略号冒充路径');
+  // ② 结构化投影：spill_paths 全量、逐字等于输入（可复制）。
+  const entry = projectBatchEntry({
+    jobId: 'rsl-2', terminal: { status: 'completed' }, chars: 0, truncated: false,
+    text: '', lossy: true, spillPaths: [longPath, 'short/a.bin']
+  }, 'en');
+  assert.deepEqual(entry.spill_paths, [longPath, 'short/a.bin'], 'spill_paths 全量逐字交付');
+  // ③ 额度不足对照：留存行单列预算装不下的路径不出现、以计数行报告；结构化
+  //    字段仍全量在场。
+  const many = Array.from({ length: 12 }, (_, i) => `M${i}-${'x'.repeat(200)}`);
+  const linesMany = entryNoteLines({ jobId: 'rsl-3', lossy: true, spillPaths: many }, 'en');
+  const listedMany = linesMany.filter((line) => line.includes('Retained at the host-reported path:'));
+  assert.ok(listedMany.length < many.length, `超预算留存行不全列（实列 ${String(listedMany.length)}）`);
+  assert.ok(listedMany.every((line) => /^Retained at the host-reported path: M\d+-x+$/.test(line)),
+    '列出的留存行都完整（无中途截断）');
+  assert.match(linesMany.join('\n'), /more spill paths omitted/, '超限给计数行（指向结构化字段）');
+  const entryMany = projectBatchEntry({
+    jobId: 'rsl-4', terminal: { status: 'completed' }, chars: 0, truncated: false,
+    text: '', lossy: true, spillPaths: many
+  }, 'en');
+  assert.deepEqual(entryMany.spill_paths, many, '说明行超预算不影响 spill_paths 全量');
 });
 
 hostTest('R55（判据 2b·子代理侧）：next-step 滞留目标子代理的未领取结算通知 → settled（结束优先于插话）', async () => {
@@ -7069,6 +7107,9 @@ hostTest('BD-1：正文去向三档判别——nextStep 通知形态 arrived/hel
   ];
   for (const c of cases) {
     resetDeliveryLedger();
+    // 隐藏形态主体（HELD-RECOVER-01）：通道启用但本装置 ctx 无 tools 服务——
+    // 解析不可用、如实保留 held／unknown 档（通道失败形态）。
+    ledger.jobOutputHiddenFor = () => true;
     const OWNER = 'at-bd-owner';
     const calls = { inject: [], followup: [] };
     const agent = {
@@ -7096,9 +7137,9 @@ hostTest('BD-1：正文去向三档判别——nextStep 通知形态 arrived/hel
     const entry = ledger.jobs.get(c.jobId);
     assert.equal(entry.bodyDisposition, c.expect, `${c.tag}：判别结论＝${c.expect}`);
     // 结论行随完成消息载体呈现（entryNoteLines 首行＝delivery.body_* 对应键；
-    // clampNote 与载体同一实现，长文案按同一上限比对）。
+    // 必要说明不经 200 字符裁剪——HELD-RECOVER-01，长出路文案完整在场）。
     assert.equal(calls.inject.length, 1, `${c.tag}：空正文终态条目经完成消息投递（状态行载体）`);
-    const expectedLine = clampNote(t('en', `delivery.body_${c.expect}`, { jobId: c.jobId }));
+    const expectedLine = t('en', `delivery.body_${c.expect}`, { jobId: c.jobId });
     assert.ok(textOf(calls.inject[0]).includes(expectedLine),
       `${c.tag}：结论行经 entryNoteLines 首行在场（delivery.body_${c.expect}）`);
   }
@@ -7106,7 +7147,7 @@ hostTest('BD-1：正文去向三档判别——nextStep 通知形态 arrived/hel
 
 hostTest('BD-2：判别前置收窄——在册观察下的结算与有正文读取不置去向（不冒称）', async () => {
   resetDeliveryLedger();
-  const bodyLinesAbsent = (notice, jobId) => ['arrived', 'held', 'unknown']
+  const bodyLinesAbsent = (notice, jobId) => ['arrived', 'held', 'held_native', 'unknown', 'unknown_native']
     .every((d) => !notice.includes(t('en', `delivery.body_${d}`, { jobId })));
   // ① 观察下结算（observed=true）：宿主 awaited 抑制成立，正文不可能被宿主
   // 通知层消费——即使 nextStep 有引导形通知、读取为空，也不进判别。
@@ -7182,16 +7223,316 @@ hostTest('BD-2：判别前置收窄——在册观察下的结算与有正文读
   }
 });
 
-hostTest('BD-3：entryNoteLines 首行锚——三档结论用 delivery.body_* 对应键（en 档），无结论条目零注记行', async () => {
+hostTest('BD-3：entryNoteLines 首行锚——各档结论用 delivery.body_* 对应键（en 档），无结论条目零注记行', async () => {
   resetDeliveryLedger();
-  for (const d of ['arrived', 'held', 'unknown']) {
+  for (const d of ['arrived', 'held', 'held_native', 'unknown', 'unknown_native']) {
     const lines = entryNoteLines({ jobId: `job-bd-key-${d}`, bodyDisposition: d }, 'en');
     assert.equal(lines.length, 1, `${d}：该形态条目只有结论行（无 lossy／留存行与之并陈）`);
-    assert.equal(lines[0], clampNote(t('en', `delivery.body_${d}`, { jobId: `job-bd-key-${d}` })),
-      `${d}：首行＝delivery.body_${d} 键文案（三载体共用本构造器）`);
+    // 必要说明完整在场（HELD-RECOVER-01）：不经 clampNote——held 档英文出路
+    // 文案超 200 字符也完整呈现，不被说明裁剪截尾。
+    assert.equal(lines[0], t('en', `delivery.body_${d}`, { jobId: `job-bd-key-${d}` }),
+      `${d}：首行＝delivery.body_${d} 键文案（三载体共用本构造器、不裁剪）`);
   }
+  assert.ok(t('en', 'delivery.body_held', { jobId: 'x' }).length > 200,
+    'held 档英文文案本体超 200 字符——本断言组同时是不裁剪判据的形态前提');
   assert.deepEqual(entryNoteLines({ jobId: 'job-bd-none' }, 'en'), [], '无结论条目零注记行');
   assert.deepEqual(entryNoteLines({ jobId: 'job-bd-raw', bodyDisposition: null }, 'en'), [], 'bodyDisposition=null 同不产行');
+});
+
+// ── HR 系列（HELD-RECOVER-01 held 档正文恢复通道，设计 §2.3）──────────────────
+// 装置仿 BD 系列：tools 服务为受控替身，get('job_output', undefined) 返回受控
+// 定义；execute 按 rc.1 宿主语义仿真（消费式读取命中持有记录时删记录、撤回主体
+// 收件箱通知、持有正文前拼残余增量——dsh-tool-jobs 的 job_output.execute 形态）。
+// 真实插件组合上的取证（首见终态、原实例正对照、独立实例反对照等）按设计 §2.3
+// 待核验对象另行执行，本组为受控判据锚。
+
+/** 造一个 HR 装置环境：nextStep 通知形态、tool-jobs 持有记录与 execute 行为全部受控。 */
+function mkHeldEnv({ jobId, OWNER, noticeText, pendingText, executeMode, hidden = true }) {
+  const calls = { inject: [], followup: [], execute: 0 };
+  const notice = noticeText === null ? null
+    : { content: [{ type: 'text', text: noticeText }], source: { kind: 'tool-jobs' } };
+  const agent = {
+    id: OWNER,
+    status: 'running',
+    inject(message) { calls.inject.push(message); },
+    followup(message) { calls.followup.push(message); },
+    inbox: {
+      nextStep: notice === null ? [] : [notice],
+      nextTurn: []
+    }
+  };
+  // tool-jobs 替身：持有表＋job_output 定义（execute 仿真宿主三步——消费式读取、
+  // 命中删记录并撤回通知、持有正文前拼）。
+  const pending = new Map(pendingText === undefined ? [] : [[jobId, { held: pendingText }]]);
+  const def = {
+    async execute(args, exec) {
+      calls.execute += 1;
+      assert.equal(args.job_id, jobId, '通道以 {job_id} 调用（不带 wait）');
+      assert.equal(args.wait, undefined, '不传 wait——等待分支不触及');
+      assert.equal(exec.agent, agent, 'caller＝主体 Agent 对象（进程内主体身份）');
+      if (executeMode === 'throw') throw new Error('job owner mismatch');
+      const record = pending.get(args.job_id);
+      if (record === undefined) return { text: '', job: { status: 'completed' } };
+      pending.delete(args.job_id);
+      const idx = agent.inbox.nextStep.indexOf(notice);
+      if (idx >= 0) agent.inbox.nextStep.splice(idx, 1);
+      return { text: record.held, job: { status: 'completed' } };
+    }
+  };
+  const tools = {
+    get(name, scope) {
+      if (name !== 'job_output') return undefined;
+      if (executeMode === 'no-row') return undefined;
+      assert.equal(scope, undefined, '以省略 scope 的全局视图解析（组合层注册同层可见）');
+      return def;
+    }
+  };
+  const ctx = {
+    emit() {},
+    on: () => () => {},
+    get: (name) => {
+      if (name === 'agents') return { get: (id) => (id === OWNER ? agent : undefined) };
+      if (name === 'tools') return tools;
+      return undefined;
+    },
+    jobs: {
+      list: () => [{ id: jobId, status: 'completed', exitCode: 0 }],
+      read: async () => ({ chunks: [] })
+    }
+  };
+  return { calls, agent, ctx, pending };
+}
+
+hostTest('HR-1：held 档通道取回正文——组合层解析原定义、主体 caller 消费持有记录，正文走正常批次路径且撤回状态型通知', async () => {
+  resetDeliveryLedger();
+  ledger.jobOutputHiddenFor = () => true;
+  const OWNER = 'at-hr-1';
+  const HELD = `HELD-BODY-${'x'.repeat(3000)}`; // 超通知限的最终正文形态（验收复现 3015 字符样本）
+  const { calls, agent, ctx, pending } = mkHeldEnv({
+    jobId: 'job-hr-1', OWNER,
+    noticeText: 'background job job-hr-1 finished [status: completed]. Read its output with job_output.',
+    pendingText: HELD
+  });
+  const config = Object.freeze({ maxResultChars: 4000, agentLang: 'en' });
+  ledger.noteJobStarted(ctx, config, 'job-hr-1', OWNER);
+  await ledger.readSettled('job-hr-1', { status: 'completed', exitCode: 0 });
+  const entry = ledger.jobs.get('job-hr-1');
+  assert.equal(calls.execute, 1, '通道恰一次调用 job_output 原定义');
+  assert.equal(entry.bodyDisposition, null, '取回即清去向结论（不再给 held 说明）');
+  assert.equal(entry.heldRecovered, true, '恢复成功标记（诊断锚）');
+  assert.equal(pending.size, 0, '持有记录一次性消费（宿主 job_output 语义）');
+  assert.equal(agent.inbox.nextStep.length, 0, '指向已隐藏入口的状态型通知被撤回');
+  const message = textOf(calls.inject[0]);
+  assert.match(message, /HELD-BODY-/, '取回正文经完成消息载体交付（正常批次路径）');
+  assert.ok(!message.includes('held in the host notice layer'), '不再把可取回的正文写成留存说明');
+});
+
+hostTest('HR-2：通道解析不可用（组合未装载 tool-jobs 行）——如实保留 held 档、不冒称已交付', async () => {
+  resetDeliveryLedger();
+  ledger.jobOutputHiddenFor = () => true;
+  const OWNER = 'at-hr-2';
+  const { calls, ctx } = mkHeldEnv({
+    jobId: 'job-hr-2', OWNER,
+    noticeText: 'background job job-hr-2 finished [status: completed]. Read its output with job_output.',
+    executeMode: 'no-row'
+  });
+  const config = Object.freeze({ maxResultChars: 4000, agentLang: 'en' });
+  ledger.noteJobStarted(ctx, config, 'job-hr-2', OWNER);
+  await ledger.readSettled('job-hr-2', { status: 'completed', exitCode: 0 });
+  assert.equal(calls.execute, 0, '定义缺席不发起调用');
+  assert.equal(ledger.jobs.get('job-hr-2').bodyDisposition, 'held', '按 held 档如实说明');
+  assert.ok(textOf(calls.inject[0]).includes(t('en', 'delivery.body_held', { jobId: 'job-hr-2' })),
+    'held 结论行完整在场（不裁剪、不指路换组合）');
+});
+
+hostTest('HR-3：原生入口可见主体（隐藏判据不成立）——不代读不撤通知，held_native 指路原生 job_output', async () => {
+  resetDeliveryLedger();
+  ledger.jobOutputHiddenFor = () => false;
+  const OWNER = 'at-hr-3';
+  const { calls, agent, ctx } = mkHeldEnv({
+    jobId: 'job-hr-3', OWNER,
+    noticeText: 'background job job-hr-3 finished [status: completed]. Read its output with job_output.',
+    pendingText: 'SHOULD-NOT-BE-READ'
+  });
+  const config = Object.freeze({ maxResultChars: 4000, agentLang: 'en' });
+  ledger.noteJobStarted(ctx, config, 'job-hr-3', OWNER);
+  await ledger.readSettled('job-hr-3', { status: 'completed', exitCode: 0 });
+  assert.equal(calls.execute, 0, '可见主体不经通道代读');
+  assert.equal(agent.inbox.nextStep.length, 1, '不撤其状态型通知（原生出路照常在场）');
+  assert.equal(ledger.jobs.get('job-hr-3').bodyDisposition, 'held_native', 'held_native 档');
+  assert.ok(textOf(calls.inject[0]).includes(t('en', 'delivery.body_held_native', { jobId: 'job-hr-3' })),
+    '指路原生 job_output 的合法出口文案在场');
+});
+
+hostTest('HR-4：通道空回可再试——不清记录不推进游标，下次点名再次尝试；unknown 档（通知已领取）持有记录仍可取回', async () => {
+  resetDeliveryLedger();
+  ledger.jobOutputHiddenFor = () => true;
+  const OWNER = 'at-hr-4';
+  // 通知已被领取（nextStep 无该作业通知）＝unknown 档；非内联持有记录不随
+  // 通知领取清除——通道仍可取回。
+  const { calls, ctx } = mkHeldEnv({
+    jobId: 'job-hr-4', OWNER,
+    noticeText: null,
+    pendingText: 'LATE-HELD-BODY'
+  });
+  const config = Object.freeze({ maxResultChars: 4000, agentLang: 'en' });
+  ledger.noteJobStarted(ctx, config, 'job-hr-4', OWNER);
+  await ledger.readSettled('job-hr-4', { status: 'completed', exitCode: 0 });
+  assert.equal(ledger.jobs.get('job-hr-4').bodyDisposition, null, 'unknown 档经通道取回（结论清空）');
+  assert.equal(calls.execute, 1, '恰一次尝试');
+  assert.match(textOf(calls.inject[0]), /LATE-HELD-BODY/, '正文交付');
+  // 空回形态（无持有记录）＋投递通道失败回滚：held 档保留、已交付事实未置位，
+  // 下一轮定论读取再次尝试通道（持有记录在消费或丢失前存续——不推进任何游标）。
+  resetDeliveryLedger();
+  ledger.jobOutputHiddenFor = () => true;
+  const OWNER2 = 'at-hr-4b';
+  const env2 = mkHeldEnv({
+    jobId: 'job-hr-4b', OWNER: OWNER2,
+    noticeText: 'background job job-hr-4b finished [status: completed]. Read its output with job_output.'
+  });
+  let refuseDelivery = true;
+  const realInject = env2.agent.inject.bind(env2.agent);
+  env2.agent.inject = (message) => {
+    if (refuseDelivery) throw new Error('inject #1 refused');
+    realInject(message);
+  };
+  const config2 = Object.freeze({ maxResultChars: 4000, agentLang: 'en' });
+  ledger.noteJobStarted(env2.ctx, config2, 'job-hr-4b', OWNER2);
+  await ledger.readSettled('job-hr-4b', { status: 'completed', exitCode: 0 });
+  assert.equal(ledger.jobs.get('job-hr-4b').bodyDisposition, 'held', '空回＝未取得（无持有记录）');
+  assert.equal(env2.calls.execute, 1, '首轮恰一次尝试');
+  refuseDelivery = false;
+  const r2 = await ledger.readSettled('job-hr-4b', { status: 'completed', exitCode: 0 });
+  assert.equal(env2.calls.execute, 2, '投递回滚后下一轮定论读取再次尝试通道');
+  assert.equal(ledger.jobs.get('job-hr-4b').bodyDisposition, 'held', '仍未取得，结论稳定');
+  assert.equal(r2.terminal.status, 'completed', '第二轮照常交付终态事实（状态行＋held 说明）');
+});
+
+hostTest('HR-5：通道调用抛错（跨主体拒绝形态）——按未取得处理，不外抛不冒称', async () => {
+  resetDeliveryLedger();
+  ledger.jobOutputHiddenFor = () => true;
+  const OWNER = 'at-hr-5';
+  const { calls, ctx } = mkHeldEnv({
+    jobId: 'job-hr-5', OWNER,
+    noticeText: 'background job job-hr-5 finished [status: completed]. Read its output with job_output.',
+    executeMode: 'throw'
+  });
+  const config = Object.freeze({ maxResultChars: 4000, agentLang: 'en' });
+  ledger.noteJobStarted(ctx, config, 'job-hr-5', OWNER);
+  await ledger.readSettled('job-hr-5', { status: 'completed', exitCode: 0 });
+  assert.equal(calls.execute, 1, '尝试后抛错被通道承接');
+  assert.equal(ledger.jobs.get('job-hr-5').bodyDisposition, 'held', '按 held 档如实说明（不把拒绝写成已交付）');
+});
+
+hostTest('HR-6：首见即终态不挂保活链＋同批多目标双恢复——observedSettlement 不得被挂链误置（d5 批形态回归锚）', async () => {
+  resetDeliveryLedger();
+  // ① 首见即终态（证据行已证终态）：入账不挂链——挂链后 jobs.wait 立即以终态
+  // 视图释放，#beat 会误置 observedSettlement（抑制前提不成立：结算发生在
+  // 挂链之前，宿主可能已消费式预读持有正文），§2.3 判别与恢复通道随之被跳过
+  //——多目标同批点名时首个目标在通道耗时窗口内完成判别、其余被误置位跳过，
+  // 正文静默搁浅（盲测 d5 形态）。
+  const ctxA = { jobs: { list: () => [], read: async () => ({ chunks: [] }) } };
+  const config = Object.freeze({ maxResultChars: 8000, agentLang: 'en' });
+  const termEntry = ledger.observeForeignJob(ctxA, config, 'job-hr-6-term', 'at-hr-6', {
+    unowned: false, terminal: true
+  });
+  assert.notEqual(termEntry, null, '终态证据入账成功');
+  assert.equal(termEntry.chain, null, '首见即终态不挂保活链（链会使 jobs.wait 立即释放并误置观察）');
+  assert.equal(termEntry.observedSettlement, false, '未误置 observedSettlement');
+  // 运行中证据照常挂链（对照——结算观察与抑制语义不变）。
+  const ctxB = { jobs: { list: () => [], read: async () => ({ chunks: [] }), wait: async () => ({ status: 'completed' }) } };
+  const runEntry = ledger.observeForeignJob(ctxB, config, 'job-hr-6-run', 'at-hr-6', {
+    unowned: false, terminal: false
+  });
+  assert.notEqual(runEntry.chain, null, '运行中证据照常挂链（对照）');
+  // ② JobTarget.ensureRegistered 对终态证据行同样不挂链（点名路径入口）。
+  const { JobTarget } = await import('../lib/wait-job-target.js');
+  const ctxC = { jobs: { list: () => [], read: async () => ({ chunks: [] }) } };
+  const target = new JobTarget({ ctx: ctxC, config, jobId: 'job-hr-6-named', owner: 'at-hr-6', t, lang: 'en' });
+  target.ensureRegistered({ id: 'job-hr-6-named', status: 'completed', owner: 'at-hr-6' });
+  assert.equal(ledger.entryFor('job-hr-6-named', 'at-hr-6').chain, null,
+    '点名路径：终态证据行入账不挂链');
+  // ③ 同批双恢复（d5 形态受控化）：同一主体的两个首见终态＋持有形作业在同一
+  // 批窗口内逐一定论读取，两个都经通道取回正文——不存在「首个恢复、其余搁浅」。
+  // 装置用**共享单主体**（真实宿主一名册一主体一 Agent 对象；mkHeldEnv 的
+  // 逐环境 Agent 在同主体形态下是伪影）。
+  ledger.jobOutputHiddenFor = () => true;
+  const PAIR_OWNER = 'at-hr-6-p';
+  const pairNotices = [1, 2].map((n) => ({
+    content: [{ type: 'text', text: `background job job-hr-6-p${n} finished [status: completed]. Read its output with job_output.` }],
+    source: { kind: 'tool-jobs' }
+  }));
+  const pairInjected = [];
+  const pairAgent = {
+    id: PAIR_OWNER,
+    status: 'running',
+    inject(message) { pairInjected.push(String(message?.content?.[0]?.text ?? message)); },
+    followup() {},
+    inbox: { nextStep: [...pairNotices], nextTurn: [] }
+  };
+  const pairPending = new Map([
+    ['job-hr-6-p1', { held: `PAIR-BODY-1-${'y'.repeat(500)}` }],
+    ['job-hr-6-p2', { held: `PAIR-BODY-2-${'y'.repeat(500)}` }]
+  ]);
+  let pairExecutes = 0;
+  const pairDef = {
+    async execute(args, exec) {
+      pairExecutes += 1;
+      assert.equal(exec.agent, pairAgent, '通道 caller＝共享主体对象');
+      const record = pairPending.get(args.job_id);
+      if (record === undefined) return { text: '', job: { status: 'completed' } };
+      pairPending.delete(args.job_id);
+      const notice = pairNotices[Number(args.job_id.endsWith('1')) ? 0 : 1];
+      const idx = pairAgent.inbox.nextStep.indexOf(notice);
+      if (idx >= 0) pairAgent.inbox.nextStep.splice(idx, 1);
+      return { text: record.held, job: { status: 'completed' } };
+    }
+  };
+  const pairTools = { get: (name) => (name === 'job_output' ? pairDef : undefined) };
+  const mkPairCtx = (jobId) => ({
+    emit() {},
+    on: () => () => {},
+    get: (name) => {
+      if (name === 'agents') return { get: (id) => (id === PAIR_OWNER ? pairAgent : undefined) };
+      if (name === 'tools') return pairTools;
+      return undefined;
+    },
+    jobs: {
+      list: () => [{ id: jobId, status: 'completed', exitCode: 0 }],
+      read: async () => ({ chunks: [] })
+    }
+  });
+  const pairCfg = Object.freeze({ maxResultChars: 8000, agentLang: 'en' });
+  // 入场走点名/枚举发现同款路径（wait.js 对账循环同形）：JobTarget 携终态证据行
+  // ensureRegistered（经本轮修复分支——修前此处会挂链并误置 observedSettlement）
+  // 后 readSettled 定论；不经 noteJobStarted（自有作业的链从不走 observeForeignJob，
+  // 修前该形态同样会绿，不能作红绿锚）。
+  const mkPairTarget = (jobId) => new JobTarget({
+    ctx: mkPairCtx(jobId), config: pairCfg, jobId, owner: PAIR_OWNER, t, lang: 'en'
+  });
+  const pairRow = (jobId) => ({ id: jobId, status: 'completed', exitCode: 0, owner: PAIR_OWNER });
+  const target1 = mkPairTarget('job-hr-6-p1');
+  const target2 = mkPairTarget('job-hr-6-p2');
+  target1.ensureRegistered(pairRow('job-hr-6-p1'));
+  assert.equal(ledger.entryFor('job-hr-6-p1', PAIR_OWNER).chain, null,
+    '作业一经终态证据入账不挂链（修复分支本体）');
+  target2.ensureRegistered(pairRow('job-hr-6-p2'));
+  assert.equal(ledger.entryFor('job-hr-6-p2', PAIR_OWNER).chain, null,
+    '作业二经终态证据入账不挂链（d5 修前此处挂链→observedSettlement 误置→判别与通道被跳过）');
+  await target1.readSettled(pairRow('job-hr-6-p1'));
+  await target2.readSettled(pairRow('job-hr-6-p2'));
+  const e1 = ledger.jobs.get('job-hr-6-p1');
+  const e2 = ledger.jobs.get('job-hr-6-p2');
+  assert.equal(e1.bodyDisposition, null, '作业一取回（结论清空）');
+  assert.equal(e2.bodyDisposition, null, '作业二取回（结论清空——d5 修前此处为 chars:0 搁浅）');
+  assert.equal(e1.heldRecovered, true, '作业一恢复标记');
+  assert.equal(e2.heldRecovered, true, '作业二恢复标记（同批不因首个目标的通道耗时而搁浅）');
+  // 正文断言对准实际交付形态：running 主体经完成消息直付（缓冲随之消费），
+  // 注入文本须各含两作业的持有正文。
+  assert.ok(pairInjected.some((text) => text.includes('PAIR-BODY-1')), '作业一正文经完成消息在场');
+  assert.ok(pairInjected.some((text) => text.includes('PAIR-BODY-2')), '作业二正文经完成消息在场（修前此处永不送达）');
+  assert.equal(pairPending.size, 0, '两条持有记录均一次性消费');
+  assert.equal(pairAgent.inbox.nextStep.length, 0, '两条状态型通知均撤回');
 });
 
 // ═════════════════════════════════════════════════════════════════════

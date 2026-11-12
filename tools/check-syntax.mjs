@@ -21,8 +21,8 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
 
 /** 需要检查的目录与扩展名（`verify/` 含 `_visual/` 探针——它们不进 `npm test`
  * 也不进分发清单，正是"从没被解析过"的高危区：嵌套模板语法错在这里出现过，
- * 而 `check` 与 `npm test` 两道门都拦不住）。导出供 test/check-syntax.test.mjs
- * 的覆盖守卫消费；主流程只在直接执行时运行。 */
+ * 而 `check` 脚本与 `npm test` 都不会解析这些文件、拦不住该形态）。导出供
+ * test/check-syntax.test.mjs 的覆盖守卫消费；主流程只在直接执行时运行。 */
 export const TARGETS = [
   ['lib', '.js'],
   ['test', '.mjs'],

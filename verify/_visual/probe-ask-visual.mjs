@@ -1009,7 +1009,8 @@ try {
     return { box: [Math.round(r.width), Math.round(r.height)], inside, overlap,
       gapX: sr === null || cr === null ? null : Math.round((cr.left - sr.right) * 10) / 10,
       // 注意外层已是 evaluate 的模板字符串——这里必须用拼接，嵌套反引号会
-      // 提前终止外层模板（曾因此整文件语法坏且三道门全漏过，见 0.2.2 盲审 A1）。
+      // 提前终止外层模板（该形态曾让整个探针文件语法损坏且各层检查未拦截，
+      // 外层模板必须保持成对闭合）。
       count: cr === null ? null : String(Math.round(cr.width)) + 'x' + String(Math.round(cr.height)) };
   })()`);
   check('AV-9g 徽标宿主化几何：盒 ≤52×≥28、计数泡内联含于盒且与 svg 零重叠（间隙 ≥2px）',

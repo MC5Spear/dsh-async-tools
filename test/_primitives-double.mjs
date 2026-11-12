@@ -18,11 +18,14 @@
  * 0.2.1-rc.2 的安装树**不再单独发布** `dsh-client-ui-primitives` 包（client-ui
  * 拆成按域包），但 web 外壳的**建资产仍以同一模块 id 内联提供它**（实测
  * `dsh-web-frontend/dist/assets/index-*.js` 的冻结模块表含
- * `"@deepseek-ai/dsh-client-ui-primitives"` 键，client.js 消费的七个成员
+ * `"@deepseek-ai/dsh-client-ui-primitives"` 键，七个成员
  * `SettingsForm` / `SettingsFormModel` / `settingsNumberField` /
  * `settingsTextField` / `IconQuestionOutlineRegular` / `Switch` / `Tag`
- * 在建资产中都在场）——client.js 的 `require` 在 0.2.1 运行时有效。
- * （替身另导出的 `SettingsValueField` 只是结构对照件，client.js 不消费它。）
+ * 在建资产中都在场）——client.js 的 `require` 在目标宿主运行时有效
+ * （0.2.2-rc.1 树同形态：成员经冻结模块表的共享虚拟模块解析）。本包现行
+ * 消费其中六项：`Switch` 已随布尔控件自绘退场（设计 5.5「自绘开关」），其
+ * 形状核对结论保留为官方件形态证据，替身继续导出仅作结构对照（与
+ * `SettingsValueField` 同一分工——client.js 同样不消费它）。
  * 替身的**逐行转录基准**因此仍是 [0.2.0-rc.2] 的独立包源码（唯一可逐行读的
  * 文本，行号为转录时亲读核对）：
  * `settingsNumberField` `:7110-7124`；
