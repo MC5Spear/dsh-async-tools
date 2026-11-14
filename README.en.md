@@ -21,7 +21,7 @@ This third-party plugin is unaffiliated with DeepSeek. It is personally maintain
 
 “Host” means the DSH instance loading the plugin. **Only these four DSH versions can load this package**, not the final `0.2.1` or an unlisted rc. Node.js 24 is recommended; see the [runtime prerequisites](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>) before choosing another runtime.
 
-Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Full real-host rechecking on rc.3/rc.4 is also incomplete. Before relying on these environments, check the features needed in a separate test session.
+Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Full real-host rechecking on rc.3/rc.4 is also incomplete. Before relying on those platforms or rc.3/rc.4, check the features needed in a separate test session.
 
 For IME, screen-reader, or touch-based answers, and for result recovery after a canceled tool call, also read [usage limits and saving results](<docs/user-reference.en.md#usage-limits-and-saving-results>).
 
@@ -95,7 +95,7 @@ Custom presets can use all features too, but tools must be mounted manually and 
 
 Open the plugin list → this package's detail page. Save applies edits, including Restore default actions. Ordinary valid saves need no restart. The [settings reference](<docs/user-reference.en.md#2-first-use-and-settings>) explains each field and its default.
 
-The pending-question panel and silent-command-failure warnings are off by default. Both act only on presets in `boundPresets`, which defaults to the two shipped presets. Enable `askTakeover` when the panel is needed. **Some current `silentFailureGuard` warnings can encourage repeating a command that already succeeded; keep it off until fixed.** If already enabled, follow [missing-output checks](<docs/user-reference.en.md#a-command-should-have-produced-output-but-did-not>) rather than immediately rerunning the command.
+The pending-question panel and silent-command-failure warnings are off by default. Both act only on presets in `boundPresets`, which defaults to the two shipped presets. Enable `askTakeover` for the panel or `silentFailureGuard` for command diagnostics. After a missing-output warning, [check exit information and actual effects](<docs/user-reference.en.md#a-command-should-have-produced-output-but-did-not>) before deciding what to do; do not immediately rerun the original command.
 
 Commands inherit the session's directory, sandbox, approvals, and permissions, and can still access the network or sensitive information. The plugin itself collects no telemetry, initiates no network requests, and does not read or write credentials. Model discovery obtains data from DSH without model inference. Output and host temporary files may contain secrets; redact before sharing.
 

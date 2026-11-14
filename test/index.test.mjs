@@ -257,9 +257,11 @@ const BUILTIN_CTX_MEMBERS = new Set(['effect', 'on', 'emit', 'get', 'logger', 'i
 /**
  * 构造最小 cordis 上下文：注册假服务，并记录工具注册。
  * @param {Function} Context - 真 cordis 的 `Context`。
+ * @param {object|null} [jobsService] - 行 `jobs` 服务覆写（FD-EVT 用——注入
+ *   事件枢纽在场等特殊形态）；缺省用挂载级最小假件（无 events＝降级形态）。
  * @returns {object} 上下文与探针。
  */
-function makeContext(Context) {
+function makeContext(Context, jobsService = null) {
   const registered = [];
   const restrictCalls = [];
   const restrictDisposed = [];
@@ -279,7 +281,7 @@ function makeContext(Context) {
       return () => { restrictDisposed.push(policy); };
     }
   });
-  ctx.provide('jobs', {
+  ctx.provide('jobs', jobsService ?? {
     start: () => 'async-command-1',
     get: () => ({ status: 'running' }),
     read: () => ({ text: '' }),
@@ -1140,6 +1142,139 @@ test('T21：refreshToolDescriptions 递归同步嵌套参数说明——en→zh�
   assert.strictEqual(targets.items.properties.kind, kind, '回切后 kind 子节点引用不变');
   assert.strictEqual(targets.items.properties.id, targetId, '回切后 id 子节点引用不变');
   assert.deepEqual(targets.items.required, requiredBefore, '回切后 required 不变');
+});
+
+// FD-EVT（SOL-REQ-01，021 线返修）：外来作业事件订阅必须从**本行 ctx** 取事件
+// 枢纽（静态 inject 含 jobs）。修前经 `agent.ctx?.jobs?.events` 取——Agent ctx
+//（dsh-subagent 挂预设子树的 child ctx）未声明注入 jobs，cordis 追踪代理对未
+// 注入服务的属性访问在 getter 内**抛错**（cannot get property "jobs" without
+// inject，真机插桩定案 diag-foreign-events-022），可选链拦不住，异常落入仅
+// warn 的 catch → 零订阅、外来事件通路全灭（枚举降级兜底仍在）。装置＝T19 同
+// 款 agent/created 驱动＋行 jobs 服务覆写（事件枢纽可观察）。
+test('FD-EVT：外来事件订阅从行 ctx 取枢纽——getter 抛错不触路；订阅到账面驱动；双挂注销幂等；无枢纽降级（SOL-REQ-01）', async (t) => {
+  const host = await loadHost();
+  const delivery = await loadOfflineSafe('../lib/delivery.js');
+  if (host === undefined || delivery === undefined || Context === undefined) {
+    t.skip(HOST_SKIP_REASON);
+    return;
+  }
+  const ledger = delivery.ledger;
+
+  // 行 jobs 服务（带事件枢纽）：subscribe 记录 filter/listener，宿主语义复刻
+  // 「subscribe 把注册挂行 ctx 的 effect（行卸载即撤）」；read/wait 供订阅驱动
+  // 的入账（挂链保活）与定论读取（settled）使用。
+  const subscribes = [];
+  const unsubCalls = [];
+  const settledReads = [];
+  const settle = () => new Promise((resolve) => { setImmediate(resolve); });
+  let rowCtx = null;
+  const jobsFake = {
+    events: {
+      subscribe(filter, listener) {
+        const unsub = () => { unsubCalls.push(filter.owner); };
+        subscribes.push({ filter, listener, unsub });
+        rowCtx.effect(() => () => unsub()); // 宿主语义：注册挂行 ctx effect
+        return unsub;
+      }
+    },
+    read: async (jobId) => { settledReads.push(jobId); return { chunks: [{ channel: 'stdout', text: 'FD-EVT-BODY' }] }; },
+    wait: () => new Promise(() => {}) // 挂起不结算：链行为由 PJ-BEAT 锚，此处只看入账
+  };
+  rowCtx = makeContext(Context, jobsFake).ctx;
+  const fork = rowCtx.plugin(
+    { name: host.name, inject: host.inject, Config: host.Config, apply: host.apply },
+    { toolName: 'async_wait' }
+  );
+  await activate(fork);
+
+  // ① 真机定案形态：Agent ctx 的 jobs 属性访问在 getter 内抛错（非 undefined）
+  // ——修后订阅块只读本行 ctx.jobs，不再触碰 agent.ctx.jobs。
+  const agentEffectThunks = [];
+  const agentEffectLabels = [];
+  const agent = {
+    id: 'fd-evt-agent',
+    ctx: {
+      tools: {
+        view() { return { visible: new Map([['async_wait', {}]]) }; },
+        restrict() { return () => {}; }
+      },
+      effect(fn, label) { agentEffectThunks.push(fn); agentEffectLabels.push(String(label)); },
+      get jobs() { throw new Error('cannot get property "jobs" without inject'); }
+    }
+  };
+  rowCtx.emit('agent/created', { agent });
+  assert.equal(subscribes.length, 1,
+    '①订阅照常注册（修前：经 agent.ctx.jobs 即抛→仅 warn 降级→零订阅＝红）');
+  assert.deepEqual(subscribes[0].filter, { owner: 'fd-evt-agent' }, '①过滤口径＝{owner: agent.id}');
+  assert.equal(typeof subscribes[0].listener, 'function', '①listener 为函数');
+  assert.equal(agentEffectLabels.length, 2,
+    '①agent.ctx.effect 双挂（隐藏句柄＋事件订阅注销；修前零订阅时只有隐藏一项）');
+
+  // ② 订阅到账面驱动：registered→账本外新作业入账挂链；settled→账本外补入账
+  // ＋定论读取（reads 被调用、终态入账）；已定论条目不重复读。
+  subscribes[0].listener({ type: 'registered', job: { id: 'fd-evt-r1', owner: 'fd-evt-agent' } });
+  await settle();
+  const r1 = ledger.jobs.get('fd-evt-r1');
+  assert.ok(r1 !== undefined, '②registered：外来条目入账（有主按裸键）');
+  assert.equal(r1.owner, 'fd-evt-agent', '②条目主体＝订阅 owner');
+  assert.ok(r1.chain !== null, '②入账即挂保活链（观察在册）');
+  subscribes[0].listener({ type: 'settled', job: { id: 'fd-evt-s1', status: 'completed', exitCode: 0, owner: 'fd-evt-agent' } });
+  await settle();
+  await settle();
+  assert.ok(settledReads.includes('fd-evt-s1'), '②settled：账本外结算补定论读取（reads 被调用）');
+  const s1 = ledger.jobs.get('fd-evt-s1');
+  assert.ok(s1 !== undefined && s1.terminal?.status === 'completed', '②settled：终态事实入账');
+  const readsBefore = settledReads.length;
+  subscribes[0].listener({ type: 'settled', job: { id: 'fd-evt-s1', status: 'completed', exitCode: 0, owner: 'fd-evt-agent' } });
+  await settle();
+  assert.equal(settledReads.length, readsBefore, '②已定论条目不重复定论读取');
+
+  // ③ 注销双挂：agent.ctx.effect 登记的注销在 Agent 结束撤订阅（effect 回调
+  // 返回注销函数——与行 ctx.effect 同契约；幂等二次调用不炸）；行卸载经宿主
+  // 的行 effect 注册同样撤（兜底路径）。
+  const eventsIndex = agentEffectLabels.indexOf('async-tools: foreign job events');
+  assert.equal(eventsIndex, 1, '③事件订阅注销挂 agent.ctx.effect（隐藏句柄之后）');
+  const eventsOff = agentEffectThunks[eventsIndex];
+  assert.equal(typeof eventsOff, 'function', '③effect 回调在场');
+  assert.doesNotThrow(() => eventsOff()(), '③Agent 结束：运行 effect 取注销并撤销订阅（首调）');
+  assert.equal(unsubCalls.length, 1, '③宿主 unsubscribe 被调用');
+  assert.doesNotThrow(() => eventsOff()(), '③幂等：注销二次调用不炸');
+  // 行卸载撤订阅：宿主把 unscoped 订阅注册为行 ctx 的 effect（dsh-jobs-local
+  // registrar.effect；真机 registrar＝events 的访问方 fiber）。fake 服务无
+  // cordis Service tracker 的访问者绑定，registrar 以行根 ctx 代位——行卸载
+  // 以 rowCtx.dispose 锚定（fork 是插件子 fiber，其 dispose 只跑插件自身
+  // 效应，不触碰挂在行根 ctx 上的订阅效应）。
+  await fork.dispose();
+  await rowCtx.fiber.dispose(); // 根 ctx 无 dispose——cordis 停用入口在 fiber（dispose 异步收尾）
+  assert.equal(unsubCalls.length, 3,
+    '③行卸载撤销订阅（行 ctx effect 真实执行；thunk 首调＋幂等重调＋行卸载各贡献一次）');
+
+  // ④ 降级口径：行 jobs 无事件枢纽（undefined）——走 fallback 分支不抛错、
+  // 隐藏照常登记（handler 后续不被事件缺位阻断）。
+  const stock = makeContext(Context); // 缺省 jobs 假件无 events
+  const fork2 = stock.ctx.plugin(
+    { name: host.name, inject: host.inject, Config: host.Config, apply: host.apply },
+    { toolName: 'async_wait' }
+  );
+  await activate(fork2);
+  const restrictProbe = [];
+  assert.doesNotThrow(() => {
+    stock.ctx.emit('agent/created', {
+      agent: {
+        id: 'fd-evt-fallback',
+        ctx: {
+          tools: {
+            view() { return { visible: new Map([['async_wait', {}]]) }; },
+            restrict(p) { restrictProbe.push(p); return () => {}; }
+          },
+          effect() {}
+        }
+      }
+    });
+  }, '④无枢纽不抛错（降级走枚举发现口径）');
+  assert.deepEqual(restrictProbe, [{ deny: ['job_output'] }], '④事件缺位不阻断隐藏登记（handler 全程走完）');
+  assert.equal(subscribes.length, 1, '④降级行零订阅（不误挂）');
+  await fork2.dispose();
 });
 
 

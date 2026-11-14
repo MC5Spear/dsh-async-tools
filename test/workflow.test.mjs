@@ -365,16 +365,23 @@ hostTest('async_workflow（R34-c·插话）：让出窗口内用户消息 → �
   freezeTimers(f.ctx);
   const exec = { agent, signal: new AbortController().signal };
   const pending = tool.execute(BASE_ARGS, exec);
+  // TEST-TIMING-01：下界改按实测等待时长推导（performance.now 单调、亚毫秒），
+  // 留 2ms 容差吸收 elapsed 侧的时钟域差异与取整——固定 `>= 5` 在整数毫秒
+  // 取整下会把 4.9ms 真实等待判成 4ms 而脆断。判据仍能检出真实取点错误：
+  // t0 若取在等待结束处，实得 ~0ms，恒低于下界。
+  const sleepStartedAt = performance.now();
   await new Promise((r) => { setTimeout(r, 5); });
+  const wallWaited = performance.now() - sleepStartedAt;
   f.emit('agent/inbox/inserted', inboxPayload({ agent, sourceKind: 'user', text: 'hold on', target: 'next-step' }));
 
   const result = await pending;
   assert.equal(result.status, 'running', '插话 → 转后台句柄（恢复通道 = 完成通知）');
   assert.match(result.note, /ended early: a user message arrived/);
   assert.match(result.note, /async_wait\(targets=\[\{kind:"job", id:"/, '恢复示例照带');
-  // elapsed 双向域：下界 = 触发前的 5 ms 等待（t0 必须在引擎启动
-  // 之前的 execute 入口），上界 = 首次等待预算（这条路不是预算到期退出的）。
-  assert.ok(result.elapsed_ms >= 5, `t0 取点在 execute 入口（实得 ${String(result.elapsed_ms)}）`);
+  // elapsed 双向域：下界 = 触发前的实测等待（t0 必须在引擎启动之前的 execute
+  // 入口），上界 = 首次等待预算（这条路不是预算到期退出的）。
+  const lowerBound = Math.max(0, wallWaited - 2);
+  assert.ok(result.elapsed_ms >= lowerBound, `t0 取点在 execute 入口（实得 ${String(result.elapsed_ms)}，下界 ${String(lowerBound)}）`);
   assert.ok(result.elapsed_ms < 600000, '插话先于预算到期返回');
   assert.equal(runs[0].cancelCalls, 0, '插话只结束等待，绝不取消 run（同款）');
   assert.equal(f.jobsFake.views()[0].status, 'running', '作业存活');

@@ -2224,6 +2224,235 @@ test('sidebar 注册 label 闭包——经 apply 产品路径，随快照语言�
   assert.ok(overlayReg !== undefined && overlayReg.meta.order === 900, 'overlay 座位注册并存');
 });
 
+// ── REQ02（SOL-REQ-02）：ask 座位 fiber 生命周期────────────────
+
+/** REQ02 装置：装载产物＋假 ctx，ask 命名空间的动态 inject 返回可计数 fiber
+ *（回调延迟激活——真机 inject 返回句柄后可择机重跑回调）；mount promise 可控
+ * 解析。seatSlotLog 记录两座位槽（shell.overlay／sidebar.footer.action）接线的
+ * 创建与释放——inner 接线的生命周期由此可观察（noHandle＝inject 无句柄形态）。 */
+function makeSeatFiberRig(product, { mountDeferred = false, noHandle = false, sidebarThrow = false, overlayThrow = false, injectThrow = false } = {}) {
+  const seatSlotLog = [];
+  const askInjects = [];
+  let resolveMount = () => {};
+  const mountPromise = mountDeferred
+    ? new Promise((resolve) => { resolveMount = resolve; })
+    : Promise.resolve(() => {});
+  const askRemoteNs = { state: () => Promise.resolve({ ok: true, value: { serverNow: 0, items: [] } }) };
+  const fakeAgentPresets = { list: () => Promise.resolve({ ok: true, value: { presets: [] } }) };
+  const effects = [];
+  // 设置快照 scope（sidebar 用例同款形状）：createAskModel 订阅 getSnapshot 推送；
+  // 订阅退订计数＝ask 模型 dispose 的可观察面。
+  let unsubCount = 0;
+  const settingsScope = {
+    getSnapshot: () => ({ status: 'ready', value: { askTakeover: true, askUiSeat: 'sidebar' }, user: {} }),
+    subscribe: () => () => { unsubCount += 1; },
+    mutate: async () => true
+  };
+  const ctx = {
+    configForms: {
+      get: () => settingsScope,
+      // 装置内宿主行始终服务该命名空间：whileServed 立即激活，返回值＝块停用出口。
+      whileServed: (entries, fn) => {
+        const off = fn();
+        return () => (typeof off === 'function' ? off() : undefined);
+      }
+    },
+    slots: {
+      inject: (slot, factory) => {
+        // overlay 槽宿主拒绝形态（REQ02-SEATS-THROW ③）：第一槽注入点抛错。
+        if (overlayThrow && slot === 'shell.overlay') throw new Error('overlay slot refused');
+        // sidebar 槽宿主拒绝形态（REQ02-SEATS-THROW ①）：注入点本身抛错。
+        if (sidebarThrow && slot === 'sidebar.footer.action') throw new Error('sidebar slot refused');
+        const rec = { slot, disposed: false };
+        seatSlotLog.push(rec);
+        const off = factory();
+        return () => { rec.disposed = true; if (typeof off === 'function') off(); };
+      },
+      register: () => () => {}
+    },
+    // 真机同款动态 inject：ask 命名空间返回 fiber 本体、回调由装置择机激活；
+    // 其他命名空间（预设目录）同步激活即可。
+    inject: (list, fn) => {
+      if (list.join(',') === 'remote.async-tools-ask') {
+        // 动态 inject 本身同步抛错形态（REQ02-SEATS-THROW ②）。
+        if (injectThrow) throw new Error('ask inject refused');
+        if (noHandle) { askInjects.push({ fiber: undefined, callback: fn }); return undefined; }
+        const fiber = {
+          disposeCount: 0,
+          catchCount: 0,
+          dispose() { this.disposeCount += 1; },
+          catch(handler) { this.catchCount += 1; return handler; }
+        };
+        askInjects.push({ fiber, callback: fn });
+        return fiber;
+      }
+      return fn({ remote: { agentPresets: fakeAgentPresets } });
+    },
+    locale: { register: () => () => {} },
+    remote: { $mount: () => mountPromise, $on: () => () => {} },
+    on: () => () => {},
+    effect: (fn, label) => {
+      const off = fn();
+      effects.push({ label: String(label), off });
+      return () => (typeof off === 'function' ? off() : undefined);
+    },
+    uiWorkspace: { openSession() {} }
+  };
+  product.apply(ctx);
+  return {
+    seatSlotLog,
+    askInjects,
+    resolveMount,
+    askRemoteNs,
+    modelUnsubs: () => unsubCount,
+    seatsOff: () => effects.find((one) => one.label.includes('ask takeover seats'))?.off(),
+    flush: () => new Promise((resolve) => { setTimeout(resolve, 0); })
+  };
+}
+
+const SEAT_SLOTS = ['shell.overlay', 'sidebar.footer.action'];
+const seatRecordsOf = (rig, slot) => rig.seatSlotLog.filter((rec) => rec.slot === slot);
+
+test('REQ02-ASK-FIBER：座位 inject 句柄——重入先拆旧 inner、停用即 dispose 并释放 inner、迟到激活立即回收（SOL-REQ-02）', async () => {
+  const react = makeMiniReact();
+  const product = await loadClientProduct(react, { setInterval: () => 0, clearInterval: () => {} });
+  const rig = makeSeatFiberRig(product, { mountDeferred: true });
+  rig.resolveMount(() => {});
+  await rig.flush();
+  assert.equal(rig.askInjects.length, 1, '前置：ask 命名空间动态 inject 恰一次');
+  const { fiber, callback } = rig.askInjects[0];
+  assert.ok(fiber.catchCount === 1 && fiber.disposeCount === 0, '前置：句柄已 catch 接线、服务期内未 dispose');
+  const askScope = { remote: { 'async-tools-ask': rig.askRemoteNs } };
+
+  // ① 注入回调重入先释放旧 inner：两座位接线各恰一份活（不翻倍滞留）。
+  callback(askScope);
+  for (const slot of SEAT_SLOTS) {
+    assert.equal(seatRecordsOf(rig, slot).length, 1, `①首跑：${slot} 装一份接线`);
+  }
+  callback(askScope); // 服务实现变化：fiber 重跑回调（旧 episode 仍在册）
+  for (const slot of SEAT_SLOTS) {
+    const records = seatRecordsOf(rig, slot);
+    assert.equal(records.length, 2, `①重入：${slot} 重建新接线`);
+    assert.equal(records[0].disposed, true, `①重入：先释放旧 inner（${slot} 首份已拆；修前：覆盖丢弃旧接线＝红）`);
+    assert.equal(records[1].disposed, false, `①重入：新 inner 在位（${slot} 恰一份活接线）`);
+  }
+  assert.equal(fiber.disposeCount, 0, '①服务期内句柄不被 dispose');
+
+  // ② 停用：dispose 保存的句柄并释放 inner（两座位接线无残留）。
+  rig.seatsOff();
+  assert.equal(fiber.disposeCount, 1, '②停用即 dispose 句柄（修前：句柄丢弃、每次启用多挂一份接线＝红）');
+  for (const slot of SEAT_SLOTS) {
+    assert.equal(seatRecordsOf(rig, slot).filter((rec) => !rec.disposed).length, 0,
+      `②停用：inner 释放（${slot} 无残留接线）`);
+  }
+
+  // ③ 迟到激活：停用后回调才跑——新建 wiring 立即回收，不留无人引用的活模型。
+  callback(askScope);
+  for (const slot of SEAT_SLOTS) {
+    const records = seatRecordsOf(rig, slot);
+    assert.equal(records.length, 3, `③迟到激活：${slot} 回调照常新建 wiring`);
+    assert.equal(records[2].disposed, true, `③迟到激活：新建 wiring 立即回收（${slot}；修前：滞留活接线＝红）`);
+  }
+});
+
+test('REQ02-ASK-FIBER：mount 迟于停用解析不再接线；inject 无句柄（undefined）停用不炸（SOL-REQ-02）', async () => {
+  const react = makeMiniReact();
+  // ① 停用先于 mount 解析：cancelled 守卫——不再向宿主命名空间挂注入接线。
+  const productA = await loadClientProduct(react, { setInterval: () => 0, clearInterval: () => {} });
+  const rigA = makeSeatFiberRig(productA, { mountDeferred: true });
+  rigA.seatsOff();
+  rigA.resolveMount(() => {});
+  await rigA.flush();
+  assert.equal(rigA.askInjects.length, 0, '①停用后 mount 解析：不再动态 inject（迟到 mount 不接线）');
+
+  // ② inject 无句柄（undefined）：inner 照常释放、停用出口不抛。
+  const productB = await loadClientProduct(react, { setInterval: () => 0, clearInterval: () => {} });
+  const rigB = makeSeatFiberRig(productB, { mountDeferred: true, noHandle: true });
+  rigB.resolveMount(() => {});
+  await rigB.flush();
+  assert.equal(rigB.askInjects.length, 1, '②前置：无句柄形态照样接线一次');
+  rigB.askInjects[0].callback({ remote: { 'async-tools-ask': rigB.askRemoteNs } });
+  for (const slot of SEAT_SLOTS) {
+    assert.equal(seatRecordsOf(rigB, slot).filter((rec) => !rec.disposed).length, 1,
+      `②前置：${slot} 接线在位`);
+  }
+  assert.doesNotThrow(() => rigB.seatsOff(), '②无句柄停用不抛（句柄可能 undefined）');
+  for (const slot of SEAT_SLOTS) {
+    assert.equal(seatRecordsOf(rigB, slot).filter((rec) => !rec.disposed).length, 0,
+      `②停用：inner 照常释放（${slot}）`);
+  }
+});
+
+test('REQ02-SEATS-THROW：sidebar 槽注入抛错——overlay 先释放＋ask 模型 dispose＋异常上抛（不留半套）（SOL-REQ-02）', async () => {
+  // wireAskSeats 的第二槽（sidebar.footer.action）注入被宿主拒绝时，第一槽
+  //（overlay）与 ask 模型已装——先释放已装部分再上抛：座位接线要么整套装上、
+  // 要么全不占（需求 7.2 生命周期不留半套；修前＝overlay 槽与模型滞留＝红）。
+  const react = makeMiniReact();
+  const product = await loadClientProduct(react, { setInterval: () => 0, clearInterval: () => {} });
+  const rig = makeSeatFiberRig(product, { mountDeferred: true, sidebarThrow: true });
+  rig.resolveMount(() => {});
+  await rig.flush();
+  assert.equal(rig.askInjects.length, 1, '前置：ask 命名空间动态 inject 在场');
+  // 注入回调首跑：装完 overlay 槽后 sidebar 槽注入被拒。
+  assert.throws(() => rig.askInjects[0].callback({ remote: { 'async-tools-ask': rig.askRemoteNs } }),
+    /sidebar slot refused/, '异常原样上抛（注入回调不吞宿主拒绝）');
+  const overlay = seatRecordsOf(rig, 'shell.overlay');
+  assert.equal(overlay.length, 1, 'overlay 槽已装（先装的部分）');
+  assert.equal(overlay[0].disposed, true, 'overlay 槽先释放（修前：半套滞留＝红）');
+  assert.equal(seatRecordsOf(rig, 'sidebar.footer.action').length, 0, 'sidebar 槽未落任何接线');
+  assert.equal(rig.modelUnsubs(), 1,
+    'ask 模型已 dispose（设置订阅退订恰一次；修前：半套模型滞留＝红）');
+  // 半套不留的净效果：停用出口无事可做也不炸。
+  assert.doesNotThrow(() => rig.seatsOff(), '抛错后的停用出口不炸');
+});
+
+test('REQ02-SEATS-THROW：overlay 槽注入抛错——ask 模型先 dispose 再上抛，零槽装上（SOL-REQ-02）', async () => {
+  // wireAskSeats 第一槽（shell.overlay）注入被宿主拒绝时，ask 模型（设置订阅＋
+  // 轮询）刚建、任何座位槽未装——先 dispose 再上抛：「不留半套」对「模型在、
+  // 槽全无」的反向形态同样成立（需求 7.2；修前＝模型滞留＝红）。
+  const react = makeMiniReact();
+  const product = await loadClientProduct(react, { setInterval: () => 0, clearInterval: () => {} });
+  const rig = makeSeatFiberRig(product, { mountDeferred: true, overlayThrow: true });
+  rig.resolveMount(() => {});
+  await rig.flush();
+  assert.equal(rig.askInjects.length, 1, '前置：ask 命名空间动态 inject 在场');
+  // 注入回调首跑：模型建毕、第一槽注入即被宿主拒绝。
+  assert.throws(() => rig.askInjects[0].callback({ remote: { 'async-tools-ask': rig.askRemoteNs } }),
+    /overlay slot refused/, '异常原样上抛（注入回调不吞宿主拒绝）');
+  // 座位槽零装上（seatSlotLog 里可能仍有 plugins.bundle.config 设置卡——非座位
+  // 接线、先于 wireAskSeats 挂载，不属「半套」判定面）。
+  assert.equal(seatRecordsOf(rig, 'shell.overlay').length, 0, 'shell.overlay 零装上（第一槽即拒）');
+  assert.equal(seatRecordsOf(rig, 'sidebar.footer.action').length, 0, 'sidebar.footer.action 零装上（第二槽未触）');
+  assert.equal(rig.modelUnsubs(), 1,
+    'ask 模型已 dispose（设置订阅退订恰一次；修前：模型滞留＝红）');
+  assert.doesNotThrow(() => rig.seatsOff(), '抛错后的停用出口不炸');
+});
+
+test('REQ02-SEATS-THROW：ctx.inject 同步抛错——单链 catch 打印 wiring failed，零接线，停用不炸（SOL-REQ-02）', async () => {
+  // seats 块为单链 .then(...).catch(...)：onFulfilled 内 ctx.inject 同步抛错由
+  // .catch 承接并打印「ask seats wiring failed」——双参 .then 的 onRejected 只
+  // 承接挂载自身拒绝，fulfillment 内抛错会落入无人处理的派生 Promise 拒绝、
+  // 诊断行不打印（修前形态＝红）。假 window 带 console.error＝诊断行观察面。
+  const react = makeMiniReact();
+  const errorLines = [];
+  const product = await loadClientProduct(react, {
+    setInterval: () => 0, clearInterval: () => {},
+    console: { error: (...parts) => { errorLines.push(parts.map(String).join(' ')); } }
+  });
+  const rig = makeSeatFiberRig(product, { mountDeferred: true, injectThrow: true });
+  rig.resolveMount(() => {});
+  await rig.flush();
+  assert.equal(errorLines.filter((line) => line.includes('[dsh-async-tools] ask seats wiring failed')).length, 1,
+    'wiring failed 诊断行恰一条（修前：fulfillment 内抛错旁路 onRejected＝诊断缺失＝红）');
+  assert.equal(errorLines.filter((line) => line.includes('ask seats inject failed')).length, 0,
+    'fiber 句柄未取得——inject failed 行不出现');
+  assert.equal(rig.askInjects.length, 0, '零 ask 注入接线在册');
+  for (const slot of SEAT_SLOTS) {
+    assert.equal(seatRecordsOf(rig, slot).length, 0, `${slot} 无任何接线（inner 从未建立）`);
+  }
+  assert.doesNotThrow(() => rig.seatsOff(), '停用出口不炸（inner/fiber 均空）');
+});
+
 // ── J21：待答界面语言三档（读取范围）─────────────────────────
 
 test('J21：语言三档——auto 经 ctx.locale 跟宿主语言，zh/en 钉住本包词典；locale 推送驱动重渲', async () => {
@@ -3750,4 +3979,47 @@ test('J54：手势组合位——组合中开始的提交手势迟到 click 被�
   } finally {
     delete globalThis.document;
   }
+});
+
+// ── PROBE-GUARD（DOC-06 全退出路径）：reid 探针守卫的源码静态锚 ────────────────
+
+test('PROBE-GUARD：reid 探针守卫与退出路径——pack 判空先于首个 stdout.match、认证首跳 catch→die、进程级兜底先于建目录、中止收束退出码 2、cleanup 永不抛', () => {
+  // verify/probe-recovery-identity.mjs 的收尾纪律（DOC-06：全部退出路径统一清理
+  // 运行目录）：守卫任一缺席，装置段裸抛或 spawn 层失败都会绕过 cleanup()
+  // 泄漏运行目录；判级中途中止必须以装置故障（退出码 2）收束，不得冒充全过。
+  // 运行时行为由探针本体在开发机实例上验证；套件层钉源码形态与顺序
+  //（live-probe-teardown 同款源码切片风格，不执行探针顶层语句）。
+  const source = readFileSync(resolve(ROOT, 'verify/probe-recovery-identity.mjs'), 'utf8');
+  // ① pack spawnSync 判空走 die：spawn 层失败（如受限沙箱 EPERM 击杀）时
+  //    stdout 缺失，直接 .stdout.match 会 TypeError 绕过一切收尾。
+  assert.match(source, /typeof packRun\.stdout !== 'string'\) \{\s*die\(2,/,
+    'pack 判空守卫在场且走 die（error／stdout 类型先行检查）');
+  const packGuardAt = source.indexOf('packRun.error !== undefined');
+  const firstMatchAt = source.indexOf('packRun.stdout.match');
+  assert.ok(packGuardAt >= 0 && firstMatchAt >= 0, '前置：判空与 match 使用点都在场');
+  assert.ok(packGuardAt < firstMatchAt, 'pack 判空先于首个 stdout.match（顺序锚）');
+  // ② 认证首跳 try/catch→die：本段在主 try 之外，裸抛会绕过收尾。
+  assert.match(source, /\} catch \(authError\) \{\s*die\(2, `FAULT：认证首跳失败/,
+    '认证首跳异常走 die（收尾不旁路）');
+  // ③ 进程级兜底：先于任何运行目录创建注册——不留「目录已建、兜底未挂」窗口。
+  assert.match(source, /process\.on\('uncaughtException', \(err\) => \{ die\(/,
+    'uncaughtException → die');
+  assert.match(source, /process\.on\('unhandledRejection', \(err\) => \{ die\(/,
+    'unhandledRejection → die');
+  const uncaughtAt = source.indexOf("process.on('uncaughtException'");
+  const unhandledAt = source.indexOf("process.on('unhandledRejection'");
+  const runDirAt = source.indexOf('mkdirSync(RUN_DIR');
+  assert.ok(uncaughtAt >= 0 && unhandledAt >= 0 && runDirAt >= 0, '前置：兜底注册与建目录都在场');
+  assert.ok(uncaughtAt < runDirAt && unhandledAt < runDirAt,
+    '两个进程级兜底都先于 mkdirSync(RUN_DIR)（顺序锚；修前：兜底挂在建目录后＝窗口＝红）');
+  // ④ 判级中途中止：主 try 的 catch 置 aborted，finally 以 aborted 优先收束——
+  //    装置故障不得冒充退出码 0（README 退出码契约）。
+  assert.match(source, /catch \(probeError\) \{[\s\S]{0,200}?aborted = true;/,
+    '主 try 的 catch (probeError) 置 aborted（中止标记在场）');
+  assert.match(source, /process\.exit\(aborted \? 2 : \(failed > 0 \? 1 : 0\)\);/,
+    '退出码收束 aborted 优先（2＝装置故障；失败 1；全过 0）');
+  // ⑤ cleanup 永不抛：rmSync 包 try/catch，失败只 WARN 留现场（进程级兜底
+  //    路径里再抛会把 Node 打成 fatal，清理反而做不完）。
+  assert.match(source, /rmSync\(RUN_DIR, \{ recursive: true, force: true \}\);\s*\} catch \(rmError\) \{\s*console\.error\(`\[launcher\] WARN: 运行目录清理失败/,
+    'cleanup 的 rmSync 有 try/catch＋留存现场告警（cleanup 永不抛）');
 });
