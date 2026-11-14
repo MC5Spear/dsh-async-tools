@@ -310,6 +310,10 @@ hostTest('R57 真实注册表④：并发双创建同窗——首创建直付后
     assert.match(r2.result, new RegExp(`\\[output truncated: ${String(jsonB.length - 8)} chars omitted\\]`),
       `次创建吃同批余量 8（省略 ${String(jsonB.length - 8)}）——旧形态拿新批全额 60 不截断，本断言必红`);
     assert.equal(subject.batch, null, '末个认领注销 ⇒ 复查后关批');
+    // §2.6 输入代记账：领取是模型的下一回合（看到两个直付结果后才发 wait）——
+    // 回合边界重置内容预算，续段才能以全额整装（装置未挂行监听，事件重置以
+    // 手工置代等价替代；同代合计约束由 RC-GEN 锚专证）。
+    subject.generation.spent = 0;
     // 续段恢复：关批后的下一载体（wait）以新批全额预算交回次创建被省略的中段。
     const again = await rig.waiter.execute(waitArgs(jobB), rig.exec());
     assert.equal(again.status, 'completed');
@@ -1302,6 +1306,10 @@ hostTest('R58-g：批预算耗尽——完成消息延后不丢正文，wait_ms=
     // 次序决定哪条进首批（A 触发先装配＝A 截断入批、B 延后；反向＝B 完整入批、
     // A 截断入批），但无论哪种时序，B 的完整正文（50 字符低于任何单批预算）必须
     // 整体出现在某个载体——等待返回、完成消息或领取——绝不允许只余截断标注。
+    // §2.6 输入代记账：领取是模型的下一回合（看到首批截断与延后说明后才发
+    // 零等待点名）——回合边界重置内容预算，B 才能整装进新批（装置未挂行监听，
+    // 事件重置以手工置代等价替代；同代合计约束由 RC-GEN 锚专证）。
+    ledger.subjects.get(rig.parent.id).generation.spent = 0;
     const pickupB = await rig.waiter.execute(
       { wait_ms: 0, targets: [{ kind: 'job', id: idB }] }, rig.exec()
     );
@@ -1873,6 +1881,10 @@ hostTest('W-READY-A：入口已就绪的续段 → 无目标等待不挂起，�
     const first = await rig.waiter.execute(waitArgs(jobId), rig.exec());
     assert.equal(first.status, 'completed');
     assert.equal(first.truncated, true, '前置：首访按 40 份额截断（partial 事实，中段留缓冲）');
+    // §2.6 输入代记账：第二次 wait 是模型的下一回合（看到首访截断后才再发
+    // 等待）——回合边界重置内容预算，续段才能整装（装置未挂行监听，事件重置
+    // 以手工置代等价替代；同代合计约束由 RC-GEN 专证）。
+    ledger.subjects.get(rig.parent.id).generation.spent = 0;
     // 无目标正等待：入口汇集就绪续段，不进入资格检查挂起。
     const started = Date.now();
     const again = await rig.waiter.execute({ wait_ms: 300 }, rig.exec());
@@ -3423,6 +3435,8 @@ hostTest('REC-A：完成消息载体 partial——认领在接受点释放，关
   assert.ok(truncate('ABCDEFGHIJKL', 8, 'en').text !== 'ABCDEFGHIJKL', '前置：份额确实截断');
   // 等待出口关批 → 零等待领取续段（full 预算）：只交付中段，不重发首尾。
   ledger.closeBatchIfIdle(rig.OWNER);
+  // §2.6 输入代记账：零等待领取在下一回合——装置内手工重置代（同代合计约束由 RC-GEN 专证）。
+  ledger.subjects.get(rig.OWNER).generation.spent = 0;
   const { delivered } = ledger.collectBatch(rig.OWNER, {});
   assert.equal(delivered.length, 1, 'partial 续段条目进批（事实的 partial 例外）');
   assert.equal(delivered[0].text, expectedMiddle, '续段＝省略中段原文');
@@ -3448,6 +3462,8 @@ hostTest('REC-B：完成消息回滚保缓冲与追加增量——凭据四字�
   // 凭据必须恢复「装配前原文＋追加增量」——修前凭据丢弃 remainder，回滚退成
   // 「空 original ＋ tail」，装配份额（中段原文）永久丢失。
   ledger.closeBatchIfIdle(rig.OWNER);
+  // §2.6 输入代记账：再次装配＝下一回合领取——装置内手工重置代（同代合计由 RC-GEN 专证）。
+  ledger.subjects.get(rig.OWNER).generation.spent = 0;
   const { delivered } = ledger.collectBatch(rig.OWNER, {});
   assert.equal(delivered.length, 1, '续段装配成功（前置）');
   entry.buffer += 'APPENDED-INCREMENT';
@@ -3683,6 +3699,8 @@ hostTest('REC-K：完成消息载体回滚凭据四字段——装配后增量�
   assert.equal(rig.calls.inject.length, 0, '通道未送达（前置：记录器只在真通道上计数）');
   // 关批 → 下一批装配见到完整缓冲（凭据链完整性经装配的 original 再现）。
   ledger.closeBatchIfIdle(rig.OWNER);
+  // §2.6 输入代记账：回滚不退代额度（保守方向）、下一批装配＝下一回合——装置内手工重置代。
+  ledger.subjects.get(rig.OWNER).generation.spent = 0;
   const { delivered } = ledger.collectBatch(rig.OWNER, {});
   assert.equal(delivered.length, 1, '重装配进批');
   assert.equal(delivered[0].original, expected, '下一批凭据的 original＝原文＋增量（缓冲未损）');
@@ -3769,6 +3787,8 @@ hostTest('REC-O：让位终局复查投 partial 续段——中段经完成消�
   // 宿主接受点释放，复查按 partial 例外投中段，不重发首尾。首条消息的批次在
   // 无活等待时按关批判定关闭（下一批恢复全额预算）。
   ledger.closeBatchIfIdle(rig.OWNER);
+  // §2.6 输入代记账：让位复查＝下一回合的被动载体——装置内手工重置代（同代合计由 RC-GEN 专证）。
+  ledger.subjects.get(rig.OWNER).generation.spent = 0;
   const token = ledger.claimWait(rig.OWNER);
   await ledger.releaseWait(token, rig.OWNER);
   assert.equal(rig.calls.inject.length, 2, '续段经完成消息恢复（让位复查载体）');
@@ -3859,10 +3879,17 @@ hostTest('REC-J：等待出口注记两分——续段附带给 partialDelivered
       '首次交付不声称续段已附带');
     const entry = led.jobs.get(jobId);
     assert.equal(entry.deliveredFact.partial, true, '前置：partial 事实');
+    // §2.6 输入代记账：每次续访都是模型的下一回合（看到上批结果后才再发等待）
+    // ——回合边界重置内容预算，续段才能逐批推进（装置未挂行监听，事件重置以
+    // 手工置代等价替代；同代合计约束由 RC-GEN 专证）。
+    const nextTurn = () => {
+      ledger.subjects.get(rig.parent.id).generation.spent = 0;
+      return rig.waiter.execute(waitArgs(jobId), rig.exec());
+    };
     // 续访：trigger 携带续段（预算 40 < 缓冲 144 ⇒ 再截断）——双事实并陈：
     // 已附带份额（partialDelivered，chars＝装配条目份额＝output 长度）＋待领取
     // 份额（partialPending，chars＝剩余缓冲长度）。
-    const second = await rig.waiter.execute(waitArgs(jobId), rig.exec());
+    const second = await nextTurn();
     assert.equal(second.status, 'completed');
     assert.ok(second.output.length > 0, '续段正文随 output 附带');
     assert.match(second.note ?? '', /attached with this batch/, '已附带份额注记在场（partialDelivered）');
@@ -3875,7 +3902,7 @@ hostTest('REC-J：等待出口注记两分——续段附带给 partialDelivered
     //（无剩余 ⇒ 不再有 partialPending）；随后事实完全 ⇒ alreadyDelivered。
     let latest = second;
     for (let i = 0; i < 6 && latest.truncated === true; i += 1) {
-      latest = await rig.waiter.execute(waitArgs(jobId), rig.exec());
+      latest = await nextTurn();
       assert.equal(latest.status, 'completed', '续访按终态返回');
       assert.match(latest.note ?? '', /attached with this batch/, '附带份额注记在场');
       if (latest.truncated === true) {
@@ -3954,6 +3981,8 @@ hostTest('CRE-3：窗口空闲序＝先复查后关批——复查在旧批上�
   assert.equal(entry.buffer, expectedMiddle, '省略中段按原文留缓冲');
   assert.equal(ledger.subjects.get(rig.OWNER).batch, null,
     '复查后批次已关（关批在复查之后）——下一载体恢复全额预算');
+  // §2.6 输入代记账：下一载体＝下一回合——装置内手工重置代（同代合计由 RC-GEN 专证）。
+  ledger.subjects.get(rig.OWNER).generation.spent = 0;
   const { delivered } = ledger.collectBatch(rig.OWNER, {});
   assert.equal(delivered.length, 1, '续段条目进批（partial 例外）');
   assert.equal(delivered[0].text, expectedMiddle, '续段＝省略中段原文');
@@ -4042,7 +4071,10 @@ hostTest('RN-B：100 条空输出结算——物理消息恰 14（10＋3＋1）�
   assert.match(aggregate, /wait_ms=0/, '聚合带领取出路');
   assert.ok(!/targets=/.test(aggregate), '聚合示例不带 targets（一并领取全部就绪结果）');
   const notesText = [...individual, aggregate].join('\n');
-  assert.ok(notesText.length <= 800, `说明字符合计 ${String(notesText.length)} ≤ 800（数值固定可测）`);
+  // 上限按现行词典文案定值：§2.6 修订为延后说明三键补「领取时机」句（至迟在
+  // 经正常收尾的回合结束后可领取）——en 档四条说明合计 ~803，上限取 900 容一句
+  // 内的措辞微调，仍钉住「无界增长必红」的本意。
+  assert.ok(notesText.length <= 900, `说明字符合计 ${String(notesText.length)} ≤ 900（数值固定可测）`);
   // 未逐一说明的候选不静默丢失：内容在缓冲（空正文零内容）＋下一批 FIFO 补投。
   ledger.closeBatchIfIdle(rig.OWNER);
   const token2 = ledger.claimWait(rig.OWNER);
@@ -4170,6 +4202,8 @@ hostTest('ECHO-E6＋R2 活性：partial 续段批次附原文恰一次（截断�
   assert.equal(entry.echoAttached, false, '原文未置一次性状态');
   // 第二批（关批恢复全额预算）：续段 50 字符完整交付，原文 42 ≤ 剩余 50 → 附上。
   ledger.closeBatchIfIdle(rig.OWNER);
+  // §2.6 输入代记账：第二批＝下一回合——装置内手工重置代（同代合计由 RC-GEN 专证）。
+  ledger.subjects.get(rig.OWNER).generation.spent = 0;
   const token2 = ledger.claimWait(rig.OWNER);
   await ledger.releaseWait(token2, rig.OWNER);
   assert.equal(rig.calls.inject.length, 2, '续段批恰一条');
@@ -4187,6 +4221,8 @@ hostTest('ECHO-E6＋R2 活性：partial 续段批次附原文恰一次（截断�
   entry.buffer = 'E6-RETRY-BODY';
   entry.readyAt = ledger.now();
   ledger.closeBatchIfIdle(rig.OWNER);
+  // §2.6 输入代记账：重演装配＝再下一回合——手工重置代（与上一重置同一装置口径）。
+  ledger.subjects.get(rig.OWNER).generation.spent = 0;
   const { delivered } = ledger.collectBatch(rig.OWNER, {});
   assert.equal(delivered.length, 1, '变异形态下条目可再装配（重演双附窗口）');
   assert.ok(String(delivered[0].echo).includes('E6-ECHO-MARK'),
@@ -5984,6 +6020,9 @@ hostTest('RC-HDUP-NT：非触发恢复条目完整头随批；窄预算增量恢
     assert.equal(first.delivered.length, 1, '前置：首装交付、份额登记在册');
     const subject = ledger.subjects.get(owner);
     subject.batch = null; // 关批（装置内直达置空，同 RC-P）
+    // §2.6 输入代记账：恢复点名是首装后的下一回合——装置内手工重置代（跨回合
+    // 领取的自然模型流形态；同代合计约束由 RC-GEN 专证）。
+    subject.generation.spent = 0;
     ledger.jobs.get(jobId).config = { maxResultChars: 100, agentLang: 'en' }; // 恢复批窄预算
     const marker = t('en', 'delivery.recoveryMarker', { jobId });
     const heads = [];
@@ -6002,6 +6041,7 @@ hostTest('RC-HDUP-NT：非触发恢复条目完整头随批；窄预算增量恢
       assert.equal(countLiteral(rendered, 'N'.repeat(100)), 1, `第 ${round + 1} 批：正文恰一次`);
       heads.push(entry.recovery_line);
       subject.batch = null; // 关批后再取下一片（装置内直达，同 RC-P）
+      subject.generation.spent = 0; // 下一次点名＝再下一回合（装置内手工重置代）
     }
     assert.notEqual(heads[0], heads[1], '两批头不同（位置说明行各自）');
     assert.ok(heads[0].includes('characters 1–100') && heads[1].includes('characters 101–200'),
@@ -6074,6 +6114,8 @@ hostTest('RC-E：副本上限与行清扫——条数 10 FIFO、字符 2×maxRes
     for (const portions of subject.recoveries.values()) portionsA += portions.length;
     assert.equal(portionsA, 10, '份额条数上限 10（延后候选不入份额）');
     subject.batch = null;
+    // §2.6 输入代记账：第二批装配＝下一回合——装置内手工重置代（同代合计由 RC-GEN 专证）。
+    subject.generation.spent = 0;
     ledger.collectBatch(ownerA, { lang: 'en' });
     portionsA = 0;
     for (const portions of subject.recoveries.values()) portionsA += portions.length;
@@ -6086,7 +6128,10 @@ hostTest('RC-E：副本上限与行清扫——条数 10 FIFO、字符 2×maxRes
     for (let i = 0; i < 3; i += 1) {
       idsB.push(mk(ownerB, i, 400, 500));
       ledger.collectBatch(ownerB, { lang: 'en' });
+      // §2.6 输入代记账：逐批装配＝逐回合领取——装置内手工重置代（否则第二批
+      // 起只剩代内余量 100，份额被截断登记，字符上限断言失真）。
       ledger.subjects.get(ownerB).batch = null;
+      ledger.subjects.get(ownerB).generation.spent = 0;
     }
     const subB = ledger.subjects.get(ownerB);
     let total = 0;
@@ -6214,6 +6259,7 @@ hostTest('RC-H：份额按登记序并存——连续取消的各份额都可先
         '标记行在场（必要说明层，不入正文预算）');
       served += item.text;
       subjectOf().batch = null;
+      subjectOf().generation.spent = 0; // §2.6 输入代记账：逐批领取＝逐回合——装置内手工重置代
     }
     assert.equal(ledger.stageRecovery('rc-h-job', owner)?.drained, true,
       '两份额服务完：流取尽待定案');
@@ -6257,6 +6303,8 @@ hostTest('RC-L：恢复条目批满/预算尽整条延后——挂起保持、�
     // 批关闭（生产＝领取关批；此处直达账本置空重开）→ 下一批第 1 档恢复：自
     // 游标起顺序切片（标记行＋位置说明行入必要说明层，不入正文预算）。
     subject.batch = null;
+    // §2.6 输入代记账：下一批恢复＝下一回合领取——装置内手工重置代（同代合计由 RC-GEN 专证）。
+    subject.generation.spent = 0;
     const third = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' });
     const recoveryItem = third.delivered.find((item) => item.recovery === true);
     assert.ok(recoveryItem !== undefined, '下一批恢复交付（标记行＋正文切片＋位置说明行）');
@@ -6298,6 +6346,9 @@ hostTest('RC-M：续取优先——有未交付内容时不重发副本、中段
     subject.batch = null; // 关批（生产＝领取关批）
     assert.equal(ledger.stageRecovery('rc-m-job', owner), null,
       '有未交付内容 → 不走恢复档（续取优先）');
+    // §2.6 输入代记账：续取点名是下一回合——装置内关批＋手工重置代（同代合计由 RC-GEN 专证）。
+    subject.batch = null;
+    subject.generation.spent = 0;
     const second = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en', triggerJobIds: ['rc-m-job'] });
     assert.ok(second.delivered.every((item) => item.recovery !== true),
       '同批不重发副本（标记行不得在场）');
@@ -6427,6 +6478,9 @@ hostTest('RC-P：恢复流游标分批——切片＝min(批剩余,未服务长)
     assert.equal(subject.recoveries.get('rc-p-job')?.[0]?.text, 'b'.repeat(900),
       '前置：份额正文在册');
     subject.batch = null; // 关批（生产＝领取事件或全部活等待提交；装置内直达置空）
+    // §2.6 输入代记账：恢复点名是首装后的下一回合——装置内手工重置代（跨回合
+    // 领取的自然模型流形态；同回合串行合计约束由 RC-GEN 专证）。
+    subject.generation.spent = 0;
     entry.config = { maxResultChars: 400, agentLang: 'en' }; // 恢复批按 400 额度开
     const plan = [400, 400, 100];
     let served = 0;
@@ -6454,7 +6508,10 @@ hostTest('RC-P：恢复流游标分批——切片＝min(批剩余,未服务长)
       const stream = subject.recoveryStreams.get('rc-p-job');
       assert.ok(stream !== undefined && stream.ord === 1 && stream.offset === served,
         `第 ${i + 1} 批后游标：份额 1、偏移 ${served}`);
-      if (more) subject.batch = null; // 关批后下一批自游标续
+      if (more) {
+        subject.batch = null; // 关批后下一批自游标续
+        subject.generation.spent = 0; // 下一次点名＝再下一回合（装置内手工重置代）
+      }
     }
     assert.equal(served, 900, '三批合计＝份额全文（区间无重叠、无跳空）');
   } finally {
@@ -6625,6 +6682,8 @@ hostTest('RC-T：同批单恢复条目与预算口径——单槽末位胜出、
       assert.equal(ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' }).delivered.length, 1,
         `前置：${id} 整段交付成份额`);
       ledger.subjects.get(owner).batch = null;
+      // §2.6 输入代记账：下一作业首装＝下一回合——装置内手工重置代（同代合计由 RC-GEN 专证）。
+      ledger.subjects.get(owner).generation.spent = 0;
     }
     const subject = ledger.subjects.get(owner);
     assert.equal(ledger.stageRecovery('rc-t-a', owner)?.tier, 1, 'A 第 1 档可恢复');
@@ -6878,12 +6937,16 @@ hostTest('RC-W：清空出口清流——到期清扫、条数逐出与推进定
     ledger.collectBatch(ownerB, { consumeRecovery: true, lang: 'en' }); // 服务完份额 1 → 游标 {1, 100}
     subjectB.batch = null;
     assert.ok(subjectB.recoveryStreams.get('rc-w-e1') !== undefined, '前置：e1 流游标在册');
+    // §2.6 输入代记账：e2 的逐次增量装配＝后续回合——装置内手工重置代（首装与
+    // 恢复装配已占 200，不重置则 e2 首次开批按 100−200 取 0、份额缺席）。
+    subjectB.generation.spent = 0;
     ledger.noteJobStarted(rowB, { maxResultChars: 100, agentLang: 'en' }, 'rc-w-e2', ownerB);
     ledger.jobs.get('rc-w-e2').terminal = null;
     for (let i = 1; i <= 10; i += 1) {
       ledger.jobs.get('rc-w-e2').buffer = `p${i}-chunk`;
       ledger.collectBatch(ownerB, { consumeRecovery: true, lang: 'en', includeRunning: true });
       subjectB.batch = null; // 逐次关批（增量各自成份额，同 RC-U ③）
+      subjectB.generation.spent = 0; // §2.6 输入代记账：逐次增量＝逐回合——装置内手工重置代
     }
     ledger.now = realClock;
     assert.equal(subjectB.recoveries.get('rc-w-e1'), undefined, '第 11 份登记逐出最旧（e1 份额清空）');
@@ -7193,6 +7256,9 @@ hostTest('RC-Y1：恢复请求批满延后在场——async_run 首次等待让�
     assert.ok(second.deferred.includes('rc-y1-job'), '前置：批预算尽整条延后（挂起保持）');
     assert.equal(subject.stagedRecovery?.jobId, 'rc-y1-job', '前置：stagedRecovery 在场');
     subject.batch = null; // 关批（生产＝领取关批）——让出批次自新批装配
+    // §2.6 输入代记账：让出载体是下一回合的调用（首装属更早回合）——装置内
+    // 手工重置代，让出批才有整批额度装配就绪条目（同代合计由 RC-GEN 专证）。
+    subject.generation.spent = 0;
     // 就绪条目锚（非空 outputs 形态）：同主体他作业照常随让出批携带，恢复条目不在其中。
     seedTerminalJob(rig.ctx, owner, 'rc-y1-ready', { maxResultChars: 400, agentLang: 'en' }, 'RC-Y1-READY-BODY');
     ledger.jobs.get('rc-y1-ready').readyAt = ledger.now();
@@ -7209,6 +7275,8 @@ hostTest('RC-Y1：恢复请求批满延后在场——async_run 首次等待让�
     assert.equal(ledger.subjects.get(owner).stagedRecovery?.jobId, 'rc-y1-job',
       'stagedRecovery 未被让出批次消费（挂起原样保持）');
     // 恢复仍可经等待载体装配（consumeRecovery 显式选择加入）：自游标（份额 1 起点）续取全文。
+    subject.batch = null; // 关批（让出批不再延续）——等待载体自新批装配
+    subject.generation.spent = 0; // §2.6 输入代记账：等待载体＝再下一回合（装置内手工重置代）
     const served = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' });
     const item = served.delivered.find((one) => one.recovery === true);
     assert.ok(item !== undefined, '恢复条目在等待载体批次装配');
@@ -7250,6 +7318,8 @@ hostTest('RC-Y2：同形态 async_workflow 让出——恢复请求不被消费�
     const second = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' });
     assert.ok(second.deferred.includes(a.job_id), '前置：批预算尽整条延后（挂起保持）');
     subject.batch = null; // 关批（生产＝领取关批）
+    // §2.6 输入代记账：让出载体是下一回合的调用——装置内手工重置代（同 RC-Y1 口径）。
+    subject.generation.spent = 0;
     // 就绪条目锚（非空 outputs 形态）：随 B 的让出批携带，恢复条目不在其中。
     seedTerminalJob(rig.ctx, owner, 'rc-y2-ready', { maxResultChars: 400, agentLang: 'en' }, 'RC-Y2-READY-BODY');
     ledger.jobs.get('rc-y2-ready').readyAt = ledger.now();
@@ -7268,6 +7338,11 @@ hostTest('RC-Y2：同形态 async_workflow 让出——恢复请求不被消费�
     // 等待载体装配（生产路径）：A 注册表行结算后显式零等待点名 → 标记行＋份额全文。
     rig.finisher(0);
     await sleep(150);
+    // §2.6 输入代记账：显式零等待点名是让出后的下一回合——装置内关批＋手工
+    // 重置代（不发 turn-stopping：装置直达装配的份额无载波信号，事件定案会把
+    // 在册份额确认清除、误伤本锚的恢复点名前提）。
+    ledger.subjects.get(owner).batch = null;
+    ledger.subjects.get(owner).generation.spent = 0;
     const recovered = await rig.waiter.execute(
       { wait_ms: 0, targets: [{ kind: 'job', id: a.job_id }] }, rig.exec()
     );
@@ -7480,6 +7555,9 @@ hostTest('RC-J：出口中止的登记现查——装配时信号已中止即置
     const firstCopy = (subject.recoveries.get('rc-j-job') ?? [])[0];
     assert.ok(firstCopy !== undefined && firstCopy.returned === false, '前置：首装份额未标记');
     subject.batch = null;
+    // §2.6 输入代记账：第二载体按下一回合近似——装置内手工重置代（本锚验登记
+    // 现查〔signal.aborted〕，代合计行为由 RC-GEN 专证）。
+    subject.generation.spent = 0;
     // 中止发生在两次装配之间：第二次装配在改写取消窗口内——登记现查必须置
     // returned（修前：份额 2.returned === false＝红）。两载体各持独立信号：
     // 份额 1 的信号保持未中止（回合收尾按未中止确认），份额 2 现查即退回。
@@ -7555,6 +7633,300 @@ hostTest('RC-K：恢复条目回滚＝游标回退——undoClaim 不写作业�
     const later = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' });
     assert.equal(later.delivered.filter((item) => item.job_id === 'rc-k-job').length, 0,
       '后续批次不再投该作业（修前：标记行当正文再投＝红）');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+// ── RC-GEN／RC-AA～RC-AD（§2.6 修订：输入代记账、迟到回滚身份校验、
+// 恢复出口第 3 档与交付事实解耦）────────────────────────────────────────
+
+hostTest('RC-GEN：输入代记账——同代串行装配合计封顶、关批不重置、turn-stopping 重置、中止回合结转（修前红）', async () => {
+  // §2.6「共同输入的预算记账上移到输入代」：记账单位是输入代（代边界＝该主体
+  // 的 agent/turn-stopping 重置），不是批次——同一代内的本包计费内容（正文
+  // 份额、恢复条目正文切片、回显原文）合计 ≤ maxResultChars。四个独立期望：
+  // ① 同代第二批按「maxResultChars − 代内已交付」开批（修前每批全额）；
+  // ② 关批（batch 置空）不重置代额度——下一批仍按代内剩余开；
+  // ③ turn-stopping 事件重置代（重复发出幂等）——其后新批恢复全额；
+  // ④ 中止路径不派发该事件——额度跨回合结转、如实保持（下一批仍按剩余开）。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  ledger.attachClaimedListener(ctx);
+  try {
+    const owner = `rc-gen-owner-${rcSuffix()}`;
+    // 两作业：A 恰满额 400（首装整装）、B 100（同代第二批的候选）。
+    const entryA = seedTerminalJob(
+      ctx, owner, 'rc-gen-a', { maxResultChars: 400, agentLang: 'en' }, 'g'.repeat(400)
+    );
+    seedTerminalJob(
+      ctx, owner, 'rc-gen-b', { maxResultChars: 400, agentLang: 'en' }, 'h'.repeat(100)
+    );
+    // ① 同代串行第二次装配：首装 400 用尽整代额度 → 同代第二批开 0 → 整条延后。
+    const first = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en', triggerJobIds: ['rc-gen-a'] });
+    const subject = ledger.subjects.get(owner); // collectBatch 建主体后现读
+    assert.ok(first.delivered.length === 1 && first.delivered[0].jobId === 'rc-gen-a'
+      && first.delivered[0].truncated === false,
+      '前置：首装 A 整装 400（恰满额）');
+    assert.equal(subject.generation.spent, 400, '代内已交付＝首装份额');
+    subject.batch = null; // 关批＝批级边界，不是代边界
+    const second = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en', triggerJobIds: ['rc-gen-b'] });
+    assert.ok(second.delivered.length === 0 && second.deferred.includes('rc-gen-b'),
+      '② 关批不重置代额度：同代第二批开 0、B 整条延后（修前：新批全额交付＝红）');
+    assert.equal(subject.generation.spent, 400, '延后零扣减、代内已交付保持');
+    // ③ 代边界重置：回合可关闭事件（重复发出幂等）后新批恢复全额。
+    ctx.emit('agent/turn-stopping', { agent: { id: owner } });
+    ctx.emit('agent/turn-stopping', { agent: { id: owner } });
+    assert.equal(subject.generation.spent, 0, 'turn-stopping 重置代（重复发出幂等）');
+    subject.batch = null;
+    const third = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en', triggerJobIds: ['rc-gen-b'] });
+    assert.ok(third.delivered.length === 1 && third.delivered[0].truncated === false,
+      '③ 代重置后新批恢复全额：B 完整交付');
+    assert.equal(subject.generation.spent, 100, '代内已交付随新批继续记账');
+    // ④ 中止回合结转：不发事件（中止路径不派发 turn-stopping）、关批后再装——
+    //    新批仍按代内剩余开（不重置、不凭关批恢复全额）。
+    subject.batch = null;
+    entryA.terminal = null;
+    entryA.deliveredFact = null;
+    entryA.buffer = 'z'.repeat(300); // 增量 300 恰等于代内剩余 300 → 全额入账
+    const fourth = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en', includeRunning: true });
+    const inc = fourth.delivered.find((item) => item.jobId === 'rc-gen-a');
+    assert.ok(inc !== undefined && inc.text === 'z'.repeat(300),
+      '④ 代内剩余容纳增量全额（300 ≤ 400−100）');
+    assert.equal(subject.generation.spent, 400, '④ 代内已交付跨批累计（100＋300 恰 400 封顶）');
+    subject.batch = null;
+    entryA.buffer = 'w'.repeat(10); // 再一笔小额增量——代额度已耗尽 → 整条延后
+    const fifth = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en', includeRunning: true });
+    assert.ok(fifth.delivered.every((item) => item.jobId !== 'rc-gen-a'),
+      '④ 代额度耗尽后同代新载体零份额：小额增量同样延后（修前：关批即全额＝红）');
+    assert.ok(fifth.deferred.includes('rc-gen-a'), '延后随 deferred 清单可见');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+hostTest('RC-AA：迟到回滚身份校验——流已前进不动游标只丢自身记录；流已移除零操作（修前红）', async () => {
+  // §2.6「回退以推进凭据与流前缀一致为前提」：undoClaim 的恢复回滚先验身份——
+  // 凭据份额序＝当前流份额序且其后无新推进才回退游标；流已在新份额上（迟到
+  // 凭据）只丢弃该凭据自身的推进记录、不动游标（已按可能重复警示交回的内容
+  // 不回退重取，避免旧份额的迟到回滚把新流重置到已发位置、从新份额头部重发）；
+  // 流已移除（份额序不复用）零操作——不重建流、不复活旧序号。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  try {
+    const owner = `rc-aa-owner-${rcSuffix()}`;
+    ledger.noteJobStarted(ctx, { maxResultChars: 1000, agentLang: 'en' }, 'rc-aa-job', owner);
+    ledger.collectBatch(owner, { lang: 'en' }); // 建主体（空候选：零装配、零扣减）
+    const subject = ledger.subjects.get(owner);
+    // 腿 ① 流已前进（份额 2 在服务中）：份额 1 的凭据迟到。
+    subject.recoveries.set('rc-aa-job', [
+      { ord: 1, text: 'a'.repeat(400), partial: false, terminal: { status: 'completed' }, registeredAt: ledger.now(), returned: true, via: 'wait' },
+      { ord: 2, text: 'b'.repeat(500), partial: false, terminal: { status: 'completed' }, registeredAt: ledger.now(), returned: false, via: 'wait' }
+    ]);
+    subject.recoverySeqs.set('rc-aa-job', 2);
+    subject.recoveryStreams.set('rc-aa-job', {
+      ord: 2, offset: 250,
+      advances: [
+        { ord: 1, from: 0, to: 400, signal: null },
+        { ord: 2, from: 0, to: 250, signal: null }
+      ]
+    });
+    ledger.undoClaim(owner, [{ recovery: true, jobId: 'rc-aa-job', recoveryOrd: 1, recoveryFrom: 0 }]);
+    const stream = subject.recoveryStreams.get('rc-aa-job');
+    assert.ok(stream !== undefined && stream.ord === 2 && stream.offset === 250,
+      '腿 ① 迟到凭据不动游标：仍在份额 2、偏移 250（修前：重置回份额 1 起点＝红）');
+    assert.deepEqual(stream.advances.map((adv) => adv.ord), [2],
+      '腿 ① 只丢弃该凭据自身的推进记录（份额 1 的记录出册、份额 2 的保留）');
+    // 腿 ① 行为面：下一次恢复装配自份额 2 游标续取——不从份额 2 头部重发。
+    assert.equal(ledger.stageRecovery('rc-aa-job', owner)?.tier, 1, '腿 ① 前置：份额 2 可恢复');
+    const item = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' }).delivered
+      .find((one) => one.recovery === true);
+    assert.ok(item !== undefined && item.text === 'b'.repeat(250),
+      '腿 ① 续取自游标 250（份额 2 的后半）——不重置到头部重发前 250（修前红）');
+    assert.ok(item.recoveryHead.includes(t('en', 'delivery.recoveryPosition', {
+      index: 2, from: 251, to: 500, state: t('en', 'delivery.recoveryDone')
+    })), '腿 ① 位置行区间＝251–500（续取而非重发）');
+    // 腿 ② 流已移除（份额清空后的流校正）：凭据零操作——不重建流、不复活序号。
+    subject.recoveries.set('rc-aa-job', [
+      { ord: 3, text: 'c'.repeat(100), partial: false, terminal: { status: 'completed' }, registeredAt: ledger.now(), returned: false, via: 'wait' }
+    ]);
+    subject.recoveryStreams.delete('rc-aa-job');
+    ledger.undoClaim(owner, [
+      { recovery: true, jobId: 'rc-aa-job', recoveryOrd: 1, recoveryFrom: 0 },
+      { recovery: true, jobId: 'rc-aa-job', recoveryOrd: 2, recoveryFrom: 250 }
+    ]);
+    assert.equal(subject.recoveryStreams.get('rc-aa-job'), undefined,
+      '腿 ② 流已移除：零操作（不重建流、不复活旧序号——修前：重建 {ord:1}＝红）');
+    // 关批再取（腿 ① 批已装过恢复条目：recoveryAssembled 在批上，同批不再装）。
+    subject.batch = null;
+    subject.generation.spent = 0; // 装置内手工重置代（领取＝新回合）
+    assert.equal(ledger.stageRecovery('rc-aa-job', owner)?.tier, 1, '腿 ② 份额 3 照常可恢复');
+    const fresh = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' }).delivered
+      .find((one) => one.recovery === true);
+    assert.ok(fresh !== undefined && fresh.text === 'c'.repeat(100),
+      '腿 ② 新份额自位置 0 交齐（序号语义不受旧凭据影响）');
+    assert.ok(fresh.recoveryHead.includes('portion 3'), '腿 ② 位置行按新份额序号 3');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+hostTest('RC-AB：合法回滚对照——凭据与流前缀一致才回退；同份额更后推进＝迟到（修前红）', async () => {
+  // RC-AA 的对照锚：身份校验放行的形态照常回退（回滚能力未被身份校验误伤）；
+  // 同一份额上存在更后推进（装配后流已越过凭据区间）时按迟到分档——不回退。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  try {
+    const owner = `rc-ab-owner-${rcSuffix()}`;
+    ledger.noteJobStarted(ctx, { maxResultChars: 1000, agentLang: 'en' }, 'rc-ab-job', owner);
+    ledger.collectBatch(owner, { lang: 'en' }); // 建主体（空候选：零装配、零扣减）
+    const subject = ledger.subjects.get(owner);
+    subject.recoveries.set('rc-ab-job', [
+      { ord: 1, text: 'a'.repeat(400), partial: false, terminal: { status: 'completed' }, registeredAt: ledger.now(), returned: true, via: 'wait' }
+    ]);
+    subject.recoverySeqs.set('rc-ab-job', 1);
+    // ① 合法回滚：流停在份额 1、凭据区间之后无新推进 → 游标回退、推进记录清。
+    subject.recoveryStreams.set('rc-ab-job', {
+      ord: 1, offset: 400, advances: [{ ord: 1, from: 0, to: 400, signal: null }]
+    });
+    ledger.undoClaim(owner, [{ recovery: true, jobId: 'rc-ab-job', recoveryOrd: 1, recoveryFrom: 0 }]);
+    const rolled = subject.recoveryStreams.get('rc-ab-job');
+    assert.ok(rolled !== undefined && rolled.ord === 1 && rolled.offset === 0,
+      '① 合法回滚：游标回退到装配前（份额 1、偏移 0）');
+    assert.equal(rolled.advances.length, 0, '① 回退点之后的推进记录清空');
+    // ② 同份额更后推进：凭据 from=0 但流已推进到 400→480——凭据区间已被越过，
+    //    按迟到分档：只丢自身记录、游标不动。
+    subject.recoveryStreams.set('rc-ab-job', {
+      ord: 1, offset: 480,
+      advances: [
+        { ord: 1, from: 0, to: 400, signal: null },
+        { ord: 1, from: 400, to: 480, signal: null }
+      ]
+    });
+    ledger.undoClaim(owner, [{ recovery: true, jobId: 'rc-ab-job', recoveryOrd: 1, recoveryFrom: 0 }]);
+    const late = subject.recoveryStreams.get('rc-ab-job');
+    assert.ok(late !== undefined && late.ord === 1 && late.offset === 480,
+      '② 同份额更后推进＝迟到：游标不动（仍在偏移 480）');
+    assert.deepEqual(late.advances.map((adv) => adv.from), [400],
+      '② 只丢弃凭据自身记录（from 0 的出册、from 400 的保留）');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+hostTest('RC-AC：运行中份额过期＝第 3 档如实说明缺失——与交付事实解耦、不伪造终态（修前红）', async () => {
+  // §2.6 恢复出口第 3 档解耦：丢失清单非空即如实说明缺失——运行中作业（无整体
+  // 交付事实）同样进第 3 档：报当前状态（仍在运行）＋已过期份额序号＋留存线索
+  // （如有），不伪造终态、不伪称已送达；零等待出口 note 给运行中缺失说明
+  // （wait.recoveryRunningLost）。装置＝真 rig（注册表行保持 running）＋账面
+  // 直达份额过期（RC-HDUP-NT 同款）。
+  const rig = await buildRig('rc-ac', []);
+  try {
+    const owner = rig.parent.id;
+    let finishJob;
+    const jobDone = new Promise((resolve) => { finishJob = resolve; });
+    const jobId = rig.ctx.jobs.start({
+      kind: 'at-rc-ac', label: 'RC-AC running lost', owner,
+      run() {
+        return {
+          cancel() { finishJob({ status: 'completed', detail: 'cancelled' }); },
+          done: jobDone
+        };
+      }
+    });
+    // 账面：运行中条目＋份额登记（via wait、未确认），缓冲空（无未交付内容——
+    // 续取优先不适用，恢复出口按份额判档）。
+    ledger.noteJobStarted(rig.ctx, { maxResultChars: 400, agentLang: 'en' }, jobId, owner);
+    const entry = ledger.jobs.get(jobId);
+    entry.terminal = null;
+    entry.buffer = '';
+    ledger.collectBatch(owner, { lang: 'en' }); // 建主体（空候选：零装配、零扣减）
+    const subject = ledger.subjects.get(owner);
+    subject.recoveries.set(jobId, [
+      { ord: 1, text: 'ac'.repeat(100), partial: false, terminal: null, registeredAt: ledger.now(), returned: false, via: 'wait' }
+    ]);
+    subject.recoverySeqs.set(jobId, 1);
+    // 份额过期（假时钟）：丢失清单记序号 1、份额清空。
+    const realClock = ledger.now;
+    let fake = realClock();
+    ledger.now = () => fake;
+    try {
+      fake += 31 * 60 * 1000;
+      const staged = ledger.stageRecovery(jobId, owner);
+      assert.deepEqual(staged, { tier: 3, terminal: null, spillPaths: [], lost: [1] },
+        '运行中丢失份额＝第 3 档：terminal 如实为 null（仍在运行）、lost 逐号（修前：无交付事实即 null＝红）');
+      // 零等待点名（等待载体）：note 给运行中缺失说明＋序号清单。
+      ledger.subjects.get(owner).batch = null;
+      ledger.subjects.get(owner).generation.spent = 0; // 装置内手工重置代（点名＝新回合）
+      const answered = await rig.waiter.execute(
+        { wait_ms: 0, targets: [{ kind: 'job', id: jobId }] }, rig.exec()
+      );
+      const note = String(answered.note ?? '');
+      assert.ok(note.includes(t('en', 'wait.recoveryRunningLost', { jobId })),
+        '运行中缺失说明在场（wait.recoveryRunningLost——仍在运行＋份额过期不再保留）');
+      assert.ok(note.includes(t('en', 'wait.recoveryPortionsLost', { ords: '1' })),
+        '缺失份额序号逐条列出（wait.recoveryPortionsLost）');
+      assert.equal(String(answered.output ?? ''), '', '不伪造正文');
+      assert.notEqual(note.includes(t('en', 'wait.recoveryExpired', { jobId })), true,
+        '不误用已交付形态的过期文案（运行中无终态事实可援引）');
+    } finally {
+      ledger.now = realClock;
+    }
+    finishJob({ status: 'completed', detail: 'done' });
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('RC-AD：运行中丢失份额后——后续增量照常装配，丢失清单不阻断增量游标（修前红）', async () => {
+  // §2.6 第 3 档解耦的推论：已知缺失（丢失清单）与增量交付互不干扰——份额
+  // 过期只说明该份额不可恢复，后续新增量照常经正常批次路径装配前进；有未交付
+  // 内容时恢复请求按续取优先（null），不重发过期份额、不因丢失清单阻断。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  try {
+    const owner = `rc-ad-owner-${rcSuffix()}`;
+    ledger.noteJobStarted(ctx, { maxResultChars: 400, agentLang: 'en' }, 'rc-ad-job', owner);
+    const entry = ledger.jobs.get('rc-ad-job');
+    entry.terminal = null;
+    entry.buffer = '';
+    ledger.collectBatch(owner, { lang: 'en' }); // 建主体（空候选：零装配、零扣减）
+    const subject = ledger.subjects.get(owner);
+    subject.recoveries.set('rc-ad-job', [
+      { ord: 1, text: 'd'.repeat(200), partial: false, terminal: null, registeredAt: ledger.now(), returned: false, via: 'wait' }
+    ]);
+    subject.recoverySeqs.set('rc-ad-job', 1);
+    const realClock = ledger.now;
+    let fake = realClock();
+    ledger.now = () => fake;
+    fake += 31 * 60 * 1000;
+    assert.deepEqual(ledger.stageRecovery('rc-ad-job', owner), { tier: 3, terminal: null, spillPaths: [], lost: [1] },
+      '前置：过期份额入丢失清单、按第 3 档说明');
+    ledger.now = realClock;
+    // 新增量到达（运行中作业继续产出）：正常批次路径装配前进。
+    subject.batch = null;
+    subject.generation.spent = 0; // 装置内手工重置代（增量装配＝新回合）
+    entry.buffer = 'NEW-INCREMENT-AFTER-LOSS';
+    const batch = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en', includeRunning: true });
+    const inc = batch.delivered.find((item) => item.jobId === 'rc-ad-job');
+    assert.ok(inc !== undefined && inc.text === 'NEW-INCREMENT-AFTER-LOSS',
+      '后续增量照常装配交付（丢失清单不阻断增量——修前按缺失短路＝红）');
+    assert.equal(entry.buffer, '', '增量交付清缓冲（增量游标前进）');
+    // 有未交付内容时恢复请求按续取优先；缓冲清空后再次过期清扫形态下，
+    // 丢失清单保持记录（不因增量装配被清）且新份额登记照常。
+    entry.buffer = 'SECOND-INCREMENT';
+    assert.equal(ledger.stageRecovery('rc-ad-job', owner), null,
+      '有未交付内容 → 续取优先（null），不重发过期份额');
+    subject.batch = null;
+    subject.generation.spent = 0;
+    const batch2 = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en', includeRunning: true });
+    assert.ok(batch2.delivered.some((item) => item.jobId === 'rc-ad-job' && item.text === 'SECOND-INCREMENT'),
+      '第二笔增量同样照常装配');
+    assert.deepEqual(subject.lostPortions.get('rc-ad-job'), [1],
+      '丢失清单保持记录（不因后续增量被清——已知缺失仍可查）');
   } finally {
     ledger.disposeRow(ctx);
   }

@@ -4157,3 +4157,132 @@ test('J58：探针守卫静态锚——pack 判空先于首处 stdout.match、�
   assert.ok(/catch\s*\(/.test(cleanupBody) && cleanupBody.includes('WARN'),
     '⑥ 删除失败按 WARN 告警留现场');
 });
+
+// ── 依赖撤下承接（设计 §4.3）：connection/reset → 探测 → 按结果分判 ─────────
+//
+// ask 命名空间的服务依赖撤下（宿主行停止服务）不产生明确事件——只有
+// `connection/reset` 这类粗信号。承接是幂等三态：探测证实缺席才回收、探测
+// 成功零动作（瞬态闪断自愈）、其余未决（下次重探）。装置＝J55 骨架＋
+// `ctx.on` 捕获 connection/reset 监听＋`lastNs.state()` 手控门闩（回执形态
+// 与时点全部受控——三态分判必须精确编排探测回执）。
+test('J59：依赖撤下承接——reset 探测三态分判＋证实回收幂等＋恢复经既有装配路径重建（§4.3，修前红）', async () => {
+  const react = makeMiniReact();
+  const armed = [];
+  const cleared = [];
+  const product = await loadClientProduct(react, {
+    setInterval: (fn, ms) => { armed.push(ms); return armed.length; },
+    clearInterval: (id) => { cleared.push(id); }
+  });
+  let snap = { status: 'ready', value: { askTakeover: true, askUiSeat: 'overlay' }, user: {} };
+  const scope = {
+    getSnapshot: () => snap,
+    subscribe: () => () => {},
+    mutate: async () => true
+  };
+  let served = true;
+  const servedBlocks = [];
+  const serve = () => { served = true; for (const block of servedBlocks) block.run(); };
+  const unserved = () => { served = false; for (const block of servedBlocks) block.stop(); };
+  const liveRegs = new Map();
+  const slots = {
+    inject: (slot, factory) => { const off = factory(); return () => off?.(); },
+    register: (meta) => {
+      const key = `${meta.name}/${meta.id}`;
+      liveRegs.set(key, (liveRegs.get(key) ?? 0) + 1);
+      return () => { liveRegs.set(key, (liveRegs.get(key) ?? 0) - 1); };
+    }
+  };
+  const askNsList = `remote.${product.ASK_NAMESPACE}`;
+  const askInjects = [];
+  let resolveMount;
+  const mountP = new Promise((r) => { resolveMount = r; });
+  // connection/reset 监听捕获（CL-INJECT 形态）：探测行为的驱动入口。
+  const resetListeners = [];
+  const ctx = {
+    configForms: {
+      get: () => scope,
+      whileServed: (entries, fn) => {
+        let off = null;
+        const block = {
+          run: () => { if (off === null) off = fn(); },
+          stop: () => { if (off !== null) { off(); off = null; } }
+        };
+        servedBlocks.push(block);
+        if (served) block.run();
+        return block.stop;
+      }
+    },
+    slots,
+    inject: (list, callback) => {
+      const fiber = { disposed: 0, dispose() { this.disposed += 1; }, catch() {} };
+      if (Array.isArray(list) && list.join(',') === askNsList) askInjects.push({ callback, fiber });
+      return fiber;
+    },
+    locale: { register: () => () => {} },
+    remote: { $mount: () => mountP, $on: () => () => {} },
+    on: (event, fn) => { if (event === 'connection/reset') resetListeners.push(fn); return () => {}; },
+    effect: (fn) => { const off = fn(); return () => off?.(); },
+    uiWorkspace: { openSession() {} }
+  };
+  // lastNs.state() 手控：计数＋回执形态可切换（三态分判的编排点）。
+  let stateCalls = 0;
+  let stateResult = () => Promise.resolve({ ok: true, value: { serverNow: 0, items: [] } });
+  const askRemoteNs = { state: () => { stateCalls += 1; return stateResult(); } };
+  const presetNs = { list: () => Promise.resolve({ ok: true, value: { presets: [] } }) };
+  const scopeOf = () => ({ remote: { [product.ASK_NAMESPACE]: askRemoteNs, agentPresets: presetNs } });
+  const overlayKey = 'shell.overlay/async-tools-ask';
+  const sidebarKey = 'sidebar.footer.action/async-tools-ask';
+  const liveAskRegs = () => (liveRegs.get(overlayKey) ?? 0) + (liveRegs.get(sidebarKey) ?? 0);
+  const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
+  const fireReset = async () => { for (const fn of [...resetListeners]) fn(); await flush(); };
+
+  try {
+    product.apply(ctx);
+    resolveMount(() => {});
+    await flush();
+    askInjects[0].callback(scopeOf());
+    assert.equal(liveAskRegs(), 2, '前置：一套座位接线在册');
+    assert.equal(armed.length, 1, '前置：ask 模型轮询武装');
+
+    // 腿 ① 服务在场（探测成功）：reset 不回收——瞬态闪断重连后面板自愈。
+    //（ask 模型装配时有一次自己的首拉，判据用差值：reset 恰触发一次探测。）
+    const probeBase = stateCalls;
+    await fireReset();
+    assert.equal(stateCalls, probeBase + 1, '腿 ① reset 恰触发一次服务状态探测');
+    assert.equal(liveAskRegs(), 2, '腿 ① 探测成功＝零回收（接线原样保持）');
+    assert.equal(cleared.length, 0, '腿 ① 轮询不被撤销');
+
+    // 腿 ② 证实缺席（gateway/invocation-unavailable）：幂等回收本期接线。
+    stateResult = () => Promise.resolve({ ok: false, error: { code: 'gateway/invocation-unavailable', message: 'service gone' } });
+    await fireReset();
+    assert.equal(liveAskRegs(), 0, '腿 ② 证实缺席＝回收本期接线（修前：reset 不触发回收＝2＝红）');
+    assert.equal(cleared.length, 1, '腿 ② ask 模型轮询随回收撤销');
+    // 幂等：已回收后重复 reset 再探——证实回执仍是缺席，零副作用（不再拆已空的接线）。
+    const callsBefore = stateCalls;
+    await fireReset();
+    assert.equal(stateCalls, callsBefore, '腿 ② 幂等：回收后 inner 已空，重复 reset 不再发探测');
+    assert.equal(liveAskRegs(), 0, '腿 ② 幂等：重复证实零副作用');
+
+    // 腿 ③ 传输失败（探测 reject）＝未决：不回收、不推断成因，下次 reset 重探。
+    askInjects[0].callback(scopeOf()); // 服务恢复注入（重建一套——既有装配路径）
+    assert.equal(liveAskRegs(), 2, '腿 ③ 前置：注入回调重入重建接线');
+    assert.equal(armed.length, 2, '腿 ③ 前置：新 ask 模型武装');
+    const rebuildBase = stateCalls; // 重建的 ask 模型有自己的首拉，差值从重建后起算
+    stateResult = () => Promise.reject(new Error('transport broken'));
+    await fireReset();
+    assert.equal(stateCalls, rebuildBase + 1, '腿 ③ 未决也消耗一次探测（reject 被承接）');
+    assert.equal(liveAskRegs(), 2, '腿 ③ 传输失败＝未决：不回收（不把未决当缺席）');
+    assert.equal(cleared.length, 1, '腿 ③ 轮询保持（未决不拆接线）');
+    await fireReset();
+    assert.equal(stateCalls, rebuildBase + 2, '腿 ③ 未决后下一次 reset 重探（仍按结果分判）');
+
+    // 腿 ④ 服务恢复：探测成功后接线已在（零动作）；缺席回收后的重建走注入
+    // 回调重入的既有装配路径（腿 ③ 前置已证），无并行第二套机制。
+    stateResult = () => Promise.resolve({ ok: true, value: { serverNow: 1, items: [] } });
+    await fireReset();
+    assert.equal(liveAskRegs(), 2, '腿 ④ 服务在场＝零动作（恢复不重复装配）');
+    assert.equal(armed.length, 2, '腿 ④ 不额外武装第二套轮询');
+  } finally {
+    unserved();
+  }
+});

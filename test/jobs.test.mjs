@@ -34,7 +34,17 @@ const jobsModule = await loadOfflineSafe('../lib/jobs.js');
 const { createRunTool: buildRunTool } = jobsModule ?? {};
 const deliveryModule = await loadOfflineSafe('../lib/delivery.js');
 const { ledger } = deliveryModule ?? {};
-const hostTest = await hostTestFor('../lib/jobs.js');
+const hostTestForJobs = await hostTestFor('../lib/jobs.js');
+// §2.6 输入代记账的装置近似：真实宿主里模型的每次工具调用之间隔着新输入
+//（代边界＝agent/turn-stopping 重置内容预算）；本文件多数锚共用同一主体 id
+//（fakeAgent 缺省 session-1）且不发该事件——不归零则前面锚的扣减结转到后面
+// 锚的首直付批（让出条目/注记被延后＝假红）。每个锚开始时把全部主体的代
+// 额度归零＝「锚＝新输入代」；锚内的串行调用仍按同代合计（受控合计判据由
+// test/wait-delivery.test.mjs 的 RC-GEN 专证，这里不重复）。
+const hostTest = (name, fn) => hostTestForJobs(name, async (...args) => {
+  for (const subject of ledger?.subjects.values() ?? []) subject.generation.spent = 0;
+  return fn(...args);
+});
 
 /**
  * 被测工具一律经 `checkedTool` 包一层：**每条**用例的返回值都会被喂给宿主输出校验器

@@ -2041,9 +2041,16 @@ test('T23（PRESET-BIND-01·需求 9.4.2）：预设绑定块——目录四态/
   assert.ok(textOf(tree).join('').includes('preset.unavailable|'),
     '宿主网关不可用 ⇒ preset.unavailable 专属文案');
   // 通知接线在场（宿主无专门预设事件——文档更新/连接重置两通知，设计 §5.5）。
+  // connection/reset 现有两份订阅＝两个职责：预设目录重读（§5.5）＋ask 座位
+  // 依赖撤下的承接探测（§4.3，askTakeover 启用时）——判据按「事件集合＋每事件
+  // 订阅数」钉住（漏接任一职责＝该事件计数缺一角，必红）。
   const noticeEvents = noticeSubs.map((entry) => entry.event).sort();
-  assert.deepEqual(noticeEvents, ['connection/reset', 'settings/document-updated'],
-    '刷新通知 = settings/document-updated + connection/reset（两订阅在场）');
+  assert.deepEqual([...new Set(noticeEvents)].sort(), ['connection/reset', 'settings/document-updated'],
+    '刷新通知 = settings/document-updated + connection/reset（两事件都在册）');
+  assert.equal(noticeEvents.filter((event) => event === 'connection/reset').length, 2,
+    'connection/reset 恰两份订阅（目录重读＋ask 依赖撤下承接——§4.3 新增职责）');
+  assert.equal(noticeEvents.filter((event) => event === 'settings/document-updated').length, 1,
+    'settings/document-updated 恰一份订阅（目录重读）');
   unmount();
 });
 
@@ -3558,4 +3565,181 @@ test('W-MIGRATE-D：宿主行平铺（无 toolName 的 0.2.5 生产 patch 形态
   } finally {
     await rig.restore();
   }
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// PCAT／CHN（§10.1 预设目录的世代纪律；§5.4 链式比较的三方取值）。
+//
+// 目录模型行为锚的装置：在沙箱里加载 client.js（T9 同款），取导出的
+// createPresetCatalog；服务代理用手控 Promise 的假件（list 调用计数、回执
+// 时点全部受控）——世代/序号纪律是时序问题，必须能精确编排「在途」窗口。
+// ═════════════════════════════════════════════════════════════════════
+
+/** 在沙箱中加载 client.js 并返回模块导出（T9 同款装载）。 */
+async function loadClientProduct() {
+  const reactStub = { createElement: () => undefined, useState: () => [undefined, () => {}], useEffect: () => {}, useRef: (v) => ({ current: v }) };
+  const { makePrimitivesDouble } = await import('./_primitives-double.mjs');
+  const double = makePrimitivesDouble(reactStub);
+  const source = readFileSync(resolve(ROOT, 'client.js'), 'utf8');
+  let loaded;
+  new Function('window', source)({ __ModuleLoader__: { load: (spec) => { loaded = spec; } } });
+  return loaded.factory((name) => (name === 'react' ? reactStub : double));
+}
+
+/** 手控假服务：list 计数、每次调用返回一个手控的 {resolve} 门闩。 */
+function makeGatedService() {
+  const gates = [];
+  return {
+    calls: 0,
+    gates,
+    list() {
+      this.calls += 1;
+      return new Promise((resolveFn) => { gates.push(resolveFn); });
+    }
+  };
+}
+
+/** 让出一轮事件循环：目录模型经 Promise.resolve().then 发起读取，回执链的
+ * 每一跳都要等微任务队列排空（setTimeout(0) 在全部微任务之后）。 */
+const settle = () => new Promise((resolveFn) => { setTimeout(resolveFn, 0); });
+
+test('PCAT-A：在途通知合并为恰一次补读——回执落地后按新读取取新快照（修前红）', async (t) => {
+  const product = await loadClientProduct();
+  if (product === undefined) { t.skip(HOST_SKIP_REASON); return; }
+  const catalog = product.createPresetCatalog();
+  const service = makeGatedService();
+  catalog.attach(service);
+  await settle();
+  assert.equal(service.calls, 1, 'attach 立即首读');
+  assert.equal(catalog.store.getSnapshot().status, 'loading', '在途＝loading');
+  // 在途窗口内多次变更/重连通知：合并，不丢弃、不并发放读。
+  catalog.load();
+  catalog.load();
+  catalog.load();
+  assert.equal(service.calls, 1, '读取在途时通知只置待补读标记（不并发补读）');
+  service.gates[0]({ ok: true, value: { presets: [{ id: 'p-old', isDefault: false }] } });
+  await settle();
+  assert.equal(catalog.store.getSnapshot().status, 'loading', '补读已自动发起（仍 loading）');
+  assert.equal(service.calls, 2, '多次通知合并为恰一次补读（修前：通知丢弃＝1，逐条补读＝4）');
+  service.gates[1]({ ok: true, value: { presets: [{ id: 'p-new', isDefault: false }] } });
+  await settle();
+  assert.equal(service.calls, 2, '补读落地后不再连环补读（pendingReload 只消费一次）');
+  const snap = catalog.store.getSnapshot();
+  assert.equal(snap.status, 'ready', '补读回执落地 → ready');
+  assert.deepEqual(snap.items.map((item) => item.id), ['p-new'], '快照＝补读的新目录（不是旧回执）');
+  catalog.detach();
+});
+
+test('PCAT-B：attach 重入隔离旧代理在途回执；detach 后旧凭据零写、items 内部保留（修前红）', async (t) => {
+  const product = await loadClientProduct();
+  if (product === undefined) { t.skip(HOST_SKIP_REASON); return; }
+  const catalog = product.createPresetCatalog();
+  const serviceA = makeGatedService();
+  const serviceB = makeGatedService();
+  catalog.attach(serviceA);
+  await settle();
+  assert.equal(serviceA.calls, 1, 'A 首读在途');
+  // 服务替换（注入回调重入）：世代递增＋立即首读——在途旧请求不挡新首读。
+  catalog.attach(serviceB);
+  await settle();
+  assert.equal(serviceB.calls, 1, '重入立即对新代理首读');
+  assert.equal(catalog.store.getSnapshot().status, 'loading', 'loading（B 在途）');
+  // A 的迟到回执落地：世代不符——零写入（items 与 error 均不落）。
+  serviceA.gates[0]({ ok: true, value: { presets: [{ id: 'stale-a', isDefault: false }] } });
+  await settle();
+  assert.equal(catalog.store.getSnapshot().status, 'loading',
+    '旧代理回执零写入：仍是 loading（修前：旧空快照覆盖目录＝红）');
+  serviceB.gates[0]({ ok: true, value: { presets: [{ id: 'fresh-b', isDefault: false }] } });
+  await settle();
+  assert.equal(catalog.store.getSnapshot().status, 'ready', 'B 回执落地 → ready');
+  // detach：在途回执失效、展示态转服务缺席；items 内部保留（不清空）。
+  const readyItems = catalog.store.getSnapshot().items;
+  catalog.detach();
+  const detached = catalog.store.getSnapshot();
+  assert.equal(detached.status, 'error', 'detach 后展示态＝error');
+  assert.equal(detached.unavailable, true, '服务缺席口径（可重试）');
+  assert.deepEqual(detached.items, readyItems, '内部保留最后已知 items（不清空）');
+  catalog.load();
+  await settle();
+  const afterRetry = catalog.store.getSnapshot();
+  assert.equal(afterRetry.status, 'error', 'detach 后读取按服务缺席口径（可重试 error 态）');
+  assert.deepEqual(afterRetry.items, readyItems,
+    '缺席错误态不改写 items（迟到回执不污染最后已知快照）');
+});
+
+test('PCAT-C：补读与重读只换目录快照——不触碰草稿与已存绑定（模型不持有）', async (t) => {
+  const product = await loadClientProduct();
+  if (product === undefined) { t.skip(HOST_SKIP_REASON); return; }
+  const catalog = product.createPresetCatalog();
+  const service = makeGatedService();
+  catalog.attach(service);
+  await settle();
+  service.gates[0]({ ok: true, value: { presets: [{ id: 'p1', isDefault: true }, { id: 'p2', isDefault: false }] } });
+  await settle();
+  const before = catalog.store.getSnapshot();
+  assert.equal(before.status, 'ready', '前置：ready');
+  // ready 态再通知：走新读取（非在途窗口），落地只换 items/status——
+  // 快照形状不含草稿/绑定键（草稿在设置表单模型，绑定在 value 层；目录模型
+  // 持有这两者＝越权，重读就会覆盖用户编辑）。
+  catalog.load();
+  assert.equal(catalog.store.getSnapshot().status, 'loading', 'ready 态通知＝新读取');
+  await settle();
+  service.gates[1]({ ok: true, value: { presets: [{ id: 'p1', isDefault: true }] } });
+  await settle();
+  const after = catalog.store.getSnapshot();
+  assert.deepEqual(Object.keys(after).sort(), ['error', 'items', 'status'],
+    '快照形状只有 status/items/error（不含草稿或绑定键——持有即越权）');
+  assert.deepEqual(after.items.map((item) => item.id), ['p1'], '重读落地只更新目录快照');
+  catalog.detach();
+});
+
+test('CHN：链式比较三方取值——合法草稿、清空草稿按 schema 默认、未改动按生效值（修前红）', async (t) => {
+  const product = await loadClientProduct();
+  if (product === undefined) { t.skip(HOST_SKIP_REASON); return; }
+  // 官方原语前提（§5.4 三方判定的第二档依赖）：数字字段空草稿 parse 得
+  // {kind:'clear'}——保存将 unset 覆盖、恢复默认语义；清空判据不是「回退生效值」。
+  const reactStub = { createElement: () => undefined, useState: () => [undefined, () => {}], useEffect: () => {}, useRef: (v) => ({ current: v }) };
+  const { makePrimitivesDouble } = await import('./_primitives-double.mjs');
+  const double = makePrimitivesDouble(reactStub);
+  assert.deepEqual(double.settingsNumberField({ key: 'minWaitMs' }).parse(''), { kind: 'clear' },
+    '官方原语：空文本＝清除操作（unset 覆盖），不是空操作');
+  // 基准状态：生效值 minWaitMs=20000 ≤ defaultWaitMs=30000（无违例）。
+  const baseState = (patch) => Object.assign({
+    fields: {},
+    userHas: {},
+    effective: { minWaitMs: 20000, defaultWaitMs: 30000 }
+  }, patch);
+  // ① 合法草稿参与比较：草稿 90000 > 30000 → 违例并给出参照字段。
+  const s1 = baseState({ fields: { minWaitMs: { text: '90000' } } });
+  assert.equal(product.chainHitOf(s1, 'minWaitMs'), 'defaultWaitMs', '① 合法草稿参与链式比较（命中参照字段）');
+  assert.equal(product.pairViolated(s1), true, '① pairViolated 同判');
+  // ② 清空草稿＋该字段有用户覆盖：预判取保存后的预期生效值（schema 默认 20000）
+  //    ——不是仍含旧覆盖的当前生效值（修前回退 90000>30000 假拦截＝红）。
+  const s2 = baseState({
+    fields: { minWaitMs: { text: '' } },
+    userHas: { minWaitMs: true },
+    effective: { minWaitMs: 90000, defaultWaitMs: 30000 }
+  });
+  assert.equal(product.chainHitOf(s2, 'minWaitMs'), null,
+    '② 清空草稿＋覆盖在场 → 按 schema 默认 20000 预判：无违例（修前红）');
+  assert.equal(product.pairViolated(s2), false, '② pairViolated 同判');
+  // ③ 未改动（空草稿＋无覆盖）：按当前生效值如实比较。
+  const s3 = baseState({
+    fields: { minWaitMs: { text: '' } },
+    userHas: {},
+    effective: { minWaitMs: 90000, defaultWaitMs: 30000 }
+  });
+  assert.equal(product.chainHitOf(s3, 'minWaitMs'), 'defaultWaitMs',
+    '③ 未改动 → 当前生效值参与（真实违例如实拦，不因清空判据漏放）');
+  // ④ SCHEMA_DEFAULTS 与 resolveConfig({}) 对账：预判用的「保存后预期生效值」
+  //    就是 schema 默认——两处只改其一，此处必红。
+  const { resolveConfig } = await import('../lib/config.js');
+  const resolved = resolveConfig({ toolName: 'async_run' });
+  for (const [key, want] of Object.entries(product.SCHEMA_DEFAULTS)) {
+    assert.equal(resolved[key], want, `SCHEMA_DEFAULTS.${key} 必须与 resolveConfig 默认值一致（预判口径同源）`);
+  }
+  const chainKeys = [...new Set(product.CHAIN_PAIRS.flat())].sort();
+  assert.deepEqual(Object.keys(product.SCHEMA_DEFAULTS).sort(),
+    [...new Set([...chainKeys, 'maxResultChars', 'askTimeoutMs', 'askExtendMs'])].sort(),
+    'SCHEMA_DEFAULTS 键集＝链式键集∪{maxResultChars, askTimeoutMs, askExtendMs}（增删字段两处同步）');
 });

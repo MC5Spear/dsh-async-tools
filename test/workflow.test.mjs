@@ -30,7 +30,15 @@ const deliveryModule = await loadOfflineSafe('../lib/delivery.js');
 const { createWorkflowTool: buildWorkflowTool, wrapScriptWithRootGuard: wrapScript } = workflowModule ?? {};
 const { createWaitTool: buildWaitTool } = waitModule ?? {};
 const { ledger } = deliveryModule ?? {};
-const hostTest = await hostTestFor('../lib/workflow.js', '../lib/wait.js');
+const hostTestForWorkflow = await hostTestFor('../lib/workflow.js', '../lib/wait.js');
+// §2.6 输入代记账的装置近似（同 test/jobs.test.mjs 的口径）：真实宿主里模型
+// 的每次工具调用之间隔着新输入（代边界重置内容预算）；锚共用主体 id 且装置
+// 不发 agent/turn-stopping——每个锚开始时把全部主体的代额度归零＝「锚＝新
+// 输入代」，锚内串行调用仍按同代合计（受控合计判据由 RC-GEN 专证）。
+const hostTest = (name, fn) => hostTestForWorkflow(name, async (...args) => {
+  for (const subject of ledger?.subjects.values() ?? []) subject.generation.spent = 0;
+  return fn(...args);
+});
 
 const createWorkflowTool = (ctx, config) => checkedTool(buildWorkflowTool(ctx, config));
 const createWaitTool = (ctx, config) => checkedTool(buildWaitTool(ctx, config));
@@ -669,6 +677,11 @@ hostTest('async_workflow（F8）：注册表收原始 JSON；已直付的最终�
   const views = f.jobsFake.views();
   const jobId = views[0].id;
   await new Promise((resolve) => { setTimeout(resolve, 5); });
+  // §2.6 输入代记账：直付按份额 5 已用尽本代额度；宿主在直付返回、模型收尾
+  // 回合时重置代——再次等待领取发生在下一回合（同代串行合计封顶由
+  // wait-delivery 的 RC-GEN 专证；本锚验一次性通道不重复消费，装置内手工
+  // 重置代＝下回合近似）。
+  ledger.subjects.get(agent.id).generation.spent = 0;
   // 装置显式 minWaitMs=1：本用例走入口终态分支立即返回，但装置不走夹紧歧义。
   const waiter = createWaitTool(f.ctx, resolveConfig({ toolName: 'async_wait', maxResultChars: 5, minWaitMs: 1 }));
   const again = await waiter.execute({ wait_ms: 30000, targets: [{ kind: 'job', id: jobId }] }, exec);
