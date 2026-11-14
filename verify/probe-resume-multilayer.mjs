@@ -17,7 +17,7 @@
  *    回执＋最终回答到达——「恢复会话的实时模型选择一致」的行为面（派生
  *    许可与配置在恢复会话中继续生效）；
  * 4. RM-4 恢复会话中的排队消息：忙碌窗（async_run 约 20s 前台命令——工具
- *    调用在场门控（gate））期间 queue 通道注入→回合边界领取→回执，判据含
+ *    调用在场条件（gate））期间 queue 通道注入→回合边界领取→回执，判据含
  *    忙碌窗实锚（async_run 在场＋命令输出 token 经宿主侧载体到达）与回合
  *    边界顺序锚（RM4_DONE 首现的模型消息晚于忙碌回执首现消息——queue 若
  *    被漂移为回合中拼接则同消息共现、断言不成立——宿主下一轮语义在恢复
@@ -327,7 +327,7 @@ async function driveStep(sessionId, step) {
       let transcript;
       try { transcript = await transcriptOf(sessionId); } catch { continue; }
       // 步骤专属动作：观察到本窗相应工具调用（gate）后注入（RM-4/5 的
-      // async_run、RM-6 的 async_agent——门控注入不早于工作形态开始）。
+      // async_run、RM-6 的 async_agent——在场条件触发的注入不早于工作形态开始）。
       if (!acted && step.afterWorking !== undefined) {
         const workingSeen = step.gate === undefined
           || toolCallNames(transcript, beforeCount).has(step.gate);
@@ -479,7 +479,7 @@ await driveStep(s1.sessionId, {
   prompt: 'Run this single step: call async_run with command "Start-Sleep -Seconds 20; Write-Output RM4-BUSY-8d3", description "rm4 busy window", yield_ms 30000 and wait for its foreground output. Then end your turn with exactly RM4_BUSY_DONE.',
   gate: 'async_run',
   afterWorking: async (sessionId) => {
-    // 忙碌已开始（async_run 调用在场门控）即注入（queue 通道——回合边界领取）。
+    // 忙碌已开始（async_run 调用在场条件）即注入（queue 通道——回合边界领取）。
     await sendPrompt(sessionId, 'Queued follow-up: after your current work, reply with exactly RM4_DONE (in addition to anything you already planned) and end your turn. Do not call more tools.', 'queue');
   },
   judge: (ctx) => {
@@ -509,7 +509,7 @@ await driveStep(s1.sessionId, {
   prompt: 'Run this single step: call async_run with command "Start-Sleep -Seconds 60; Write-Output RM5-TOKEN-4e7", description "rm5 first-wait work", yield_ms 600000 and wait for the command to finish (foreground, or via a follow-up async_wait if your first wait ends early). Then end your turn with exactly RM5_DONE.',
   gate: 'async_run',
   afterWorking: async (sessionId) => {
-    // 命令调用在场门控后约 8s 经 steer 通道注入（首等窗内——非等待挂起形态）。
+    // 命令调用在场条件后约 8s 经 steer 通道注入（首等窗内——非等待挂起形态）。
     await new Promise((r) => { setTimeout(r, 8000); });
     await sendPrompt(sessionId, 'Steering message while you work: when the command finishes, also reply with exactly RM5_STEER_DONE (in addition to RM5_DONE) in the same final message. Do not restart or kill the command.', 'steer');
   },
@@ -535,7 +535,7 @@ await driveStep(s1.sessionId, {
   prompt: 'Run this single step: call async_agent with description "rm6 middle agent", prompt "Run this single step: call async_agent with description \'rm6 grandchild\', prompt \'Reply with exactly the single token GRAND-9c4 and nothing else.\' — it returns an agent_id; end your turn WITHOUT waiting. When that child answer reaches you, reply with exactly MID_DONE plus that token and the grandchild agent_id." — it returns an agent_id immediately; end your turn WITHOUT waiting. When the middle agent final answer reaches you AND any newer user message, reply with exactly RM6_DONE plus the grandchild token, then end your turn. No other tools, no questions.',
   gate: 'async_agent',
   afterWorking: async (sessionId) => {
-    // 中间代理派生在场门控后约 12s（中间代理在等孙代理期间——主代理已结束
+    // 中间代理派生在场条件后约 12s（中间代理在等孙代理期间——主代理已结束
     // 回合、等注入），主会话 steer 插话——落点是主代理层（宿主不允许后台
     // 子代理直接人类交互）。
     await new Promise((r) => { setTimeout(r, 12000); });

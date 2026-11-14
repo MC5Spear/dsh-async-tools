@@ -3782,7 +3782,7 @@ test('J55：待答座位 fiber 生命周期——句柄停用时 dispose；回�
   const servedBlocks = [];
   const serve = () => { served = true; for (const block of servedBlocks) block.run(); };
   const unserved = () => { served = false; for (const block of servedBlocks) block.stop(); };
-  // 槽注册台账：按 `${name}/${id}` 追踪在册条数（每套座位接线＝overlay＋sidebar 各一条）。
+  // 槽注册记录表：按 `${name}/${id}` 追踪在册条数（每套座位接线＝overlay＋sidebar 各一条）。
   const liveRegs = new Map();
   const regLog = [];
   const slots = {
@@ -3842,7 +3842,7 @@ test('J55：待答座位 fiber 生命周期——句柄停用时 dispose；回�
     product.apply(ctx);
     resolveMount(() => {});
     await flush();
-    // ① 启用：mount 落地后 ask 命名空间 inject 恰一次；回调激活装一套座位接线。
+    // ① 启用：mount 生效后 ask 命名空间 inject 恰一次；回调激活装一套座位接线。
     assert.equal(askInjects.length, 1, '① 启用：ask 命名空间 inject 恰一次');
     askInjects[0].callback(scopeOf());
     assert.equal(liveAskRegs(), 2, '① 回调激活：overlay＋sidebar 两座位注册在册');
@@ -4104,10 +4104,10 @@ test('J57：座位接线同步抛错可见——ctx.inject 同步抛错走单链
 // verify/probe-recovery-identity.mjs 的三处守卫以源码静态核对钉住（切片风格
 // 同 test/live-probe-teardown.test.mjs：读源断言，不执行探针顶层语句）：
 // pack spawnSync 判空走 die 先于首处 stdout.match（spawn 层失败时 stdout 缺失，
-// 直接 match 会 TypeError 绕过一切收尾）；认证首跳 try/catch 兜底（主 try 之外
+// 直接 match 会 TypeError 绕过一切收尾）；认证首跳 try/catch 承接（主 try 之外
 // 裸抛同样绕过收尾）；进程级 uncaughtException／unhandledRejection 统一转 die
 // 清运行目录。
-test('J58：探针守卫静态锚——pack 判空先于首处 stdout.match、认证首跳兜底走 die、进程级异常统一 die、兜底先于建目录、aborted 三档收束、cleanup 删失败 WARN（DOC-06）', () => {
+test('J58：探针守卫静态锚——pack 判空先于首处 stdout.match、认证首跳承接走 die、进程级异常统一 die、承接先于建目录、aborted 三档收束、cleanup 删失败 WARN（DOC-06）', () => {
   const source = readFileSync(resolve(ROOT, 'verify/probe-recovery-identity.mjs'), 'utf8');
   // ① pack spawnSync 判空守卫：在场，且先于首处 packRun.stdout.match。
   const guardPos = source.indexOf('packRun.error !== undefined');
@@ -4116,24 +4116,24 @@ test('J58：探针守卫静态锚——pack 判空先于首处 stdout.match、�
   assert.notEqual(matchPos, -1, 'pack stdout.match 判定在场');
   assert.ok(guardPos < matchPos, '判空守卫先于首处 stdout.match');
   assert.ok(source.indexOf('die(2', guardPos) < matchPos, '判空守卫走 die（统一清理运行目录）');
-  // ② 认证首跳 try/catch 兜底：首跳判定在 try 内、catch 走 die。
+  // ② 认证首跳 try/catch 承接：首跳判定在 try 内、catch 走 die。
   const catchPos = source.indexOf('catch (authError)');
-  assert.notEqual(catchPos, -1, '认证首跳兜底 catch 在场（修前：裸抛绕过收尾＝红）');
+  assert.notEqual(catchPos, -1, '认证首跳承接 catch 在场（修前：裸抛绕过收尾＝红）');
   assert.ok(source.indexOf('authCookieFromFirstHop', catchPos - 600) !== -1
     && source.indexOf('authCookieFromFirstHop', catchPos - 600) < catchPos,
-    '首跳判定在 try 内（兜底覆盖 fetch 与判定两段）');
+    '首跳判定在 try 内（承接覆盖 fetch 与判定两段）');
   assert.ok(source.indexOf('die(2', catchPos) < catchPos + 300, '首跳失败走 die');
   // ③ 进程级异常守卫：未捕获异常／未处理拒绝统一转 die 清运行目录。
   assert.match(source, /process\.on\('uncaughtException',\s*\(err\) => \{ die\(/,
     'uncaughtException 守卫走 die（修前：默认路径泄漏运行目录＝红）');
   assert.match(source, /process\.on\('unhandledRejection',\s*\(err\) => \{ die\(/,
     'unhandledRejection 守卫走 die');
-  // ④ 进程级兜底先于运行目录创建：不留「目录已建、兜底未挂」的窗口
-  //（mkdirSync(RUN_DIR) 之前装置段任何未捕获异常都已有兜底接管）。
+  // ④ 进程级异常承接先于运行目录创建：不留「目录已建、承接未挂」的窗口
+  //（mkdirSync(RUN_DIR) 之前装置段任何未捕获异常都已有承接接管）。
   const uncaughtPos = source.indexOf("process.on('uncaughtException'");
   const runDirPos = source.indexOf('mkdirSync(RUN_DIR');
   assert.ok(uncaughtPos !== -1 && runDirPos !== -1 && uncaughtPos < runDirPos,
-    '④ 兜底注册先于 mkdirSync(RUN_DIR)（修前：兜底后挂＝目录已建无兜底的窗口＝红）');
+    '④ 承接注册先于 mkdirSync(RUN_DIR)（修前：承接后挂＝目录已建无承接的窗口＝红）');
   // ⑤ 主 try 的 catch 置 aborted、finally 按三档收束：装置故障（aborted）以
   // 退出码 2 与核心判据失败（退出码 1）区分——空 verdicts 不得读成全过。
   const abortedDeclPos = source.indexOf('let aborted = false');
@@ -4146,14 +4146,14 @@ test('J58：探针守卫静态锚——pack 判空先于首处 stdout.match、�
   assert.ok(source.includes('process.exit(aborted ? 2 : (failed > 0 ? 1 : 0))'),
     '⑤ finally 按 aborted／failed 三档收束退出码（修前：装置故障与判据失败不分＝红）');
   // ⑥ cleanup 的 rmSync 包 try/catch＋WARN 留现场：Windows 文件锁（EBUSY/
-  // EPERM）只告警不中断——cleanup 自身永不抛（进程级兜底路径里再抛会把
+  // EPERM）只告警不中断——cleanup 自身永不抛（进程级异常承接路径里再抛会把
   // Node 打成 fatal，清理反而做不完）。
   const cleanupStart = source.indexOf('const cleanup');
   const dieStart = source.indexOf('const die', cleanupStart);
   assert.ok(cleanupStart !== -1 && dieStart !== -1, '⑥ cleanup 函数在场');
   const cleanupBody = source.slice(cleanupStart, dieStart);
   assert.ok(cleanupBody.indexOf('try') !== -1 && cleanupBody.indexOf('try') < cleanupBody.indexOf('rmSync(RUN_DIR'),
-    '⑥ rmSync 包 try（修前：裸抛把兜底路径打成 fatal＝红）');
+    '⑥ rmSync 包 try（修前：裸抛把承接路径打成 fatal＝红）');
   assert.ok(/catch\s*\(/.test(cleanupBody) && cleanupBody.includes('WARN'),
     '⑥ 删除失败按 WARN 告警留现场');
 });

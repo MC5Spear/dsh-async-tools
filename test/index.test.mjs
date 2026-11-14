@@ -421,7 +421,7 @@ test('T6b：`ctx.get("<字面量>")` 的第二种写法也要被看见（R3 审�
     unexplained,
     [],
     `这些 ctx.get("<name>") 既不在 inject 里、也不在 OPTIONAL_SERVICE_READS 白名单里：`
-    + `${unexplained.join(', ')}。要么改成硬依赖写进 inject，要么按设计说明它为什么必须可选。`
+    + `${unexplained.join(', ')}。要么改成强制依赖写进 inject，要么按设计说明它为什么必须可选。`
   );
   // 白名单本身不许腐烂：白名单里的名字必须真的还在被读，否则删掉它。
   const stale = [...OPTIONAL_SERVICE_READS].filter((name) => !reads.has(name));
@@ -853,8 +853,8 @@ test('T19b：外来作业事件订阅——agent/created 从本行 ctx 的 jobs.
   assert.equal(subscribes.length, 1, 'agent/created ⇒ 行 ctx jobs.events 恰一次 subscribe');
   assert.deepEqual(subscribes[0].filter, { owner: 'agent-evsub' }, '订阅过滤＝{owner: 主体 id}');
   assert.equal(typeof subscribes[0].handler, 'function', '订阅登记事件处理回调');
-  // ② 退订处置经 agent.ctx.effect 登记（随 Agent 世代回收；行卸载兜底由宿主
-  // subscribe 把订阅挂行 ctx effect 承担）。产品登记形 `() => unsubscribe`＝
+  // ② 退订处置经 agent.ctx.effect 登记（随 Agent 世代回收；行卸载时的撤销
+  // 由宿主 subscribe 把订阅挂行 ctx effect 承担）。产品登记形 `() => unsubscribe`＝
   // 「处置时交出退订函数」——触发登记的处置即验证退订确实被调用。
   assert.equal(effects.length, 2, 'restrict 句柄＋退订句柄都挂 agent.ctx.effect');
   for (const dispose of effects) dispose();
@@ -916,7 +916,7 @@ test('FD-EVT：外来事件订阅从行 ctx 取枢纽——Agent ctx 的 jobs ge
   );
   await activate(fork);
   const effects = [];
-  const settle = () => new Promise((resolve) => setImmediate(resolve)); // readSettled 微任务链收口
+  const settle = () => new Promise((resolve) => setImmediate(resolve)); // readSettled 微任务链收敛
   try {
     // ① 真机定案形态（diag-foreign-events-022）：Agent ctx 未注入 jobs，
     // cordis 追踪代理在 getter 内抛错（可选链拦不住）。订阅必须从本行 ctx
@@ -968,12 +968,12 @@ test('FD-EVT：外来事件订阅从行 ctx 取枢纽——Agent ctx 的 jobs ge
     assert.ok(reads.includes('fd-evt-j3'), '② 在册无链 settled ⇒ 补定论读取（不双读有链形态）');
     // ③ 注销双挂：宿主 subscribe 挂行 ctx effect（行卸载即撤，宿主语义）；
     // Agent 世代注销（agent.ctx.effect）交出**同一**退订闭包——幂等双撤
-    // （Agent 结束＋行卸载兜底）不炸。
+    // （Agent 结束＋行卸载两道）不炸。
     assert.equal(effects.length, 2, '③ restrict 句柄＋退订句柄挂 agent.ctx.effect');
     const teardown = effects[1];
     teardown();
     assert.equal(subscribes[0].off, 1, '③ Agent 世代处置撤同一订阅');
-    assert.doesNotThrow(() => { teardown(); teardown(); }, '③ 幂等双撤不炸（行卸载兜底＋Agent 结束）');
+    assert.doesNotThrow(() => { teardown(); teardown(); }, '③ 幂等双撤不炸（行卸载＋Agent 结束两道）');
     assert.equal(subscribes[0].off, 3, '③ 每次处置交出同一退订闭包');
     // ④ 枢纽缺席（行 ctx 无 jobs.events）→ 降级口径＝枚举发现：不抛错、只记
     // info，外来观察回落 §2.6 对账段。

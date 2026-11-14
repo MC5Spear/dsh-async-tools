@@ -10,7 +10,7 @@
  * prompt 的 yield_ms 24000 本身落在出厂区间 [20000,600000] 内、不被夹紧——
  * 与姊妹 concurrent-wait 的短窗调低前提不同，本探针无设置写入。
  *
- * 三步（对应需求 4 章 async_workflow 行为约定 232-257）：
+ * 三步（对应需求 §2.4「后台编排」的 async_workflow 行为约定）：
  *
  * 1. WF-1 pipeline 逐条独立流过＋局部降 null（249 行 pipeline 条款）：纯 JS 阶段（不派
  *    子代理——pipeline 阶段是编排脚本内同步函数，只有 agent() 钩子派子代理），

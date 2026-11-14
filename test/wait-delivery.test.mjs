@@ -2856,7 +2856,7 @@ hostTest('W-SPIN-B：自旋防线出口与预算到期同款三档取键——�
 });
 
 hostTest('W-RACE-TERM：终态竞速不丢——已结算未消费的作业终态保持竞速候选，ready 先序后下一轮交回（SOL-REQ-03 修前红）', async () => {
-  // 竞速候选纪律（设计 §3.2.4）：作业事件通道的终态 resolve 落地后，若同轮
+  // 竞速候选纪律（设计 §3.2.4）：作业事件通道的终态 resolve 完成后，若同轮
   // 竞速被先序信号（内容就绪事件）赢走、循环只 continue，下一轮候选必须保留
   // 该已结算条目——Promise 已 resolve 不阻塞竞速。过滤掉它会令终态事实再无
   // 消费载体：本次等待预算耗尽按顶层 running 交回，而目标实为 completed、
@@ -2869,7 +2869,7 @@ hostTest('W-RACE-TERM：终态竞速不丢——已结算未消费的作业终�
       { ...WF_ARGS, meta: { ...WF_ARGS.meta, name: 'wrace-wf' } }, rig.exec()
     );
     const jobId = wf.job_id;
-    // 受控放行：包装 jobs.wait——注册表结算先在底层 promise 落地，何时向竞速
+    // 受控放行：包装 jobs.wait——注册表结算先在底层 promise 完成，何时向竞速
     // 成员放行由测试编排，用于精确构造「终态 resolve 已排队、就绪回调先消费
     // 同轮竞速」的微任务次序。
     const gated = [];
@@ -3823,7 +3823,7 @@ hostTest('REC-Q：空输出作业首等不误报 alreadyDelivered——第二分
     });
     // 首次等待（入口终态分支）：本次装配自置 {via:'wait'}——不得把它当
     // 「先前已交付」误报 alreadyDelivered（修前该形态无注记；放宽分支后曾误报，
-    // factBefore 门控后恢复）。零等待同口径。
+    // 注记以 factBefore 为启用条件后恢复）。零等待同口径。
     const first = await rig.waiter.execute(waitArgs(jobId), rig.exec());
     assert.equal(first.status, 'completed');
     const note1 = first.note ?? '';
@@ -7080,7 +7080,7 @@ hostTest('PJ-DISPOSE：无主分册作业行卸载清恢复四表——按裸 id
   // 分册键与恢复键不同源（PUBLIC-JOB-01 分册）：无主外来作业在账本以
   // `jobId\0owner` 分册键在册，而恢复四表（份额／流游标／丢失清单／序号
   // 计数）按裸 jobId 登记。行卸载清恢复账目必须按裸 id 命中——按分册键删
-  // 会四表漏清，份额滞留到期限兜底（账目失真、内存滞留）。主体因他行作业
+  // 会四表漏清，份额滞留到期限清扫（账目失真、内存滞留）。主体因他行作业
   // 保留在场：只清本行作业的恢复账目，不动他行作业。
   resetDeliveryLedger();
   const rowS = new Context();

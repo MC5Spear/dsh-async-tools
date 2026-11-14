@@ -41,9 +41,9 @@ const SCRIPT = 'tools/check-docs.mjs';
  * 现行文档清单——**必须与 `tools/check-docs.mjs` 的 `DOCUMENTS` 责任表一致**
  * （本文件按现行/档案分组列路径，只是排版差异）。
  *
- * 这里写第二份而不是 import 脚本的常量：脚本的 CLI 入口会 `process.exit`，
- * 静态导入有顺带执行整场检查的风险（函数形态只在调用时跑，但双份清单的漂移风险
- * 本来就是 C5 要盯的）。重复一份的代价是可能漂移，所以 C5 顺便断言这些文件都存在。
+ * 这里维护独立期望集而不是 import 脚本常量：C5 的对账不依赖脚本自身的清单
+ * 才能发现责任表漏项（脚本错了测试仍能红）；动态导入只取函数形态，不触发
+ * CLI 分支。重复一份的代价是可能漂移，所以 C5 顺便断言这些文件都存在。
  */
 const CURRENT_DOCS = ['requirements.md', 'design.md', 'user-reference.md', 'user-reference.en.md', 'documentation-principles.md'];
 
