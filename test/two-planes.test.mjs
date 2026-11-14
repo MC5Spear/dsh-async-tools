@@ -863,6 +863,101 @@ test('T16：plugins.bundle.config keyed 槽契约 + 毫秒换算秒读数', asyn
   assert.equal(typeof registrations[2].Component, 'function', 'sidebar 座位注册的是组件');
 });
 
+// CL-INJECT（验收 ACCEPT-CLIENT-INJECT-01）：预设目录服务的动态注入按 fiber
+// 生命周期管理——`ctx.inject` 同步返回 fiber（不因 `.then` 解包错认清理句柄），
+// whileServed 退出清理调 `fiber.dispose()` **恰一次**，fiber 内部跑注入回调自身
+// 返回的清理（清目录服务引用）；两轮服务周期（服务实现变化）各自独立装配，
+// 重复清理幂等（fiber 句柄置空后不再 dispose）。
+test('CL-INJECT：预设目录注入走 fiber 生命周期——dispose 恰一次、回调清理 detach、两轮服务周期', async () => {
+  // 装置同 T16 的装载形态（window.__ModuleLoader__ 工厂 + React 原语替身）。
+  const { makePrimitivesDouble } = await import('./_primitives-double.mjs');
+  const reactRecord = {
+    createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
+    useState: () => [undefined, () => {}], useEffect: () => {}, useRef: (v) => ({ current: v })
+  };
+  const double = makePrimitivesDouble(reactRecord);
+  const source = readFileSync(resolve(ROOT, 'client.js'), 'utf8');
+  let loaded;
+  new Function('window', source)({ __ModuleLoader__: { load: (spec) => { loaded = spec; } } });
+  const product = loaded.factory((name) => (name === 'react' ? reactRecord : double));
+
+  const fibers = [];        // 每次 agentPresets 注入产出的 fiber（按周期序）
+  const servedLoads = [];   // whileServed 装载闭包（产品接线，可重跑＝服务周期重估）
+  const servedCleanups = [];
+  let attachRuns = 0;       // 注入回调执行次数（= 服务周期数）
+  let detachRuns = 0;       // 回调清理（detach）执行次数
+  let serviceId = 0;        // 每轮服务实现的标识（fiber 闭包捕获当轮）
+  const registrations = [];
+  const fakeCtx = {
+    locale: { register: () => () => {} },
+    configForms: {
+      get: () => ({ getSnapshot: () => ({ status: 'ready', value: {}, user: {} }), subscribe: () => () => {}, mutate: async () => true }),
+      // 真机同款：whileServed 条件内装配，返回退出清理；装载闭包记录在案
+      //（产品接线原样可重跑＝第二服务周期）。
+      whileServed: (ids, load) => {
+        servedLoads.push(load);
+        const off = load();
+        servedCleanups.push(off);
+        return off;
+      }
+    },
+    remote: { $mount: () => Promise.resolve(() => {}), $on: () => () => {} },
+    on: () => () => {},
+    uiWorkspace: { openSession() {} },
+    // 真机同款形态：ctx.inject 返回 fiber——宿主在 fiber 内跑回调，回调返回的
+    // 清理函数挂到 fiber 生命周期（dispose 时执行）。ask 座位的动态注入
+    //（remote.async-tools-ask）同走本口，返回最小 fiber 形状。
+    inject: (list, fn) => {
+      if (list[0] !== 'remote.agentPresets') {
+        return { dispose() {} };
+      }
+      const currentService = { id: ++serviceId, list: () => Promise.resolve({ ok: true, value: { presets: [] } }) };
+      let disposed = false;
+      const cleanup = fn({ remote: { agentPresets: currentService } });
+      attachRuns += 1;
+      const fiber = {
+        service: currentService,
+        dispose: () => {
+          if (disposed) throw new Error('fiber double-disposed');
+          disposed = true;
+          detachRuns += 1;
+          cleanup();
+        }
+      };
+      fibers.push(fiber);
+      return fiber;
+    },
+    slots: { inject: (slot, load) => load(), register: (options, Component) => registrations.push({ options, Component }) },
+    effect: (fn) => fn()
+  };
+  product.apply(fakeCtx);
+  await Promise.resolve();
+  await Promise.resolve();
+  // 预设接线是 apply 里第一个 whileServed 装载（设置卡在其后）。
+  assert.equal(attachRuns, 1, '首轮服务周期：注入回调执行一次');
+  assert.equal(fibers.length, 1, '首轮：恰一个 fiber（同步返回本体）');
+  assert.equal(fibers[0].service.id, 1, 'fiber 持当轮服务实现');
+
+  // ① 退出清理（whileServed 条件失效）：产品清理调 fiber.dispose 恰一次，
+  //    dispose 执行注入回调返回的清理（目录 detach）。
+  servedCleanups[0]();
+  assert.equal(detachRuns, 1, '① dispose 执行回调清理（目录 detach）恰一次');
+  // ② 幂等：重复退出清理不再 dispose（产品清理把 fiber 句柄置空）。
+  servedCleanups[0]();
+  assert.equal(detachRuns, 1, '② 重复清理幂等（不再 dispose）');
+  // ③ 第二轮服务周期（服务实现变化→whileServed 重跑同一装载闭包）：新 fiber、
+  //    新当轮服务引用；退出同样 dispose 恰一次。
+  const secondOff = servedLoads[0]();
+  assert.equal(attachRuns, 2, '③ 第二轮注入回调执行');
+  assert.equal(fibers.length, 2, '③ 第二轮新 fiber');
+  assert.notEqual(fibers[1], fibers[0], '③ 新 fiber 本体');
+  assert.equal(fibers[1].service.id, 2, '③ 第二轮闭包捕获新服务实现');
+  secondOff();
+  assert.equal(detachRuns, 2, '③ 第二轮退出 dispose 恰一次');
+  secondOff();
+  assert.equal(detachRuns, 2, '③ 第二轮重复清理同样幂等');
+});
+
 /**
  * 最小 React 替身：实现卡片与表单组件用到的 `createElement` / `useState` / `useEffect`
  * / `useRef` / `useSyncExternalStore`（`useSyncExternalStore` 订阅模型的快照存储，

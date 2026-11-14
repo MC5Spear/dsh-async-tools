@@ -11,7 +11,7 @@ Find the task you need:
 
 ## 1. Installation identity and prerequisites
 
-**Candidate status:** this adaptation has not passed release acceptance. The table states which versions the package declares admissible, not which have completed acceptance. The public remote does not currently provide `adapt/dsh-0.2.2`; use the remote installation steps only after an accessible source is published. Before then, ask the maintainer for the matching candidate artifact and source, and test in an isolated instance.
+**This candidate has not passed release acceptance.** The table lists versions the package declares admissible. Before testing, confirm an accessible exact commit or artifact with the maintainer, use an isolated instance, and retain matching source; the same version number can identify different implementations. Remote installation steps apply only to a published, accessible branch or commit, not an unuploaded local commit.
 
 | Component | Current applicable version |
 | --- | --- |
@@ -20,7 +20,7 @@ Find the task you need:
 
 “Host” means the DSH instance loading the plugin. Only the version listed above can load the package, not the final `0.2.2`, older `0.2.2` pre-releases (alphas), the `0.2.1`/`0.2.0` lines, or an unlisted rc.
 
-Node.js `24.9.0` or newer is required (the package manifest declares `engines` `>=24.9.0`). DSH's commander 15 dependency needs at least `22.12.0`, which rules out lower versions on that basis alone. Other dependencies may require more. Before choosing a version other than Node.js 24.9, confirm that all dependencies of the target DSH version work on it.
+Node.js `24.9.0` or newer is required, matching this package and the target DSH runtime requirements.
 
 ### Prerequisites for reusing host dependencies
 
@@ -36,9 +36,13 @@ Linux command execution and one-shot permission escalation have not been verifie
 
 The pending-question panel has not been verified with a real OS input method, screen reader, or touchscreen. When relying on these input methods, first confirm that choices and submissions work. If the panel is unusable, open the original session and reply there.
 
+Pending-question behavior after page reconnection or hot updates has not been fully verified. If the panel repeatedly reports errors or stops updating, check the original session before submitting again. Reply directly in that session if needed, and retain the symptoms and triggering actions for the maintainer.
+
 When a tool call is canceled, DSH can replace its return with a cancellation error, leaving the Agent without the result body already generated. The plugin offers [limited recovery copies](<#a-tool-result-may-not-have-arrived-request-a-recovery-copy>), but cancellation and recovery at that instant have not been verified on a real host. Save important output promptly. If recovery fails, inspect the original UI records and any retained-output paths attached to the result; do not automatically repeat a task with side effects.
 
-**Result risk for jobs created by other plugins:** on rc.1, the host can consume a final result but send only a notice directing the Agent to `job_output`. This package’s presets hide that entry, and a later `async_wait` can incorrectly report an empty body. The confirmed case occurs without an active wait, when the host sends its own settlement notice: there is no streamed output, and the final result is too long to include in that notice. Until fixed, do not treat that empty return as proof that the job produced no result. Keep the job ID and ask the instance maintainer to check producer-retained output or original records. Recovery is not guaranteed without an available copy; do not repeat a side-effecting task to reproduce its result.
+**Reading results from other plugins' jobs:** after discovering a running job, this package observes its settlement and delivers the result, including through completion messages when no wait is active. For a job already settled when first discovered, `async_wait` checks the body's location. A body already included in a host message is not duplicated. Where this package has hidden the native `job_output` tool, it attempts to retrieve the original notification component's retained copy, then delivers any retrieved body within normal budgets. The Agent need not call a hidden tool. This channel is implemented, but verification of real loading, presets, and reload conditions remains incomplete; recovery is not guaranteed in every composition.
+
+If no copy is obtained, the return gives terminal facts and a location explanation, not proof that the job produced no result. After that explanation is delivered, later explicit waits normally report delivery facts; they do not guarantee another attempt against the original component. Keep the job ID and notice, and ask the instance maintainer to check that component or the producer for an available copy. Another composition need not share the retained body, a new session remains subject to job-access restrictions, and reloading the component can lose its in-memory copy. Without an available copy, recovery cannot be guaranteed; do not repeat a side-effecting task to recreate its result.
 
 ### Install, pin a source, and check the version
 
@@ -143,6 +147,8 @@ Settings can come from three places, in descending priority: **user overrides** 
 
 Restore default stages removal of that field's user override and still needs Save; other fields remain unchanged. The field then takes the composition value, using the factory default only when no composition value exists. For example, a composition value of `45000` overridden with `90000` returns to `45000`, not the factory `20000`.
 
+When manually clearing a wait-minimum override while also lowering the related default, the current form can validate against the old minimum and reject a valid combination. Clear and save only the minimum override first, confirm its effective value, then change and save the default. For example, a minimum/default pair of `50000/60000` can become `20000/60000` after clearing the override, then `20000/30000` after the second save. The restored minimum comes from composition or factory values, and every step must satisfy the field relationships; do not apply this example to unrelated combinations.
+
 ### 2.1 All 20 settings
 
 Wait durations use milliseconds (ms); 1000 ms is one second. The ranges below describe **settings that can be saved**. A tool call's duration is bounded by the current min/max: a value below the minimum becomes the minimum, and one above the maximum becomes the maximum. This is clamping. New invalid settings are rejected, not clamped.
@@ -205,6 +211,8 @@ A minimum is not a mandatory delay. Completion or an eligible message still retu
 The default list contains the two shipped presets; both switches default to off. Uncheck all entries and save the empty array `[]` to unbind all three features. **The list neither installs nor removes tools.** Custom presets still need [tools mounted first](<#7-advanced-composition>). An unlisted preset does not receive these auxiliary features even if it uses the same tool.
 
 Candidates come from the DSH preset registry; Refresh reads them again. Bound IDs that are currently absent remain available for removal. Failed-to-load entries show the host's reason and cannot be newly selected, but existing bindings can be removed. A failed registry read preserves saved bindings instead of displaying the failure as an empty list.
+
+Directory updates currently have a limitation: while a read is pending, a refresh triggered by a preset change or reconnection can be ignored, and an old response can overwrite the new directory. Once the original request finishes, select Refresh to read again. While it is still loading, there is no cancel or force-refresh action; closing and reopening settings does not rebuild the directory model. If reloading the entire browser page is necessary, record unsaved drafts first: the reload discards them and does not guarantee that a service failure has recovered. If reading still fails, ask the instance maintainer to check the directory service rather than restarting an instance in use.
 
 ### Configuration warnings and recovery
 
@@ -345,7 +353,7 @@ Reads model catalogs and selection permission from DSH without creating children
 | `provider` | string | Optional | Exact provider ID; omit for provider browsing or cross-provider search |
 | `model` | string | Optional | Together with provider, gets exact model details including efforts |
 | `query` | string | Optional | Searches IDs and display names, ignoring case and surrounding whitespace; a nonempty query conflicts with model details |
-| `target_tool` | string | Optional | Intended creation-tool name, including configured names; an entry invisible to the session gives a not-allowed verdict |
+| `target_tool` | string | Optional | Intended creation-tool name, including configured names; a tool invisible to the session or disallowed by this step's condition gives `not-allowed`; an unverifiable step permission gives `unconfirmed`. See `basis` for the reason |
 | `page` | integer | 1 | At least 1; later pages require version |
 | `page_size` | integer | 20 | 1..100 |
 | `version` | string | Optional on first page | Continuation uses the preceding result's version and the same filters and target |
@@ -400,7 +408,7 @@ Job results arrive in the initial call's return, an in-flight `async_wait` retur
 
 A failed read gives an explanation and retry instructions rather than saying the result is empty. Retry the original target as instructed to continue reading unread content.
 
-Ownerless public jobs created by other plugins have a further limitation: after one caller reads through this package, a second caller who originally had access can be incorrectly told that the job belongs to another session. Keep the job ID and error for the instance maintainer to check the producer and legitimate access scope; do not create the task again or try to bypass permissions. The error does not establish that the job was originally private. Whether its body remains available depends on the host’s one-time consumption and retained copies; replay is not guaranteed.
+Other plugins may provide jobs accessible to multiple sessions. Each authorized session can check their status, but content read by one session is not replayed to the others. Later reads return only content not yet read. If a result is needed in another session, save it in the session that receives it.
 
 ### Shortened output or deferred entries: continue reading
 
@@ -412,7 +420,9 @@ async_wait(wait_ms=0)
 
 `maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes. Results share this allowance within one internal delivery batch. The target triggering delivery has priority, followed by readiness order. A batch contains at most 10 entries, including empty ones.
 
-A current parallel-call issue affects this limit: when one caller starts commands concurrently and their directory preparation takes different amounts of time, the returns can be assigned to separate internal batches, each with the full allowance, yet enter the same next model input. In that case, `maxResultChars` is not a total bound for result content in that input. Until fixed, start commands one at a time when strict result-length control is needed; background jobs can still run concurrently.
+Concurrent commands or workflows that have started executing share the batch allowance from preparation onward; different directory-preparation times do not by themselves start a fresh allowance. The current candidate does not cover calls in the same model step that are still queued and have not started executing. When the host executes one tool call at a time, later calls can each receive a fresh allowance even though their results enter the next model input together. Their combined body content can therefore exceed `maxResultChars`. This defect is not yet fixed; it does not mean that tasks failed or bodies were lost.
+
+Results arriving after a batch closes can also enter the same model input as that earlier batch. Do not use `maxResultChars` to estimate the maximum length of one input; inspect actual model requests when controlling or checking consumption. Issuing only one result-returning call per model step avoids the queued-call combination above, but is not a batch fix or a guarantee on total input length.
 
 An oversized entry keeps its head and tail while its middle remains for later reading. Excess entries are deferred in full. Status, necessary error explanations, and retained-output paths are outside the body allowance. **Shortened display does not mean the content was lost.**
 
@@ -432,11 +442,27 @@ Unread middle sections and deferred content arrive first. If none remains, the p
 
 Copies are retained for at most 30 minutes by default, subject to per-session caps of 10 records and 2×maxResultChars characters in total. Oldest entries are removed first, and unloading a plugin row clears its records, so copies can expire earlier. If a copy is unavailable, inspect original UI records and known retained-output paths. Without a body source, recovery cannot be guaranteed.
 
+Different output copies from the same job are handled separately. Confirmation of one portion does not make known expired content count as fully delivered. For a terminal job with some content confirmed and other copies unavailable, recovery reports partial confirmation and the missing portions.
+
+Two recovery limits remain. Continuing recovery of the same job's output can repeat an opening section already provided. Also, after an unconfirmed incremental copy expires while its job is still running, a zero-wait return can show only the running state without explaining that the earlier portion is unavailable. The first case still carries the “may duplicate” marker; do not treat repeated text as new output. In the second case, a running state is not proof that the earlier body was delivered. If content is incomplete, keep the job ID, check original records and known retained paths, and contact the instance maintainer if needed. Do not repeat a side-effecting task to recover its result.
+
 ### The host reports lost buffering: inspect known retained paths
 
-`lossy` means the host actually lost some buffered content, unlike display shortening. `spillPaths`, when included, are output-retention file paths reported by the host and can be supplied with or without lossy. Open them where authorized, save required content promptly, and redact before sharing.
+`lossy` means the host actually lost some buffered content, unlike display shortening. The host reports retained-output file locations through `spillPaths`; this package keeps them with or without lossy. Open complete paths where authorized, save required content promptly, and redact before sharing.
 
-Temporary files may be cleaned up and may not contain the full result. Without a returned path, the plugin has no known recovery route. Do not assume a full disk copy exists or automatically repeat a command with side effects.
+Paths are listed in full, without shortening individual paths. Each return allocates about 2000 characters per job to path listings. If a single path exceeds that amount, at least one complete path is still listed. When more paths remain, the note gives the remaining count and continuation instructions.
+
+Name the original job in a zero-wait call to continue listing its paths:
+
+```text
+async_wait(targets=[{kind:"job", id:"<original job_id>"}], wait_ms=0)
+```
+
+Check the remaining count after each return. If paths remain, repeat the same call until the listing is complete. This retrieves retained-output locations; it does not rerun the task or replay body content already confirmed delivered. Structured tool returns also carry the complete `spill_paths` array, but model-facing text and plain-text completion messages do not display that field directly. Normal continuation does not require finding it.
+
+If the job or plugin delivery record has been cleared and continuation is unavailable, keep the job ID and existing note. Inspect accessible original records, or ask the instance maintainer to check host or producer retention information. Without usable records, omitted locations may not be recoverable.
+
+Temporary files may be cleaned up and may not contain the full result. Without a usable path or copy, the plugin has no known recovery route. Do not assume a full disk copy exists or automatically repeat a command with side effects.
 
 ## 5. Model catalogs, authorization, and inheritance
 
@@ -482,7 +508,9 @@ When the current step condition is not met, wait for a legitimate step in which 
 
 Native creation tools use their own session policy, and workflow agent() has separate rules. Do not apply async_agent permission or argument requirements to other entries. Pagination and search arguments cannot be passed to creation either. After refusal, query again for the same target rather than changing entry points to bypass limits.
 
-Native-target discovery currently has two further limits. If the native row permits model selection but the session has no recorded policy, this package incorrectly rejects every route even though rc.1’s native tool still permits the exact parent route. With several native creation aliases in one group, a later alias can receive only `unconfirmed` because it has no independent identity section. Keep the target name, parent route, and `basis` for the maintainer to investigate; do not expand allowed lists or treat an unconfirmed result as permission.
+If a native creation tool permits model selection but the session has no recorded allowed list, explicit selection is limited to the exact provider and model currently used by the parent Agent. Discovery follows that rule; with a recorded list, it checks that list instead. The target's identity must still be confirmed: its name alone is not enough to apply the parent-model rule.
+
+With several native creation aliases in one group, a later alias may receive only `unconfirmed` because it lacks an independent identity section, even though the native tool is legitimately present. Keep the target name and `basis` for the maintainer to investigate. Do not treat an unconfirmed result as permission or switch entry points to obtain an allowed verdict.
 
 For custom presets that supply child-model defaults, see [child defaults and selectable presets](<#child-defaults-and-selectable-presets>).
 
@@ -494,13 +522,15 @@ Enable `askTakeover` and save. Ordinary questions from root Agents on presets in
 
 With askUiSeat set to sidebar, click the unanswered count at the sidebar bottom to expand the panel. With overlay, questions appear at the lower right. The panel can open the original session, answer, ignore, or extend time. New questions announce the added count to assistive technology without taking keyboard focus or automatically reading the whole question. The countdown does not repeat the announcement.
 
+If the current candidate's first pending-state read fails and no older questions are cached, it also hides the error entry. The absence of a badge or overlay is therefore not confirmation that no questions are pending. If a question appears to be missing, check the original session and its deadline; replying there is an alternative. The panel continues retrying in the background. If it still does not appear, give the instance maintainer redacted symptoms and triggering steps.
+
 ### Answer or ignore
 
 Single-choice questions accept one preset option or the custom answer. Multiple-choice questions can combine choices; custom text is an independent answer, not a note appended to an option. Nothing starts selected, including recommendations.
 
 The custom answer uses a multiline input below its title and choice control, about three lines high and vertically resizable. Clicking it or typing non-whitespace text selects the custom option. Moving keyboard focus into it alone does not change selection. Enter inserts a line break; use the button to submit. Submission is temporarily disabled during IME composition. After composition ends, submit explicitly again; nothing is sent automatically.
 
-Deselecting the custom option can retain its draft without sending it. Clearing a selected custom answer keeps it selected, so enter valid text or deselect it. No selection, or a selected whitespace-only custom answer, prevents submission even when a multiple-choice question has other choices. Use the separate Ignore action to leave a question unanswered.
+Deselecting the custom option can retain its draft without sending it. Clearing a selected custom answer keeps it selected, so enter valid text or deselect it. No selection, or a selected whitespace-only custom answer, prevents submission even when a multiple-choice question has other choices. Select the separate **Skip** button to leave a question unanswered.
 
 Answer text and line breaks are delivered unchanged. Unselected options and drafts are not included.
 
@@ -526,11 +556,15 @@ If a question call is rejected as a whole, check that questions is an array and 
 
 `silentFailureGuard` is off by default. Enabling it adds command diagnostics, tool-description warnings, and operating instructions for presets in boundPresets. It reminds the Agent to check execution rather than replacing host execution logs.
 
-**Known issue: some warnings treat empty output as non-execution and suggest retrying the original command, even when a valid command exited successfully or already caused side effects. Keep this switch off until the issue is fixed. If such a warning appears, do not immediately rerun the command; use the checks below.**
+Some restricted environments block commands before process startup when they capture output, for example through variable assignments, subexpressions, `2>&1`, or output redirection. An executed command can also leave no visible output because it was captured. Empty output alone proves neither success nor non-execution; a multi-statement command may have executed only its earlier statements.
 
-Some restricted environments silently fail commands that capture output, such as assignments to variables, subexpressions, or `2>&1`. If expected output is missing and there is no actual exit information, do not assume success from an empty result or immediately conclude that the command never ran.
+The current diagnostic reports “execution unconfirmed” when a capture form, empty output, a nonzero or unknown exit code, and the other diagnostic conditions coincide. Exit code 0 does not trigger this warning. The check uses command text and exit information; it cannot establish the actual side effects.
 
-First check the PowerShell execution channel with a harmless invocation without capture, such as `Write-Output EXEC_CHECK`, then inspect host logs. Do not rerun a side-effecting original command as a test. A one-shot retry is available only when the current tool exposes wider-permission arguments, the command was just denied in the same turn, and the host approves. A warning does not add permission.
+Check in this order:
+
+1. Inspect the tool's exit information, `$LASTEXITCODE` where available, and expected side effects. For output redirection, check the target file first; no console output may be the intended result.
+2. If the execution channel is still in doubt, run a separate harmless probe without capture, such as `Write-Output EXEC_CHECK`, and inspect host logs as needed.
+3. Decide what to do from the findings, whether the operation is safe to repeat, and the current authorization. Rerunning the original command is not the channel check. Wider permissions still require the current tool's escalation conditions and host approval; a warning does not add permission.
 
 ## 7. Advanced composition
 

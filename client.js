@@ -868,11 +868,12 @@ function createCardModel(ctx) {
  * - 防重入：loading 中忽略并发 load（照宿主成例 `beginRosterRead`）。
  *
  * 服务代理经 `attach(service)` 注入（apply 的动态 inject 接线，见
- * `createPresetCatalog` 用法处注释）；服务永不到场时，任何一次读取尝试（手动
+ * `createPresetCatalog` 用法处注释），服务实现变化／fiber 退出时经 `detach()`
+ * 清空引用；服务永不到场时，任何一次读取尝试（手动
  * 刷新或通知触发的 load）都进入可重试的 error 态（服务缺席文案），无人尝试
  * 则停在 idle 回退渲染——设置卡与其余字段不受影响，已存绑定仍可查看与取消。
  *
- * @returns {object} `{store, load, attach}`——store 是快照存储
+ * @returns {object} `{store, load, attach, detach}`——store 是快照存储
  *   （`{status:'idle'|'loading'|'ready'|'error', items:[], error:undefined}`）。
  */
 function createPresetCatalog() {
@@ -937,6 +938,12 @@ function createPresetCatalog() {
     attach: function (remoteService) {
       service = remoteService;
       load();
+    },
+    // 注入回调返回的清理函数调用（ACCEPT-CLIENT-INJECT-01 设计 §5.3）：
+    // 清空目录持有的服务引用——服务实现变化（fiber 先拆旧 episode、清理跑后
+    // 重跑回调）时目录不留陈旧代理；后续读取按服务缺席口径走可重试 error 态。
+    detach: function () {
+      service = null;
     }
   };
 }
@@ -2734,20 +2741,19 @@ function apply(ctx) {
   var presetCatalog = createPresetCatalog();
   ctx.effect(function () {
     return ctx.configForms.whileServed([ENTRY], function () {
-      var inner = null;
-      var pending = ctx.inject(["remote.agentPresets"], function (scope) {
+      // fiber 生命周期（ACCEPT-CLIENT-INJECT-01 设计 §5.3）：`ctx.inject` 同步
+      // 返回 fiber 本体——返回值即句柄，不经 `then` 解包（其 resolve 值不是
+      // 清理函数）；退出清理＝`fiber.dispose()` 一次并置空（pending 也可
+      // dispose，迟到完成由此覆盖），重服务/断连由 fiber 内部重估。注入回调
+      // 自身返回清理函数：清空目录持有的服务引用，服务实现变化（fiber 先拆
+      // 旧 episode、清理跑后重跑回调）时目录不留陈旧代理。
+      var fiber = ctx.inject(["remote.agentPresets"], function (scope) {
         presetCatalog.attach(scope.remote.agentPresets);
+        return function () { presetCatalog.detach(); };
       });
-      if (pending && typeof pending.then === "function") {
-        pending.then(function (dispose) {
-          inner = typeof dispose === "function" ? dispose : null;
-        }, function () {});
-      } else if (typeof pending === "function") {
-        inner = pending;
-      }
       return function () {
-        if (inner !== null) inner();
-        inner = null;
+        if (fiber !== null && typeof fiber.dispose === "function") fiber.dispose();
+        fiber = null;
       };
     });
   }, "async-tools: preset catalog service");
@@ -2818,29 +2824,46 @@ function apply(ctx) {
     // 题不丢提醒。座位接线先完成渲染，state() 的回执要跨一次 RPC 往返，首查播
     // 报预期晚于区域挂载；极端调度下若首查文本随挂载初值在场，部分读屏不读初
     // 始内容——AX-4 探针在真实实例上实测覆盖该时序。
-    var disposeOverlay = ctx.slots.inject("shell.overlay", function () {
-      return ctx.slots.register(
-        { name: "shell.overlay", id: "async-tools-ask", order: 900 },
-        function () {
-          return React.createElement(React.Fragment, null,
-            React.createElement(AskAnnouncer, { ask: ask }),
-            React.createElement(AskOverlaySeat, { ask: ask, ctx: ctx }));
-        }
-      );
-    });
-    var disposeSidebar = ctx.slots.inject("sidebar.footer.action", function () {
-      return ctx.slots.register(
-        {
-          name: "sidebar.footer.action", id: "async-tools-ask",
-          // label 走本包词典（读模型快照的当前语言；宿主在 locale 变更时
-          // 重读 label——resolveSlotLabel 接受函数）。
-          label: function () {
-            return askTranslator(ask.store.getSnapshot().uiLang, ask.locale)("ask.title");
+    var disposeOverlay;
+    try {
+      disposeOverlay = ctx.slots.inject("shell.overlay", function () {
+        return ctx.slots.register(
+          { name: "shell.overlay", id: "async-tools-ask", order: 900 },
+          function () {
+            return React.createElement(React.Fragment, null,
+              React.createElement(AskAnnouncer, { ask: ask }),
+              React.createElement(AskOverlaySeat, { ask: ask, ctx: ctx }));
           }
-        },
-        function () { return React.createElement(AskSidebarSeat, { ask: ask, ctx: ctx }); }
-      );
-    });
+        );
+      });
+    } catch (error) {
+      // 第一槽注入抛错时已建的 ask 模型（订阅＋轮询）无人收拾——先 dispose 再
+      // 上抛：「不留半套」对「模型在、槽全无」的反向形态同样成立（需求 7.2）。
+      ask.dispose();
+      throw error;
+    }
+    var disposeSidebar;
+    try {
+      disposeSidebar = ctx.slots.inject("sidebar.footer.action", function () {
+        return ctx.slots.register(
+          {
+            name: "sidebar.footer.action", id: "async-tools-ask",
+            // label 走本包词典（读模型快照的当前语言；宿主在 locale 变更时
+            // 重读 label——resolveSlotLabel 接受函数）。
+            label: function () {
+              return askTranslator(ask.store.getSnapshot().uiLang, ask.locale)("ask.title");
+            }
+          },
+          function () { return React.createElement(AskSidebarSeat, { ask: ask, ctx: ctx }); }
+        );
+      });
+    } catch (error) {
+      // 第二槽注册抛错时第一槽已滞留——先释放已装部分再上抛：座位接线要么
+      // 整套装上、要么全不占（需求 7.2 生命周期不留半套）。
+      disposeOverlay();
+      ask.dispose();
+      throw error;
+    }
     return function () {
       disposeSidebar();
       disposeOverlay();
@@ -2853,31 +2876,44 @@ function apply(ctx) {
   // 决定渲染 null 还是本体——座位切换是纯呈现层（宿主管道路径不随座位变）。
   ctx.effect(function () {
     return ctx.configForms.whileServed([ENTRY], function () {
+      // fiber 生命周期（同上方 preset catalog 的 ACCEPT-CLIENT-INJECT-01 口径，
+      // SOL-REQ-02）：`ctx.inject` 同步返回 fiber 本体——句柄必须保存并在停用
+      // 时 `dispose()`（pending 也可 dispose，迟到完成由 fiber 覆盖）；句柄
+      // 丢弃会让每次启用都向宿主命名空间多挂一份注入接线。注入回调可重入
+      // （服务实现变化时 fiber 先拆旧 episode、重跑回调）：重入先释放上一套
+      // 座位接线再装新的——覆盖丢弃会同时滞留旧 ask 模型的轮询、设置订阅与
+      // 槽注册（各自翻倍累积，需求 7.2 生命周期释放）。
       var inner = null;
+      var fiber = null;
       var cancelled = false;
-      // 顺序：$mount 先落（失败则 seats 不装，stderr 已由 askMount.catch 记）。
+      // 顺序：$mount 先落（失败则 seats 不装）。单链 .catch 兼承两类失败：
+      // $mount 拒绝与 onFulfilled 内的同步抛错（如 ctx.inject 抛错）——双参
+      // .then 的 onRejected 只承接挂载自身拒绝，fulfillment 内抛错会落入无人
+      // 处理的派生 Promise 拒绝，诊断行不打印（SOL-REQ-02 诊断可见性口径）。
       Promise.resolve(askMount).then(function () {
         if (cancelled) return;
-        var ui = ctx.inject(["remote." + ASK_NAMESPACE], function (scope) {
-          inner = wireAskSeats(ctx, scope.remote[ASK_NAMESPACE]);
+        fiber = ctx.inject(["remote." + ASK_NAMESPACE], function (scope) {
+          // 重入先拆旧（回调重跑前旧 episode 仍在册）；迟到激活（停用后回调
+          // 才跑）立即回收，不留无人引用的活模型。
+          if (inner !== null) { inner(); inner = null; }
+          var wired = wireAskSeats(ctx, scope.remote[ASK_NAMESPACE]);
+          if (cancelled) { wired(); return; }
+          inner = wired;
         });
-        if (ui && typeof ui.catch === "function") {
-          ui.catch(function (error) {
+        if (fiber && typeof fiber.catch === "function") {
+          fiber.catch(function (error) {
             (window.console && window.console.error) && window.console.error("[dsh-async-tools] ask seats inject failed", error);
           });
         }
-        if (ui && typeof ui.then === "function") {
-          ui.then(function () {
-            if (cancelled && inner !== null) { inner(); inner = null; }
-          }, function () {});
-        }
-      }, function (error) {
+      }).catch(function (error) {
         // 外层（$mount 失败 / inject 抛错）不得静默——待答界面消失必须有人在控制台看见。
         (window.console && window.console.error) && window.console.error("[dsh-async-tools] ask seats wiring failed", error);
       });
       return function () {
         cancelled = true;
         if (inner !== null) { inner(); inner = null; }
+        if (fiber && typeof fiber.dispose === "function") fiber.dispose();
+        fiber = null;
       };
     });
   }, "async-tools: ask takeover seats");

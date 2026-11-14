@@ -12,7 +12,7 @@ This third-party plugin is unaffiliated with DeepSeek. It is personally maintain
 
 ## Before installing
 
-**Candidate status:** this adaptation has not passed release acceptance. The versions below are the package’s declared admission set, not an acceptance result. The `adapt/dsh-0.2.2` branch is not currently available from the public remote; the remote installation steps below apply only after the maintainer publishes an accessible source. For testing before then, obtain a matching candidate artifact from the maintainer and use an isolated instance.
+**This candidate has not passed release acceptance.** The table lists versions the package declares admissible. Before testing, confirm an accessible exact commit or artifact with the maintainer, use an isolated instance, and retain the source: the same version number can identify different source revisions. The branch address below works only when that branch has been published and is accessible; an unuploaded local commit cannot serve as a remote source.
 
 | Component | Current applicable version |
 | --- | --- |
@@ -23,7 +23,7 @@ This third-party plugin is unaffiliated with DeepSeek. It is personally maintain
 
 Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Before relying on these environments, check the features needed in a separate test session.
 
-For IME, screen-reader, or touch-based answers, and recovery after a canceled tool call, read [usage limits and saving results](<docs/user-reference.en.md#usage-limits-and-saving-results>). **Jobs created by other plugins also have a result-reading risk: a long final result consumed by the host but omitted from its notice can be incorrectly reported as empty by this package.** Until fixed, keep the job ID and producer-retained output; do not repeat a side-effecting task on the strength of that empty return.
+For IME, screen-reader, or touch-based answers, and recovery after a canceled tool call, read [usage limits and saving results](<docs/user-reference.en.md#usage-limits-and-saving-results>). If another plugin's job settled before this package began observing it, `async_wait` first checks the body's location. Where the native reader is hidden, it attempts to retrieve the original notification component's retained copy. A retrieved body follows normal delivery. If no copy is obtained, keep the job ID and explanation and follow the [result-reading limits](<docs/user-reference.en.md#usage-limits-and-saving-results>) for assistance; do not repeat a side-effecting task to recreate its result.
 
 ## Install and confirm loading
 
@@ -95,7 +95,7 @@ Custom presets can use all features too, but tools must be mounted manually and 
 
 Open the plugin list → this package's detail page. Save applies edits, including Restore default actions. Ordinary valid saves need no restart. The [settings reference](<docs/user-reference.en.md#2-first-use-and-settings>) explains each field and its default.
 
-The pending-question panel and silent-command-failure warnings are off by default. Both act only on presets in `boundPresets`, which defaults to the two shipped presets. Enable `askTakeover` when the panel is needed. **Some current `silentFailureGuard` warnings can encourage repeating a command that already succeeded; keep it off until fixed.** If already enabled, follow [missing-output checks](<docs/user-reference.en.md#a-command-should-have-produced-output-but-did-not>) rather than immediately rerunning the command.
+The pending-question panel and silent-command-failure warnings are off by default. Both act only on presets in `boundPresets`, which defaults to the two shipped presets. Enable `askTakeover` for the panel or `silentFailureGuard` for command diagnostics. After a missing-output warning, [check exit information and actual effects](<docs/user-reference.en.md#a-command-should-have-produced-output-but-did-not>) before deciding what to do; do not immediately rerun the original command.
 
 Commands inherit the session's directory, sandbox, approvals, and permissions, and can still access the network or sensitive information. The plugin itself collects no telemetry, initiates no network requests, and does not read or write credentials. Model discovery obtains data from DSH without model inference. Output and host temporary files may contain secrets; redact before sharing.
 

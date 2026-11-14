@@ -19,6 +19,7 @@ import { dirname, join } from 'node:path';
 import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
 import { resolveConfig } from '../lib/config.js';
 import { LATE_ANSWER_EVENT } from '../lib/interrupts.js';
+import { JOB_RESULT_EVENT } from '../lib/delivery-sources.js';
 import { t } from '../lib/text.js';
 import { AgentTarget, resetAgentBaselines, describeEntry } from '../lib/wait-agent-target.js';
 import { checkedTool, inboxPayload } from './_helpers.mjs';
@@ -819,7 +820,9 @@ hostTest('R58-l：说明两档上限——单条 200 截断、留存行合计 20
     assert.ok(text.includes('BODY-TEXT'), '正文不受说明上限影响');
     const spillLineCount = (text.match(/P\d+-x+/g) ?? []).length;
     assert.ok(spillLineCount < 12, `留存行被合并（未逐条全列）；实列 ${String(spillLineCount)} 行`);
-    assert.match(text, /more spill paths omitted|留存路径未随说明列出/, '超限给一行计数汇总（汇总回退）');
+    assert.match(text, /Retained-path listing is paged|留存路径分批列出/, '超限给计数行（分页续取口径）');
+    assert.match(text, /async_wait\(targets=\[\{kind:"job", id:"r58l-job-/,
+      '计数行附点名该作业的零等待领取例句');
     ledger.detachJob(jobId);
   } finally {
     await rig.dispose();
@@ -854,9 +857,12 @@ hostTest('RA-SPILL-LOCATOR：留存行完整出现或不出现——长路径不
   const linesMany = entryNoteLines({ jobId: 'rsl-3', lossy: true, spillPaths: many }, 'en');
   const listedMany = linesMany.filter((line) => line.includes('Retained at the host-reported path:'));
   assert.ok(listedMany.length < many.length, `超预算留存行不全列（实列 ${String(listedMany.length)}）`);
+  assert.ok(listedMany.length >= 1, '预算内至少列入一条（分页续取不永不可达）');
   assert.ok(listedMany.every((line) => /^Retained at the host-reported path: M\d+-x+$/.test(line)),
     '列出的留存行都完整（无中途截断）');
-  assert.match(linesMany.join('\n'), /more spill paths omitted/, '超限给计数行（指向结构化字段）');
+  assert.match(linesMany.join('\n'), /Retained-path listing is paged: 8 of 12 listed this batch/,
+    '计数行报告本批列出量与总量');
+  assert.match(linesMany.join('\n'), /to list the remaining 4/, '计数行报告余量并附领取例句');
   const entryMany = projectBatchEntry({
     jobId: 'rsl-4', terminal: { status: 'completed' }, chars: 0, truncated: false,
     text: '', lossy: true, spillPaths: many
@@ -2846,6 +2852,53 @@ hostTest('W-SPIN-B：自旋防线出口与预算到期同款三档取键——�
     }
   } finally {
     WAIT_SPIN_LIMIT.value = original;
+  }
+});
+
+hostTest('W-RACE-TERM：终态竞速不丢——已结算未消费的作业终态保持竞速候选，ready 先序后下一轮交回（SOL-REQ-03 修前红）', async () => {
+  // 竞速候选纪律（设计 §3.2.4）：作业事件通道的终态 resolve 落地后，若同轮
+  // 竞速被先序信号（内容就绪事件）赢走、循环只 continue，下一轮候选必须保留
+  // 该已结算条目——Promise 已 resolve 不阻塞竞速。过滤掉它会令终态事实再无
+  // 消费载体：本次等待预算耗尽按顶层 running 交回，而目标实为 completed、
+  // 正文滞留账本缓冲。
+  const rig = await buildRig('wrace', []);
+  const originalWait = rig.ctx.jobs.wait;
+  const realWait = originalWait.bind(rig.ctx.jobs);
+  try {
+    const wf = await rig.workflow.execute(
+      { ...WF_ARGS, meta: { ...WF_ARGS.meta, name: 'wrace-wf' } }, rig.exec()
+    );
+    const jobId = wf.job_id;
+    // 受控放行：包装 jobs.wait——注册表结算先在底层 promise 落地，何时向竞速
+    // 成员放行由测试编排，用于精确构造「终态 resolve 已排队、就绪回调先消费
+    // 同轮竞速」的微任务次序。
+    const gated = [];
+    rig.ctx.jobs.wait = (...args) => new Promise((resolve) => {
+      realWait(...args).then((view) => { gated.push(() => resolve(view)); }, () => {});
+    });
+    const started = performance.now();
+    const pending = rig.waiter.execute(
+      { wait_ms: 1200, targets: [{ kind: 'job', id: jobId }] }, rig.exec()
+    );
+    await sleep(120); // 等待已挂起进竞速循环、作业事件通道已武装
+    rig.finisher();   // 引擎结算：底层 wait promise resolve（放行进队列）
+    await sleep(40);  // 结算链与账本 beat（内容就绪事件的自然先序）完成
+    // 同刻同步块编排微任务次序：先放行终态 resolve（then-handler 入队、条目
+    // 记录 settled＋resolvedTerminal），随即发就绪事件——就绪回调后入队但
+    // 早于终态条目的竞速回调执行，本轮竞速由 ready 赢走（有目标不结束、仅
+    // continue）；下一轮建候选时终态条目已结算未消费。
+    for (const release of gated.splice(0)) release();
+    rig.ctx.emit(JOB_RESULT_EVENT, { owner: rig.parent.id });
+    const outcome = await pending;
+    const wall = performance.now() - started;
+    assert.equal(outcome.status, 'completed',
+      '已结算未消费的终态保持竞速候选、下一轮交回（修前：候选过滤排除已结算条目、预算耗尽按 running 交回＝红）');
+    assert.ok(String(outcome.output ?? '').includes('AT_FINAL_PAYLOAD'),
+      '正文随终态出口交付（不滞留账内）');
+    assert.ok(wall < 1000, `不耗尽本次等待预算（实耗 ${String(Math.round(wall))} ms）`);
+  } finally {
+    rig.ctx.jobs.wait = originalWait;
+    await rig.dispose();
   }
 });
 
@@ -5381,7 +5434,15 @@ hostTest('RC-A：完成消息接受点登记副本（via=message）；领取事�
     const copies = ledger.subjects.get(rig.parent.id)?.recoveries?.get(jobId) ?? [];
     assert.equal(copies.length, 1, '接受点登记份额（inject 正常返回＝已持久入箱）');
     assert.equal(copies[0].via, 'message', '完成消息载体');
-    rig.ctx.emit('agent/inbox/claimed', { agent: { id: rig.parent.id } });
+    assert.ok(copies[0].messageId === rig.injections[0].id,
+      '份额按载体消息构造期 id 登记（messageId）');
+    // 无关消息的领取零份额变动（ACCEPT-RECOVERY-MESSAGE-01）：id 不匹配→保持。
+    rig.ctx.emit('agent/inbox/claimed',
+      { agent: { id: rig.parent.id }, message: { id: 'unrelated-msg-id' }, turn: 1 });
+    assert.equal(ledger.jobs.get(jobId).confirmedAt ?? null, null,
+      '无关消息领取：份额保持未确认');
+    rig.ctx.emit('agent/inbox/claimed',
+      { agent: { id: rig.parent.id }, message: { id: rig.injections[0].id }, turn: 1 });
     const entry = ledger.jobs.get(jobId);
     assert.notEqual(entry.confirmedAt ?? null, null, '领取确认：confirmedAt 置位');
     assert.equal(ledger.subjects.get(rig.parent.id)?.recoveries?.get(jobId), undefined,
@@ -5408,7 +5469,13 @@ hostTest('RC-C：领取前丢弃（agent/inbox/discarded）→ 副本退回未�
     await sleep(150);
     const copies = ledger.subjects.get(rig.parent.id)?.recoveries?.get(jobId) ?? [];
     assert.equal(copies.length, 1, '前置：完成消息接受点登记份额');
-    rig.ctx.emit('agent/inbox/discarded', { agent: { id: rig.parent.id } });
+    // 无关消息的丢弃零份额变动（ACCEPT-RECOVERY-MESSAGE-01）：id 不匹配→原样。
+    rig.ctx.emit('agent/inbox/discarded',
+      { agent: { id: rig.parent.id }, message: { id: 'unrelated-msg-id' } });
+    assert.equal((ledger.subjects.get(rig.parent.id)?.recoveries?.get(jobId) ?? [])[0]?.returned, false,
+      '无关消息丢弃：份额不退回');
+    rig.ctx.emit('agent/inbox/discarded',
+      { agent: { id: rig.parent.id }, message: { id: rig.injections[0].id } });
     const after = ledger.subjects.get(rig.parent.id)?.recoveries?.get(jobId) ?? [];
     assert.equal(after.length, 1, '丢弃退回：份额保持（可恢复）');
     assert.equal(after[0].returned, true, 'returned 标记置位');
@@ -5424,6 +5491,400 @@ hostTest('RC-C：领取前丢弃（agent/inbox/discarded）→ 副本退回未�
     await rig.dispose();
   }
 });
+
+// RM-MATRIX（验收 ACCEPT-RECOVERY-MESSAGE-01）：份额确认/退回按**载体消息身份**
+// 匹配——一条消息多份额（同 id 全确认）、多消息各份额（逐 id）、无关消息零变动、
+// 事件无消息身份零变动、退回在先领取在后（M1：returned 不被确认复活）、热更边界
+// 前的旧份额（无 messageId）保守滞留。
+hostTest('RM-MATRIX：份额按载体消息身份确认/退回——无关消息、无身份事件、旧份额零变动', async () => {
+  const rig = await buildRig('rm-mx', []);
+  ledger.attachClaimedListener(rig.ctx);
+  try {
+    const j = [];
+    for (let i = 0; i < 2; i += 1) {
+      const wf = await rig.workflow.execute({ ...WF_ARGS, yield_ms: 20 }, rig.exec());
+      j.push(wf.job_id);
+    }
+    rig.finisher(0);
+    rig.finisher(1);
+    await sleep(150); // 两条完成消息经 inject 各自接受（busy 路径逐 send 一条）
+    assert.equal(rig.injections.length, 2, '前置：两条完成消息各自注入（逐条 id）');
+    const owner = rig.parent.id;
+    const copiesOf = (jobId) => ledger.subjects.get(owner)?.recoveries?.get(jobId) ?? [];
+    assert.equal(copiesOf(j[0]).length, 1, '前置：份额 #1 在册');
+    assert.equal(copiesOf(j[1]).length, 1, '前置：份额 #2 在册');
+    assert.ok(copiesOf(j[0])[0].messageId === rig.injections[0].id
+      && copiesOf(j[1])[0].messageId === rig.injections[1].id,
+      '两份额各按其载体消息构造期 id 登记（不同 id）');
+    // ① 无关消息领取：零变动。
+    rig.ctx.emit('agent/inbox/claimed',
+      { agent: { id: owner }, message: { id: 'rm-unrelated' }, turn: 1 });
+    assert.equal(ledger.jobs.get(j[0]).confirmedAt ?? null, null, '① 无关消息：#1 未确认');
+    assert.equal(ledger.jobs.get(j[1]).confirmedAt ?? null, null, '① 无关消息：#2 未确认');
+    // ② 无消息身份的领取事件（旧宿主/降级形态）：保守零变动（保恢复能力）。
+    rig.ctx.emit('agent/inbox/claimed', { agent: { id: owner } });
+    assert.equal(ledger.jobs.get(j[0]).confirmedAt ?? null, null, '② 无身份事件：#1 仍未确认');
+    // ③ 同 id 领取：该消息的份额确认即清。
+    rig.ctx.emit('agent/inbox/claimed',
+      { agent: { id: owner }, message: { id: rig.injections[0].id }, turn: 1 });
+    assert.ok(ledger.jobs.get(j[0]).confirmedAt !== null, '③ 同 id 领取：#1 确认');
+    assert.equal(ledger.subjects.get(owner)?.recoveries?.get(j[0]), undefined, '③ 确认清副本');
+    assert.equal(ledger.jobs.get(j[1]).confirmedAt ?? null, null, '③ 他份额不受牵连');
+    // ④ 退回在先（同 id 丢弃）→ returned 置位；随后领取同一 id 不复活（M1）。
+    rig.ctx.emit('agent/inbox/discarded',
+      { agent: { id: owner }, message: { id: rig.injections[1].id } });
+    assert.equal(copiesOf(j[1])[0]?.returned, true, '④ 退回置位');
+    assert.equal(ledger.jobs.get(j[1]).confirmedAt ?? null, null, '④ 未确认');
+    rig.ctx.emit('agent/inbox/claimed',
+      { agent: { id: owner }, message: { id: rig.injections[1].id }, turn: 2 });
+    assert.equal(copiesOf(j[1])[0]?.returned, true, '④ returned 不因后续领取复活（M1）');
+    assert.equal(ledger.jobs.get(j[1]).confirmedAt ?? null, null, '④ 仍未确认');
+    // ⑤ 热更边界前的旧份额（无 messageId）：任何事件都不匹配，保守滞留在册。
+    const legacyJob = `rm-legacy-${Math.random().toString(36).slice(2, 8)}`;
+    ledger.noteJobStarted(rig.ctx, { agentLang: 'en', maxResultChars: 4096 }, legacyJob, owner);
+    ledger.jobs.get(legacyJob).terminal = { status: 'completed' };
+    ledger.subjects.get(owner).recoveries.set(legacyJob, [{
+      ord: 1, text: 'LEGACY-BODY', partial: false, terminal: { status: 'completed' },
+      registeredAt: ledger.now(), returned: false, via: 'message' // 无 messageId（旧版本登记形态）
+    }]);
+    rig.ctx.emit('agent/inbox/claimed',
+      { agent: { id: owner }, message: { id: rig.injections[0].id }, turn: 3 });
+    rig.ctx.emit('agent/inbox/discarded',
+      { agent: { id: owner }, message: { id: rig.injections[0].id } });
+    assert.equal((ledger.subjects.get(owner)?.recoveries?.get(legacyJob) ?? []).length, 1,
+      '⑤ 旧份额保守滞留（不被任何领取/丢弃事件匹配）');
+    assert.equal(ledger.subjects.get(owner)?.recoveries?.get(legacyJob)[0].returned, false,
+      '⑤ 旧份额不误退回');
+    ledger.detachJob(legacyJob);
+  } finally {
+    await rig.dispose();
+  }
+});
+
+// RM-IDLE（验收 ACCEPT-RECOVERY-MESSAGE-01）：空闲路径多作业合并成**一条**完成消息
+// （followup，S5 同款确定性装置）——一份载体、多份额同 messageId；领取该 id
+// 一次性确认全部。
+hostTest('RM-IDLE：合并载体一消息多份额同 id——领取一次全确认', async () => {
+  const rig = sRig({ status: 'idle' });
+  const token = ledger.claimWait(rig.OWNER);
+  await rig.readyJob('job-rm-ia', 'BODY-RM-A');
+  await rig.readyJob('job-rm-ib', 'BODY-RM-B');
+  await ledger.releaseWait(token, rig.OWNER);
+  assert.equal(rig.calls.followup.length, 1, '前置：两项合并为一条完成消息（followup）');
+  for (const id of ['job-rm-ia', 'job-rm-ib']) {
+    const copies = ledger.subjects.get(rig.OWNER)?.recoveries?.get(id) ?? [];
+    assert.equal(copies.length, 1, `份额 ${id} 在册`);
+    assert.equal(copies[0].messageId, rig.calls.followup[0].id, `合并载体：${id} 同 messageId`);
+  }
+  rig.listeners.get('agent/inbox/claimed')(
+    { agent: { id: rig.OWNER }, message: { id: rig.calls.followup[0].id } });
+  for (const id of ['job-rm-ia', 'job-rm-ib']) {
+    assert.ok(ledger.jobs.get(id).confirmedAt !== null, `同 id 领取：${id} 确认`);
+    assert.equal(ledger.subjects.get(rig.OWNER)?.recoveries?.get(id), undefined,
+      `确认清副本：${id}`);
+  }
+});
+
+// RM-ABORT（验收 ACCEPT-ABORT-VALIDATION-01）：取消早退不豁免参数语义校验——
+// wait_ms=-1 且入口信号已中止时按非法预算**拒绝**，不返回 cancelled（校验次序：
+// 统一预算/目标规范化 → 取消早退）。
+hostTest('RM-ABORT：入口已中止＋wait_ms=-1 → 非法预算错误（非 cancelled）', async () => {
+  const rig = await buildRig('rm-ab');
+  try {
+    const abortedExec = () => ({
+      agent: rig.parent,
+      signal: AbortSignal.abort()
+    });
+    await assert.rejects(
+      rig.waiter.execute({ wait_ms: -1, targets: [{ kind: 'job', id: 'rm-ab-x' }] }, abortedExec()),
+      (error) => /wait_ms must be a finite number >= 0/.test(String(error?.message ?? error)),
+      '非法预算按校验错误拒绝（校验先于取消早退）'
+    );
+    // 对照：合法预算＋已中止 → 仍是取消口径零返回（行为不变）。
+    const cancelled = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: 'rm-ab-x' }] }, abortedExec()
+    );
+    assert.equal(cancelled.status, 'cancelled', '对照：合法请求已中止仍按 cancelled');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+// RA-SPILL-PAGE（验收 ACCEPT-SPILL-LOCATOR-01 返修）：留存行分页续取——
+// spillListCount 至少一条、单条超预算整条列入（2102 受控形态一次取回）、页序
+// 取尽幂等（游标在尾 → 0）；stageRecovery 第 2 档领取组按「至少一条」推进游标、
+// 取尽后不再附组。
+hostTest('RA-SPILL-PAGE：留存行分页——至少一条、2102 单路径整取、取尽幂等', async () => {
+  const { spillListCount } = await import('../lib/delivery.js');
+  // ① 单条超预算（2102 受控形态）：整条列入本批（不永不可达）。
+  const huge = `H/${'h'.repeat(2090)}/tail.bin`;
+  assert.ok(huge.length > 2000, '前置：单条超 MAX_SPILL_TOTAL');
+  assert.equal(spillListCount([huge], 0, 'en'), 1, '① 单条超预算整条列入');
+  assert.equal(spillListCount([huge], 1, 'en'), 0, '① 取尽后 0（幂等）');
+  // ② 12 × ~220：每页至少一条、逐页推进、合计恰 12、游标在尾后 0。
+  const paths = Array.from({ length: 12 }, (_, i) => `S${i}-${'p'.repeat(210)}`);
+  let cursor = 0;
+  const pages = [];
+  while (cursor < paths.length) {
+    const n = spillListCount(paths, cursor, 'en');
+    assert.ok(n >= 1, `② 第 ${String(pages.length + 1)} 页至少一条`);
+    pages.push(n);
+    cursor += n;
+  }
+  assert.equal(cursor, 12, '② 分页合计恰取尽');
+  assert.equal(pages.length > 1, true, '② 超预算确需多页（对照：单页装不下）');
+  assert.equal(spillListCount(paths, 12, 'en'), 0, '② 游标在尾 → 0（幂等不重发）');
+  // ③ stageRecovery 第 2 档领取组：真实账本驱动——确认后点名反复领取直到取尽，
+  //    组消失后档位回 plain {tier:2}（不再附组）。
+  const rig = await buildRig('rsl-pg');
+  try {
+    const owner = rig.parent.id;
+    const jobId = `rsl-pg-job-${Math.random().toString(36).slice(2, 8)}`;
+    ledger.noteJobStarted(rig.ctx, { agentLang: 'en', maxResultChars: 4096 }, jobId, owner);
+    ledger.claimWait(owner); // 建主体分册（subjects 随首个 #subject 调用创建）
+    const entry = ledger.jobs.get(jobId);
+    entry.terminal = { status: 'completed' };
+    entry.spillPaths = paths;
+    entry.confirmedAt = ledger.now();
+    const seen = [];
+    for (;;) {
+      const tier = ledger.stageRecovery(jobId, owner);
+      assert.equal(tier?.tier, 2, '③ 已确认作业恒第 2 档');
+      if (tier.spillGroup === undefined) break;
+      assert.ok(tier.spillGroup.count >= 1, '③ 领取组至少一条');
+      seen.push(...tier.spillGroup.paths);
+    }
+    assert.deepEqual(seen, paths, '③ 领取组逐页取尽、次序不乱');
+    assert.deepEqual(ledger.stageRecovery(jobId, owner), { tier: 2 }, '③ 取尽后不再附组（幂等）');
+    ledger.detachJob(jobId);
+  } finally {
+    await rig.dispose();
+  }
+});
+
+// RA-SPILL-RESET（验收 ACCEPT-SPILL-LOCATOR-01 返修）：宿主报告的留存清单
+// **重排**时已列游标归零重列（重复列出无害、按游标跳过有错位风险）；同序追加
+// 新路径不重排、按去重并入。真读路径驱动（jobs.read 的 spillPaths 次序受控）。
+hostTest('RA-SPILL-RESET：留存清单重排 → 已列游标归零；同序追加不重排、去重并入', async () => {
+  const mk = (tag) => `${tag}/${'r'.repeat(80)}/spill.bin`;
+  const A = mk('A');
+  const B = mk('B');
+  const C = mk('C');
+  const D = mk('D');
+  const rig = sRig(); // 受控读取装置（sRig 的 jobs.read 直接回放 reads 表）
+  try {
+    // ① 首次装配：终态正文＋留存 [A,B,C] → 批次列出三条、游标推进到尾。
+    rig.reads.set('job-rst', {
+      chunks: [{ channel: 'stdout', text: 'RST-BODY' }],
+      job: { output: { spillPaths: [A, B, C] } }
+    });
+    ledger.noteJobStarted(rig.ctx, rig.config, 'job-rst', rig.OWNER);
+    await ledger.readSettled('job-rst');
+    const token = ledger.claimWait(rig.OWNER);
+    await ledger.releaseWait(token, rig.OWNER);
+    const entry = ledger.jobs.get('job-rst');
+    assert.equal(entry.spillListed, 3, '前置：首批三条全列（游标推进到尾）');
+    assert.equal(entry.spillPaths.length, 3, '在册清单三条');
+    // 领取确认（份额在册会占第 1 档——确认后第 2 档领取组才是本测断言面）：
+    // 同 id 领取事件确认该份额（sRig 的 inject 记录＝真实载体消息 id）。
+    assert.equal(rig.calls.inject.length, 1, '前置：完成消息经 inject 接受');
+    rig.listeners.get('agent/inbox/claimed')(
+      { agent: { id: rig.OWNER }, message: { id: rig.calls.inject[0].id } });
+    assert.ok(entry.confirmedAt !== null, '前置：领取确认（confirmedAt 置位）');
+    // ② 重排（同集不同序）：真读路径（readIncremental 的读取回执）→ 归零重列。
+    rig.reads.set('job-rst', {
+      chunks: [],
+      job: { output: { spillPaths: [C, B, A] } }
+    });
+    await ledger.readIncremental('job-rst', rig.OWNER);
+    assert.equal(entry.spillListed, 0, '② 重排检测：已列游标归零（重列不跳过）');
+    assert.equal(entry.spillPaths.length, 3, '② 同集去重：不重复入账');
+    // ③ 同序追加（无重排）：游标不动、新路径去重并入。
+    rig.reads.set('job-rst', {
+      chunks: [],
+      job: { output: { spillPaths: [A, B, C, D] } }
+    });
+    await ledger.readIncremental('job-rst', rig.OWNER);
+    assert.equal(entry.spillListed, 0, '③ 同序不重排（游标不动）');
+    assert.deepEqual(entry.spillPaths, [A, B, C, D], '③ 新路径追加并入、旧路径不重复');
+    // ④ 归零后的重列出口：点名第 2 档领取组自游标 0 起全量交回。
+    entry.confirmedAt = ledger.now();
+    const tier = ledger.stageRecovery('job-rst', rig.OWNER);
+    assert.equal(tier?.tier, 2, '④ 点名按第 2 档');
+    assert.deepEqual(tier?.spillGroup?.paths, [A, B, C, D], '④ 领取组自游标 0 全量交回');
+    assert.equal(entry.spillListed, 4, '④ 领取组推进游标（预算内四条一批）');
+  } finally {
+    ledger.detachJob('job-rst');
+  }
+});
+
+// RA-SPILL-ZW（盲审 #1 返修补）：零等待主出口的留存领取组——运行中作业＋已确认
+// （confirmedAt）＋缓冲空＋留存余量＋显式零等待点名 → stageRecovery 第 2 档随取
+// 随推进游标，主出口必须把领取组渲染进 note（否则该页被静默烧掉）；重复零等待
+// 分页取尽，取尽后不再附组。
+hostTest('RA-SPILL-ZW：零等待主出口渲染留存领取组——分页取尽、取尽不附组', async () => {
+  const paths = Array.from({ length: 12 }, (_, i) => `Z${i}-${'z'.repeat(210)}`);
+  const rig = await buildRig('rsl-zw');
+  try {
+    const wf = await rig.workflow.execute({ ...WF_ARGS, meta: { ...WF_ARGS.meta, name: 'rsl-zw-wf' } }, rig.exec());
+    const jobId = wf.job_id;
+    assert.equal(wf.status, 'running', '前置：编排作业运行中');
+    const entry = ledger.jobs.get(jobId);
+    entry.confirmedAt = ledger.now(); // 已确认（第 2 档资格）
+    entry.spillPaths = paths;
+    entry.spillListed = 0;
+    assert.equal(entry.buffer, '', '前置：缓冲空（无未交付增量）');
+    const countLines = (note) => note.split('Retained at the host-reported path:').length - 1;
+    // 第 1 页：组行 8 条＋计数行（余 4）。
+    const page1 = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: jobId }] }, { agent: rig.parent }
+    );
+    assert.equal(page1.status, 'running', '运行中目标：零等待出口状态 running');
+    assert.equal(countLines(page1.note), 8, '第 1 页组行 8 条');
+    assert.match(page1.note, /Retained-path listing is paged: 8 of 12 listed this batch/, '第 1 页计数行');
+    assert.match(page1.note, /to list the remaining 4/, '计数行附余量与领取例句');
+    assert.equal(entry.spillListed, 8, '游标推进到 8');
+    // 第 2 页：余 4 条、无计数行。
+    const page2 = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: jobId }] }, { agent: rig.parent }
+    );
+    assert.equal(countLines(page2.note), 4, '第 2 页组行 4 条');
+    assert.doesNotMatch(page2.note, /Retained-path listing is paged/, '取尽页无计数行');
+    assert.equal(entry.spillListed, 12, '游标取尽');
+    // 第 3 页：不再附组（幂等不重发）。
+    const page3 = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: jobId }] }, { agent: rig.parent }
+    );
+    assert.equal(countLines(page3.note), 0, '取尽后不附组');
+    assert.deepEqual(ledger.stageRecovery(jobId, rig.parent.id), { tier: 2 }, '档位回 plain');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+// RA-SPILL-RB（盲测 P7(b) 返修补）：undoClaim 的留存游标回退凭据两种形态——
+// 等待出口直传 collectBatch 原始装配（spillFrom）与完成消息路径预映射
+// （spillBefore）同值同义，缺一即失败载体已列的说明行永不重列。
+hostTest('RA-SPILL-RB：undoClaim 游标回退——spillFrom／spillBefore 两凭据同效', async () => {
+  const mk = (tag) => `${tag}/${'b'.repeat(80)}/spill.bin`;
+  const paths = [mk('B0'), mk('B1'), mk('B2'), mk('B3'), mk('B4'), mk('B5')];
+  const rig = sRig();
+  try {
+    ledger.noteJobStarted(rig.ctx, rig.config, 'job-rb', rig.OWNER);
+    ledger.claimWait(rig.OWNER); // 建主体分册（entryFor 随 #subject 创建）
+    const entry = ledger.jobs.get('job-rb');
+    entry.terminal = { status: 'completed' };
+    entry.spillPaths = paths;
+    // ① 等待出口形态：原始装配条目携带 spillFrom＝装配时游标（0），回滚回 0。
+    entry.spillListed = 4;
+    ledger.undoClaim(rig.OWNER, [{ jobId: 'job-rb', text: '', spillFrom: 0, spillCount: 4 }]);
+    assert.equal(entry.spillListed, 0, '① spillFrom 凭据回退到装配前');
+    // ② 完成消息路径形态：#releaseClaims 预映射 spillBefore，同效。
+    entry.spillListed = 5;
+    ledger.undoClaim(rig.OWNER, [{ jobId: 'job-rb', text: '', spillBefore: 1 }]);
+    assert.equal(entry.spillListed, 1, '② spillBefore 凭据同效');
+    // ③ 两键同在以显式 spillBefore 为准（消息路径语义）。
+    entry.spillListed = 4;
+    ledger.undoClaim(rig.OWNER, [{ jobId: 'job-rb', text: '', spillBefore: 2, spillFrom: 0 }]);
+    assert.equal(entry.spillListed, 2, '③ 同在时 spillBefore 优先');
+    // ④ 清单重排已归零后旧凭据（归零前游标 5）到达：Math.min 下界维持归零，
+    // 不回退到重排前进度跳过重列；归零后已重列 3、旧凭据 5 到达同理不回退。
+    entry.spillListed = 0;
+    ledger.undoClaim(rig.OWNER, [{ jobId: 'job-rb', text: '', spillBefore: 5 }]);
+    assert.equal(entry.spillListed, 0, '④ 归零后旧凭据不恢复归零前游标');
+    entry.spillListed = 3;
+    ledger.undoClaim(rig.OWNER, [{ jobId: 'job-rb', text: '', spillBefore: 5 }]);
+    assert.equal(entry.spillListed, 3, '④ 归零后已重列的进度不被旧凭据回退');
+  } finally {
+    ledger.detachJob('job-rb');
+  }
+});
+
+// RA-SPILL-TE（二轮盲审测试缺口①返补）：入口终态分支的领取组渲染——终态＋
+// 已确认（confirmedAt）＋缓冲空＋留存余量＋显式零等待点名时，首个终态目标走
+// 入口终态分支（与零等待主出口互斥），该分支同样必须把 #spillGroup 领取组
+// 渲染进 note（否则该页被静默烧掉）；重复零等待分页取尽。
+hostTest('RA-SPILL-TE：入口终态分支渲染留存领取组——分页取尽、取尽不附组', async () => {
+  const paths = Array.from({ length: 12 }, (_, i) => `T${i}-${'t'.repeat(210)}`);
+  const rig = await buildRig('rsl-te');
+  try {
+    const wf = await rig.workflow.execute({ ...WF_ARGS, meta: { ...WF_ARGS.meta, name: 'rsl-te-wf' } }, rig.exec());
+    const jobId = wf.job_id;
+    rig.finisher(); // 引擎结算：终态入账、完成消息登记未确认份额（tier 1 资格）
+    await sleep(150);
+    const entry = ledger.jobs.get(jobId);
+    assert.ok(entry.terminal, '前置：终态已入账');
+    // 份额在册会先走第 1 档——份额属状态装配（确认事件清理），不入本锚范围，
+    // 直接清位后构造第 2 档资格（已确认＋缓冲空＋留存余量）。
+    ledger.subjects.get(rig.parent.id)?.recoveries?.delete(jobId);
+    entry.confirmedAt = ledger.now();
+    entry.buffer = '';
+    entry.spillPaths = paths;
+    entry.spillListed = 0;
+    const countLines = (note) => note.split('Retained at the host-reported path:').length - 1;
+    const page1 = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: jobId }] }, { agent: rig.parent }
+    );
+    assert.equal(countLines(page1.note), 8, '第 1 页组行 8 条');
+    assert.match(page1.note, /Retained-path listing is paged: 8 of 12 listed this batch/, '第 1 页计数行');
+    assert.doesNotMatch(page1.note, /AT_FINAL_PAYLOAD/, '缓冲空：终态正文不再随批重发');
+    assert.equal(entry.spillListed, 8, '游标推进到 8');
+    const page2 = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: jobId }] }, { agent: rig.parent }
+    );
+    assert.equal(countLines(page2.note), 4, '第 2 页组行 4 条');
+    assert.doesNotMatch(page2.note, /Retained-path listing is paged/, '取尽页无计数行');
+    const page3 = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: jobId }] }, { agent: rig.parent }
+    );
+    assert.equal(countLines(page3.note), 0, '取尽后不附组');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+// RA-SPILL-TE②（盲测 F-1 返修锚）：入口终态分支的事实注记未准入形态——终态＋
+// confirmedAt（增量确认遗留）＋deliveredFact=null（从未整段交付）＋缓冲空＋留存
+// 余量：stageRecovery 已按「取了就交回」推进游标，组行必须单独成注交回，不随
+// 事实注记三联条件（factBefore≠null）一同省略；tier 2 无事实可陈述，不谎称
+// alreadyDelivered。
+hostTest('RA-SPILL-TE②：入口终态分支事实注记未准入——领取组单独成注交回', async () => {
+  const paths = Array.from({ length: 12 }, (_, i) => `U${i}-${'u'.repeat(210)}`);
+  const rig = await buildRig('rsl-te2');
+  try {
+    const wf = await rig.workflow.execute({ ...WF_ARGS, meta: { ...WF_ARGS.meta, name: 'rsl-te2-wf' } }, rig.exec());
+    const jobId = wf.job_id;
+    rig.finisher();
+    await sleep(150);
+    const entry = ledger.jobs.get(jobId);
+    assert.ok(entry.terminal, '前置：终态已入账');
+    ledger.subjects.get(rig.parent.id)?.recoveries?.delete(jobId);
+    entry.confirmedAt = ledger.now();
+    entry.deliveredFact = null; // 盲测 F-1 形态：从未整段交付（factBefore=null）
+    entry.buffer = '';
+    entry.spillPaths = paths;
+    entry.spillListed = 0;
+    const countLines = (note) => note.split('Retained at the host-reported path:').length - 1;
+    const page1 = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: jobId }] }, { agent: rig.parent }
+    );
+    assert.equal(countLines(page1.note), 8, '第 1 页组行 8 条（推进即交回）');
+    assert.match(page1.note, /Retained-path listing is paged: 8 of 12 listed this batch/, '第 1 页计数行');
+    assert.doesNotMatch(page1.note, /already delivered/i, '无事实可陈述：不谎称 alreadyDelivered');
+    // 同响应双页并列（与主出口同语义）：组页 [0,8) 在注记、余量 [8,12) 随批
+    // 条目说明行列出——全量 12 可见、游标 12，无烧页。
+    const whole1 = JSON.stringify(page1);
+    assert.equal(whole1.split('Retained at the host-reported path:').length - 1, 12, '第 1 页全量可见：注记组 8＋批条目 4');
+    assert.equal(entry.spillListed, 12, '游标推进与可见行数一致');
+    const page2 = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: jobId }] }, { agent: rig.parent }
+    );
+    assert.equal(countLines(page2.note), 0, '取尽后不附组');
+  } finally {
+    await rig.dispose();
+  }
+});
+
 
 /** 字面量子串计数（split 版，不做正则解释——标记行含 `[]` 等正则元字符）。 */
 const countLiteral = (text, needle) => text.split(needle).length - 1;
@@ -6294,6 +6755,423 @@ hostTest('RC-U：清除与丢失边界——行卸载清份额/游标/丢失清�
   }
 });
 
+// ── RC-V～RC-Z（SOL-RC-01／SOL-RC-02：稳定份额身份、清空出口的流校正、
+// 部分确认档）──────────────────────────────────────────────────────────────
+
+hostTest('RC-V：稳定份额身份——份额清空（确认）后序号不复位、流记录同步清理，新份额自位置 0 完整服务（修前红）', async () => {
+  // 份额身份与恢复流的不变量：同一主体×作业的份额序号按单调计数终身递增
+  //（确认／到期／逐出清空在册份额都不复位）；在册份额清空的出口同步清流
+  // 记录。可观察后果：份额清空后再登记的新份额，恢复流从新份额位置 0 起
+  // 完整服务——序号复用会让滞留游标按「游标之前＝已服务」把新输出的前部
+  // 跳过（首段部分恢复并确认后，后续增量重发只剩尾部片段仍称全部重发的
+  // 形态）。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  ledger.attachClaimedListener(ctx);
+  try {
+    const owner = `rc-v-owner-${rcSuffix()}`;
+    const carrier = { aborted: false };
+    const entry = seedTerminalJob(
+      ctx, owner, 'rc-v-job', { maxResultChars: 400, agentLang: 'en' }, 'v'.repeat(200)
+    );
+    ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en', carrierSignal: carrier });
+    const subject = ledger.subjects.get(owner);
+    subject.batch = null;
+    // ① 首段部分恢复：份额 1 服务 60/200，游标推进到 {份额 1, 偏移 60}。
+    assert.equal(ledger.stageRecovery('rc-v-job', owner)?.tier, 1, '前置：第 1 档可恢复');
+    subject.batch = { remaining: 60, items: 0, recoveryAssembled: false, echoOn: false };
+    const partial = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en', carrierSignal: carrier })
+      .delivered.find((one) => one.recovery === true);
+    assert.ok(partial !== undefined && partial.chars === 60, '前置：恢复切片 60/200');
+    const stream = subject.recoveryStreams.get('rc-v-job');
+    assert.ok(stream !== undefined && stream.ord === 1 && stream.offset === 60,
+      '前置：游标 {份额 1, 偏移 60}');
+    subject.batch = null;
+    // ② 回合收尾确认（信号未中止）：份额清空＋作业确认标记，流记录一并清。
+    ctx.emit('agent/turn-stopping', { agent: { id: owner } });
+    assert.equal(subject.recoveries.get('rc-v-job'), undefined, '确认清份额');
+    assert.notEqual(ledger.jobs.get('rc-v-job').confirmedAt ?? null, null, '作业确认标记置位');
+    assert.equal(subject.recoveryStreams.get('rc-v-job'), undefined,
+      '确认清空份额时同步清流记录（修前：游标 {份额 1, 偏移 60} 滞留＝红）');
+    // ③ 新份额登记：序号自单调计数继续（2），不复位为 1。运行中增量装配
+    // 形态（增量登记不置已交付事实——条目字段直接拨到该形态，同 RC-R）。
+    entry.terminal = null;
+    entry.deliveredFact = null;
+    entry.buffer = 'w'.repeat(200);
+    ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en', includeRunning: true });
+    const portions = subject.recoveries.get('rc-v-job');
+    assert.ok(portions !== undefined && portions.length === 1 && portions[0].ord === 2,
+      '新份额序号继续单调（修前：份额清空后序号从 1 复用＝红）');
+    assert.equal(subject.recoverySeqs.get('rc-v-job'), 2, '计数器在册（清空不复位）');
+    subject.batch = null;
+    // ④ 恢复流自新份额位置 0 完整服务：不按旧游标跳过前部。
+    assert.equal(ledger.stageRecovery('rc-v-job', owner)?.tier, 1, '新份额第 1 档可恢复');
+    const full = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' })
+      .delivered.find((one) => one.recovery === true);
+    assert.ok(full !== undefined && full.text === 'w'.repeat(200),
+      '自位置 0 交齐新份额全文（修前：按滞留游标跳过前 60、只得尾段＝红）');
+    assert.ok(full.recoveryHead.includes(t('en', 'delivery.recoveryPosition', {
+      index: 2, from: 1, to: 200, state: t('en', 'delivery.recoveryDone')
+    })), '位置行按新份额序号 2、区间 1–200 交齐');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+hostTest('RC-W：清空出口清流——到期清扫、条数逐出与推进定案清空在册份额时，恢复流记录一并移除（修前红）', async () => {
+  // 在册份额清空的其余出口（期限惰性清扫／条数逐出／推进定案）同样同步清
+  // 流记录：滞留游标指向已不存在的份额，序号单调后新份额必取更大序号、自
+  // 位置 0 服务——旧位置不再有语义，滞留只会让「流取尽」误判与序号语义漂移。
+  resetDeliveryLedger();
+  const realClock = ledger.now;
+  const rows = [];
+  try {
+    // ① 期限清扫清空：未服务完即到期 → 份额消失记丢失，流记录同步清；
+    //    随后新份额序号继续（计数不复位）。
+    const ownerA = `rc-w-a-${rcSuffix()}`;
+    const rowA = new Context();
+    rows.push(rowA);
+    ledger.registerRow(rowA);
+    seedTerminalJob(rowA, ownerA, 'rc-w-t', { maxResultChars: 400, agentLang: 'en' }, 'x'.repeat(200));
+    ledger.collectBatch(ownerA, { consumeRecovery: true, lang: 'en' }); // 已交付事实＋份额 1
+    const subjectA = ledger.subjects.get(ownerA);
+    subjectA.batch = null;
+    ledger.stageRecovery('rc-w-t', ownerA);
+    subjectA.batch = { remaining: 60, items: 0, recoveryAssembled: false, echoOn: false };
+    ledger.collectBatch(ownerA, { consumeRecovery: true, lang: 'en' }); // 游标 {1, 60}
+    subjectA.batch = null;
+    assert.ok(subjectA.recoveryStreams.get('rc-w-t') !== undefined, '前置：部分服务游标在册');
+    let fake = ledger.now() + 31 * 60 * 1000;
+    ledger.now = () => (fake += 31 * 60 * 1000);
+    const tier3 = ledger.stageRecovery('rc-w-t', ownerA);
+    ledger.now = realClock;
+    assert.deepEqual(tier3,
+      { tier: 3, terminal: { status: 'completed', exitCode: 0 }, spillPaths: [], lost: [1] },
+      '到期清扫后按第 3 档如实说明缺失');
+    assert.equal(subjectA.recoveries.get('rc-w-t'), undefined, '到期份额被清扫');
+    assert.equal(subjectA.recoveryStreams.get('rc-w-t'), undefined,
+      '到期清空份额时同步清流记录（修前：游标滞留＝红）');
+    const entryA = ledger.jobs.get('rc-w-t');
+    entryA.terminal = null;
+    entryA.deliveredFact = null;
+    entryA.buffer = 'y'.repeat(120);
+    ledger.collectBatch(ownerA, { consumeRecovery: true, lang: 'en', includeRunning: true });
+    assert.equal(subjectA.recoveries.get('rc-w-t')?.[0]?.ord, 2,
+      '清扫清空后新份额序号继续（修前：复位 1＝红）');
+    assert.equal(subjectA.recoverySeqs.get('rc-w-t'), 2, '计数不复位');
+
+    // ② 条数逐出清空：他作业的登记把最旧份额逐出、该作业份额清空时流记录
+    //    同步清（步进时钟覆盖全部登记，保证登记时刻可比；已服务完的份额被
+    //    逐出不记丢失）。
+    const ownerB = `rc-w-b-${rcSuffix()}`;
+    const rowB = new Context();
+    rows.push(rowB);
+    ledger.registerRow(rowB);
+    let tick = ledger.now();
+    ledger.now = () => (tick += 1000);
+    seedTerminalJob(rowB, ownerB, 'rc-w-e1', { maxResultChars: 400, agentLang: 'en' }, 'a'.repeat(100));
+    ledger.collectBatch(ownerB, { consumeRecovery: true, lang: 'en' });
+    const subjectB = ledger.subjects.get(ownerB);
+    subjectB.batch = null;
+    ledger.stageRecovery('rc-w-e1', ownerB);
+    ledger.collectBatch(ownerB, { consumeRecovery: true, lang: 'en' }); // 服务完份额 1 → 游标 {1, 100}
+    subjectB.batch = null;
+    assert.ok(subjectB.recoveryStreams.get('rc-w-e1') !== undefined, '前置：e1 流游标在册');
+    ledger.noteJobStarted(rowB, { maxResultChars: 100, agentLang: 'en' }, 'rc-w-e2', ownerB);
+    ledger.jobs.get('rc-w-e2').terminal = null;
+    for (let i = 1; i <= 10; i += 1) {
+      ledger.jobs.get('rc-w-e2').buffer = `p${i}-chunk`;
+      ledger.collectBatch(ownerB, { consumeRecovery: true, lang: 'en', includeRunning: true });
+      subjectB.batch = null; // 逐次关批（增量各自成份额，同 RC-U ③）
+    }
+    ledger.now = realClock;
+    assert.equal(subjectB.recoveries.get('rc-w-e1'), undefined, '第 11 份登记逐出最旧（e1 份额清空）');
+    assert.equal(subjectB.recoveryStreams.get('rc-w-e1'), undefined,
+      '逐出清空份额时同步清流记录（修前：游标滞留＝红）');
+    assert.equal(subjectB.lostPortions.get('rc-w-e1'), undefined, '已服务完的份额被逐出不记丢失');
+    assert.deepEqual(subjectB.recoveries.get('rc-w-e2')?.map((one) => one.ord),
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 'e2 十份增量份额并存（作业内计数各自发放）');
+
+    // ③ 推进定案清空：恢复流服务到末尾、回合收尾定案清除份额并置确认——
+    //    流记录随之移除（游标滞留在已定案份额上的形态）。
+    const ownerC = `rc-w-c-${rcSuffix()}`;
+    const rowC = new Context();
+    rows.push(rowC);
+    ledger.registerRow(rowC);
+    ledger.attachClaimedListener(rowC);
+    const firstCarrier = { aborted: false };
+    seedTerminalJob(rowC, ownerC, 'rc-w-f', { maxResultChars: 400, agentLang: 'en' }, 'f'.repeat(150));
+    ledger.collectBatch(ownerC, { consumeRecovery: true, lang: 'en', carrierSignal: firstCarrier });
+    const subjectC = ledger.subjects.get(ownerC);
+    subjectC.batch = null;
+    ledger.stageRecovery('rc-w-f', ownerC);
+    const steady = { aborted: false };
+    ledger.collectBatch(ownerC, { consumeRecovery: true, lang: 'en', carrierSignal: steady });
+    subjectC.batch = null;
+    firstCarrier.aborted = true; // 首装份额落退回窗口：收尾不走确认清除、走推进定案
+    rowC.emit('agent/turn-stopping', { agent: { id: ownerC } });
+    assert.equal(subjectC.recoveries.get('rc-w-f'), undefined, '推进定案清除份额');
+    assert.notEqual(ledger.jobs.get('rc-w-f').confirmedAt ?? null, null, '定案置作业确认标记');
+    assert.equal(subjectC.recoveryStreams.get('rc-w-f'), undefined,
+      '定案清空份额时同步清流记录（修前：游标滞留在已定案份额＝红）');
+  } finally {
+    ledger.now = realClock;
+    for (const row of rows) {
+      if (ledger.rows.has(row)) ledger.disposeRow(row);
+    }
+  }
+});
+
+hostTest('RC-X：部分确认档——作业级确认在场而丢失清单非空 → 第 3 档 partialConfirmed 逐条列 lost；丢失清单空才第 2 档（修前红）', async () => {
+  // 份额聚合确认的档位口径：confirmedAt 只说明「此前已有份额送达」——其他
+  // 份额到期或被逐出（丢失清单非空）时，后段确认不能掩盖前段不可用，按
+  // 第 3 档如实说明缺失（partialConfirmed＝此前另有份额已确认送达），不伪
+  // 称全部已交付（tier2 的「已交付」会误导放弃找回缺失段）。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  try {
+    const owner = `rc-x-owner-${rcSuffix()}`;
+    seedTerminalJob(ctx, owner, 'rc-x-job', { maxResultChars: 400, agentLang: 'en' }, 'x'.repeat(50));
+    ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' }); // 已交付事实在册
+    const subject = ledger.subjects.get(owner);
+    subject.batch = null;
+    subject.recoveries.delete('rc-x-job'); // 在册份额清空（确认清除的等价形态）
+    ledger.jobs.get('rc-x-job').confirmedAt = ledger.now();
+    subject.lostPortions.set('rc-x-job', [1, 3]);
+    assert.deepEqual(ledger.stageRecovery('rc-x-job', owner), {
+      tier: 3,
+      terminal: { status: 'completed', exitCode: 0 },
+      spillPaths: [],
+      lost: [1, 3],
+      partialConfirmed: true
+    }, '确认在场＋丢失非空 → 第 3 档 partialConfirmed（修前：按第 2 档「已交付」返回＝红）');
+    subject.lostPortions.delete('rc-x-job');
+    assert.deepEqual(ledger.stageRecovery('rc-x-job', owner), { tier: 2 },
+      '对照：丢失清单空 → 第 2 档（状态行＋已交付说明）');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+hostTest('RC-Y：部分确认档渲染——入口终态分支与事实注记未准入分支按 recoveryPartialConfirmed 逐条列 lost（修前红）', async () => {
+  // 渲染侧两处（lib/wait.js）：入口终态分支的事实注记（factBefore≠null）与
+  // 事实注记未准入、说明单独成注的分支（factBefore=null＋领取组在场）都按
+  // partialConfirmed 选 wait.recoveryPartialConfirmed 词典键并逐条列丢失
+  // 序号——不按 tier2 的 alreadyDelivered 一笔带过。
+  const rig = await buildRig('rc-y', []);
+  try {
+    const hold = ledger.claimWait(rig.parent.id); // 压住完成消息：job1 正文走等待载体
+    const wf1 = await rig.workflow.execute(
+      { ...WF_ARGS, meta: { ...WF_ARGS.meta, name: 'rc-y-wf1' } }, rig.exec());
+    const wf2 = await rig.workflow.execute(
+      { ...WF_ARGS, meta: { ...WF_ARGS.meta, name: 'rc-y-wf2' } }, rig.exec());
+    rig.finisher(0);
+    rig.finisher(1);
+    await sleep(150);
+    // ① 事实注记准入形态：job1 经等待载体交付（已交付事实在册）→ 确认标记
+    //    ＋丢失清单 [1,3]、在册份额清位 → 点名按部分确认档说明。
+    const job1 = wf1.job_id;
+    const first = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: job1 }] }, rig.exec()
+    );
+    assert.ok((first.delivered ?? []).some((item) => item.job_id === job1),
+      '前置：job1 正文经等待载体交付');
+    const subject = ledger.subjects.get(rig.parent.id);
+    const entry1 = ledger.jobs.get(job1);
+    assert.notEqual(entry1.deliveredFact ?? null, null, '前置：已交付事实在册');
+    subject.recoveries.delete(job1);
+    entry1.confirmedAt = ledger.now();
+    subject.lostPortions.set(job1, [1, 3]);
+    const outcome1 = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: job1 }] }, rig.exec()
+    );
+    assert.equal(outcome1.status, 'completed', '终态照常交回');
+    assert.equal(outcome1.output, '', '部分确认档不重发正文');
+    assert.ok(outcome1.note.includes(t('en', 'wait.recoveryPartialConfirmed', { jobId: job1 })),
+      '事实注记准入：选 recoveryPartialConfirmed 键（修前：按 tier2 alreadyDelivered＝红）');
+    assert.ok(outcome1.note.includes(t('en', 'wait.recoveryPortionsLost', { ords: '1, 3' })),
+      '丢失序号逐条列出');
+    assert.ok(!outcome1.note.includes(t('en', 'wait.alreadyDelivered', { jobId: job1 })),
+      '不误称全部已交付');
+    // ② 事实注记未准入形态：job2 从未整段交付（factBefore=null）＋留存余量
+    //    ——tier3 说明行与领取组行单独成注交回（不谎称 alreadyDelivered）。
+    await ledger.releaseWait(hold, rig.parent.id); // 让位终局复查：job2 走完成消息
+    await sleep(30);
+    const job2 = wf2.job_id;
+    const entry2 = ledger.jobs.get(job2);
+    subject.recoveries.delete(job2);
+    entry2.deliveredFact = null;
+    entry2.confirmedAt = ledger.now();
+    entry2.buffer = '';
+    entry2.spillPaths = ['/spill/rc-y-part.bin'];
+    entry2.spillListed = 0;
+    subject.lostPortions.set(job2, [1]);
+    const outcome2 = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: job2 }] }, rig.exec()
+    );
+    assert.ok(outcome2.note.includes(t('en', 'wait.recoveryPartialConfirmed', { jobId: job2 })),
+      '事实注记未准入：partialConfirmed 行单独成注（修前：tier2 只交领取组行＝红）');
+    assert.ok(outcome2.note.includes(t('en', 'wait.recoveryPortionsLost', { ords: '1' })),
+      '丢失序号随注交回');
+    assert.ok(outcome2.note.includes('/spill/rc-y-part.bin'), '留存领取组行同注在场');
+    assert.ok(!outcome2.note.includes(t('en', 'wait.alreadyDelivered', { jobId: job2 })),
+      '无事实可陈述：不谎称 alreadyDelivered');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('RC-Z：部分确认档渲染——零等待主出口按 partialConfirmed 列 lost，不误称全部已交付（修前红）', async () => {
+  // 渲染侧第三处（lib/wait.js 零等待主出口的 deliveredNotes else 链）：入口
+  // 快照运行中、检查窗口内转终态的目标，主出口按 partialConfirmed 选
+  // recoveryPartialConfirmed 并逐条列 lost——tier2 的 alreadyDelivered 会把
+  // 「部分份额已确认、其余丢失」折叠成「全部已交付」。窗口内翻转由增量读取
+  // 副作用承载（有主外来作业按裸键入账，readIncremental 才可达条目）。
+  const owner = `rc-z-owner-${Math.random().toString(36).slice(2, 8)}`;
+  const row = { id: 'ext-rcz', status: 'completed', exitCode: 0, owner };
+  let windowFlip = false;
+  const rig = await buildRig('rc-z', [], {
+    jobsList: () => [row],
+    jobsRead: async () => {
+      if (windowFlip) {
+        row.status = 'completed'; // 检查窗口内静默翻转（读取副作用时点）
+        row.exitCode = 0;
+        return { chunks: [] };
+      }
+      return { chunks: [{ channel: 'stdout', text: 'RC-Z-BODY-唯一正文' }] };
+    }
+  });
+  const waitExec = () => ({ agent: { ...rig.parent, id: owner }, session: { append() {} }, signal: undefined });
+  try {
+    const first = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: 'ext-rcz' }] }, waitExec()
+    );
+    assert.ok((first.delivered ?? []).some((item) => item.job_id === 'ext-rcz'),
+      '前置：正文经入口终态分支交付（已交付事实在册）');
+    const subject = ledger.subjects.get(owner);
+    // 有主外来作业按裸键入账（§2.6 分账）：readIncremental 的无主体调用可达。
+    const entry = ledger.jobs.get('ext-rcz');
+    assert.ok(entry !== undefined && entry.owner === owner, '前置：外来作业经点名入账（裸键）');
+    subject.recoveries.delete('ext-rcz');
+    entry.confirmedAt = ledger.now();
+    subject.lostPortions.set('ext-rcz', [1]);
+    // 入口快照改回运行中、读取侧在检查窗口内翻转回终态：主出口分支接管。
+    row.status = 'running';
+    row.exitCode = undefined;
+    windowFlip = true;
+    const outcome = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: 'ext-rcz' }] }, waitExec()
+    );
+    assert.equal(outcome.status, 'running', '入口快照运行中：主出口状态照快照口径');
+    assert.ok(outcome.note.includes(t('en', 'wait.recoveryPartialConfirmed', { jobId: 'ext-rcz' })),
+      '主出口按 partialConfirmed 键说明（修前：tier2 alreadyDelivered＝红）');
+    assert.ok(outcome.note.includes(t('en', 'wait.recoveryPortionsLost', { ords: '1' })),
+      '丢失序号逐条列出');
+    assert.ok(!outcome.note.includes(t('en', 'wait.alreadyDelivered', { jobId: 'ext-rcz' })),
+      '不误称全部已交付');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('PJ-DISPOSE：无主分册作业行卸载清恢复四表——按裸 id 命中（修前：按分册键删＝漏清红）', async () => {
+  // 分册键与恢复键不同源（PUBLIC-JOB-01 分册）：无主外来作业在账本以
+  // `jobId\0owner` 分册键在册，而恢复四表（份额／流游标／丢失清单／序号
+  // 计数）按裸 jobId 登记。行卸载清恢复账目必须按裸 id 命中——按分册键删
+  // 会四表漏清，份额滞留到期限兜底（账目失真、内存滞留）。主体因他行作业
+  // 保留在场：只清本行作业的恢复账目，不动他行作业。
+  resetDeliveryLedger();
+  const rowS = new Context();
+  const rowS2 = new Context();
+  ledger.registerRow(rowS);
+  ledger.registerRow(rowS2);
+  try {
+    const owner = `pj-dispose-owner-${rcSuffix()}`;
+    // 主体的他行在册作业：本行卸载后主体记录保留（只清本行账目）。
+    ledger.noteJobStarted(rowS2, { maxResultChars: 400, agentLang: 'en' }, 'pj-keep-job', owner);
+    // 无主外来作业（分册键入账）＋恢复账目：份额、流游标、丢失清单、序号
+    // 计数、挂起消费标记（丢失清单与挂起标记直接构造，同 RC-X 口径）。
+    const entry = ledger.ensureForeignJob(
+      rowS, { maxResultChars: 400, agentLang: 'en' }, 'pj-f-j', owner, { unowned: true }
+    );
+    assert.notEqual(entry, null, '前置：无主外来作业经分册键入账');
+    entry.terminal = { status: 'completed', exitCode: 0 };
+    entry.buffer = 'p'.repeat(200);
+    ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' }); // 份额 1（序号计数随发）
+    const subject = ledger.subjects.get(owner);
+    subject.batch = null;
+    ledger.stageRecovery('pj-f-j', owner);
+    subject.batch = { remaining: 60, items: 0, recoveryAssembled: false, echoOn: false };
+    ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' }); // 流游标 {1, 60}
+    subject.batch = null;
+    subject.lostPortions.set('pj-f-j', [1]);
+    subject.stagedRecovery = { jobId: 'pj-f-j' };
+    assert.ok(subject.recoveries.get('pj-f-j') !== undefined, '前置：份额在册');
+    assert.ok(subject.recoveryStreams.get('pj-f-j') !== undefined, '前置：流游标在册');
+    assert.equal(subject.recoverySeqs.get('pj-f-j'), 1, '前置：序号计数在册');
+    // 行卸载：只清本行（rowS）作业的账目——恢复四表按裸 id 命中。
+    ledger.disposeRow(rowS);
+    assert.equal(ledger.entryFor('pj-f-j', owner), undefined, '分册条目随行卸载撤销');
+    assert.ok([...ledger.jobs.keys()].every((key) => !String(key).startsWith('pj-f-j')),
+      '分册条目按账本键移除（detachJob：裸键与分册键均无 pj-f-j 残留）');
+    const kept = ledger.subjects.get(owner);
+    assert.ok(kept !== undefined, '主体因他行作业保留在场');
+    assert.equal(kept.recoveries.get('pj-f-j'), undefined,
+      '份额表无残留（修前：按分册键删＝漏清红）');
+    assert.equal(kept.recoveryStreams.get('pj-f-j'), undefined,
+      '流游标表无残留（修前同）');
+    assert.equal(kept.lostPortions.get('pj-f-j'), undefined,
+      '丢失清单表无残留（修前同）');
+    assert.equal(kept.recoverySeqs.get('pj-f-j'), undefined,
+      '序号计数表无残留（修前同）');
+    assert.equal(kept.stagedRecovery, null, '挂起消费标记已清（修前：指向不符＝滞留红）');
+    assert.ok(ledger.entryFor('pj-keep-job', owner) !== undefined, '他行作业不受本行卸载影响');
+  } finally {
+    if (ledger.rows.has(rowS)) ledger.disposeRow(rowS);
+    if (ledger.rows.has(rowS2)) ledger.disposeRow(rowS2);
+  }
+});
+
+hostTest('PJ-DISPOSE-B：主体保留条件含在途创建认领——只余认领（无作业/等待/待投递）时行卸载不删主体；认领释放后无窗口成员才可删（修前：卸载即删主体＝红）', async () => {
+  // 准备期窗口成员（ACCEPT-BATCH-01）：在途创建认领与活等待同列——行卸载的
+  // 主体保留条件必须把它算进去（与 #deliverIfNoWait／closeBatchIfIdle 的
+  // 同窗判据一致）。卸载窄窗内删主体会丢开批与占位，随后并行新调用重建主体、
+  // 开新批取全额预算——正是准备期窗口要防的双份预算形态。认领随自身正规
+  // 出口（releaseCreation）注销后，主体才恢复「无窗口成员可整体释放」。
+  resetDeliveryLedger();
+  const rowA = new Context();
+  const rowB = new Context();
+  const rowC = new Context(); // 常驻行：防 disposeRow 末行整体释放干扰主体级断言
+  ledger.registerRow(rowA);
+  ledger.registerRow(rowB);
+  ledger.registerRow(rowC);
+  try {
+    const owner = `pj-dispose-b-${rcSuffix()}`;
+    ledger.noteJobStarted(rowA, { maxResultChars: 400, agentLang: 'en' }, 'pj-b-j1', owner);
+    const token = ledger.claimCreation(owner, 'run');
+    const subject = ledger.subjects.get(owner);
+    assert.ok(subject !== undefined && subject.inFlightCreations.size === 1, '前置：认领在册');
+    // 行卸载（rowA 撤主体唯一在册作业）：主体只余在途创建认领——不得删。
+    ledger.disposeRow(rowA);
+    assert.ok(ledger.subjects.get(owner) !== undefined,
+      '只余在途创建认领时主体保留（修前：卸载即删主体＝红）');
+    assert.equal(ledger.entryFor('pj-b-j1', owner), undefined, 'rowA 作业照常撤销');
+    // 认领释放（正规出口）后再无窗口成员——下一次行卸载删主体（rowC 在册，
+    // 非末行整体释放：删主体只能来自保留条件判定本身）。
+    ledger.noteJobStarted(rowB, { maxResultChars: 400, agentLang: 'en' }, 'pj-b-j2', owner);
+    await ledger.releaseCreation(token, owner);
+    assert.equal(subject.inFlightCreations.size, 0, '认领已注销');
+    ledger.disposeRow(rowB);
+    assert.equal(ledger.subjects.get(owner), undefined, '无窗口成员后主体可删（保留条件放行）');
+  } finally {
+    if (ledger.rows.has(rowA)) ledger.disposeRow(rowA);
+    if (ledger.rows.has(rowB)) ledger.disposeRow(rowB);
+    if (ledger.rows.has(rowC)) ledger.disposeRow(rowC);
+  }
+});
+
 hostTest('RC-Y1：恢复请求批满延后在场——async_run 首次等待让出不消费（形状过校验、outputs 无 recovery_line、挂起保持）', async () => {
   // RECOVERY-YIELD-CARRIER（rework5 §3.5）：恢复消费限定等待载体——让出批次
   // 不传 consumeRecovery，挂起的恢复请求跨让出原样保持，延后的份额等下一
@@ -6805,10 +7683,14 @@ trcGate('T-RC-1 真 agent-loop 装置：真投影折叠＋真实事件时序驱�
     // rc.1 适配事实：turnBoundary 不再是会话投影——真 AgentLoop 只注册 inbox，
     // turn 边界读取迁移到 agents 服务的 turnBoundaryOf（rc.1 dsh-agent-loop
     // lib/index.js「agents.turnBoundaryOf(session)」；本装置 agents 为占位假件，
-    // 服务方法不在装置面，按「投影缺席」锚定迁移事实，④段的 turn-stopping
-    // 事件时序断言不受影响——账本消费的是宿主事件而非投影）。
-    assert.equal(root.sessionProjections.stateOf(session, 'turnBoundary'), undefined,
-      'rc.1 起 turnBoundary 不是会话投影（迁移到 agents.turnBoundaryOf）');
+    // 服务方法不在装置面，按「投影无边界内容」锚定迁移事实。rc.5 注册表对
+    // 缺席投影返回惰性空态（全 null 字段）而非 undefined——两形态都锚
+    // 「无边界内容」，④段的 turn-stopping 事件时序断言不受影响——账本消费
+    // 的是宿主事件而非投影。
+    const boundary = root.sessionProjections.stateOf(session, 'turnBoundary');
+    assert.ok(boundary === undefined
+      || (boundary.openTurnStartSeq === null && boundary.lastStepBoundary === null),
+      'rc.1 起 turnBoundary 不承载边界内容（迁移到 agents.turnBoundaryOf）');
 
     // ② 真折叠：与 ReactLoopInbox.mutate 同形的持久 splice（insert）。
     const notice = { id: 'trc1-m1', kind: 'notice', source: { kind: 'async-tools-job-result' } };
@@ -6880,12 +7762,12 @@ trcGate('T-RC-1 真 agent-loop 装置：真投影折叠＋真实事件时序驱�
       assert.equal(msgCopies().length, 1, '前置：消息载体副本在接受点登记');
       const msgJobId = msgCopies()[0][0];
       session.append('agent/inbox/spliced', {
-        target: 'next-step', start: 0, inserted: [{ id: 'trc1-msg', kind: 'notice' }]
+        target: 'next-step', start: 0, inserted: [{ id: rig.injections[0].id, kind: 'notice' }]
       });
       session.append('agent/inbox/spliced',
         { target: 'next-step', start: 0, removedCount: 1, inserted: [] });
       root.emit('agent/inbox/claimed',
-        { agent: { id: 'trc1-hot' }, message: { id: 'trc1-msg' }, turn: 2 });
+        { agent: { id: 'trc1-hot' }, message: { id: rig.injections[0].id }, turn: 2 });
       assert.ok(ledger.jobs.get(msgJobId)?.confirmedAt !== null,
         '领取事件确认消息载体副本（真实领取时序）');
       assert.equal(ledger.subjects.get('trc1-hot').recoveries.get(msgJobId), undefined,
@@ -6900,12 +7782,12 @@ trcGate('T-RC-1 真 agent-loop 装置：真投影折叠＋真实事件时序驱�
       assert.equal(msgCopies().length, 1, '前置：第二份消息副本在册');
       const dropJobId = msgCopies()[0][0];
       session.append('agent/inbox/spliced', {
-        target: 'next-step', start: 0, inserted: [{ id: 'trc1-drop', kind: 'notice' }]
+        target: 'next-step', start: 0, inserted: [{ id: rig.injections[1].id, kind: 'notice' }]
       });
       session.append('agent/inbox/spliced',
         { target: 'next-step', start: 0, removedCount: 1, inserted: [], outcome: 'canceled' });
       root.emit('agent/inbox/discarded',
-        { agent: { id: 'trc1-hot' }, message: { id: 'trc1-drop' } });
+        { agent: { id: 'trc1-hot' }, message: { id: rig.injections[1].id } });
       assert.equal((ledger.subjects.get('trc1-hot').recoveries.get(dropJobId) ?? [])[0]?.returned, true,
         '取消待处理输入＝份额退回（保持未确认，可恢复）');
     } finally {
