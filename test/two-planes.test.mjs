@@ -3386,6 +3386,174 @@ test('T23c（R29-d）：client 内联上界与 lib/budget-limits.js 逐条比对
   assert.match(clientCode(), /var CHAIN_PAIRS = \[[\s\S]*?pollIntervalMs[\s\S]*?maxWaitMs/, '链式判定常量在场（以 CHAIN_PAIRS 为唯一键源）');
 });
 
+test('T23e（R29-d·判据 14·设计 §5.4）：链式候选三档——有效草稿优先、无改动走生效值、覆盖在场＋空草稿＝候选不可知（跳过比较、不禁保存、不拿过期覆盖值比较）', async () => {
+  const { makePrimitivesDouble } = await import('./_primitives-double.mjs');
+  const reactStub = { createElement: () => undefined, useState: () => [undefined, () => {}], useEffect: () => {}, useRef: (v) => ({ current: v }) };
+  const double = makePrimitivesDouble(reactStub);
+  let loaded;
+  new Function('window', readFileSync(resolve(ROOT, 'client.js'), 'utf8'))({ __ModuleLoader__: { load: (spec) => { loaded = spec; } } });
+  const product = loaded.factory((name) => (name === 'react' ? reactStub : double));
+
+  const state = (fields, effective) => ({ fields, effective });
+  // ① 有效草稿 → 草稿值：只判一侧草稿会把「把上限改小」漏成可保存——两侧任意
+  //    组合（覆盖在场与否）都以草稿为准。
+  assert.equal(product.chainNumber(
+    state({ defaultWaitMs: { text: '40000', overridden: true } }, { defaultWaitMs: 30000 }), 'defaultWaitMs'),
+    40000, '草稿在场 ⇒ 候选＝草稿值（覆盖标记不否决草稿）');
+  assert.equal(product.chainNumber(
+    state({ defaultWaitMs: { text: ' 40000 ' } }, { defaultWaitMs: 30000 }), 'defaultWaitMs'),
+    40000, '草稿首尾空白照常解析');
+  // ② 无草稿条目 / 空草稿无覆盖 → 生效值（空草稿＝无改动，不参与比较就取快照）。
+  assert.equal(product.chainNumber(state({}, { defaultWaitMs: 30000 }), 'defaultWaitMs'),
+    30000, '无草稿条目 ⇒ 候选＝生效值');
+  assert.equal(product.chainNumber(
+    state({ defaultWaitMs: { text: '   ' } }, { defaultWaitMs: 30000 }), 'defaultWaitMs'),
+    30000, '空草稿且无覆盖 ⇒ 候选＝生效值');
+  // ③ 覆盖在场＋空草稿 → CHAIN_UNKNOWN：空草稿对覆盖字段是清除语义，落存值由
+  //    服务端按配置优先级重取（客户端不可算）；生效快照里的旧覆盖值是**不得
+  //    拿来比较**的过期快照。
+  const unknown = product.chainNumber(
+    state({ defaultWaitMs: { text: '', overridden: true } }, { defaultWaitMs: 900000 }), 'defaultWaitMs');
+  assert.strictEqual(unknown, product.CHAIN_UNKNOWN, '覆盖在场＋空草稿 ⇒ 候选不可知哨兵');
+  // ④ 非法草稿 → null（单字段档缺席：非法性由单字段校验报出，链式不叠加）。
+  assert.equal(product.chainNumber(state({ defaultWaitMs: { text: 'abc' } }, {}), 'defaultWaitMs'),
+    null, '非法草稿 ⇒ 链式候选缺席');
+  assert.equal(product.chainComparable(null), false, 'null 不参与链式比较');
+  assert.equal(product.chainComparable(product.CHAIN_UNKNOWN), false, 'UNKNOWN 不参与链式比较');
+  // ⑤ UNKNOWN 侧跳过比较：保存不因此禁用（服务端终判）——两侧各验一次。
+  assert.equal(product.pairViolated(state(
+    { defaultWaitMs: { text: '', overridden: true }, maxWaitMs: { text: '1' } },
+    { defaultWaitMs: 900000, maxWaitMs: 600000 })), false,
+    '左值 UNKNOWN ⇒ 跳过该链（修前按过期覆盖值 900000 > 600000 判违例＝红：保存被误禁）');
+  assert.equal(product.pairViolated(state(
+    { defaultWaitMs: { text: '9999999' }, maxWaitMs: { text: '', overridden: true } },
+    { defaultWaitMs: 30000, maxWaitMs: 600000 })), false,
+    '右值 UNKNOWN ⇒ 跳过该链（候选不可知不折算成违例）');
+  assert.equal(product.chainHitOf(state(
+    { defaultWaitMs: { text: '', overridden: true }, maxWaitMs: { text: '1' } },
+    { defaultWaitMs: 900000 }), 'defaultWaitMs'), null,
+    'UNKNOWN 侧不挂链式原因文案（单字段层无跨字段结论可给）');
+  // ⑥ 有效比较照常：纯生效值对（两侧无改动）与双侧草稿对（改小上限的形态）。
+  assert.equal(product.pairViolated(state({}, { defaultWaitMs: 700000, maxWaitMs: 600000 })), true,
+    '纯生效值对违例照常判出（快照本身越界的可见性不因三档丢失）');
+  assert.equal(product.pairViolated(state(
+    { defaultWaitMs: { text: '500000' }, maxWaitMs: { text: '400000' } }, {})), true,
+    '双侧草稿改到越界 ⇒ 违例（只判一侧草稿会漏「把上限改小」形态）');
+});
+
+// ── 预设目录模型（§10.1 CAT 系列）：通知触发的重读合并、stale 回执零写入、
+// attach 首读不被旧在途挡。目录只读写自身快照——设置草稿存于表单模型，重读/
+// 失败/重试期间原样保留（草稿锚在 T23 系列，本系列锚目录自身的不变量）。──
+
+test('T-CAT-1（CAT-REREAD）：loading 期间到达的读取请求不并发另起——在途回执落定后自动补恰一次重读', async () => {
+  const { makePrimitivesDouble } = await import('./_primitives-double.mjs');
+  const reactStub = { createElement: () => undefined, useState: () => [undefined, () => {}], useEffect: () => {}, useRef: (v) => ({ current: v }) };
+  const double = makePrimitivesDouble(reactStub);
+  let loaded;
+  new Function('window', readFileSync(resolve(ROOT, 'client.js'), 'utf8'))({ __ModuleLoader__: { load: (spec) => { loaded = spec; } } });
+  const product = loaded.factory((name) => (name === 'react' ? reactStub : double));
+
+  const flush = () => new Promise((resolve) => { setTimeout(resolve, 0); });
+  const catalog = product.createPresetCatalog();
+  const gate = [];
+  catalog.attach({ list: () => new Promise((resolve) => { gate.push(resolve); }) });
+  assert.equal(catalog.store.getSnapshot().status, 'loading', 'attach 即首读（loading）');
+  await flush(); // list 在微任务里被调（快照先入 loading，服务调用随后）
+  assert.equal(gate.length, 1, '前置：首读恰一次 list 在途');
+  // 在途期间通知触发两次 load：不并发另起（list 恰一次），只置待重读标记。
+  catalog.load();
+  catalog.load();
+  assert.equal(gate.length, 1, '在途期间的读取请求不另起第二次 list（防重入）');
+  // 首回执落定：ready 先行落写，随后**恰一次**补读自动发起（loading 再现）。
+  gate[0]({ ok: true, value: { presets: [{ id: 'p-first' }] } });
+  await flush();
+  assert.equal(gate.length, 2, '在途回执落定后恰补一次重读（两次 load 合并不双读）');
+  assert.equal(catalog.store.getSnapshot().status, 'loading', '补读在途（loading 再现，条目区等待新回执）');
+  // 补读回执落定 → ready；此后无新请求 ⇒ 无更多读取（无自旋）。
+  gate[1]({ ok: true, value: { presets: [{ id: 'p-second' }] } });
+  await flush();
+  await flush();
+  const settled = catalog.store.getSnapshot();
+  assert.equal(settled.status, 'ready', '补读落定 → ready');
+  assert.deepEqual(settled.items, [{ id: 'p-second' }], '条目＝最新回执（非首回执残影）');
+  assert.equal(gate.length, 2, '无新请求时不自旋重读');
+});
+
+test('T-CAT-2（CAT-STALE）：stale 回执零写入——attach 换代理/detach 撤代理后，旧代理上的在途回执不落写（items/error/status 一概不动）', async () => {
+  const { makePrimitivesDouble } = await import('./_primitives-double.mjs');
+  const reactStub = { createElement: () => undefined, useState: () => [undefined, () => {}], useEffect: () => {}, useRef: (v) => ({ current: v }) };
+  const double = makePrimitivesDouble(reactStub);
+  let loaded;
+  new Function('window', readFileSync(resolve(ROOT, 'client.js'), 'utf8'))({ __ModuleLoader__: { load: (spec) => { loaded = spec; } } });
+  const product = loaded.factory((name) => (name === 'react' ? reactStub : double));
+
+  const flush = () => new Promise((resolve) => { setTimeout(resolve, 0); });
+  const catalog = product.createPresetCatalog();
+  // 旧代理在途（回执将迟到）：attach 换代理 ⇒ 代际推进＋即时首读。
+  let staleResolve;
+  catalog.attach({ list: () => new Promise((resolve) => { staleResolve = resolve; }) });
+  await flush(); // 旧代理的 list 进入在途
+  catalog.attach({ list: () => Promise.resolve({ ok: true, value: { presets: [{ id: 'fresh' }] } }) });
+  assert.equal(catalog.store.getSnapshot().status, 'loading', 'attach 首读即时发起（不被旧在途的 loading 挡）');
+  await flush();
+  const before = catalog.store.getSnapshot();
+  assert.equal(before.status, 'ready', '新代理首读落定 → ready');
+  // 旧代理回执迟到（携带旧代际）：零写入——不得把旧代理结果冒充新代理结果。
+  staleResolve({ ok: true, value: { presets: [{ id: 'stale-gen' }] } });
+  await flush();
+  assert.deepStrictEqual(catalog.store.getSnapshot(), before,
+    '旧代际回执零写入：items/status/error 一概不动（成功回执不冒充新代理结果）');
+  // detach 撤代理：代际再进——被撤代理上的在途回执同样自弃。
+  let detachedResolve;
+  catalog.attach({ list: () => new Promise((resolve) => { detachedResolve = resolve; }) });
+  await flush(); // 让该读真正进入在途（list 已调）
+  catalog.detach();
+  detachedResolve({ ok: true, value: { presets: [{ id: 'ghost' }] } });
+  await flush();
+  assert.equal(catalog.store.getSnapshot().status, 'loading',
+    '被撤代理的回执零写入（loading 不被旧回执伪落定——新读取由下一次 attach/load 发起）');
+});
+
+test('T-CAT-3（CAT-ATTACH）：服务缺席走可重试 error 态；attach 即首读、attach 自身满足在途期间的待重读意图（不双读）', async () => {
+  const { makePrimitivesDouble } = await import('./_primitives-double.mjs');
+  const reactStub = { createElement: () => undefined, useState: () => [undefined, () => {}], useEffect: () => {}, useRef: (v) => ({ current: v }) };
+  const double = makePrimitivesDouble(reactStub);
+  let loaded;
+  new Function('window', readFileSync(resolve(ROOT, 'client.js'), 'utf8'))({ __ModuleLoader__: { load: (spec) => { loaded = spec; } } });
+  const product = loaded.factory((name) => (name === 'react' ? reactStub : double));
+
+  const flush = () => new Promise((resolve) => { setTimeout(resolve, 0); });
+  const catalog = product.createPresetCatalog();
+  assert.equal(catalog.store.getSnapshot().status, 'idle', '初始态 idle（非 loading——loading 会被防重入守卫吞掉 attach 首读）');
+  // 服务未注入的读取尝试：可重试的服务缺席 error 态（不是空目录、不是静默）。
+  catalog.load();
+  const absent = catalog.store.getSnapshot();
+  assert.equal(absent.status, 'error', '服务缺席 ⇒ error 态');
+  assert.equal(absent.unavailable, true, '服务缺席带 unavailable 标记（可重试文案由渲染层给）');
+  assert.deepEqual(absent.items, [], '缺席态条目为空（不冒充空目录成功态）');
+  // 注入即首读：error 态不被守卫挡（守卫只挡 loading），重试路径成立。
+  const gate = [];
+  catalog.attach({ list: () => new Promise((resolve) => { gate.push(resolve); }) });
+  assert.equal(catalog.store.getSnapshot().status, 'loading', 'attach 即时首读（error 态可重试）');
+  await flush(); // list 在微任务里被调
+  // 在途期间 load 置待重读标记；再次 attach（fiber 重挂形态）自身就是新读——
+  // 标记随 attach 作废（意图已满足），落定后不双读。
+  catalog.load();
+  const gate2 = [];
+  catalog.attach({ list: () => new Promise((resolve) => { gate2.push(resolve); }) });
+  await flush(); // 新代理的 list 进入在途（旧代理的在途回执此后到达即 stale）
+  gate[0]({ ok: true, value: { presets: [{ id: 'old-agent' }] } });
+  await flush();
+  assert.equal(catalog.store.getSnapshot().status, 'loading', '旧代理回执零写入（新读的 loading 不被打断）');
+  assert.equal(gate2.length, 1, 'attach 后新代理恰一次 list');
+  assert.equal(gate.length, 1, '旧代理无第二次 list（attach 满足待重读意图，不双读）');
+  gate2[0]({ ok: true, value: { presets: [{ id: 'new-agent' }] } });
+  await flush();
+  const settled = catalog.store.getSnapshot();
+  assert.equal(settled.status, 'ready', '新代理回执落定 → ready');
+  assert.deepEqual(settled.items.map((one) => one.id), ['new-agent'], '条目＝新代理结果');
+});
+
 test('T8b（R29-a·判据 15 附）：settings 的悬空动态 import 必须 .catch——快照已落，广播失败不得杀实例', () => {
   const code = stripComments(read('lib/settings.js'));
   assert.match(code, /import\('\.\/refresh-bus\.js'\)[\s\S]{0,160}\.catch\(/,

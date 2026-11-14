@@ -31,7 +31,25 @@ const deliveryModule = await loadOfflineSafe('../lib/delivery.js');
 const { createWorkflowTool: buildWorkflowTool, wrapScriptWithRootGuard: wrapScript } = workflowModule ?? {};
 const { createWaitTool: buildWaitTool } = waitModule ?? {};
 const { ledger } = deliveryModule ?? {};
-const hostTest = await hostTestFor('../lib/workflow.js', '../lib/wait.js');
+const bareHostTest = await hostTestFor('../lib/workflow.js', '../lib/wait.js');
+
+// §2.6 关批装置补丁：本装置共用主体（fakeAgent 默认 id 'session-1'），而合取
+// 关批（在册清空 ∧ 闭合证据）在没有宿主事件的假 ctx 上永不闭合——批会跨用例
+// 滞留，把上一用例的余量带进下一用例（首直付份额被吃空、截断省略量按错误
+// 预算计、续段拿不到新批）。生产形态里每条工具结果都被宿主领取（证据①
+// agent/inbox/claimed），用例边界＝回合边界；这里在每条用例收尾按同一判据
+// 直达关批（RC 系列装置先例：直达置空），账面其余状态不动。
+const hostTest = (name, fn) => bareHostTest(name, async (...args) => {
+  try {
+    return await fn(...args);
+  } finally {
+    for (const subject of ledger.subjects.values()) {
+      subject.batch = null;
+      subject.windowEvidence = false;
+      subject.pendingClose = null;
+    }
+  }
+});
 
 const createWorkflowTool = (ctx, config) => checkedTool(buildWorkflowTool(ctx, config));
 const createWaitTool = (ctx, config) => checkedTool(buildWaitTool(ctx, config));
@@ -677,6 +695,16 @@ hostTest('async_workflow（F8）：注册表收原始 JSON；已直付的最终�
   const views = f.jobsFake.views();
   const jobId = views[0].id;
   await new Promise((resolve) => { setTimeout(resolve, 5); });
+  // §2.6 装置内关批：生产形态里首次等待的载体结果先被宿主领取（证据①
+  // agent/inbox/claimed）之后才发生下一次工具调用——同一窗口内两次调用共享
+  // 批预算，续段要等窗口闭合后按新批全额装配。假 ctx 不发宿主事件，此处直达
+  // 置空批对象（RC 系列装置先例）以复现该回合边界。
+  const subject = ledger.subjects.get(agent.id);
+  if (subject !== undefined) {
+    subject.batch = null;
+    subject.windowEvidence = false;
+    subject.pendingClose = null;
+  }
   // 装置显式 minWaitMs=1：本用例走入口终态分支立即返回，但装置不走夹紧歧义。
   const waiter = createWaitTool(f.ctx, resolveConfig({ toolName: 'async_wait', maxResultChars: 5, minWaitMs: 1 }));
   const again = await waiter.execute({ wait_ms: 30000, targets: [{ kind: 'job', id: jobId }] }, exec);

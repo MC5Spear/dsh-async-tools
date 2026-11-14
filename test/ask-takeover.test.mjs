@@ -1972,6 +1972,73 @@ test('J19：座位渲染门——关/计数 0/座位不匹配三态渲染 null�
   model.dispose();
 });
 
+test('座位显形计入 callFailed=state（§4.3 失败档）——读取失败与零题可区分：徽标最小在场（图标、无计数泡、aria-label 载失败说明）、面板失败行常驻、成功后回计数形态', async () => {
+  const react = makeMiniReact();
+  const product = await loadClientProduct(react, { setInterval: () => 0, clearInterval: () => {} });
+  let snap = { status: 'ready', value: { askTakeover: true, askUiSeat: 'sidebar' }, user: {} };
+  let scopeListener = () => {};
+  const scope = {
+    getSnapshot: () => snap,
+    subscribe: (fn) => { scopeListener = fn; return () => {}; },
+    mutate: async () => true
+  };
+  const ctx = { configForms: { get: () => scope }, remote: {}, uiWorkspace: { openSession() {} } };
+  // 首查失败（{ok:false} ⇒ callFailed='state'）：不覆盖名单（失败路径不动
+  // items/lost/undelivered）——此后名单保持空，座位显形只能来自失败档本身。
+  const model = product.createAskModel(ctx, { state: async () => ({ ok: false }) });
+  await new Promise((resolve) => { setTimeout(resolve, 0); }); // 首查回执落定
+  const seatProps = { ask: model, ctx };
+  const renderComp = (fn) => react.render(fn);
+  const live = model.store.getSnapshot();
+  assert.equal(live.callFailed, 'state', '前置：读取失败档立起');
+  assert.equal(live.items.length, 0, '前置：零题（名单未被失败回执污染）');
+
+  // ① 失败档显形：读取失败不等于没有待答问题——列表可能已过期，座位必须
+  // 在场承载重试与说明；条件若只看题目/名单计数，失败档永不可见（§4.3）。
+  assert.ok(renderComp(() => product.AskSidebarSeat(seatProps)) !== null,
+    'callFailed=state 且名单全空 ⇒ sidebar 徽标在场（失败档显形，修前消隐＝红）');
+  snap = { status: 'ready', value: { askTakeover: true, askUiSeat: 'overlay' }, user: {} };
+  scopeListener();
+  assert.ok(renderComp(() => product.AskOverlaySeat(seatProps)) !== null,
+    'overlay 座位同门（失败档计入 askHasFace）');
+  // ② 面板失败行常驻：读取失败与零题可区分（零题时座位本就消隐）。
+  const failedPanel = renderComp(() => product.AskList({ ask: model }));
+  const failedLine = failedPanel.children.find((child) => child?.props?.className === 'ats-ask-failed');
+  assert.ok(failedLine !== undefined && String(failedLine.children).includes(product.DICTIONARIES.en['ask.stateFailed']),
+    '面板失败行在场且走词典 ask.stateFailed（不冒充空目录成功态）');
+
+  // ③ 徽标最小在场：图标在场、计数泡缺席（零题显示 0 会冒充已证实的零题）、
+  // aria-label 改载失败说明（不虚构题目数）。
+  snap = { status: 'ready', value: { askTakeover: true, askUiSeat: 'sidebar' }, user: {} };
+  scopeListener();
+  const badgeNode = renderComp(() => product.AskSidebarSeat(seatProps));
+  const badgeButton = badgeNode.children.find((child) => child !== null && typeof child === 'object');
+  assert.ok(badgeButton.children.find((child) => child?.type === 'svg') !== undefined,
+    '图标本体在场（失败入口的可见面）');
+  assert.equal(badgeButton.children.find((child) => child?.props?.className === 'ats-ask-count'), undefined,
+    '失败档不呈现计数泡（零题≠已证实的零题）');
+  const labelText = String(badgeButton.props['aria-label']);
+  assert.ok(labelText.includes(product.DICTIONARIES.en['ask.stateFailed']),
+    'aria-label 载失败说明（无障碍树可知重试语义）');
+  assert.ok(!labelText.includes(product.DICTIONARIES.en['ask.count'].replace('{n}', '0')),
+    'aria-label 不虚构题目数');
+
+  // ④ 恢复：读取成功清 'state' 档（applyRead 只清自己的失败档）——名单仍空 ⇒
+  // 座位回到消隐口径；题目到场 ⇒ 回到计数形态。快照每次现取：notify() 按
+  // 浅拷贝换引用（useSyncExternalStore 口径），早先捕获的引用已过期。
+  const live4 = model.store.getSnapshot();
+  live4.callFailed = null;
+  assert.equal(renderComp(() => product.AskSidebarSeat(seatProps)), null,
+    '失败档清除且名单空 ⇒ 消隐口径恢复');
+  model.store.getSnapshot().items = [{ batchId: 'b', sessionId: 's1', questionId: 'q1', question: 'q', options: [], multiSelect: false, receivedAt: 0, expiresAt: 1, phase: 'open' }];
+  const countNode = renderComp(() => product.AskSidebarSeat(seatProps));
+  const countButton = countNode.children.find((child) => child !== null && typeof child === 'object');
+  const countSpan = countButton.children.find((child) => child?.props?.className === 'ats-ask-count');
+  assert.ok(countSpan !== undefined && String(countSpan.children).includes('1'),
+    '读取成功后回计数形态（计数泡在场、计数＝1）');
+  model.dispose();
+});
+
 test('AskItem 作答选择与提交（需求 §4.2.1–§4.2.4）——单选互斥、多选组合、草稿排除与两侧有效性', async () => {
   const react = makeMiniReact();
   const product = await loadClientProduct(react, { setInterval: () => 0, clearInterval: () => {} });

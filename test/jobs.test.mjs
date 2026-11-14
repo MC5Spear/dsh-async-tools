@@ -34,7 +34,25 @@ const jobsModule = await loadOfflineSafe('../lib/jobs.js');
 const { createRunTool: buildRunTool } = jobsModule ?? {};
 const deliveryModule = await loadOfflineSafe('../lib/delivery.js');
 const { ledger } = deliveryModule ?? {};
-const hostTest = await hostTestFor('../lib/jobs.js');
+const bareHostTest = await hostTestFor('../lib/jobs.js');
+
+// §2.6 关批装置补丁：本文件共用主体（模块级 exec.agent＝'session-1'），而
+// 合取关批（在册清空 ∧ 闭合证据）在没有宿主事件的假 ctx 上永不闭合——批会
+// 跨用例滞留，把上一用例的余量带进下一用例（完成分支份额被吃空→status 误
+// running、正文只剩截断标注、echo/留存行被挤掉）。生产形态里每条工具结果都
+// 被宿主领取（证据① agent/inbox/claimed），用例边界＝回合边界；这里在每条
+// 用例收尾按同一判据直达关批（RC 系列装置先例：直达置空），账面其余状态不动。
+const hostTest = (name, fn) => bareHostTest(name, async (...args) => {
+  try {
+    return await fn(...args);
+  } finally {
+    for (const subject of ledger.subjects.values()) {
+      subject.batch = null;
+      subject.windowEvidence = false;
+      subject.pendingClose = null;
+    }
+  }
+});
 
 /**
  * 被测工具一律经 `checkedTool` 包一层：**每条**用例的返回值都会被喂给宿主输出校验器

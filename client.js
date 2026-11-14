@@ -229,16 +229,35 @@ var CHAIN_PAIRS = [
 ];
 
 /**
- * 链式比较值（设计 §5.4）：**草稿优先，无草稿用生效值**——覆盖草稿与生效值的任意
- * 组合（只判一侧草稿会把"把上限改小"漏成可保存）。空/非法草稿且无生效值 →
- * null，该侧不参与比较。
+ * 链式比较的「候选不可知」哨兵（设计 §5.4 第三档）：覆盖在场＋空草稿——空草稿
+ * 对覆盖字段是"清除"语义，落存值是服务端的推荐/默认（客户端不可算），而生效
+ * 快照里的旧覆盖值正是**不得拿来比较**的过期快照。该侧跳过客户端比较，保存
+ * 不因此禁用，终判在服务端。
+ */
+var CHAIN_UNKNOWN = { chainUnknown: true };
+
+/**
+ * 链式比较值（设计 §5.4 三档）：**有效草稿 → 草稿值**（覆盖与生效值的任意组合
+ * 都以草稿为准——只判一侧草稿会把"把上限改小"漏成可保存）；**无草稿条目或
+ * （空草稿且无覆盖）→ 生效值**（空草稿＝无改动）；**覆盖在场＋空草稿 →
+ * `CHAIN_UNKNOWN`**（候选不可知，比较跳过、服务端终判）。非法草稿属单字段档
+ * （返回 null，该侧不参与链式比较——非法性由单字段校验报出、保存随之禁用，
+ * 链式不叠加）。
  */
 function chainNumber(state, key) {
-  var draft = draftNumber(state, key);
-  if (draft !== null) return draft;
+  var entry = state.fields === undefined ? undefined : state.fields[key];
+  var hasDraftText = entry !== undefined && typeof entry.text === "string"
+    && entry.text.trim() !== "";
+  if (hasDraftText) return draftNumber(state, key);
+  if (entry !== undefined && entry.overridden === true) return CHAIN_UNKNOWN;
   var source = state.effective === undefined || state.effective === null ? {} : state.effective;
   var effective = source[key];
   return typeof effective === "number" && Number.isFinite(effective) ? effective : null;
+}
+
+/** 链式比较的参与判据（设计 §5.4）：null＝单字段档缺席；UNKNOWN＝候选不可知——两种都不参与比较。 */
+function chainComparable(value) {
+  return value !== null && value !== CHAIN_UNKNOWN;
 }
 
 /**
@@ -251,7 +270,7 @@ function pairViolated(state) {
   for (var i = 0; i < CHAIN_PAIRS.length; i += 1) {
     var left = chainNumber(state, CHAIN_PAIRS[i][0]);
     var right = chainNumber(state, CHAIN_PAIRS[i][1]);
-    if (left !== null && right !== null && left > right) return true;
+    if (chainComparable(left) && chainComparable(right) && left > right) return true;
   }
   return false;
 }
@@ -263,7 +282,7 @@ function chainHitOf(state, key) {
     if (CHAIN_PAIRS[i][0] !== key) continue;
     var left = chainNumber(state, key);
     var right = chainNumber(state, CHAIN_PAIRS[i][1]);
-    if (left !== null && right !== null && left > right) return CHAIN_PAIRS[i][1];
+    if (chainComparable(left) && chainComparable(right) && left > right) return CHAIN_PAIRS[i][1];
   }
   return null;
 }
@@ -867,6 +886,19 @@ function createCardModel(ctx) {
  *   「读取失败不得显示为空列表」）——失败态下列表区退回已保存绑定（value 层）。
  * - 防重入：loading 中忽略并发 load（照宿主成例 `beginRosterRead`）。
  *
+ * 通知重读纪律（设计 §10.1）：
+ * - **在途期间的读取请求（通知触发）不并发另起**——置待重读标记，在途回执落定
+ *   后自动补**恰一次**重读（重读由目录自身发起，计入 store 侧 `service.list`
+ *   调用；补读期间再到的通知按同一标记机制叠加，仍不并发）。
+ * - **回执双重校验（读取序列＋服务代际）**：每次读取携带发起时的序号与代际，
+ *   落定回执序号非在册最新、或代际已进（attach 换代理／detach 撤代理）即
+ *   stale 回执——**零写入**（items／error／status 一概不动，也不冲刷存储，
+ *   不得把旧代理的回执冒充新代理的结果）。
+ * - **attach 首读不被旧在途请求挡**：attach 即推进代际并即时发起新读——旧
+ *   在途回执按代际失配自弃，新代理的首读不等待、不缺席。
+ * - 目录只读写自身快照，不触设置表单模型——重读/失败/重试期间未保存草稿
+ *   原样保留。
+ *
  * 服务代理经 `attach(service)` 注入（apply 的动态 inject 接线，见
  * `createPresetCatalog` 用法处注释），服务实现变化／fiber 退出时经 `detach()`
  * 清空引用；服务永不到场时，任何一次读取尝试（手动
@@ -884,44 +916,76 @@ function createPresetCatalog() {
   // 渲染、无状态行；首读发起后才进入真正的 loading。
   var snapshot = { status: "idle", items: [], error: undefined };
   var service = null;
+  // 读取代际（attach/detach 推进）：旧代理上的在途回执按代际失配自弃。
+  var generation = 0;
+  // 读取序列（只增不减）：回执携带发起时的序号，落后于在册最新序号的回执
+  // （同代内先发后至）同样自弃。
+  var readSeq = 0;
+  // 待重读标记（§10.1）：loading 期间到达的读取请求只置位一次，在途回执落定
+  // 后自动补恰一次重读。
+  var pendingReread = false;
   function publish() {
     for (var i = 0; i < listeners.length; i += 1) listeners[i]();
   }
-  function load() {
-    if (snapshot.status === "loading") return;
+  /** 回执落定（§10.1）：stale 回执零写入；有效回执落写冲刷后消费待重读标记（恰一次补读）。 */
+  function settleRead(seq, atGeneration, apply) {
+    if (seq !== readSeq || atGeneration !== generation) return;
+    apply();
+    publish();
+    if (pendingReread) {
+      pendingReread = false;
+      startRead();
+    }
+  }
+  function startRead() {
+    readSeq += 1;
+    var seq = readSeq;
+    var atGeneration = generation;
+    snapshot = { status: "loading", items: [], error: undefined };
+    publish();
     if (service === null || typeof service.list !== "function") {
       // 服务未注入（inject 回调未运行）＝按服务缺席处理：保持可重试的 error 态，
       // 不是空目录。
-      snapshot = { status: "error", items: [], error: undefined, unavailable: true };
-      publish();
+      settleRead(seq, atGeneration, function () {
+        snapshot = { status: "error", items: [], error: undefined, unavailable: true };
+      });
       return;
     }
-    snapshot = { status: "loading", items: [], error: undefined };
-    publish();
     Promise.resolve().then(function () { return service.list(); }).then(function (result) {
-      if (result !== null && typeof result === "object" && result.ok === true
-        && result.value !== null && typeof result.value === "object"
-        && Array.isArray(result.value.presets)) {
-        snapshot = { status: "ready", items: result.value.presets, error: undefined };
-      } else if (result !== null && typeof result === "object" && result.ok !== true
-        && result.error !== null && typeof result.error === "object") {
-        var unavailable = result.error.code === "gateway/invocation-unavailable";
+      settleRead(seq, atGeneration, function () {
+        if (result !== null && typeof result === "object" && result.ok === true
+          && result.value !== null && typeof result.value === "object"
+          && Array.isArray(result.value.presets)) {
+          snapshot = { status: "ready", items: result.value.presets, error: undefined };
+        } else if (result !== null && typeof result === "object" && result.ok !== true
+          && result.error !== null && typeof result.error === "object") {
+          var unavailable = result.error.code === "gateway/invocation-unavailable";
+          snapshot = {
+            status: "error", items: [],
+            error: unavailable ? undefined : String(result.error.message ?? result.error.code),
+            unavailable: unavailable
+          };
+        } else {
+          snapshot = { status: "error", items: [], error: undefined, malformed: true };
+        }
+      });
+    }, function (error) {
+      settleRead(seq, atGeneration, function () {
         snapshot = {
           status: "error", items: [],
-          error: unavailable ? undefined : String(result.error.message ?? result.error.code),
-          unavailable: unavailable
+          error: String((error && error.message) || error)
         };
-      } else {
-        snapshot = { status: "error", items: [], error: undefined, malformed: true };
-      }
-      publish();
-    }, function (error) {
-      snapshot = {
-        status: "error", items: [],
-        error: String((error && error.message) || error)
-      };
-      publish();
+      });
     });
+  }
+  function load() {
+    if (snapshot.status === "loading") {
+      // 在途期间的读取请求（通知触发，§10.1）：不并发另起——置待重读标记，
+      // 在途回执落定后自动补恰一次重读（防重入不吞通知）。
+      pendingReread = true;
+      return;
+    }
+    startRead();
   }
   return {
     store: {
@@ -937,13 +1001,21 @@ function createPresetCatalog() {
     load: load,
     attach: function (remoteService) {
       service = remoteService;
-      load();
+      // 代际推进＋即时首读（§10.1）：旧代理上的在途回执按代际失配自弃，首读
+      // 不被旧在途请求的 loading 守卫挡（挡住＝新代理的首读缺席）。服务实现
+      // 变化（fiber 重挂）重复 attach 同样成立；attach 自身就是一次新读，此前
+      // 在途期间的待重读标记随之作废（意图已由本次首读满足，不双读）。
+      generation += 1;
+      pendingReread = false;
+      startRead();
     },
     // 注入回调返回的清理函数调用（ACCEPT-CLIENT-INJECT-01 设计 §5.3）：
     // 清空目录持有的服务引用——服务实现变化（fiber 先拆旧 episode、清理跑后
     // 重跑回调）时目录不留陈旧代理；后续读取按服务缺席口径走可重试 error 态。
+    // 代际同步推进：被撤代理上的在途回执零写入。
     detach: function () {
       service = null;
+      generation += 1;
     }
   };
 }
@@ -1376,7 +1448,7 @@ var DICTIONARIES = {
     "ask.rejectSingleBoth": "单选题在预设选项与自定义回答中只能选一项",
     "ask.rejectNothing": "未选择任何答案：请选择一项选项或填写自定义回答",
     "ask.undelivered": "未送达：题目记录已不在，本次提交未被接受（具体原因无法从回执确认）；如仍需作答，请在所属会话中直接回复。",
-    "ask.stateFailed": "待答状态读取失败；面板会自动重试。",
+    "ask.stateFailed": "待答状态读取失败——这不等于没有待答问题，列表可能已过期；面板会自动重试。",
     "ask.extendFailed": "延长请求没有收到宿主确认——可能已生效，也可能没有；按面板刷新后的剩余时间决定是否再点（每次点击都会累加）。",
     "ask.extendRejected": "宿主已收到延长请求但明确拒绝——本次加时没有生效；稍候面板自动刷新。",
     "ask.lostAnswer": "作答已提交但这一次投递未送达 Agent；题目保持待答，重新提交即重新投递——也可打开所属会话直接回复。",
@@ -1514,7 +1586,7 @@ var DICTIONARIES = {
     "ask.rejectSingleBoth": "a single-select question accepts either an option or a custom answer, not both",
     "ask.rejectNothing": "nothing selected: choose an option or provide a custom answer",
     "ask.undelivered": "Not delivered: the question record is gone, so this submission was not accepted (the receipt cannot confirm why); if you still want to answer, reply directly in the session.",
-    "ask.stateFailed": "Failed to fetch the pending-questions state; the panel retries automatically.",
+    "ask.stateFailed": "Failed to fetch the pending-questions state — this does not mean there are no pending questions; the list may be stale and the panel retries automatically.",
     "ask.extendFailed": "No confirmation was received for the extend request — it may or may not have taken effect; decide whether to click again based on the remaining time shown after the panel refreshes (each click adds up).",
     "ask.extendRejected": "The host received the extend request but explicitly refused it — this extension did not take effect; the panel refreshes automatically shortly.",
     "ask.lostAnswer": "The answer was submitted but this one delivery attempt did not reach the agent; the question stays answerable — submitting again re-delivers it, or open the session and reply there directly.",
@@ -2648,10 +2720,13 @@ function askTranslator(uiLang, locale) {
  * 计数归零——条件若只看计数，gone＋undelivered 形态（单题批次最常见）的报错
  * 永不显示。未读失败不算「处理完」，消除后
  * 才回到消隐口径。新题播报（state.announce）不进本条件——播报区域常驻在场，
- * 不是面板显形条件。
+ * 不是面板显形条件。题目读取失败（`callFailed === 'state'`）同样显形（§4.3）：
+ * 失败档的在场最小形态是徽标本体（图标、无计数泡，见 AskSidebarSeat），面板
+ * 展开时失败说明常驻——读取失败与零题可区分，且轮询自动重试。
  */
 function askHasFace(state) {
-  return state.items.length > 0 || state.lostAnswers.length > 0 || state.undelivered.length > 0;
+  return state.items.length > 0 || state.lostAnswers.length > 0 || state.undelivered.length > 0
+    || state.callFailed === "state";
 }
 
 /**
@@ -2695,7 +2770,10 @@ function AskOverlaySeat(props) {
  * 与底栏控件同排等高 28px，问号圆环图标与内联计数泡在盒内居中（几何见
  * 样式段注释），完整名称走 `aria-label`（屏幕阅读器与无障碍树恒可得，
  * 不依赖悬停），面板标题行（.ats-ask-title）承载可见全名。`aria-expanded`
- * 同步开合态。 */
+ * 同步开合态。题目读取失败档（§4.3）：计数泡不呈现（零题显示 0 会冒充已
+ * 证实的零题；未送达/丢失名单非空时同样不呈现——失败档一律最小在场），
+ * `aria-label` 改载失败说明、不虚构题目数，图标本体即失败入口；读取成功
+ * 后回到计数形态。 */
 function AskSidebarSeat(props) {
   var state = React.useSyncExternalStore(props.ask.store.subscribe, props.ask.store.getSnapshot);
   var openRef = React.useRef(false);
@@ -2703,10 +2781,12 @@ function AskSidebarSeat(props) {
   if (!state.enabled || state.seat !== "sidebar" || !askHasFace(state)) return null;
   injectAskStyles();
   var t = askTranslator(state.uiLang, props.ask.locale);
+  var stateFailed = state.callFailed === "state";
   return React.createElement(React.Fragment, null,
     React.createElement("button", {
       type: "button", className: "ats-ask-badge",
-      "aria-label": t("ask.title") + " · " + t("ask.count").replace("{n}", String(state.items.length)),
+      "aria-label": t("ask.title") + " · "
+        + (stateFailed ? t("ask.stateFailed") : t("ask.count").replace("{n}", String(state.items.length))),
       "aria-expanded": openRef.current ? "true" : "false",
       onClick: function () { openRef.current = !openRef.current; rerender(function (n) { return n + 1; }); }
     },
@@ -2721,7 +2801,9 @@ function AskSidebarSeat(props) {
           x: 8, y: 11.6, textAnchor: "middle",
           fontSize: 9.5, fontWeight: 600, fill: "currentColor"
         }, "?")),
-      React.createElement("span", { className: "ats-ask-count" }, String(state.items.length))),
+      stateFailed
+        ? null
+        : React.createElement("span", { className: "ats-ask-count" }, String(state.items.length))),
     openRef.current
       ? React.createElement(AskList, { ask: props.ask, panelClass: "ats-ask-panel--sidebar" })
       : null);
@@ -2944,6 +3026,8 @@ module.exports = {
   createPresetCatalog: createPresetCatalog,
   PresetBindingBlock: PresetBindingBlock,
   createAskModel: createAskModel,
+  /** 设计 §4.3 座位可见判据（含状态读取失败档，测试锚定用）。 */
+  askHasFace: askHasFace,
   AskList: AskList,
   AskItem: AskItem,
   AskAnnouncer: AskAnnouncer,
@@ -2972,6 +3056,11 @@ module.exports = {
   /** 设计 §5.4 对账项：与 `lib/budget-limits.js` 的 CHAIN_INEQUALITIES 同组（T23c 断言相等）。 */
   CHAIN_PAIRS: CHAIN_PAIRS,
   boundedNumberSpec: boundedNumberSpec,
+  /** 设计 §5.4 三档取值（测试锚定用）：CHAIN_UNKNOWN＝候选不可知哨兵（该侧跳过比较）。 */
+  chainNumber: chainNumber,
+  CHAIN_UNKNOWN: CHAIN_UNKNOWN,
+  /** 设计 §5.4 参与判据（测试锚定用）：null＝单字段档缺席；UNKNOWN＝候选不可知。 */
+  chainComparable: chainComparable,
   pairViolated: pairViolated,
   chainHitOf: chainHitOf,
   LANG_KEYS: LANG_KEYS,

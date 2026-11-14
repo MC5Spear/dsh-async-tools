@@ -47,20 +47,32 @@
  *   使用；安装树（其下才有 node_modules/）补 node_modules。归一后的 CLI 实际
  *   路径随启动日志打印，供核对来源；不再对环境变量无条件拼接 node_modules。
  * - `--model-patch`（或环境 DSAT_MODEL_PATCH）：模型路由 patch 显式入口（与
- *   probe-workflow-engine 同款）；缺省依次找 `<R>/patches/zai-glm.yml`、
- *   `<R>/ops/patches/zai-glm.yml`。patch 缺失＝启动前置检查 FAULT（退出码 2，
- *   指向 verify/patches/model-routing.example.yml 模板），不进入会话阶段。
- * - `--repo` 默认本脚本所在树（跨树取证显式传）；`--label` 进证据文件名。
+ *   probe-workflow-engine 同款）。两种形态：
+ *   - **自备 patch（显式给定）**：失效（文件缺席／不可读／空文件，YAML 语法
+ *     错误经实例启动阶段观察）＝启动前置检查 FAULT（退出码 2，指向
+ *     verify/patches/model-routing.example.yml 模板），**不静默回落**缺省查找
+ *     ——回落会把「指错了文件」伪装成「用错了部署」；该形态下无部署根与
+ *     ZAI 凭据前提（路由到其他供应商时两者本就无关）。
+ *   - **缺省查找**（未显式给定）：依次找 `<R>/patches/zai-glm.yml`、
+ *     `<R>/ops/patches/zai-glm.yml`（历史部署形态）；此形态需要 `--r` 部署根
+ *     与其 `.env` 的 ZAI_API_KEY（无凭据＝未执行 SKIP，退出码 3）。
+ * - `--repo` 默认本脚本所在树（跨树取证显式传）；`--label` 进证据文件名与运行
+ *   目录名，限安全字符集（字母、数字与连字符）——其他字符按装置故障退出 2。
  *
  * ## 运行目录与清理域（DOC-06）
  *
- * 运行目录 `.local/tmp/reid-<label>-<时间戳>-<pid>` 唯一命名，内含 home／
- * playground／tgz／所有权标记 `PROBE-OWNED`——起跑**不删除任何既有目录**，
- * 重跑／并行互不覆盖；全部退出路径（前置失败、实例未就绪、判据完成）统一
- * 收尾：杀实例进程树＋整目录删除。共享 npm 缓存（`.local/npm-cache`）非本次
- * 运行私有，不在清理域内。证据写 `<repo>/.local/evidence/probe-recovery-
- * identity-<label>.json`（不含 token/密钥）。退出码 0＝核心判据全过；
- * 1＝核心判据有 FAIL；2＝装置自身故障；3＝未执行（无凭据 SKIP，落 skipped 标记证据）。
+ * 运行目录 `.local/tmp/reid-<label>-<时间戳>-<pid>` **原子独占创建**——目录已
+ * 存在即按装置故障退出（退出码 2），不起跑、不删除既有目录（预建目录可能是
+ * 他人现场）；内含 home／playground／tgz／所有权标记 `PROBE-OWNED`。全部退出
+ * 路径（前置失败、实例未就绪、判据完成、清理失败）统一收尾：**先杀进程树并
+ * 核实实际结果**（taskkill 退出码＋进程存活双核），**删除前核验 PROBE-OWNED
+ * 归属**（probe 名＋pid 与本进程一致）后才执行删除，删除后再核目录确已消失
+ * ——经核实才称清除；杀进程或删除失败时如实留存现场并在退出信息中交接运行
+ * 目录路径，不把「已发出清理调用」写成「已清理」。共享 npm 缓存
+ * （`.local/npm-cache`）非本次运行私有，不在清理域内。证据写
+ * `<repo>/.local/evidence/probe-recovery-identity-<label>.json`（不含 token/
+ * 密钥）。退出码 0＝核心判据全过；1＝核心判据有 FAIL；2＝装置自身故障；
+ * 3＝未执行（无凭据 SKIP，落 skipped 标记证据）。
  *
  * ## RPC 纪律（DOC-07，对齐 verify/_rpc.mjs 只读重试口径）
  *
@@ -84,9 +96,18 @@ const opt = (name) => {
 // 跨树取证用 --repo 显式指向另一树）。
 const REPO = opt('repo') ?? resolve(import.meta.dirname, '..');
 const LABEL = opt('label') ?? 'run';
+// --label 限安全字符集（§9.4 探针契约）：label 进运行目录名与证据文件名——
+// 其他字符（含路径分隔与点段）按装置故障退出 2，不起跑、无目录可清。
+if (!/^[A-Za-z0-9-]+$/.test(LABEL)) {
+  console.error(`FAULT：--label 仅允许字母、数字与连字符（收到 "${LABEL}"）——label 进运行目录与证据文件名，不收其他字符`);
+  process.exit(2);
+}
 const R = opt('r');
-if (R === undefined) {
-  console.error('需要 --r <dsh-service 部署根>（读其 .env 的 ZAI_API_KEY；模型路由 patch 亦默认在其中找）');
+// 部署根前提只属缺省 patch 形态（§9.4 探针契约）：自备有效 --model-patch
+//（如其他供应商路由）时部署根与 ZAI 凭据前提一律解除。
+const MODEL_PATCH_EXPLICIT = opt('model-patch') ?? process.env.DSAT_MODEL_PATCH ?? null;
+if (R === undefined && MODEL_PATCH_EXPLICIT === null) {
+  console.error('需要 --r <dsh-service 部署根>（读其 .env 的 ZAI_API_KEY；模型路由 patch 亦默认在其中找）——或用 --model-patch 自备路由（自备形态无部署根与 ZAI 凭据前提）');
   process.exit(2);
 }
 // 宿主树归一（DOC-03）：--host-root 显式优先，环境 DSAT_HOST_MODULES 回退——
@@ -105,15 +126,41 @@ if (!existsSync(BIN)) {
   console.error(`宿主树未找到 CLI：${BIN}——--host-root / DSAT_HOST_MODULES 指的树对吗？`);
   process.exit(2);
 }
-// 模型路由 patch（DOC-03）：显式参数/环境优先；缺省按公开准备说明找
-// <R>/patches/zai-glm.yml，兼容 <R>/ops/patches/zai-glm.yml（历史部署形态）。
-// 缺失＝启动前置检查 FAULT，不带着错误前提进入会话阶段。
-const MODEL_PATCH = opt('model-patch') ?? process.env.DSAT_MODEL_PATCH ?? null;
-const PATCH_CANDIDATES = [MODEL_PATCH, join(R, 'patches/zai-glm.yml'), join(R, 'ops/patches/zai-glm.yml')]
-  .filter((p) => p !== null);
-const PATCH = PATCH_CANDIDATES.find((p) => existsSync(p));
+// 模型路由 patch（DOC-03／§9.4 探针契约）两形态：
+// - 显式 --model-patch／DSAT_MODEL_PATCH：失效（文件缺席／不可读／空文件；
+//   YAML 语法错误本探针不解析，由实例启动阶段观察——120s 未就绪按 FAULT 2，
+//   报文提示优先核对）＝启动前置检查 FAULT，**不静默回落**缺省查找——回落会把
+//   「指错了文件」伪装成「用错了部署」。该形态无部署根与 ZAI 凭据前提。
+// - 缺省查找：按公开准备说明找 <R>/patches/zai-glm.yml，兼容
+//   <R>/ops/patches/zai-glm.yml（历史部署形态）；缺失＝FAULT 2（指向模板）。
+let PATCH = null;
+if (MODEL_PATCH_EXPLICIT !== null) {
+  PATCH = resolve(String(MODEL_PATCH_EXPLICIT));
+  let invalid = null;
+  if (!existsSync(PATCH)) invalid = `文件缺席：${PATCH}`;
+  else {
+    try {
+      if (readFileSync(PATCH, 'utf8').trim() === '') invalid = `文件为空：${PATCH}`;
+    } catch (readError) {
+      invalid = `不可读（${String(readError?.message ?? readError)}）：${PATCH}`;
+    }
+  }
+  if (invalid !== null) {
+    console.error(`FAULT：显式 --model-patch 失效（${invalid}）——按 verify/patches/model-routing.example.yml 模板核对后重试；显式失效不回落缺省查找`);
+    process.exit(2);
+  }
+} else {
+  const PATCH_CANDIDATES = [join(R, 'patches/zai-glm.yml'), join(R, 'ops/patches/zai-glm.yml')];
+  PATCH = PATCH_CANDIDATES.find((p) => existsSync(p)) ?? null;
+  if (PATCH === null) {
+    console.error(`FAULT：模型路由 patch 缺失（尝试：${PATCH_CANDIDATES.join(' ; ')}）——按 verify/patches/model-routing.example.yml 准备后放缺省路径，或用 --model-patch / DSAT_MODEL_PATCH 显式传入`);
+    process.exit(2);
+  }
+}
 const OUT_DIR = join(REPO, '.local/evidence');
-// 唯一运行目录＋所有权标记（DOC-06）：起跑不删任何既有目录；全部退出路径
+// 唯一运行目录＋所有权标记（DOC-06／§9.4 探针契约）：**原子独占创建**——目录
+// 已存在即装置故障退出 2，不起跑、不删除既有目录（预建目录可能是他人现场，
+// 经 PROBE-OWNED 归属核验的删除只对本次运行创建的目录发生）；全部退出路径
 // 统一清整个运行目录（见 cleanup）。
 const RUN_STAMP = `${new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)}-${String(process.pid)}`;
 const RUN_DIR = join(REPO, '.local/tmp', `reid-${LABEL}-${RUN_STAMP}`);
@@ -121,19 +168,56 @@ const HOME = join(RUN_DIR, 'home');
 const PLAYGROUND = join(RUN_DIR, 'playground');
 const EVIDENCE = join(OUT_DIR, `probe-recovery-identity-${LABEL}.json`);
 let child = null;
-// 统一收尾（DOC-06）：杀实例进程树＋删整个运行目录（home/playground/tgz/标记）；
-// 共享 npm 缓存不在域内。所有失败/完成路径都经本函数，不留早退泄漏。删除遇
-// Windows 文件锁（EBUSY/EPERM）只告警留现场——cleanup 自身永不抛（进程级异常承接
-// 路径里再抛会把 Node 打成 fatal，清理反而做不完）。
+// 统一收尾（DOC-06／§9.4 探针契约）：杀实例进程树＋删整个运行目录
+//（home/playground/tgz/标记）；共享 npm 缓存不在域内。**经核实才称清除**：
+// ① 杀进程树核实实际结果（taskkill 退出码＋进程存活复检双核，失败如实报告）；
+// ② 删除前核验 PROBE-OWNED 归属（probe 名＋pid 与本进程一致——不符则不删，
+//   交接目录路径）；③ 删除后复验目录确已消失。杀进程或删除失败时如实留存
+// 现场并交接路径，不把「已发出清理调用」写成「已清理」。删除遇 Windows 文件
+// 锁（EBUSY/EPERM）只告警留现场——cleanup 自身永不抛（进程级异常承接路径里
+// 再抛会把 Node 打成 fatal，清理反而做不完）。
 const cleanup = () => {
+  let killVerified = child === null;
   if (child !== null) {
-    try { spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F']); } catch { /* 已退出 */ }
+    const pid = child.pid;
+    try {
+      const kill = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F']);
+      if (kill.status !== 0) {
+        console.error(`[launcher] WARN: taskkill 退出码 ${String(kill.status)}（pid ${String(pid)}）——进程树杀除未证实，现场留存`);
+      } else {
+        killVerified = true;
+      }
+    } catch (killError) {
+      console.error(`[launcher] WARN: taskkill 未运行（${String(killError?.message ?? killError)}）——进程树杀除未证实，现场留存`);
+    }
+    if (killVerified && pid !== undefined) {
+      try {
+        process.kill(pid, 0);
+        killVerified = false;
+        console.error(`[launcher] WARN: pid ${String(pid)} 杀除后仍存活——现场留存`);
+      } catch { /* 已退出＝核实通过 */ }
+    }
+  }
+  let owned = false;
+  try {
+    const marker = JSON.parse(readFileSync(join(RUN_DIR, 'PROBE-OWNED'), 'utf8'));
+    owned = marker?.probe === 'probe-recovery-identity' && marker?.pid === process.pid;
+  } catch { /* 标记缺席/损坏＝按非本次运行创建处理 */ }
+  if (!owned) {
+    console.error(`[launcher] WARN: PROBE-OWNED 归属核验未通过，不删除运行目录（可能是他人现场）：${RUN_DIR}`);
+    return;
   }
   try {
     rmSync(RUN_DIR, { recursive: true, force: true });
   } catch (rmError) {
     console.error(`[launcher] WARN: 运行目录清理失败，留存现场：${RUN_DIR}（${String(rmError?.message ?? rmError)}）`);
+    return;
   }
+  if (existsSync(RUN_DIR)) {
+    console.error(`[launcher] WARN: 运行目录删除后复验仍存在，留存现场：${RUN_DIR}`);
+    return;
+  }
+  console.log(`[launcher] cleanup verified: ${RUN_DIR} 已清除${killVerified ? '' : '（进程树杀除未证实——见上文告警）'}`);
 };
 const die = (code, message) => { console.error(message); cleanup(); process.exit(code); };
 // 进程级异常承接（DOC-06）：先于任何目录创建（含证据目录与运行目录）注册——本文件
@@ -142,22 +226,37 @@ const die = (code, message) => { console.error(message); cleanup(); process.exit
 process.on('uncaughtException', (err) => { die(2, `FAULT：未捕获异常（${String(err instanceof Error ? err.stack : err)}）——运行目录已随收尾清除`); });
 process.on('unhandledRejection', (err) => { die(2, `FAULT：未处理的 Promise 拒绝（${String(err instanceof Error ? err.stack : err)}）——运行目录已随收尾清除`); });
 mkdirSync(OUT_DIR, { recursive: true });
-mkdirSync(RUN_DIR, { recursive: true });
+// 原子独占创建：父目录（.local/tmp）确保在场后一次性创建运行目录——已存在
+// （EEXIST）＝装置故障退出 2，不起跑、不删除既有目录、不经 cleanup（其对非
+// 本次创建的目录按归属核验跳过删除，但此刻尚未创建任何东西，直接退出）。
+mkdirSync(join(REPO, '.local/tmp'), { recursive: true });
+try {
+  mkdirSync(RUN_DIR);
+} catch (mkdirError) {
+  if (mkdirError?.code === 'EEXIST') {
+    console.error(`FAULT：运行目录已存在（原子独占创建失败），不起跑也不删除既有目录：${RUN_DIR}`);
+    process.exit(2);
+  }
+  throw mkdirError;
+}
 writeFileSync(join(RUN_DIR, 'PROBE-OWNED'), JSON.stringify(
   { probe: 'probe-recovery-identity', label: LABEL, pid: process.pid, startedAt: new Date().toISOString(), repo: REPO }, null, 2));
 mkdirSync(HOME, { recursive: true });
 mkdirSync(PLAYGROUND, { recursive: true });
 
 // ── 凭据（只进子进程环境；证据与日志不落密钥） ──────────────────────────────
-// 环境已带 ZAI_API_KEY 则直用；否则读 --r 部署的 .env。
+// 环境已带 ZAI_API_KEY 则直用；否则读 --r 部署的 .env。自备 patch 形态不设
+// 凭据前提（路由到其他供应商时 ZAI 凭据本就无关）——能取到则照注入。
 let ZAI = process.env.ZAI_API_KEY ?? '';
-if (ZAI === '') {
-  for (const line of readFileSync(join(R, '.env'), 'utf8').split(/\r?\n/)) {
-    const m = line.match(/^\s*ZAI_API_KEY\s*=\s*(.+)\s*$/);
-    if (m) ZAI = m[1].replace(/^["']|["']$/g, '');
-  }
+if (ZAI === '' && R !== undefined) {
+  try {
+    for (const line of readFileSync(join(R, '.env'), 'utf8').split(/\r?\n/)) {
+      const m = line.match(/^\s*ZAI_API_KEY\s*=\s*(.+)\s*$/);
+      if (m) ZAI = m[1].replace(/^["']|["']$/g, '');
+    }
+  } catch { /* 部署无 .env：按无凭据处理（缺省形态见下方 SKIP，自备形态不阻断） */ }
 }
-if (ZAI === '') {
+if (ZAI === '' && MODEL_PATCH_EXPLICIT === null) {
   // 未执行≠全过（退出码契约）：专用退出码 3＋skipped 证据，防止无凭据环境的
   // 批处理把「跳过」读成「核心判据全过」，也避免旧证据文件被误读为本轮结果。
   writeFileSync(EVIDENCE, JSON.stringify(
@@ -165,10 +264,11 @@ if (ZAI === '') {
     null, 2));
   die(3, 'SKIP：环境与 --r 部署的 .env 均无 ZAI_API_KEY（实例判据只对开发机临时实例有意义）——退出码 3＝未执行');
 }
-if (PATCH === undefined) {
-  die(2, `FAULT：模型路由 patch 缺失（尝试：${PATCH_CANDIDATES.join(' ; ')}）——按 verify/patches/model-routing.example.yml 准备后放缺省路径，或用 --model-patch / DSAT_MODEL_PATCH 显式传入`);
-}
-const CHILD_ENV = { ...process.env, DSH_HOME: HOME, ZAI_API_KEY: ZAI };
+const CHILD_ENV = {
+  ...process.env,
+  DSH_HOME: HOME,
+  ...(ZAI === '' ? {} : { ZAI_API_KEY: ZAI })
+};
 console.log(`[launcher] host bin = ${BIN}`);
 console.log(`[launcher] model patch = ${PATCH}`);
 
@@ -210,7 +310,7 @@ for (let i = 0; i < 120 && URL === null; i += 1) {
   else await new Promise((res) => setTimeout(res, 1000));
 }
 if (URL === null) {
-  die(2, `实例 120s 未就绪；stderr 尾：${stderrTail}`);
+  die(2, `实例 120s 未就绪${MODEL_PATCH_EXPLICIT !== null ? `（显式 --model-patch 给定——优先核对 patch 可解析性：${PATCH}）` : ''}；stderr 尾：${stderrTail}`);
 }
 console.log('[launcher] instance ready on', URL.split('?')[0]);
 
