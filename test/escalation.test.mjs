@@ -120,7 +120,7 @@ hostTest('R11：justification 缺 sandbox_permissions → 同样报错（反向�
   assert.equal(seen.length, 0);
 });
 
-hostTest('R11：justification 是空白串 → 报错（非空句子是硬要求）', async () => {
+hostTest('R11：justification 是空白串 → 报错（非空句子是强制要求）', async () => {
   const { f, seen } = confinedCtx();
   const tool = createRunTool(f.ctx, config);
   await assert.rejects(

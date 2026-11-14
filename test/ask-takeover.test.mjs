@@ -3983,7 +3983,7 @@ test('J54：手势组合位——组合中开始的提交手势迟到 click 被�
 
 // ── PROBE-GUARD（DOC-06 全退出路径）：reid 探针守卫的源码静态锚 ────────────────
 
-test('PROBE-GUARD：reid 探针守卫与退出路径——pack 判空先于首个 stdout.match、认证首跳 catch→die、进程级兜底先于建目录、中止收束退出码 2、cleanup 永不抛', () => {
+test('PROBE-GUARD：reid 探针守卫与退出路径——pack 判空先于首个 stdout.match、认证首跳 catch→die、进程级异常承接先于建目录、中止收束退出码 2、cleanup 永不抛', () => {
   // verify/probe-recovery-identity.mjs 的收尾纪律（DOC-06：全部退出路径统一清理
   // 运行目录）：守卫任一缺席，装置段裸抛或 spawn 层失败都会绕过 cleanup()
   // 泄漏运行目录；判级中途中止必须以装置故障（退出码 2）收束，不得冒充全过。
@@ -4001,7 +4001,7 @@ test('PROBE-GUARD：reid 探针守卫与退出路径——pack 判空先于首�
   // ② 认证首跳 try/catch→die：本段在主 try 之外，裸抛会绕过收尾。
   assert.match(source, /\} catch \(authError\) \{\s*die\(2, `FAULT：认证首跳失败/,
     '认证首跳异常走 die（收尾不旁路）');
-  // ③ 进程级兜底：先于任何运行目录创建注册——不留「目录已建、兜底未挂」窗口。
+  // ③ 进程级异常承接：先于任何运行目录创建注册——不留「目录已建、承接未挂」窗口。
   assert.match(source, /process\.on\('uncaughtException', \(err\) => \{ die\(/,
     'uncaughtException → die');
   assert.match(source, /process\.on\('unhandledRejection', \(err\) => \{ die\(/,
@@ -4009,16 +4009,16 @@ test('PROBE-GUARD：reid 探针守卫与退出路径——pack 判空先于首�
   const uncaughtAt = source.indexOf("process.on('uncaughtException'");
   const unhandledAt = source.indexOf("process.on('unhandledRejection'");
   const runDirAt = source.indexOf('mkdirSync(RUN_DIR');
-  assert.ok(uncaughtAt >= 0 && unhandledAt >= 0 && runDirAt >= 0, '前置：兜底注册与建目录都在场');
+  assert.ok(uncaughtAt >= 0 && unhandledAt >= 0 && runDirAt >= 0, '前置：承接注册与建目录都在场');
   assert.ok(uncaughtAt < runDirAt && unhandledAt < runDirAt,
-    '两个进程级兜底都先于 mkdirSync(RUN_DIR)（顺序锚；修前：兜底挂在建目录后＝窗口＝红）');
+    '两个进程级异常承接都先于 mkdirSync(RUN_DIR)（顺序锚；修前：承接挂在建目录后＝窗口＝红）');
   // ④ 判级中途中止：主 try 的 catch 置 aborted，finally 以 aborted 优先收束——
   //    装置故障不得冒充退出码 0（README 退出码契约）。
   assert.match(source, /catch \(probeError\) \{[\s\S]{0,200}?aborted = true;/,
     '主 try 的 catch (probeError) 置 aborted（中止标记在场）');
   assert.match(source, /process\.exit\(aborted \? 2 : \(failed > 0 \? 1 : 0\)\);/,
     '退出码收束 aborted 优先（2＝装置故障；失败 1；全过 0）');
-  // ⑤ cleanup 永不抛：rmSync 包 try/catch，失败只 WARN 留现场（进程级兜底
+  // ⑤ cleanup 永不抛：rmSync 包 try/catch，失败只 WARN 留现场（进程级异常承接
   //    路径里再抛会把 Node 打成 fatal，清理反而做不完）。
   assert.match(source, /rmSync\(RUN_DIR, \{ recursive: true, force: true \}\);\s*\} catch \(rmError\) \{\s*console\.error\(`\[launcher\] WARN: 运行目录清理失败/,
     'cleanup 的 rmSync 有 try/catch＋留存现场告警（cleanup 永不抛）');

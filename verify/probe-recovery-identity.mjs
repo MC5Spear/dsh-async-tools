@@ -20,8 +20,10 @@
  *    可触发 discard（事件不进转录、pending 消息取消后不可见），如实登记为
  *    装置边界缺口（事件形态由 T-RC-1 ⑥ 真投影锚定）。
  *  - RC-1 取消可达性（④ 登记的实例级探针，预期不可达）：首等窗内长命令
- *    执行中取消会话 → 会话停止运行（runGroup 排空、无悬挂）＝与「窗口不可
- *    达」契约判定一致。装置边界：宿主 tool/call 记录先于派遣入转录，转录
+ *    执行中取消会话 → 会话停止运行＝普通首等取消的实际观察（session/list
+ *    不再 running；未悬挂 execute／审批，也未观察 runGroup 或收尾事件，不
+ *    据此称排空／无悬挂；「窗口不可达」仍以宿主源码静态推断为准）。装置边
+ *    界：宿主 tool/call 记录先于派遣入转录，转录
  *    不可判派遣时点——「取消后作业正文经等待照达」子项若命中取消落在派遣
  *    前（无作业可领）按未取得登记，不判产品红。
  *
@@ -87,7 +89,7 @@ if (R === undefined) {
   console.error('需要 --r <dsh-service 部署根>（读其 .env 的 ZAI_API_KEY；模型路由 patch 亦默认在其中找）');
   process.exit(2);
 }
-// 宿主树归一（DOC-03）：--host-root 显式优先，环境 DSAT_HOST_MODULES 兜底——
+// 宿主树归一（DOC-03）：--host-root 显式优先，环境 DSAT_HOST_MODULES 回退——
 // 环境语义与测试套件一致＝**模块树本身**；两来源统一按「模块树直接用、安装
 // 树补 node_modules」归一，不再无条件拼接。归一结果打印供核对。
 const HOST_ROOT = opt('host-root') ?? process.env.DSAT_HOST_MODULES;
@@ -121,7 +123,7 @@ const EVIDENCE = join(OUT_DIR, `probe-recovery-identity-${LABEL}.json`);
 let child = null;
 // 统一收尾（DOC-06）：杀实例进程树＋删整个运行目录（home/playground/tgz/标记）；
 // 共享 npm 缓存不在域内。所有失败/完成路径都经本函数，不留早退泄漏。删除遇
-// Windows 文件锁（EBUSY/EPERM）只告警留现场——cleanup 自身永不抛（进程级兜底
+// Windows 文件锁（EBUSY/EPERM）只告警留现场——cleanup 自身永不抛（进程级异常承接
 // 路径里再抛会把 Node 打成 fatal，清理反而做不完）。
 const cleanup = () => {
   if (child !== null) {
@@ -134,9 +136,9 @@ const cleanup = () => {
   }
 };
 const die = (code, message) => { console.error(message); cleanup(); process.exit(code); };
-// 进程级兜底（DOC-06）：先于任何目录创建（含证据目录与运行目录）注册——本文件
+// 进程级异常承接（DOC-06）：先于任何目录创建（含证据目录与运行目录）注册——本文件
 // 任何未捕获异常都统一转 die() 清理并以 2 收束，不混入「1＝核心 FAIL」档，也不留
-// 「目录已建、兜底未挂」的窗口。
+// 「目录已建、承接未挂」的窗口。
 process.on('uncaughtException', (err) => { die(2, `FAULT：未捕获异常（${String(err instanceof Error ? err.stack : err)}）——运行目录已随收尾清除`); });
 process.on('unhandledRejection', (err) => { die(2, `FAULT：未处理的 Promise 拒绝（${String(err instanceof Error ? err.stack : err)}）——运行目录已随收尾清除`); });
 mkdirSync(OUT_DIR, { recursive: true });
@@ -467,7 +469,7 @@ try {
     stopped = row.running !== true;
     if (!stopped) await new Promise((res) => setTimeout(res, 1000));
   }
-  judge('RC-1 首等窗内取消：会话停止运行（runGroup 排空、无悬挂）', stopped ? 'PASS' : 'FAIL', stopped ? 'ok' : '20s 仍 running', true);
+  judge('RC-1 首等窗内取消：会话停止运行（session/list 不再 running）', stopped ? 'PASS' : 'FAIL', stopped ? 'ok' : '20s 仍 running', true);
   await promptOn(sc.sessionId, [
     'Continue RC-1. The long job from before should still be running or finished. Call async_wait with targets [{kind:"job", id:"<the job id from your earlier async_run>"}] and wait_ms 35000. Then reply exactly RC1_DONE plus the body token you read (RC1-BODY), and end turn. If the job id is not visible anymore or no job was ever created, call async_wait with no targets and wait_ms 35000, then reply RC1_DONE and state plainly why no body token is reported.'
   ].join('\n'));

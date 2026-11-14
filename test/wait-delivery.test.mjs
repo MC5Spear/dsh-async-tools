@@ -3879,7 +3879,7 @@ hostTest('REC-Q：空输出作业首等不误报 alreadyDelivered——第二分
     });
     // 首次等待（入口终态分支）：本次装配自置 {via:'wait'}——不得把它当
     // 「先前已交付」误报 alreadyDelivered（修前该形态无注记；放宽分支后曾误报，
-    // factBefore 门控后恢复）。零等待同口径。
+    // 注记以 factBefore 为启用条件后恢复）。零等待同口径。
     const first = await rig.waiter.execute(waitArgs(jobId), rig.exec());
     assert.equal(first.status, 'completed');
     const note1 = first.note ?? '';
@@ -7506,7 +7506,7 @@ hostTest('DR-KEEP-CREATION：行卸载主体保留条件含在途创建认领—
       '认领已释放且无其他成员：末行卸载删除主体（整体释放路径覆盖）');
   } finally {
     ledger.disposeRow(ctx);
-    ledger.disposeRow(keepRow); // 双行兜底撤销 → 末行 → 整体复位
+    ledger.disposeRow(keepRow); // finally 双行重复撤销 → 末行 → 整体复位
   }
 });
 

@@ -48,7 +48,7 @@
       config:
         id: dsh-async
         name: 异步模式
-        description: 在标准模式基础上改用异步命令执行的编码 Agent：async_run 的命令超出首次等待时转入后台并返回作业编号（job_id）；async_wait 统一等待后台作业与子代理，作业结算时结果正文直接附在返回里，无需再调用取回；async_agent 后台派生子代理并支持按 dsh 模型选择设置指定路由，async_list_subagent_models 只读查询可用路由。用户插话时等待立即结束，后台工作继续运行。
+        description: 在标准模式基础上改用异步命令执行的编码 Agent：async_run 的命令超出首次等待时转入后台并返回作业编号（job_id）；async_wait 统一等待后台作业与子代理，作业结算时结果正文直接附在返回里，无需再调用取回；async_agent 后台派生子代理并支持按 dsh 模型选择设置指定路由，async_list_subagent_models 只读查询可用路由；多代理编排经 async_workflow 写成脚本后台执行，进度与结算同样由 async_wait 统一等待。用户插话时等待立即结束，后台工作继续运行。
         order: 5
         plugins:
           # ── 身份（改动项 5：persona prefix 与基线身份句逐字一致，纪律走运行时

@@ -405,7 +405,7 @@ test('T6b：`ctx.get("<字面量>")` 的第二种写法也要被看见（R3 审�
     unexplained,
     [],
     `这些 ctx.get("<name>") 既不在 inject 里、也不在 OPTIONAL_SERVICE_READS 白名单里：`
-    + `${unexplained.join(', ')}。要么改成硬依赖写进 inject，要么按设计说明它为什么必须可选。`
+    + `${unexplained.join(', ')}。要么改成强制依赖写进 inject，要么按设计说明它为什么必须可选。`
   );
   // 白名单本身不许腐烂：白名单里的名字必须真的还在被读，否则删掉它。
   const stale = [...OPTIONAL_SERVICE_READS].filter((name) => !reads.has(name));
@@ -1149,7 +1149,7 @@ test('T21：refreshToolDescriptions 递归同步嵌套参数说明——en→zh�
 //（dsh-subagent 挂预设子树的 child ctx）未声明注入 jobs，cordis 追踪代理对未
 // 注入服务的属性访问在 getter 内**抛错**（cannot get property "jobs" without
 // inject，真机插桩定案 diag-foreign-events-022），可选链拦不住，异常落入仅
-// warn 的 catch → 零订阅、外来事件通路全灭（枚举降级兜底仍在）。装置＝T19 同
+// warn 的 catch → 零订阅、外来事件通路全灭（枚举降级路径仍在）。装置＝T19 同
 // 款 agent/created 驱动＋行 jobs 服务覆写（事件枢纽可观察）。
 test('FD-EVT：外来事件订阅从行 ctx 取枢纽——getter 抛错不触路；订阅到账面驱动；双挂注销幂等；无枢纽降级（SOL-REQ-01）', async (t) => {
   const host = await loadHost();
@@ -1231,7 +1231,7 @@ test('FD-EVT：外来事件订阅从行 ctx 取枢纽——getter 抛错不触�
 
   // ③ 注销双挂：agent.ctx.effect 登记的注销在 Agent 结束撤订阅（effect 回调
   // 返回注销函数——与行 ctx.effect 同契约；幂等二次调用不炸）；行卸载经宿主
-  // 的行 effect 注册同样撤（兜底路径）。
+  // 的行 effect 注册同样撤——Agent 结束未触时的第二道注销。
   const eventsIndex = agentEffectLabels.indexOf('async-tools: foreign job events');
   assert.equal(eventsIndex, 1, '③事件订阅注销挂 agent.ctx.effect（隐藏句柄之后）');
   const eventsOff = agentEffectThunks[eventsIndex];

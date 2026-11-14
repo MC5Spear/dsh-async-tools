@@ -4,7 +4,7 @@
  * ## 证明的是哪一句
  *
  * 需求 §3.2 明写：「工具行只在挂载它们的预设范围内注册」且「使用者可在自建预设
- * 按工具选择挂载」——`dsh-async` 预设只是替使用者把六行写好的默认模板，
+ * 按工具选择挂载」——`dsh-async` 预设只是替使用者写好的默认工具模板，
  * 本包不提供"只在某个预设里可见"的机制。
  *
  * ## 为什么必须有这条反向证据
@@ -13,13 +13,13 @@
  *
  * | 已有判据 | 它说的 |
  * |---|---|
- * | 本包预设里根可见的五个工具都在 | 本包的预设里有这些工具 |
+ * | 本包预设里根可见的四个工具都在 | 本包的预设里有这些工具 |
  * | standard 里不出现 | 本包**没有**把它们强行装到所有预设 |
  *
  * 两条合起来**证明不了**"别处也能有"。只靠这两条，一个"把工具**锁死在**本预设里"的
  * 实现同样能全绿——而那正好与 §3.2 相悖。
  *
- * ⇒ 本探针在**另一个预设 id** 下挂同样的六行，断言根可见工具出现。
+ * ⇒ 本探针在**另一个预设 id** 下挂同样的工具行，断言根可见工具出现。
  * 这才是"预设是模板、不是限制"的证据。
  *
  * ## 装置前提与证据边界
@@ -37,7 +37,7 @@
  * 1. 在可写预设根下建一个**临时**预设 `dsh-async-portability-probe`（复制已部署那份，
  *    只改 `id` 与 `preset.yml` 的 `name`/`order`）；
  * 2. 用它开一个会话，从真实 `request/header` 读工具清单；
- * 3. 断言五个根作用域可见的工具都在（`async_workflow` 钉在 delegation 组内、
+ * 3. 断言四个根作用域可见的本包工具都在（`async_workflow` 钉在 delegation 组内、
  *    根作用域本就不可见——它的注册与组隔离由 `verify/d05-readme-composition.mjs`
  *    证明，不在此重复断言）；
  * 4. **无论成败都删掉那个临时预设目录**，并复核删干净了。
@@ -181,7 +181,7 @@ try {
     .filter((r) => r.event?.type === 'request/header')
     .flatMap((r) => r.event.data?.header?.tools ?? [])
     .map((t) => t?.name);
-  // 根作用域可见的五个本包工具（async_workflow 在 delegation 组内、根不可见，
+  // 根作用域可见的四个本包工具（async_workflow 在 delegation 组内、根不可见，
   // 由 d05 组合探针证明，此处不断言）。
   const ours = ['async_run', 'async_wait', 'async_agent', 'async_list_subagent_models'];
   const present = ours.filter((n) => tools.includes(n));
