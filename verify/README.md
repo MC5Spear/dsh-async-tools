@@ -128,7 +128,7 @@ npm run check:alias-tokens
 | [`probe-queue-baseline.mjs`](<probe-queue-baseline.mjs>) | 记录实际投递行为，不作为独立通过判据 |
 | [`probe-agent-e2e.mjs`](<probe-agent-e2e.mjs>) | 后台创建、有界等待、消息及 persona；不涵盖所有当前实时状态或消息类别，执行前读设置写入 |
 | [`probe-settings-behavior-full.mjs`](<probe-settings-behavior-full.mjs>) | 配置变化后的夹紧、裁剪和描述；改共享设置并恢复，完整工具覆盖须按当前目标核对。起跑把原状态（value 与 user 两层）快照落盘到证据目录（进程被强杀时按快照人工恢复）；收尾恢复前先按修订号（缺席时按值深比对）检测窗口内的并发变更，发现他方更新即停止恢复并报告、不覆盖。只应在专用验证实例运行 |
-| [`probe-preset-portability.mjs`](<probe-preset-portability.mjs>) | 落盘预设目录形态下的自建挂载可移植性；源目录（`~/.dsh/.agent-presets/dsh-async`）不在时自退出、不产生证据，通过结论不得引用为 bundle patch 路径证据（该路径由 validate-preset 与 d05 承担）；不代表既有自建预设已禁同步入口；若涉及目录或组成写入须隔离 |
+| [`probe-preset-portability.mjs`](<probe-preset-portability.mjs>) | **本线退役**：宿主 0.2.2-rc.1 起不再读 `$DSH_HOME/.agent-presets/<id>/` 旧落盘预设目录（设计·隔离实例取证 0.2.2 线条目明载），本探针证明的落盘形态不适用本线现行机制，不得在本线作为现行证据运行或引用；现行 bundle patch 形态由 `tools/validate-preset.mjs`（静态逐行）与 `verify/d05-readme-composition.mjs`（装载语义＋缺引擎拒绝）承接证明。目录偶然存在或脚本自退出都不证明现行机制已验。在仍读落盘预设目录的宿主（如 0.2.1 线）上原用法仍适用；若涉及目录或组成写入须隔离 |
 | [`probe-escalation-advertised.mjs`](<probe-escalation-advertised.mjs>) | 真实模型工具 schema 中提权键，不代替实际审批 |
 | [`probe-sandbox-marker.mjs`](<probe-sandbox-marker.mjs>) | 沙箱拒绝的模型可见词表（由按文件族拦截的沙箱规则承载）与退出状态标记；本部署命令族受限、测试运行器被杀时如实记环境事实，不冒称命令族已验。靶子文件是每次运行随机命名的自建文件（先检查不存在、内容带所有权标记），收尾只清理经标记确认属于本轮的那一个——标记不在场即不删除、留人工判断 |
 | [`probe-lang-independence.mjs`](<probe-lang-independence.mjs>) | 页面文案与真实描述的双向对照，改共享语言设置；抽样描述不能冒称全部工具全文均核验 |
