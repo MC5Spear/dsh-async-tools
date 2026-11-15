@@ -1122,6 +1122,43 @@ hostTest('R58-c：无活等待的完成消息走批次预算——截断+扣减�
   }
 });
 
+hostTest('R58-note：完成消息头部 (N chars) 计正文字符——截断标注行不计数（TEXT-NOTE-01）', async () => {
+  const rig = await buildRig('r58n', [], { maxResultChars: 40 });
+  try {
+    // 双作业批额度 40：结算 result 是返回值的原始 JSON（字符串含两侧引号），
+    // value 取 28 字符串 → JSON 恰 30 字符。第一条满取 30（不截断），第二条
+    // 只取剩余 10（6:4 首尾切分、内嵌标注行）。头部「(N chars)」必须报正文
+    // 字符数（30 与 10）——截断标注行属说明行、不占内容份额（与预算扣减
+    // 同口径）；把标注行计进 N 会让读者按 N 核对批额度 40 时对不上（修前
+    // 形态：第二条头部报 10+标注行长度）。
+    const argsOf = (mark, name) => ({
+      script: `return ${JSON.stringify(mark.repeat(28))}`,
+      meta: { name, description: 'note accounting' },
+      yield_ms: 20
+    });
+    const a = await rig.workflow.execute(argsOf('a', 'r58n-a'), rig.exec());
+    const b = await rig.workflow.execute(argsOf('b', 'r58n-b'), rig.exec());
+    assert.equal(a.status, 'running', '前置：作业 A 让出');
+    assert.equal(b.status, 'running', '前置：作业 B 让出');
+    rig.finisher(0, 'a'.repeat(28));
+    rig.finisher(1, 'b'.repeat(28));
+    await new Promise((resolve) => { setTimeout(resolve, 120); });
+    // 同窗则合并恰一条（RI-4 形态）、错峰则两条——两种时序都合法；份额按
+    // 共同输入代记账（RC-GEN：同代按 maxResultChars−代内已交付开批），第二
+    // 条条目无论落哪条消息都只拿剩余 10。
+    const sends = [...rig.followups, ...rig.injections];
+    assert.ok(sends.length >= 1 && sends.length <= 2,
+      `双作业完成消息 1–2 条（同窗合并或错峰两条；实得 ${String(sends.length)} 条）`);
+    const text = sends.map((send) => send.content.map((part) => part.text).join('')).join('\n');
+    assert.ok(text.includes(a.job_id) && text.includes(b.job_id), '两作业标识同条在场');
+    assert.match(text, /\(30 chars\)/, '未截断条目头部报全文正文字符数 30');
+    assert.match(text, /\(10 chars\)/,
+      '截断条目头部报本批正文 10（只计首尾正文，不含截断标注行）');
+  } finally {
+    await rig.dispose();
+  }
+});
+
 hostTest('R58-d：首次等待直付后不再被动双投——armed 链按已交付事实短路（9.3.2「只出现一次」）', async () => {
   const rig = await buildRig('r58d');
   try {
@@ -1137,10 +1174,10 @@ hostTest('R58-d：首次等待直付后不再被动双投——armed 链按已�
       '已直付的最终结果不得再以完成消息投递（同一直付路径的被动双投是缺陷形态）');
     assert.equal(rig.injections.length, 0, 'inject 通道同样不得收到重复结果');
     // R58-i：已交付作业再次作为目标等待——返回必须**说明**已交付
-    //（note 键），不得让空 output 被误读成「完成且无输出」。IMPL-M1 返修后
-    // 首等直付与等待返回同列载体登记恢复副本（设计 §3.2 判据表第一行）——
-    // 先经回合收尾事件确认（真实生产里本回合全部 tool/result 提交后发出），
-    // 此后显式零等待点名严格按第 2 档交回：已交付说明＋空正文（恢复第 1 档
+    //（note 键），不得让空 output 被误读成「完成且无输出」。首等直付与
+    // 等待返回同列载体登记恢复副本（设计 §3.2 判据表第一行）——先经回合
+    // 收尾事件确认（真实生产里本回合全部 tool/result 提交后发出），此后
+    // 显式零等待点名严格按第 2 档交回：已交付说明＋空正文（恢复第 1 档
     // 的重发形态由 RC 系列与 T-MIX-1 锚定，不在此放宽）。
     const { ledger: dbgLedger } = await import('../lib/delivery.js');
     dbgLedger.attachClaimedListener(rig.ctx);
@@ -3897,8 +3934,14 @@ hostTest('REC-J：等待出口注记两分——续段附带给 partialDelivered
     assert.equal(second.status, 'completed');
     assert.ok(second.output.length > 0, '续段正文随 output 附带');
     assert.match(second.note ?? '', /attached with this batch/, '已附带份额注记在场（partialDelivered）');
-    assert.ok(second.note.includes(`about ${String(second.output.length)} chars`),
-      `chars 口径＝本批装配份额（${String(second.output.length)}）：partialDelivered 的数值与 output 一致`);
+    // TEXT-NOTE-01 口径：chars＝本批附带的续段**正文**份额（trigger.chars＝装配
+    // take），output 另含内嵌截断标注行——「省略的中段约 N 字符已附带」的 N
+    // 不把标注行算进省略中段（修前口径＝output 全长，把标注行谎报为中段）。
+    const marker = second.output.match(/\[output truncated: \d+ chars omitted\]/);
+    assert.ok(marker !== null, '续段仍截断 ⇒ 内嵌标注行在场（前置）');
+    const attachedBody = second.output.length - marker[0].length - 4;
+    assert.ok(second.note.includes(`about ${String(attachedBody)} chars`),
+      `chars 口径＝本批续段正文（${String(attachedBody)}），不含截断标注行`);
     assert.match(second.note ?? '', /about \d+ chars of the omitted middle were not attached this time/,
       '待领取份额并陈（partialPending）——只报其一即谎报');
     assert.ok(!second.output.includes('HEAD-9-CHARS'), '续段不重发首访已付正文');
@@ -7508,14 +7551,13 @@ tzwGate('T-ZW-1 实测：真栈 listChildren 热/冷路径采样＋混合五目�
   }
 });
 
-// ── 返修轮（IMPL-M1＋minor ①②⑤）：首等直付副本、恢复回滚隔离、恰一次失败形态、
-// 出口中止登记现查 ───────────────────────────────────────────────────────
+// ── 首等直付副本、恢复回滚隔离、恰一次失败形态、出口中止登记现查 ──────────
 
-hostTest('RC-I：首等直付登记恢复副本——改写取消后可恢复（IMPL-M1 修前红）', async () => {
-  // 修前形态（ab5fa02）：noteFirstWaitEnded('delivered') 不调用 #registerRecovery
-  //——直付被宿主改写取消后 deliveredFact 已置位、阻断完成消息与批次重投，显式
-  // 零等待只能得到第 3 档「副本已过期」。修后按设计 §3.2 判据表第一行登记
-  //（首等直付与等待返回同列载体），本用例三断言全红于修前。
+hostTest('RC-I：首等直付登记恢复副本——改写取消后可恢复', async () => {
+  // noteFirstWaitEnded('delivered') 必须调用 #registerRecovery：直付被宿主
+  // 改写取消后 deliveredFact 已置位、阻断完成消息与批次重投，无恢复副本时
+  // 显式零等待只能得到第 3 档「副本已过期」。首等直付与等待返回同列载体
+  //（设计 §3.2 判据表第一行）。
   const rig = await buildRig('rc-i');
   ledger.attachClaimedListener(rig.ctx);
   try {
@@ -7597,9 +7639,9 @@ hostTest('RC-J：出口中止的登记现查——装配时信号已中止即置
   }
 });
 
-hostTest('RC-K：恢复条目回滚＝游标回退——undoClaim 不写作业缓冲、不清交付事实（minor ①）', async () => {
-  // 修前形态：出口异常把恢复条目当普通条目回滚——original 回写 buffer、
-  // deliveredFact 清位，后续批次把标记行再当作业正文投一次。份额模型下恢复
+hostTest('RC-K：恢复条目回滚＝游标回退——undoClaim 不写作业缓冲、不清交付事实', async () => {
+  // 出口异常时不得把恢复条目当普通条目回滚——original 回写 buffer、
+  // deliveredFact 清位会让后续批次把标记行再当作业正文投一次。份额模型下恢复
   // 条目的回滚＝恢复游标回退到装配前位置（载体构造失败时切片自游标重发），
   // 不写作业缓冲、不置认领、不重置已交付事实、不登记新份额。
   const ctx = new Context();
@@ -8014,7 +8056,7 @@ hostTest('ZW-E：零等待清单失败形态同样恰一次——入口失败后
   }
 });
 
-// ── 返修轮 minor ③：设计 §5.2 真实装置系列（T-FD-1／T-RC-1／T-MIX-1）───────
+// ── 设计 §5.2 真实装置系列（T-FD-1／T-RC-1／T-MIX-1）───────────────────────
 
 hostTest('T-FD-1 真实注册表：外来作业静默结算→保活链完成消息交付，一次性 result 只消费一次（设计 §5.2／§2.6）', async () => {
   const rig = await buildRig('t-fd-1', [], { pollIntervalMs: 100 });

@@ -324,6 +324,7 @@ const PROSE_ALLOWLIST = {
     { needle: 'incremental read', why: '同上（增量读取失败的 warn 行）' },
     { needle: 'completion delivery for', why: '同上（完成消息投递失败/registry miss 的 warn 行——owner 与错误文本来自变量插值，两条同前缀合并登记）' },
     { needle: 'post-settle delivery for', why: '同上（#settleReady 加固 catch 的 warn 行——结算后补投失败的防御路径，jobId 与错误文本来自变量插值）' },
+    { needle: 'idle review after creation sweep failed', why: '同上（#idleReviewAfterSweep 加固 catch 的 warn 行——清扫触发的窗口空闲复查失败的防御路径，错误文本来自变量插值；复查是补充出口、正文仍可经显式零等待领取，不进模型上下文）' },
     { needle: 'foreign job event handling failed', why: '同上（外来作业事件订阅处理的防御 catch——noteForeignEvent 整体吞错的 log 行，错误文本来自变量插值，不进模型上下文）' },
     { needle: 'background job', why: '宿主逐字同形判定常量（§2.3 正文去向判别器匹配 dsh-tool-jobs 完成通知的前缀模板 `background job ${id}`——匹配的是宿主通知文本，不是本包文案；双语化即失配）' },
     { needle: 'Read its output with job_output.', why: '宿主逐字同形判定常量（同判别器的状态形态标记——dsh-tool-jobs fitCompletionNotice 的逐字子串，匹配宿主通知文本；截断形态标记 `\\nDone; job_output.` 无纯空白词边界、不触句子判据，无 entries）' }
