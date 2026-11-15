@@ -1944,7 +1944,7 @@ test('J19：座位渲染门——关/计数 0/座位不匹配三态渲染 null�
   snap = { status: 'ready', value: { askTakeover: true, askUiSeat: 'sidebar' }, user: {} };
   scopeListener();
   model.store.getSnapshot().lostAnswers = [{ batchId: 'b', questionId: 'q2', question: 'q' }];
-  assert.ok(renderComp(() => product.AskSidebarSeat(seatProps)) !== null, 'sidebar 座位同门（lostAnswers 计入）');
+  assert.ok(renderComp(() => product.AskSidebarSeat(seatProps)) !== null, 'sidebar 座位与 overlay 座位同一显形条件（lostAnswers 计入）');
   const noJumpPanel = renderComp(() => product.AskList({ ask: model }));
   const noJumpLine = noJumpPanel.children.find((child) => child?.props?.className === 'ats-ask-failed');
   assert.ok(noJumpLine.children.find((child) => child?.props?.className === 'ats-ask-jump') === undefined,
@@ -2000,7 +2000,7 @@ test('座位显形计入 callFailed=state（§4.3 失败档）——读取失败
   snap = { status: 'ready', value: { askTakeover: true, askUiSeat: 'overlay' }, user: {} };
   scopeListener();
   assert.ok(renderComp(() => product.AskOverlaySeat(seatProps)) !== null,
-    'overlay 座位同门（失败档计入 askHasFace）');
+    'overlay 座位与 sidebar 座位同一显形条件（失败档计入 askHasFace）');
   // ② 面板失败行常驻：读取失败与零题可区分（零题时座位本就消隐）。
   const failedPanel = renderComp(() => product.AskList({ ask: model }));
   const failedLine = failedPanel.children.find((child) => child?.props?.className === 'ats-ask-failed');
@@ -4080,11 +4080,14 @@ test('PROBE-GUARD：reid 探针守卫与退出路径——pack 判空先于首�
   assert.ok(uncaughtAt < runDirAt && unhandledAt < runDirAt,
     '两个进程级异常承接都先于 mkdirSync(RUN_DIR)（顺序锚；修前：承接挂在建目录后＝窗口＝红）');
   // ④ 判级中途中止：主 try 的 catch 置 aborted，finally 以 aborted 优先收束——
-  //    装置故障不得冒充退出码 0（README 退出码契约）。
+  //    装置故障不得冒充退出码 0（README 退出码契约）；核心全过而清理未完整
+  //    核实按 DOC-06-RESULT 升 2，核心 FAIL＝1 不被清理失败掩盖。
   assert.match(source, /catch \(probeError\) \{[\s\S]{0,200}?aborted = true;/,
     '主 try 的 catch (probeError) 置 aborted（中止标记在场）');
-  assert.match(source, /process\.exit\(aborted \? 2 : \(failed > 0 \? 1 : 0\)\);/,
-    '退出码收束 aborted 优先（2＝装置故障；失败 1；全过 0）');
+  assert.match(source, /const cleanupOk = report\.terminate\.verified && report\.ownership\.verified && report\.removal\.verified;/,
+    '清理核实＝终止／归属／删除三段齐备（与证据 cleanup 字段同源）');
+  assert.match(source, /const exitCode = aborted \? 2 : \(failed > 0 \? 1 : \(cleanupOk \? 0 : 2\)\);/,
+    '退出码收束：aborted 优先 2；核心 FAIL 1；核心全过按清理核实 0／未核实升 2');
   // ⑤ cleanup 永不抛：rmSync 包 try/catch，失败只 WARN 留现场（进程级异常承接
   //    路径里再抛会把 Node 打成 fatal，清理反而做不完）。
   assert.match(source, /rmSync\(RUN_DIR, \{ recursive: true, force: true \}\);\s*\} catch \(rmError\) \{\s*console\.error\(`\[launcher\] WARN: 运行目录清理失败/,

@@ -19,13 +19,14 @@
  *  - RI-3 先丢弃再领取（尝试）：忙碌窗排队消息＋session/cancel——RPC 面不
  *    可触发 discard（事件不进转录、pending 消息取消后不可见），如实登记为
  *    装置边界缺口（事件形态由 T-RC-1 ⑥ 真投影锚定）。
- *  - RC-1 取消可达性（④ 登记的实例级探针，预期不可达）：首等窗内长命令
- *    执行中取消会话 → 会话停止运行＝普通首等取消的实际观察（session/list
- *    不再 running；未悬挂 execute／审批，也未观察 runGroup 或收尾事件，不
- *    据此称排空／无悬挂；「窗口不可达」仍以宿主源码静态推断为准）。装置边
- *    界：宿主 tool/call 记录先于派遣入转录，转录
- *    不可判派遣时点——「取消后作业正文经等待照达」子项若命中取消落在派遣
- *    前（无作业可领）按未取得登记，不判产品红。
+ *  - RC-1 普通首等取消样本（④ 登记的实例级探针；实际取得的是普通首等取消
+ *    的观察，不是悬挂窗口的可达性证明）：首等窗内长命令执行中取消会话 →
+ *    会话停止运行＝普通首等取消的实际观察（session/list 不再 running；未
+ *    悬挂 execute／审批，也未观察 runGroup 或收尾事件，不据此称排空／无
+ *    悬挂；「悬挂窗口是否可达」仍是宿主源码静态推断、未实例验证——按未验
+ *    分层登记，不以本样本冒称）。装置边界：宿主 tool/call 记录先于派遣入
+ *    转录，转录不可判派遣时点——「取消后作业正文经等待照达」子项若命中
+ *    取消落在派遣前（无作业可领）按未取得登记，不判产品红。
  *
  * 模型依从性边界：RI-1 阻断回合超时、RI-2 消费回显未取得均按信息项登记
  * （单步指令的模型依从波动不判产品红）；核心判据（注入形态、交错在册、
@@ -59,20 +60,23 @@
  * - `--repo` 默认本脚本所在树（跨树取证显式传）；`--label` 进证据文件名与运行
  *   目录名，限安全字符集（字母、数字与连字符）——其他字符按装置故障退出 2。
  *
- * ## 运行目录与清理域（DOC-06）
+ * ## 运行目录与清理域（DOC-06／DOC-06-RESULT）
  *
  * 运行目录 `.local/tmp/reid-<label>-<时间戳>-<pid>` **原子独占创建**——目录已
  * 存在即按装置故障退出（退出码 2），不起跑、不删除既有目录（预建目录可能是
  * 他人现场）；内含 home／playground／tgz／所有权标记 `PROBE-OWNED`。全部退出
- * 路径（前置失败、实例未就绪、判据完成、清理失败）统一收尾：**先杀进程树并
- * 核实实际结果**（taskkill 退出码＋进程存活双核），**删除前核验 PROBE-OWNED
- * 归属**（probe 名＋pid 与本进程一致）后才执行删除，删除后再核目录确已消失
- * ——经核实才称清除；杀进程或删除失败时如实留存现场并在退出信息中交接运行
+ * 路径（前置失败、实例未就绪、判据完成、清理失败）统一收尾，清理按三段
+ * **结构化核实**：终止（taskkill 回执＋进程存活复检——复检异常≠已退出，仅
+ * ESRCH 是「不存在」的证据）／归属（PROBE-OWNED 的 probe 名＋pid 与本进程
+ * 一致）／删除（删除后存在性核对）；三段结果随证据 JSON 的 `cleanup` 字段
+ * 落盘。任一段未证实即停止删除、如实留存现场，告警与证据交接 pid 与运行
  * 目录路径，不把「已发出清理调用」写成「已清理」。共享 npm 缓存
  * （`.local/npm-cache`）非本次运行私有，不在清理域内。证据写
  * `<repo>/.local/evidence/probe-recovery-identity-<label>.json`（不含 token/
- * 密钥）。退出码 0＝核心判据全过；1＝核心判据有 FAIL；2＝装置自身故障；
- * 3＝未执行（无凭据 SKIP，落 skipped 标记证据）。
+ * 密钥）。退出码 0＝核心判据全过；1＝核心判据有 FAIL；2＝装置自身故障
+ * （含核心全过而清理未完整核实的升档——清理失败不应冒充全过；1 与 3 保持
+ * 原档，产品／未执行信号优先，清理状态经 `cleanup` 字段交接）；3＝未执行
+ * （无凭据 SKIP，落 skipped 标记证据）。
  *
  * ## RPC 纪律（DOC-07，对齐 verify/_rpc.mjs 只读重试口径）
  *
@@ -168,63 +172,114 @@ const HOME = join(RUN_DIR, 'home');
 const PLAYGROUND = join(RUN_DIR, 'playground');
 const EVIDENCE = join(OUT_DIR, `probe-recovery-identity-${LABEL}.json`);
 let child = null;
+// 证据基座提前在场（DOC-06-RESULT）：die／finally 的证据落盘单点共用——清理
+// 结果（lastCleanupReport）随证据 cleanup 字段一并写，自动化读退出码＋证据
+// 可判资源结束，不再出现「核心全过＋清理失败＝退出 0、证据无清理状态」。
+const evidence = { label: LABEL, host: HOST_ROOT, candidate: null, origin: null, steps: {} };
+let lastCleanupReport = null;
+const writeEvidence = (extra = {}) => {
+  try {
+    writeFileSync(EVIDENCE, JSON.stringify({ ...evidence, ...extra, cleanup: lastCleanupReport }, null, 2));
+  } catch { /* 证据目录不可写不阻断收尾——写不进证据≠清理成功 */ }
+};
 // 统一收尾（DOC-06／§9.4 探针契约）：杀实例进程树＋删整个运行目录
 //（home/playground/tgz/标记）；共享 npm 缓存不在域内。**经核实才称清除**：
-// ① 杀进程树核实实际结果（taskkill 退出码＋进程存活复检双核，失败如实报告）；
-// ② 删除前核验 PROBE-OWNED 归属（probe 名＋pid 与本进程一致——不符则不删，
-//   交接目录路径）；③ 删除后复验目录确已消失。杀进程或删除失败时如实留存
-// 现场并交接路径，不把「已发出清理调用」写成「已清理」。删除遇 Windows 文件
-// 锁（EBUSY/EPERM）只告警留现场——cleanup 自身永不抛（进程级异常承接路径里
-// 再抛会把 Node 打成 fatal，清理反而做不完）。
+// ① 杀进程树核实实际结果（taskkill 退出码＋进程存活复检双核——复检异常≠
+//   已退出，仅 ESRCH 是「不存在」的证据，EPERM 等保持未知）；② 删除前核验
+//   PROBE-OWNED 归属（probe 名＋pid 与本进程一致）；③ 删除后复验目录确已
+//   消失。三段结果（终止／归属／删除）结构化写入证据 JSON 的 cleanup 字段；
+// 任一段未证实即**停止删除**、如实留存现场，告警与证据交接 pid 与运行目录
+// 路径，不把「已发出清理调用」写成「已清理」。cleanup 自身永不抛（进程级
+// 异常承接路径里再抛会把 Node 打成 fatal，清理反而做不完）。
+let cleanupRan = false;
 const cleanup = () => {
-  let killVerified = child === null;
+  if (cleanupRan) return lastCleanupReport;
+  cleanupRan = true;
+  const report = {
+    runDir: RUN_DIR,
+    pid: child?.pid ?? null,
+    terminate: { attempted: child !== null, taskkillStatus: null, aliveRecheck: null, verified: child === null },
+    ownership: { verified: !existsSync(RUN_DIR) },
+    removal: { attempted: false, verified: !existsSync(RUN_DIR) }
+  };
   if (child !== null) {
     const pid = child.pid;
     try {
-      const kill = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F']);
-      if (kill.status !== 0) {
-        console.error(`[launcher] WARN: taskkill 退出码 ${String(kill.status)}（pid ${String(pid)}）——进程树杀除未证实，现场留存`);
-      } else {
-        killVerified = true;
-      }
+      const kill = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { timeout: 60000 });
+      report.terminate.taskkillStatus = kill.status ?? null;
     } catch (killError) {
-      console.error(`[launcher] WARN: taskkill 未运行（${String(killError?.message ?? killError)}）——进程树杀除未证实，现场留存`);
+      console.error(`[launcher] WARN: taskkill 未运行（${String(killError?.message ?? killError)}）——进程树杀除未证实，现场留存：${RUN_DIR}（pid ${String(pid)}）`);
     }
-    if (killVerified && pid !== undefined) {
+    if (report.terminate.taskkillStatus !== 0) {
+      console.error(`[launcher] WARN: taskkill 退出码 ${String(report.terminate.taskkillStatus)}（pid ${String(pid)}）——进程树杀除未证实，不删除运行目录、现场留存：${RUN_DIR}`);
+    } else if (pid !== undefined) {
+      // 复检异常≠已退出：仅 ESRCH（进程不存在）作「已退出」证据；EPERM 等
+      // 权限不足形态保持未知——未知按未证实处理，同样保留现场。
       try {
         process.kill(pid, 0);
-        killVerified = false;
-        console.error(`[launcher] WARN: pid ${String(pid)} 杀除后仍存活——现场留存`);
-      } catch { /* 已退出＝核实通过 */ }
+        report.terminate.aliveRecheck = 'alive';
+        console.error(`[launcher] WARN: pid ${String(pid)} 杀除后仍存活——不删除运行目录、现场留存：${RUN_DIR}`);
+      } catch (recheckError) {
+        report.terminate.aliveRecheck = recheckError?.code === 'ESRCH'
+          ? 'gone'
+          : `unknown(${String(recheckError?.code ?? recheckError?.message ?? recheckError)})`;
+        if (report.terminate.aliveRecheck !== 'gone') {
+          console.error(`[launcher] WARN: pid ${String(pid)} 存活复检不可判（${report.terminate.aliveRecheck}）——不当作已退出，现场留存：${RUN_DIR}`);
+        }
+      }
+    }
+    report.terminate.verified = report.terminate.taskkillStatus === 0 && report.terminate.aliveRecheck === 'gone';
+  }
+  if (existsSync(RUN_DIR)) {
+    try {
+      const marker = JSON.parse(readFileSync(join(RUN_DIR, 'PROBE-OWNED'), 'utf8'));
+      report.ownership.verified = marker?.probe === 'probe-recovery-identity' && marker?.pid === process.pid;
+    } catch { /* 标记缺席/损坏＝按非本次运行创建处理 */ }
+    if (!report.ownership.verified) {
+      console.error(`[launcher] WARN: PROBE-OWNED 归属核验未通过，不删除运行目录（可能是他人现场）：${RUN_DIR}${report.pid === null ? '' : `（pid ${String(report.pid)}）`}`);
     }
   }
-  let owned = false;
-  try {
-    const marker = JSON.parse(readFileSync(join(RUN_DIR, 'PROBE-OWNED'), 'utf8'));
-    owned = marker?.probe === 'probe-recovery-identity' && marker?.pid === process.pid;
-  } catch { /* 标记缺席/损坏＝按非本次运行创建处理 */ }
-  if (!owned) {
-    console.error(`[launcher] WARN: PROBE-OWNED 归属核验未通过，不删除运行目录（可能是他人现场）：${RUN_DIR}`);
-    return;
+  // 终止或归属未证实即不删除（DOC-06-A）：现场与可能仍在跑的进程保持可核，
+  // pid 与路径见上方告警与证据 cleanup 字段。
+  if (!report.terminate.verified || !report.ownership.verified) {
+    lastCleanupReport = report;
+    return report;
   }
+  report.removal.attempted = true;
   try {
     rmSync(RUN_DIR, { recursive: true, force: true });
   } catch (rmError) {
-    console.error(`[launcher] WARN: 运行目录清理失败，留存现场：${RUN_DIR}（${String(rmError?.message ?? rmError)}）`);
-    return;
+    console.error(`[launcher] WARN: 运行目录清理失败，留存现场：${RUN_DIR}${report.pid === null ? '' : `（pid ${String(report.pid)}）`}（${String(rmError?.message ?? rmError)}）`);
+    lastCleanupReport = report;
+    return report;
   }
-  if (existsSync(RUN_DIR)) {
-    console.error(`[launcher] WARN: 运行目录删除后复验仍存在，留存现场：${RUN_DIR}`);
-    return;
+  report.removal.verified = !existsSync(RUN_DIR);
+  if (!report.removal.verified) {
+    console.error(`[launcher] WARN: 运行目录删除后复验仍存在，留存现场：${RUN_DIR}${report.pid === null ? '' : `（pid ${String(report.pid)}）`}`);
+  } else {
+    console.log(`[launcher] cleanup verified: 终止／归属／删除三段均核实，运行目录已清除：${RUN_DIR}`);
   }
-  console.log(`[launcher] cleanup verified: ${RUN_DIR} 已清除${killVerified ? '' : '（进程树杀除未证实——见上文告警）'}`);
+  lastCleanupReport = report;
+  return report;
 };
-const die = (code, message) => { console.error(message); cleanup(); process.exit(code); };
+/** 退出码收束（DOC-06-RESULT）：核心全过（0）而清理未完整核实时按装置故障
+ * 升 2；1（核心 FAIL）与 3（未执行）保持原档——产品／未执行信号不被清理
+ * 失败掩盖，清理状态由证据 JSON 的 cleanup 字段交接（die 的 2 本就是装置
+ * 故障档）。 */
+const finalizeExit = (code, report) => (code === 0
+  && !(report.terminate.verified && report.ownership.verified && report.removal.verified) ? 2 : code);
+const die = (code, message) => {
+  console.error(message);
+  const report = cleanup();
+  const exitCode = finalizeExit(code, report);
+  writeEvidence({ exitCode, exitMessage: message });
+  process.exit(exitCode);
+};
 // 进程级异常承接（DOC-06）：先于任何目录创建（含证据目录与运行目录）注册——本文件
 // 任何未捕获异常都统一转 die() 清理并以 2 收束，不混入「1＝核心 FAIL」档，也不留
 // 「目录已建、承接未挂」的窗口。
-process.on('uncaughtException', (err) => { die(2, `FAULT：未捕获异常（${String(err instanceof Error ? err.stack : err)}）——运行目录已随收尾清除`); });
-process.on('unhandledRejection', (err) => { die(2, `FAULT：未处理的 Promise 拒绝（${String(err instanceof Error ? err.stack : err)}）——运行目录已随收尾清除`); });
+process.on('uncaughtException', (err) => { die(2, `FAULT：未捕获异常（${String(err instanceof Error ? err.stack : err)}）——将尝试清理，结果见收尾报告与证据 cleanup 字段`); });
+process.on('unhandledRejection', (err) => { die(2, `FAULT：未处理的 Promise 拒绝（${String(err instanceof Error ? err.stack : err)}）——将尝试清理，结果见收尾报告与证据 cleanup 字段`); });
 mkdirSync(OUT_DIR, { recursive: true });
 // 原子独占创建：父目录（.local/tmp）确保在场后一次性创建运行目录——已存在
 // （EEXIST）＝装置故障退出 2，不起跑、不删除既有目录、不经 cleanup（其对非
@@ -259,9 +314,8 @@ if (ZAI === '' && R !== undefined) {
 if (ZAI === '' && MODEL_PATCH_EXPLICIT === null) {
   // 未执行≠全过（退出码契约）：专用退出码 3＋skipped 证据，防止无凭据环境的
   // 批处理把「跳过」读成「核心判据全过」，也避免旧证据文件被误读为本轮结果。
-  writeFileSync(EVIDENCE, JSON.stringify(
-    { label: LABEL, host: HOST_ROOT, skipped: true, reason: 'no ZAI_API_KEY (env and --r deployment .env)', at: new Date().toISOString() },
-    null, 2));
+  evidence.skipped = true;
+  evidence.skipReason = 'no ZAI_API_KEY (env and --r deployment .env)';
   die(3, 'SKIP：环境与 --r 部署的 .env 均无 ZAI_API_KEY（实例判据只对开发机临时实例有意义）——退出码 3＝未执行');
 }
 const CHILD_ENV = {
@@ -278,7 +332,7 @@ const packRun = spawnSync('npm', ['pack', '--ignore-scripts', '--pack-destinatio
 // spawn 层失败（如受限沙箱 EPERM 击杀）时 stdout 缺失，下面直接 match 会 TypeError
 // 绕过一切收尾——先判空走 die()（DOC-06：全退出路径统一清理运行目录）。
 if (packRun.error !== undefined || typeof packRun.stdout !== 'string') {
-  die(2, `FAULT：npm pack 未运行（spawn：${String(packRun.error ?? 'stdout 缺失')}）——运行目录已随收尾清除`);
+  die(2, `FAULT：npm pack 未运行（spawn：${String(packRun.error ?? 'stdout 缺失')}）——将尝试清理，结果见收尾报告与证据 cleanup 字段`);
 }
 const tgzName = (packRun.stdout.match(/dsh-async-tools-[^\s]+\.tgz/g) ?? []).pop();
 if (tgzName === undefined) {
@@ -325,7 +379,7 @@ try {
   const indexResponse = await fetch(`${ORIGIN}/?token=${TOKEN}`, { redirect: 'manual' });
   COOKIE = authCookieFromFirstHop(indexResponse, ORIGIN);
 } catch (authError) {
-  die(2, `FAULT：认证首跳失败（${String(authError instanceof Error ? authError.message : authError)}）——运行目录已随收尾清除`);
+  die(2, `FAULT：认证首跳失败（${String(authError instanceof Error ? authError.message : authError)}）——将尝试清理，结果见收尾报告与证据 cleanup 字段`);
 }
 
 // 只读方法（DOC-07）：无副作用，fetch 拒绝可安全重试一次；其余（create／
@@ -413,7 +467,10 @@ function judge(name, kind, detail = '', core = false) {
   if (core) CORE.add(name);
   console.log(`${kind}  ${name}${detail === '' ? '' : `  —— ${String(detail).slice(0, 220)}`}`);
 }
-const evidence = { label: LABEL, host: HOST_ROOT, candidate: tgzName, origin: ORIGIN, steps: {} };
+// 证据基座在 die/cleanup 可达处已提前声明（DOC-06-RESULT）；判据阶段开始时
+// 补记候选 tgz 与来源行——die 路径的证据同样带这两字段（此前的 null）。
+evidence.candidate = tgzName;
+evidence.origin = ORIGIN;
 // 判级中途中止标记（退出码契约，README「0/1/2」）：主 try 内任何步骤抛错时置位，
 // finally 以 2（装置故障）收束——否则 verdicts 为空会被 finally 读成「核心判据全过」
 // 的 0，装置故障冒充全过。
@@ -548,7 +605,7 @@ try {
   judge('RI-3 取消后待决消息处置可观察（形态如实登记）', 'SKIP',
     `取消后：queued note 在转录=${String(queued3Visible)}；会话 running=${String(row3.running)}；discard 事件不进转录——RPC 面不可触发「先丢弃再领取」形态，按装置边界登记（事件形态由套件层 T-RC-1 ⑥ 真投影锚定）`, false);
 
-  // ── RC-1 取消可达性探针（④，预期不可达） ─────────────────────────────────
+  // ── RC-1 普通首等取消探针（④——实际取得＝普通首等取消样本；悬挂窗口可达性属静态推断未验层） ──
   const sc = await rpc('session/create', { request: { cwd: PLAYGROUND, agentPreset: 'dsh-async' } });
   await promptOn(sc.sessionId, [
     'Isolated cancel probe RC-1. Execute exactly, no questions:',
@@ -589,19 +646,22 @@ try {
   }
   evidence.steps.RC1 = {
     sessionStopped: stopped, bodyDeliveredTested: dispatched && rcText !== '' && bodyDelivered(rcText),
-    note: 'turn-stopping/收尾事件不进转录——不可观测面如实登记；窗口不可达判定以宿主源码契约分析为准（设计 §2.6 准备期窗口条）'
+    note: 'turn-stopping/收尾事件不进转录——不可观测面如实登记；悬挂窗口可达性未实例验证，按宿主源码契约静态推断分层登记（设计 §2.6 准备期窗口条）'
   };
 } catch (probeError) {
   // 中止≠核心判据全过（README 退出码契约）：已判级照常落证据，收束以 2 报装置故障。
   aborted = true;
   console.error(`FAULT：判级中途中止（${String(probeError instanceof Error ? probeError.stack : probeError)}）——按装置故障以退出码 2 收束`);
 } finally {
-  writeFileSync(EVIDENCE, JSON.stringify({ ...evidence, verdicts, aborted }, null, 2));
-  console.log(`[launcher] evidence → ${EVIDENCE}`);
+  // 先收尾后落证据（DOC-06-RESULT）：清理结果（cleanup 字段）与判级同卷；核心
+  // 全过而清理未完整核实按装置故障升 2（finalizeExit），1/3 保持原档。
+  const report = cleanup();
   const failed = verdicts.filter((v) => v.kind === 'FAIL' && CORE.has(v.name)).length;
   const passed = verdicts.filter((v) => v.kind === 'PASS').length;
-  const verdictLine = `[launcher] verdicts: ${String(passed)} PASS / ${String(failed)} core-FAIL（其余为信息项登记）${aborted ? '；ABORTED（装置故障，退出码 2）' : ''}`;
-  cleanup();
-  console.log(verdictLine);
-  process.exit(aborted ? 2 : (failed > 0 ? 1 : 0));
+  const cleanupOk = report.terminate.verified && report.ownership.verified && report.removal.verified;
+  const exitCode = aborted ? 2 : (failed > 0 ? 1 : (cleanupOk ? 0 : 2));
+  writeEvidence({ verdicts, aborted, exitCode });
+  console.log(`[launcher] evidence → ${EVIDENCE}`);
+  console.log(`[launcher] verdicts: ${String(passed)} PASS / ${String(failed)} core-FAIL（其余为信息项登记）${aborted ? '；ABORTED（装置故障，退出码 2）' : ''}${cleanupOk ? '' : `；清理未完整核实（现场与 pid 交接见告警、证据 cleanup 字段）——退出码 ${String(exitCode)}`}`);
+  process.exit(exitCode);
 }
