@@ -4127,17 +4127,17 @@ hostTest('REC-J：等待出口注记两分——续段附带给 partialDelivered
       '首次交付不声称续段已附带');
     const entry = led.jobs.get(jobId);
     assert.equal(entry.deliveredFact.partial, true, '前置：partial 事实');
-    // 续访：trigger 携带续段（预算 40 < 缓冲 144 ⇒ 再截断）——双事实并陈：
-    // 已附带份额（partialDelivered，chars＝装配条目份额＝output 长度）＋待领取
-    // 份额（partialPending，chars＝剩余缓冲长度）。续访是跨步骤的新调用（§2.6）
-    // ——先发步边界证据关批，续访批取全额预算。
+    // 续访：trigger 携带续段（预算 40 < 缓冲 ⇒ 再截断）——双事实并陈：
+    // 已附带份额（partialDelivered，chars＝装配条目份额＝批扣减口径，TEXT-NOTE-01
+    // 后不含裁剪说明行）＋待领取份额（partialPending，chars＝剩余缓冲长度）。
+    // 续访是跨步骤的新调用（§2.6）——先发步边界证据关批，续访批取全额预算。
     rig.firePreStep();
     const second = await rig.waiter.execute(waitArgs(jobId), rig.exec());
     assert.equal(second.status, 'completed');
     assert.ok(second.output.length > 0, '续段正文随 output 附带');
     assert.match(second.note ?? '', /attached with this batch/, '已附带份额注记在场（partialDelivered）');
-    assert.ok(second.note.includes(`about ${String(second.output.length)} chars`),
-      `chars 口径＝本批装配份额（${String(second.output.length)}）：partialDelivered 的数值与 output 一致`);
+    assert.ok(second.note.includes('about 40 chars'),
+      `chars 口径＝本批装配份额（批预算 40，＝计入额度的正文字符数）：partialDelivered 的数值与批扣减一致——output.length=${String(second.output.length)} 是渲染长度（含裁剪说明行），与份额有意不同`);
     assert.match(second.note ?? '', /about \d+ chars of the omitted middle were not attached this time/,
       '待领取份额并陈（partialPending）——只报其一即谎报');
     assert.ok(!second.output.includes('HEAD-9-CHARS'), '续段不重发首访已付正文');
@@ -4258,6 +4258,28 @@ hostTest('RN-C：非空正文超限两形态——预算 1 只容 1 条（1＋3�
     assert.equal(delivered.length, 10, '零等待批装配交付 10 条延后正文');
     assert.equal(delivered[0].text, 'Z', '延后正文完整恢复（全额批预算）');
   }
+});
+
+hostTest('TEXT-NOTE-01：截断条目头注 chars＝正文字符数（计入额度的份额），不含裁剪说明行', async () => {
+  // 双作业批预算 40、正文各 30：第 1 条整装（头注 30＝全文）；第 2 条份额 10、
+  // 截断——chars 若按渲染文本长度计会把说明行＋衔接换行算进去（10 正文＋
+  // 「[output truncated: 20 chars omitted]」＋两处空行＝50），模型看到的字数与
+  // 被扣的批额度无法对账。本锚钉 chars＝份额口径（与恢复切片 sliceLen 同规）。
+  const rig = sRig({ budget: 40 });
+  const token = ledger.claimWait(rig.OWNER);
+  await rig.readyJob('job-tn1-a', 'A'.repeat(30));
+  await rig.readyJob('job-tn1-b', 'B'.repeat(30));
+  await ledger.releaseWait(token, rig.OWNER);
+  const texts = rig.calls.inject.map(textOf);
+  const textA = texts.find((text) => text.includes('job-tn1-a'));
+  const textB = texts.find((text) => text.includes('job-tn1-b'));
+  assert.ok(textA !== undefined && textB !== undefined, '两条目各投一条完成消息（份额 30＋10，无延后）');
+  assert.ok(textA.includes('(30 chars)'), '整装条目头注＝全文 30 字符');
+  assert.ok(textB.includes('(10 chars)'),
+    '截断条目头注＝份额 10（说明行不计入——按渲染文本长度计得 50，此断言即红）');
+  assert.ok(textB.includes('[output truncated: 20 chars omitted]'),
+    '前置：说明行确在渲染文本中（chars 不含它，字数与额度才可对账）');
+  assert.ok(textB.includes('B'.repeat(6)), '截断形态＝6:4 首尾切分（头 6 字符在场）');
 });
 
 // ═══ ECHO-WORKFLOW-01 定案 M3：预期附原文而因预算未附的两形态一律注记 ═══
@@ -7496,14 +7518,13 @@ tzwGate('T-ZW-1 实测：真栈 listChildren 热/冷路径采样＋混合五目�
   }
 });
 
-// ── 返修轮（IMPL-M1＋minor ①②⑤）：首等直付副本、恢复回滚隔离、恰一次失败形态、
-// 出口中止登记现查 ───────────────────────────────────────────────────────
+// ── 首等直付副本与恢复回滚隔离（含恰一次失败形态、出口中止登记现查） ──────
 
 hostTest('RC-I：首等直付登记恢复副本——改写取消后可恢复（IMPL-M1 修前红）', async () => {
-  // 修前形态（ab5fa02）：noteFirstWaitEnded('delivered') 不调用 #registerRecovery
+  // 缺陷形态（无副本）：noteFirstWaitEnded('delivered') 不调用 #registerRecovery
   //——直付被宿主改写取消后 deliveredFact 已置位、阻断完成消息与批次重投，显式
-  // 零等待只能得到第 3 档「副本已过期」。修后按设计 §3.2 判据表第一行登记
-  //（首等直付与等待返回同列载体），本用例三断言全红于修前。
+  // 零等待只能得到第 3 档「副本已过期」。正确形态按设计 §3.2 判据表第一行登记
+  //（首等直付与等待返回同列载体），本用例三断言在无副本形态下全红。
   const rig = await buildRig('rc-i');
   ledger.attachClaimedListener(rig.ctx);
   try {
