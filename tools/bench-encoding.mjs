@@ -1,8 +1,21 @@
 /**
  * 编码判据实验台：用真实 CP936 双重编码样本给判据定量，决定阈值。
  *
- * 样本由本机 .NET 的 CP936 生成脚本产出
- * （Buffer 不支持 cp936；用 latin1 模拟出来的"乱码"不含汉字，调参无意义）。
+ * 样本生成（PowerShell＋本机 .NET，在仓根或任意工作目录建样本目录后逐条执行；
+ * Node Buffer 不支持 cp936，用 latin1 模拟出来的"乱码"不含汉字，调参无意义）：
+ *
+ *   $enc = [System.Text.Encoding]::GetEncoding(936)
+ *   $u8  = [System.Text.Encoding]::UTF8
+ *   $text = '这是一段正常的中文技术文档，用来生成基准样本。'
+ *   #   等等——多取几段不同长短、不同领域（代码注释、错误消息、散文）的中文文本
+ *   #   作对照组，文件名 clean-*.txt：
+ *   Set-Content -Encoding UTF8 "clean-a.txt" $text
+ *   # 双重编码形态：UTF-8 字节被按 CP936 误读（得到看似汉字的乱码）——
+ *   #   这是「乱码仍是汉字」的双重编码形态来源：
+ *   $mojibake = $enc.GetString($u8.GetBytes($text))
+ *   Set-Content -Encoding UTF8 "double-a.txt" $mojibake
+ *
+ * 判据期望由文件名承载：double- 前缀＝双重编码样本，其余＝正常对照。
  *
  * 用法：node tools/bench-encoding.mjs <样本目录>
  *

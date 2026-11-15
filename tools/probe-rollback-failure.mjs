@@ -5,7 +5,12 @@
  * 则"回滚也失败"那条分支的 warn 与消息都没有被覆盖（末尾还是 `void logged;`）。
  * 要真正覆盖它，必须先找到一种让 `rmSync(dir, {recursive:true, force:true})` 抛错的办法。
  *
- * 逐种尝试并如实记录哪种有效。用法：node probe-rollback-failure.mjs
+ * 逐种尝试并如实记录哪种有效。本探针在仓库根目录执行：
+ * `node tools/probe-rollback-failure.mjs`（自身用临时目录做样本，不触碰仓库
+ * 内容；结果只打印到 stdout）。当前用途：为「运行目录清理失败只告警留现场」
+ * 类收尾实现（如 verify/probe-recovery-identity.mjs 的 cleanup）提供本机
+ * rmSync 失败形态的实证参考——探针只登记形态，不代替各收尾路径自带的
+ * 删除后存在性核对。
  */
 import { chmodSync, mkdirSync, mkdtempSync, openSync, closeSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
