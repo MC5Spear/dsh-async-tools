@@ -2,9 +2,12 @@
  * 编码判据实验台：用真实 CP936 双重编码样本给判据定量，决定阈值。
  *
  * 样本由本机 .NET 的 CP936 生成（Buffer 不支持 cp936；用 latin1 模拟出来的
- * "乱码"不含汉字，调参无意义）。可照抄的生成步骤（PowerShell；$out＝样本目录，
- * 生成后用 `node tools/bench-encoding.mjs <样本目录>` 跑本台）：
+ * "乱码"不含汉字，调参无意义）。可照抄的生成步骤（PowerShell——先给 $out
+ * 赋样本目录并建目录，再写样本；生成后用 `node tools/bench-encoding.mjs <样本目录>`
+ * 跑本台）：
  *
+ *   $out = 'D:\somewhere\bench-samples'      # 样本目录（自选）
+ *   New-Item -ItemType Directory -Force -Path $out | Out-Null
  *   $gbk = [System.Text.Encoding]::GetEncoding(936)
  *   $src = '这是一段正常的中文技术文档样本，包含标点、async_wait 等英文与数字 123。'
  *   [System.IO.File]::WriteAllText("$out\normal-a.txt", $src)            # 正常对照（应过）

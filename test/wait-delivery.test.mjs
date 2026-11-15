@@ -3803,7 +3803,7 @@ hostTest('WN-4：静默不构成输入边界证据（判据反例，SOL-BATCH-01
     'B 只取得余量 18（42 截断）——合计恰 60 不超额（修前：另取全额 60、合计 84 超 60＝红）');
   assert.equal(itemB.original, 'B'.repeat(42), '截断凭据保整份原文（中段不丢）');
   assert.equal(subject.batch.remaining, 0, '批余量恰耗尽（18 已付）');
-  // 对照收口：真实证据到达即闭合——B 的截断中段此后按新批全额续取（与 WN-2
+  // 对照收尾：真实证据到达即闭合——B 的截断中段此后按新批全额续取（与 WN-2
   // 跨步骤判据同款，防「批永开」误读为滞留）。
   await ledger.releaseWait(token2, rig.OWNER);
   ledger.closeBatchIfIdle(rig.OWNER);

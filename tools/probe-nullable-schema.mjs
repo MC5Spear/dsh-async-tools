@@ -1,16 +1,15 @@
 /**
- * schema 方言探针 2：找出 dsh 自有 DSL 里"可空数字/可空字符串"的正确写法。
+ * schema 方言探针 2（已定论）：dsh 自有 DSL 里「可空数字/可空字符串」的写法。
  *
- * 背景：`async_run` 的完成分支返回
- * `{status:'completed', exit_code:0, signal:null, output, truncated:false}`，
- * 宿主校验器对写错的可空声明会判
- * `"value" must match exactly one oneOf branch (matched 0)`——那一支就**通不过校验**，
- * 调用会变成 `tool "async_run" returned invalid output`。包内单测挡不住它：单测只断言字段、
- * 没有用宿主校验器验过 schema 本体。
+ * 结论（现行产品采用）：`async_run` 的完成分支对 `exit_code`／`signal` 取
+ * **可选＋缺省**——字段声明为单类型、不进 required，值不是该类型时整个键
+ * 不出现（lib/jobs.js 完成分支：`exit_code`／`signal` 只在真的是该类型时
+ * 才出现）。裸 type 收 `null` 会过不了宿主校验；type 数组与节点级 oneOf
+ * 的接受情况由本探针逐项打印，供方言对照。
  *
- * 嫌疑点：`exit_code` 与 `signal` 声明成 `{ type: 'number' }` / `{ type: 'string' }`，
- * 而 `signal` 的实际值是 `null`、`exit_code` 在进程未给码时也可能是 `null`。
- * 未知的是**该 DSL 允许哪一种可空写法**——这里逐个试。
+ * 为什么单测挡不住：包内单测只断言字段，从不用宿主校验器验 schema 本体——
+ * 写错的可空声明会让那一支直接 `tool "async_run" returned invalid output`。
+ * 本探针用 `assertSupportedJsonSchema`＋`validateJsonSchemaValue` 补上这一层。
  *
  * 用法：node --import ./tools/_host-hooks.mjs tools/probe-nullable-schema.mjs
  */
