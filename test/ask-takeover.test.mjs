@@ -4165,13 +4165,38 @@ test('J58：探针守卫静态锚——pack 判空先于首处 stdout.match、�
     '⑥ 删除段带删除后存在性核对（修前：rmSync 返回即当作已清除＝红）');
   assert.ok(source.indexOf('const reportCleanup') !== -1 && source.indexOf('已清除并核实') !== -1,
     '⑥ 「已清除」只在核实后出现（reportCleanup 报告实际结果）');
-  // 运行期错误身份判别（DOC-03-N1）：按「错误文本点名补丁文件」的可证来源
-  // 分档，不再用 /patch|yaml|model.?rout/i 词面匹配（transport dispatch failed
-  // 因含 patch 被误判核心 FAIL＝红；凭据不足带 model routing 前缀同）。
+  // 运行期错误身份判别（DOC-03-N1）：按「点名补丁文件 × 解析类错误形态 ×
+  // 非读取/凭据/传输成因」三件组合分档，不再用 /patch|yaml|model.?rout/i 词面
+  // 匹配（transport dispatch failed 因含 patch 被误判核心 FAIL＝红；凭据不足
+  // 带 model routing 前缀同）。行为锚：从探针源码提取判别函数直跑样例——
+  // 「仅文件名出现不定身份」的反例（带路径的凭据/读取/传输失败不得 core FAIL）
+  // 与「真实解析错误点名文件」的正例（必须 core FAIL）都有行为断言，静态
+  // 「新装置自证」不再单独成立。
   assert.ok(!/\/patch\|yaml\|model\.\?rout\/i/.test(source),
     '⑥ 运行期分类不再按词面 regex（修前：dispatch 含 patch 被误判＝红）');
-  assert.ok(source.includes('errText.includes(PATCH)'),
-    '⑥ 运行期分类以错误点名补丁路径为可证来源');
+  const probeSource = readFileSync(resolve(ROOT, 'verify/probe-recovery-identity.mjs'), 'utf8');
+  const fnStart = probeSource.indexOf('function patchParseCoreFailure');
+  assert.notEqual(fnStart, -1, '⑥ 判别函数 patchParseCoreFailure 在场（DOC-03-N1 组合判别）');
+  const fnClose = probeSource.indexOf('\n}', fnStart);
+  const fnSource = probeSource.slice(fnStart, fnClose + 2);
+  const patchParseCoreFailure = new Function(`${fnSource}\nreturn patchParseCoreFailure;`)();
+  const PATCH_PATH = 'C:\\run\\patch\\routing.example.yml';
+  // 反例：只点名文件、不定身份——凭据失败（含 basename）/读取失败/传输失败
+  //（含绝对路径）都按装置故障 2 收束，不判 core FAIL（修前红形态＝点名即 FAIL）。
+  assert.equal(patchParseCoreFailure('model routing: provider credential unavailable (routing.example.yml)', PATCH_PATH), false,
+    '⑥ 带路径的凭据失败不定为解析失败（文件名只证明涉及哪份配置）');
+  assert.equal(patchParseCoreFailure('ENOENT: no such file routing.example.yml', PATCH_PATH), false,
+    '⑥ 补丁文件自身读取失败归装置（ENOENT 点名不定身份）');
+  assert.equal(patchParseCoreFailure('unrelated transport failure in C:/route/routing.example.yml', PATCH_PATH), false,
+    '⑥ 带路径的传输失败不定为解析失败');
+  // 正例：真实解析错误点名文件——点名 × 解析形态 × 无读取/凭据/传输成因。
+  assert.equal(patchParseCoreFailure('YAMLException: bad indentation of a mapping entry (C:\\run\\patch\\routing.example.yml:3:1)', PATCH_PATH), true,
+    '⑥ 真实解析错误点名文件必须定为 core FAIL（被测链路的补丁装载被中断）');
+  assert.equal(patchParseCoreFailure('Error: failed to parse model routing patch routing.example.yml: Unexpected token } at line 5', PATCH_PATH), true,
+    '⑥ parse/token 类解析形态点名文件同判');
+  // 来源不可证：解析形态在场但未点名补丁文件——不定身份。
+  assert.equal(patchParseCoreFailure('YAMLException: bad indentation of some other file', PATCH_PATH), false,
+    '⑥ 未点名补丁文件不定身份（来源不可证，按装置故障收束）');
 });
 
 // ── 依赖撤下承接（设计 §4.3）：connection/reset → 探测 → 按结果分判 ─────────

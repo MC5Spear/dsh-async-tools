@@ -349,13 +349,14 @@ for (let i = 0; i < 120 && URL === null; i += 1) {
   else await new Promise((res) => setTimeout(res, 1000));
 }
 if (URL === null) {
-  // 实例启动期暴露的补丁解析失败点名归因（§8.3：此阶段按装置故障 2）——宿主
-  // 对 --patch 的解析错误落在启动 stderr；判据同运行期 catch：错误文本点名
-  // 补丁文件（绝对路径或文件名）才算可证归因（词面匹配会把无关的 dispatch/
-  // routing 字样误读成因），点名报文免得「120s 未就绪」掩盖真实成因；无点名
-  // 时保持通用报错、不推断成因。
-  const patchParseHit = PATCH !== null && (stderrTail.includes(PATCH) || stderrTail.includes(basename(PATCH)));
-  die(2, `实例 120s 未就绪${patchParseHit ? '（stderr 含模型路由 patch 解析失败特征——按补丁前提未满足处理，检查 --model-patch / DSAT_MODEL_PATCH 指向的文件）' : ''}；stderr 尾：${stderrTail}`);
+  // 实例启动期的补丁问题一律按装置故障 2（§8.3：本阶段补丁文件属装置输入——
+  // 语法/读取失败都归装置前提未满足，不判 core FAIL）。判别复用运行期同款
+  // 三件组合（patchParseCoreFailure）只做**文案**归因：三件同现提示检查
+  // --model-patch 指向的文件；仅点名无解析形态（凭据/传输/读取失败）或无点名
+  // 都保持通用报错、不推断成因——词面匹配会把无关的 dispatch/routing 字样
+  // 误读成因。
+  const patchParseHit = patchParseCoreFailure(stderrTail, PATCH);
+  die(2, `实例 120s 未就绪${patchParseHit ? '（stderr 呈现模型路由 patch 解析失败特征——按补丁前提未满足处理，检查 --model-patch / DSAT_MODEL_PATCH 指向的文件）' : ''}；stderr 尾：${stderrTail}`);
 }
 console.log('[launcher] instance ready on', URL.split('?')[0]);
 
@@ -463,6 +464,28 @@ const evidence = { label: LABEL, host: HOST_ROOT, candidate: tgzName, origin: OR
 // finally 以 2（装置故障）收束——否则 verdicts 为空会被 finally 读成「核心判据全过」
 // 的 0，装置故障冒充全过。
 let aborted = false;
+
+/**
+ * 补丁解析失败能否定为 core FAIL（DOC-03-N1／§8.3 装置契约）：按「明确错误身份
+ * ×可证来源」组合判——文件名只证明涉及哪份配置、不证明错误是解析失败（带路径
+ * 的凭据/传输失败同样点名文件），仅凭点名不定身份。core FAIL 三件同现才认：
+ * ①文本点名补丁文件（绝对路径或文件名＝来源可证）；②呈现解析类错误形态（宿主
+ * 报告补丁/配置解析失败的既有类型词：SyntaxError／YAML 异常／parse／token／
+ * 缩进等）；③不带读取/凭据/传输类成因词——补丁文件读不出（ENOENT 等）＝装置
+ * 输入自身的问题，凭据/网络失败与解析无关，都按装置故障收束。身份不能证实时
+ * 不判 core FAIL、以 2 收束——升格不掩盖真实失败：宿主对补丁的解析链路错误
+ * 必然同时呈现点名与解析形态。自包含（无外部依赖），test/ask-takeover.test.mjs
+ * 的 J58 行为锚从源码提取本函数直跑样例。
+ */
+function patchParseCoreFailure(errText, patchPath) {
+  if (patchPath === null || patchPath === undefined) return false;
+  const text = String(errText);
+  const patchBase = String(patchPath).split(/[\\/]/).pop();
+  const named = text.includes(patchPath) || text.includes(patchBase);
+  if (!named) return false;
+  if (/ENOENT|EACCES|no such file|permission denied|credential|transport|network|ECONN|ETIMEDOUT|fetch failed/i.test(text)) return false;
+  return /SyntaxError|YAMLException|YamlError|failed to parse|parse error|parsing failed|Unexpected token|bad indentation|mapping values|invalid configur/i.test(text);
+}
 
 try {
   // ── RI-4 空闲合并载体（信息项：自然流聚窗不可控，形态由受控锚承担） ──────
@@ -637,22 +660,20 @@ try {
     note: 'turn-stopping/收尾事件不进转录——不可观测面如实登记；本样本为普通首等取消，悬挂准备窗口形态未取得，可达性以宿主源码契约静态推断为准（设计 §2.6 准备期窗口条）'
   };
 } catch (probeError) {
-  // 运行期错误的身份判别（DOC-03-N1：不靠词面补造产品失败）：本探针注入模型
-  // 路由补丁的**路径**是可证来源标识——错误文本点名补丁文件（绝对路径或文件
-  // 名）时，失败发生在被测链路的补丁解析上，按核心判据 FAIL（1）如实报错；
-  // 其余错误（传输失败、凭据不足等——即使文本带 patch/yaml/model routing
-  // 字样，只要未点名补丁文件）不推断成因，按装置故障（2）收束。升格为装置
-  // 故障不会掩盖判据层的真实失败：补丁解析失败的宿主报告必然指名出错的
-  // 补丁文件。
+  // 运行期错误的身份判别（DOC-03-N1：不靠词面补造产品失败）：core FAIL 只认
+  // 「点名补丁文件 × 解析类错误形态 × 非读取/凭据/传输成因」三件同现
+  //（patchParseCoreFailure——带路径的凭据/传输失败、补丁文件自身读不出都只
+  // 点名、不定身份）；身份不能证实时不判 core FAIL、按装置故障（2）收束，
+  // 与就绪等待处的处理对齐——升格为装置故障不会掩盖判据层的真实失败：宿主
+  // 对补丁的解析错误必然同时呈现两类特征。
   const errText = String(probeError instanceof Error ? `${probeError.message}\n${probeError.stack ?? ''}` : probeError);
-  const patchNamed = PATCH !== null && (errText.includes(PATCH) || errText.includes(basename(PATCH)));
-  if (patchNamed) {
+  if (patchParseCoreFailure(errText, PATCH)) {
     judge('运行期模型路由补丁解析失败（核心判据链路被中断）', 'FAIL', errText.slice(0, 400), true);
     console.error(`FAIL：判级在会话阶段遭遇补丁解析失败（${errText.slice(0, 400)}）——按核心判据 FAIL 以退出码 1 收束`);
   } else {
     // 中止≠核心判据全过（README 退出码契约）：已判级照常落证据，收束以 2 报装置故障。
     aborted = true;
-    console.error(`FAULT：判级中途中止（${String(probeError instanceof Error ? probeError.stack : probeError)}）——按装置故障以退出码 2 收束（错误未点名补丁文件，不推断成因）`);
+    console.error(`FAULT：判级中途中止（${String(probeError instanceof Error ? probeError.stack : probeError)}）——按装置故障以退出码 2 收束（错误未同时呈现补丁点名与解析形态，不推断成因）`);
   }
 } finally {
   // 清理结果先取得再落证据（DOC-06-RESULT）：证据 JSON 附三段结构化清理状态，
