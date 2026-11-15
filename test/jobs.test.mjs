@@ -52,7 +52,6 @@ const hostTest = (name, fn) => bareHostTest(name, async (...args) => {
     for (const subject of ledger.subjects.values()) {
       subject.batch = null;
       subject.windowEvidence = false;
-      subject.pendingClose = null;
     }
   }
 });

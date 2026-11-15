@@ -49,7 +49,6 @@ const hostTest = (name, fn) => bareHostTest(name, async (...args) => {
     for (const subject of ledger.subjects.values()) {
       subject.batch = null;
       subject.windowEvidence = false;
-      subject.pendingClose = null;
     }
   }
 });
@@ -707,7 +706,6 @@ hostTest('async_workflow（F8）：注册表收原始 JSON；已直付的最终�
   if (subject !== undefined) {
     subject.batch = null;
     subject.windowEvidence = false;
-    subject.pendingClose = null;
   }
   // 装置显式 minWaitMs=1：本用例走入口终态分支立即返回，但装置不走夹紧歧义。
   const waiter = createWaitTool(f.ctx, resolveConfig({ toolName: 'async_wait', maxResultChars: 5, minWaitMs: 1 }));

@@ -3610,11 +3610,11 @@ hostTest('CRE-5：注销幂等与主体隔离——未知主体/重复注销 no-
 
 // ═══ WN 系列（§2.6 领取窗口与批次识别重写）═══
 // 窗口成员＝活等待∪在途创建；关批＝在册清空（必要条件）∧ 窗口闭合证据
-//（①领取 ②回合收尾 ③步边界 ④静默复查窗——K 静默节拍 ∧ T_rt 时间下界的
-// 合取）；证据闩锁（在册非空时闩而不消费）；窗内新到达的本包调用并入当前
-// 批（保守合批——B×m>R 不可分离形态不运行时判定）。装置经 sRig listeners
-// 触发宿主同点事件（fireClaimed/firePreStep），静默窗门限经账本实例字段
-// 覆写（silentReviewTicks／silentReviewMinDelayMs）。
+//（①领取 ②回合收尾 ③步边界——任一到达即闭合，最早证据胜）；证据闩锁
+//（在册非空时闩而不消费）；无证据批停在「待闭合」——期间到达的本包调用
+// 并入当前批（保守合批，静默不构成输入边界证据，SOL-BATCH-01-A／设计
+// §2.6 证据 4）。装置经 sRig listeners 触发宿主同点事件
+//（fireClaimed/firePreStep）。
 
 hostTest('WN-1：同窗排队调用共享批预算——在册清空无证据不关批，后到装配只吃余量（修前红：等待返回即关批）', async () => {
   const rig = sRig({ budget: 60 });
@@ -3683,7 +3683,8 @@ hostTest('WN-3：证据闩锁——证据在册非空时闩而不消费，在册
   assert.notEqual(subject.batch, null, '前置：装配后批次在场');
   // 独立期望：宿主边界事件与窗口成员离场的次序不保证同拍——证据先到（此刻
   // 活等待仍压住窗口）必须闩住不丢；成员离场路径消费闩完成闭合。「证据只在
-  // 到达瞬间有效」的形态会把这条证据丢掉，窗口只能等静默复查窗④兜住。
+  // 到达瞬间有效」的形态会把这条证据丢掉，窗口无限期停在待闭合（静默不构成
+  // 输入边界证据，SOL-BATCH-01-A 后无兜底路径）。
   fireClaimed(rig);
   assert.notEqual(subject.batch, null, '在册非空 ⇒ 证据①不立即关批（必要条件缺）');
   assert.equal(subject.windowEvidence, true, '证据已闩（在册非空时闩而不消费）');
@@ -3698,54 +3699,50 @@ hostTest('WN-3：证据闩锁——证据在册非空时闩而不消费，在册
   assert.equal(subject.windowEvidence, false, '无批可关 ⇒ 不闩（防旧证据闭合新窗）');
 });
 
-hostTest('WN-4：静默复查窗④合取门限——K 静默节拍 ∧ T_rt 时间下界缺一不闭；窗内新成员作废探针并入当前批', async () => {
+hostTest('WN-4：静默不构成输入边界证据（判据反例，SOL-BATCH-01-A）——同步骤两次调用间 1700 ms 非插件工作、无任何证据，批保持开放、后一调用只吃余量（修前红：静默复查窗届满关批、后一调用另取全额）', async () => {
+  // 设计 §2.6 证据 4 受控反例（8.4 装置的同判据受控形态）：同一模型步骤的
+  // 两次调用之间可以插入任意时长的非插件工作（普通计算、非本包调用）——静默
+  // 只能证明「本包在册无活动」，不能证明「宿主当前输入已结束」。受控复现：
+  // 份额 A 42 字符消耗批预算 60 的 42，等待返回提交后在册清空；间隔 1700 ms
+  // （超过修前静默复查窗的全部门限——K=12 即时节拍 ∧ T_rt=1500 ms 时间下界）
+  // 且不发任何输入边界证据（①②③ 均不触发），随后份额 B 42 字符到达——批
+  // 必须仍开：B 只取得余量 18（合计 60，不超额）。修前形态（静默复查窗届满
+  // 关批）在 1700 ms 间隔中关批、B 另开新批取得全额 60，两份正文合计 84 超
+  // 单份 60，本锚必红。任何有限时长阈值都可被同步骤更慢的工作跨过——增大
+  // 经验时长不构成修复，静默关批整体退役。
   const rig = sRig({ budget: 60 });
-  const realTicks = ledger.silentReviewTicks;
-  const realDelay = ledger.silentReviewMinDelayMs;
-  const realClock = ledger.now;
-  try {
-    const token1 = ledger.claimWait(rig.OWNER);
-    await rig.readyJob('job-wn4a', 'A'.repeat(52));
-    ledger.collectBatch(rig.OWNER, {});
-    await ledger.releaseWait(token1, rig.OWNER);
-    // 门限收紧＋时钟冻结（实例字段可覆盖——模块常量的保守缺省不缩测试时间）：
-    // elapsed 恒 0 ⇒ 时间下界永不满。
-    ledger.silentReviewTicks = 2;
-    ledger.silentReviewMinDelayMs = 5;
-    const frozen = 1_000_000;
-    ledger.now = () => frozen;
-    ledger.closeBatchIfIdle(rig.OWNER);
-    const subject = ledger.subjects.get(rig.OWNER);
-    assert.notEqual(subject.batch, null, '前置：无证据 ⇒ 武装静默复查窗（批仍开）');
-    assert.ok(subject.pendingClose !== null, '前置：复查探针在册');
-    // ① K 节拍满足但时间下界不满足——探针在定时补足上无限轮询，永不闭合：
-    // 合取缺一不闭。
-    await new Promise((resolve) => { setTimeout(resolve, 25); }); // 节拍＋补足定时都跑过多轮
-    assert.notEqual(subject.batch, null, 'K 静默节拍满足 ∧ T_rt 未满 ⇒ 不闭合（合取门限）');
-    // ② 窗内新成员＝探针作废（到达并入当前批，保守合批）：claimWait 作废探针后，
-    // 时间条件再满足也不闭合；同窗装配只吃余量。
-    const token2 = ledger.claimWait(rig.OWNER);
-    assert.equal(subject.pendingClose, null, '新窗口成员到达 ⇒ 探针作废');
-    await rig.readyJob('job-wn4b', 'B'.repeat(52));
-    const second = ledger.collectBatch(rig.OWNER, {});
-    const itemB = second.delivered.find((one) => one.jobId === 'job-wn4b');
-    assert.ok(itemB !== undefined && itemB.truncated === true,
-      '到达成员并入当前批（只吃余量 8——截断即同批余量共享的可见面，不另开新批）');
-    assert.equal(subject.batch.remaining, 0, '同批余量恰耗尽');
-    await ledger.releaseWait(token2, rig.OWNER);
-    ledger.closeBatchIfIdle(rig.OWNER); // 重新武装（此刻时钟仍冻结）
-    await new Promise((resolve) => { setTimeout(resolve, 25); });
-    assert.notEqual(subject.batch, null, '时钟冻结下重武装的探针仍不闭合（时间下界）');
-    // ③ 时钟恢复流动（超过 T_rt）且在册仍空 ⇒ 复查闭合。
-    ledger.now = () => Date.now();
-    await new Promise((resolve) => { setTimeout(resolve, 25); });
-    assert.equal(subject.batch, null, 'K ∧ T_rt ∧ 复查在册仍空 ⇒ 静默复查窗闭合（证据④）');
-    assert.equal(subject.pendingClose, null, '闭合撤探针');
-  } finally {
-    ledger.silentReviewTicks = realTicks;
-    ledger.silentReviewMinDelayMs = realDelay;
-    ledger.now = realClock;
-  }
+  const token1 = ledger.claimWait(rig.OWNER);
+  await rig.readyJob('job-wn4a', 'A'.repeat(42));
+  const first = ledger.collectBatch(rig.OWNER, {});
+  assert.equal(first.delivered.length, 1, '前置：份额 A 装配（42 ≤ 60，余 18）');
+  assert.equal(first.delivered[0].truncated, false, '前置：A 完整交付');
+  await ledger.releaseWait(token1, rig.OWNER);
+  ledger.closeBatchIfIdle(rig.OWNER);
+  assert.notEqual(ledger.subjects.get(rig.OWNER).batch, null,
+    '前置：在册清空 ∧ 无证据 ⇒ 批待闭合（不武装任何定时器）');
+  // 同一模型步骤两次调用之间的 1700 ms 普通非插件工作：超修前静默复查窗的
+  // 全部门限（K ∧ T_rt），期间零输入边界证据。真实等待使修前的节拍与定时
+  // 自然走完（若在，静默关批已发生）。
+  await new Promise((resolve) => { setTimeout(resolve, 1700); });
+  const subject = ledger.subjects.get(rig.OWNER);
+  assert.notEqual(subject.batch, null,
+    '1700 ms 静默 ∧ 无输入边界证据 ⇒ 批仍开（静默不构成证据——修前静默关批在此关批＝红）');
+  assert.equal(subject.batch.remaining, 18, '批余量保持 18（未被静默复位）');
+  // 同步骤后一调用（无证据间隔后到达）：并入当前批、只吃余量。
+  const token2 = ledger.claimWait(rig.OWNER);
+  await rig.readyJob('job-wn4b', 'B'.repeat(42));
+  const second = ledger.collectBatch(rig.OWNER, {});
+  const itemB = second.delivered.find((one) => one.jobId === 'job-wn4b');
+  assert.ok(itemB !== undefined && itemB.truncated === true,
+    'B 只取得余量 18（42 截断）——合计恰 60 不超额（修前：另取全额 60、合计 84 超 60＝红）');
+  assert.equal(itemB.original, 'B'.repeat(42), '截断凭据保整份原文（中段不丢）');
+  assert.equal(subject.batch.remaining, 0, '批余量恰耗尽（18 已付）');
+  // 对照收口：真实证据到达即闭合——B 的截断中段此后按新批全额续取（与 WN-2
+  // 跨步骤判据同款，防「批永开」误读为滞留）。
+  await ledger.releaseWait(token2, rig.OWNER);
+  ledger.closeBatchIfIdle(rig.OWNER);
+  firePreStep(rig);
+  assert.equal(ledger.subjects.get(rig.OWNER).batch, null, '证据③到达 ⇒ 关批（续段新批全额）');
 });
 
 hostTest('WN-5：证据③被动放行契约——(payload, next) 瀑布形态记证据后原样放行', async () => {
@@ -5186,15 +5183,14 @@ hostTest('T8 真实注册表：准入上限与领取窗口解耦——触顶拒�
     // §2.6 装置内关批：生产形态里两次领取之间隔着回合边界——先到回合收尾
     // （② agent/turn-stopping）或步边界（③ agent/pre-step）窗口才闭合（工具
     // 结果不是收件箱消息，证据①不因工具结算触发），延后候选按新批全额预算
-    // 恢复。本装置时钟受控且无宿主事件，静默复查窗④在装置时间内不闭合；
-    // 此处按 RC 系列装置先例直达置空批对象模拟该边界——直达 poke 绕过生产
-    // 闭合路径、不校验「在册清空」必要条件（测试隔离取舍；closeBatchIfIdle
-    // 在 §2.6 下只凭证据关批，批已置空时它走「无窗可关」的清闩路径，无副作用）。
+    // 恢复。本装置时钟受控且无宿主事件；此处按 RC 系列装置先例直达置空批
+    // 对象模拟该边界——直达 poke 绕过生产闭合路径、不校验「在册清空」必要
+    // 条件（测试隔离取舍；closeBatchIfIdle 在 §2.6 下只凭证据关批，批已置空
+    // 时它走「无窗可关」的清闩路径，无副作用）。
     const t8Subject = ledger.subjects.get(rig.parent.id);
     if (t8Subject !== undefined) {
       t8Subject.batch = null;
       t8Subject.windowEvidence = false;
-      t8Subject.pendingClose = null;
     }
     ledger.closeBatchIfIdle(rig.parent.id);
     const { delivered } = ledger.collectBatch(rig.parent.id, {});
@@ -7067,14 +7063,18 @@ hostTest('RC-STABLE-ORD：份额清空后序号不复位＋新份额自 0 服务
   }
 });
 
-hostTest('RC-V1：undoClaim 恢复凭据身份核对——迟到旧凭据只作废旧序推进记录，不把新流拖回旧位置；流缺席/凭据无序号零操作（修前红）', async () => {
-  // §2.6 游标回退的身份核对（RC-V1）：回退凭据按「装配时刻的恢复流位置」发放
-  //（recoveryOrd＝装配时份额序）。份额清空重建（确认/到期/逐出）后流已在新
-  // 份额序上推进——迟到的旧凭据（recoveryOrd＝旧序）不得回退 ord/offset：
-  // 拖回旧位置会让新份额已交付区间被滞留游标当「已服务」跳过（SOL-RC-01 同族
-  // 缺陷形态）。旧凭据只作废**可按该序定位**的过期推进记录；流已移除（份额
-  // 清空出口）＝零操作（不重建流）；凭据无份额序（不可定位）＝零操作。同序
-  // 凭据照常整体回退（RC-K 的既有判据，此处对照钉住身份核对未误伤）。
+hostTest('RC-V1：undoClaim 恢复凭据三重身份核对（R-01-A-SAME-PORTION）——份额序＋装配实例＋发放时游标位置全符才回退；迟到旧凭据（跨份额或同份额较早装配）只作废过期推进记录、不回退流位置；流缺席/凭据无序号零操作（修前红）', async () => {
+  // §2.6 游标回退的身份核对（RC-V1＋R-01-A-SAME-PORTION）：回退凭据按「装配
+  // 时刻的恢复流位置」发放，三重身份＝份额序号＋装配实例标识＋发放时游标
+  // 位置。跨份额：份额清空重建（确认/到期/逐出）后流已在新份额序上推进——
+  // 迟到的旧凭据（recoveryOrd＝旧序）不得回退 ord/offset（拖回旧位置会让新
+  // 份额已交付区间被滞留游标当「已服务」跳过，SOL-RC-01 同族缺陷形态）。
+  // 同份额：份额序相同不构成「当前凭据」证据——同份额可多次装配（续取／
+  // 回滚后重装），较早装配的凭据迟到时不回退（ABCD→EFGH 后旧 ABCD 凭据
+  // 不得拉回，续取 IJKL）。过时凭据只作废**可按身份定位**的过期推进记录；
+  // 流已移除（份额清空出口）＝零操作（不重建流）；凭据无份额序（不可定位）
+  // ＝零操作。当前凭据照常整体回退（RC-K 的既有判据，对照钉住身份核对未
+  // 误伤）。
   resetDeliveryLedger();
   const ctx = new Context();
   ledger.registerRow(ctx);
@@ -7147,6 +7147,50 @@ hostTest('RC-V1：undoClaim 恢复凭据身份核对——迟到旧凭据只作�
     const rolledB = ledger.subjects.get(ownerB).recoveryStreams.get('rc-v1-b-job');
     assert.ok(rolledB !== undefined && rolledB.ord === 1 && rolledB.offset === 0,
       '同序凭据照常回退（ord 保持、offset 回到装配前起点）');
+
+    // 同份额迟到（R-01-A-SAME-PORTION）：份额序号一致、装配实例与发放时游标
+    // 位置不一致——同份额较早装配的凭据迟到＝过时丢弃不回退（ABCD→EFGH 后
+    // 旧 ABCD 凭据不得拉回，续取 IJKL）；修前按「份额序相同」整体回退＝红。
+    const ownerC = `rc-v1-c-${rcSuffix()}`;
+    seedTerminalJob(ctx, ownerC, 'rc-v1-c-job', { maxResultChars: 4000, agentLang: 'en' }, 'c'.repeat(120));
+    ledger.collectBatch(ownerC, { consumeRecovery: true, lang: 'en' }); // 建主体＋份额 1 在册（全文交付）
+    ledger.subjects.get(ownerC).batch = null;
+    ledger.jobs.get('rc-v1-c-job').config = { maxResultChars: 40, agentLang: 'en' };
+    assert.equal(ledger.stageRecovery('rc-v1-c-job', ownerC)?.tier, 1, '前置：份额 1 可恢复（120 全文）');
+    const abc = ledger.collectBatch(ownerC, { consumeRecovery: true, lang: 'en' }).delivered
+      .find((one) => one.recovery === true);
+    assert.ok(abc !== undefined && abc.chars === 40 && abc.recoveryOrd === 1,
+      '前置：装配 1＝ABCD（0→40，实例 I1）');
+    ledger.subjects.get(ownerC).batch = null;
+    assert.equal(ledger.stageRecovery('rc-v1-c-job', ownerC)?.tier, 1, '前置：份额 1 续段可恢复');
+    const efgh = ledger.collectBatch(ownerC, { consumeRecovery: true, lang: 'en' }).delivered
+      .find((one) => one.recovery === true);
+    assert.ok(efgh !== undefined && efgh.chars === 40 && efgh.recoveryFrom === 40,
+      '前置：装配 2＝EFGH（40→80，实例 I2）');
+    const streamC = ledger.subjects.get(ownerC).recoveryStreams.get('rc-v1-c-job');
+    assert.ok(streamC.offset === 80 && streamC.instance === efgh.recoveryInstance,
+      '前置：流停在装配 2 发放时刻（份额 1、偏移 80）');
+    // 旧 ABCD 凭据迟到（载体 1 构造失败后到）：份额序相同但装配实例与发放时
+    // 游标位置都不符 ⇒ 过时丢弃。
+    ledger.undoClaim(ownerC, [abc]);
+    const afterC = ledger.subjects.get(ownerC).recoveryStreams.get('rc-v1-c-job');
+    assert.ok(afterC !== undefined && afterC.offset === 80 && afterC.instance === efgh.recoveryInstance,
+      '同份额旧凭据不回退（修前：份额序相同即整体回退到 0＝红）');
+    assert.ok(afterC.advances.every((adv) => adv.instance !== abc.recoveryInstance),
+      '过时装配的推进记录被作废（按装配实例定位），当前装配推进记录保持');
+    // 续取 IJKL：下一装配自 80 续（修前：被拉回 0、重发 ABCD）。
+    ledger.subjects.get(ownerC).batch = null;
+    assert.equal(ledger.stageRecovery('rc-v1-c-job', ownerC)?.tier, 1, '前置：续段可恢复');
+    const ijkl = ledger.collectBatch(ownerC, { consumeRecovery: true, lang: 'en' }).delivered
+      .find((one) => one.recovery === true);
+    assert.ok(ijkl !== undefined && ijkl.recoveryFrom === 80 && ijkl.chars === 40,
+      '续取 IJKL（80→120）——不被旧凭据拉回（修前：自 0 重发 ABCD＝红）');
+    // 有效当前凭据照旧回退：此刻流的当前身份＝IJKL 装配（EFGH 已被续取超越，
+    // 其凭据在上一步按过时丢弃正是本锚判据）；当前凭据三重全符 ⇒ 整体回退。
+    ledger.undoClaim(ownerC, [ijkl]);
+    const rolledC = ledger.subjects.get(ownerC).recoveryStreams.get('rc-v1-c-job');
+    assert.ok(rolledC !== undefined && rolledC.offset === 80 && rolledC.instance === ijkl.recoveryInstance,
+      '当前凭据照旧整体回退（offset 回到 80 起点、实例保持）');
   } finally {
     ledger.disposeRow(ctx);
   }
@@ -7304,11 +7348,11 @@ hostTest('RC-Y1：恢复请求批满延后在场——async_run 首次等待让�
     // §2.6 装置内关批：生产形态里让出载体结果先经回合收尾（②
     // agent/turn-stopping）或步边界（③ agent/pre-step）之后才发生下一次等待
     // 调用——工具结果不是收件箱消息，证据①不因工具结算触发；恢复切片按新
-    // 批全额预算装配，不受让出批已用份额挤占。装置无宿主事件（前面的批置空
-    // 只服务让出批自身），此处按 RC 系列装置先例直达置空复现该回合边界。
+    // 装置无宿主事件（前面的批置空只服务让出批自身），此处按 RC 系列装置
+    // 先例直达置空复现该回合边界（恢复切片按新批全额预算装配，不受让出批
+    // 已用份额挤占）。
     subject.batch = null;
     subject.windowEvidence = false;
-    subject.pendingClose = null;
     // 恢复仍可经等待载体装配（consumeRecovery 显式选择加入）：自游标（份额 1 起点）续取全文。
     const served = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' });
     const item = served.delivered.find((one) => one.recovery === true);
