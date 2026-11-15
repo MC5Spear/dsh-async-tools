@@ -16,8 +16,13 @@
  *
  * 装置：真实 cordis-plugin-loader＋真实 cordis:group 隔离＋本包当前工作树；
  * 引擎行与产品行的进程内路径是指向同一插件的相对路径（用户参考写包名，装载语
- * 义等价）。九项兄弟服务用最小替身（与宿主侧提供位置对应：宿主组合在根作用
- * 域提供）。
+ * 义等价）。静态依赖十项（同 lib/index.js 的 inject 表）：`tools` 由
+ * ToolRuntime 提供，其余九项用最小替身（与宿主侧提供位置对应：宿主组合在根
+ * 作用域提供）；`agentPresets` 替身按「该会话无预设绑定」应答（presetForSession
+ * → undefined——纯编排两腿都不应有预设依赖行为）。
+ * 装置自带依赖对账：装载前先静态核对 lib/index.js 的 inject 表与替身集合
+ * 一致（修前红＝agentPresets 进静态表后替身缺位，插件树加载失败、两腿
+ * inGroup=false）。
  *
  * 边界：证明用户参考组合的装载语义与缺引擎拒绝形态；不替代实例级四预设装载
  * 取证，也不派生子代理。
@@ -25,7 +30,7 @@
  * 用法：node --import ./tools/_host-hooks.mjs verify/d05-readme-composition.mjs
  * （执行目录＝仓根：hook 与脚本参数都按仓根相对路径解析，两侧同源。）
  */
-import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { writeFileSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { LOCAL_DIR, localPlanePresent, loadLocalConfig } from '../tools/_local-config.mjs';
@@ -78,9 +83,9 @@ function delegationGroup(fromDir, { withEngine = true } = {}) {
 }
 
 /** boot：与 test/config.test.mjs 真实链同款（Loader＋ConfigEditor＋SettingsForms
- * ＋SystemPrompt＋ToolRuntime），另以最小替身提供本包九项静态依赖中的非全局项
+ * ＋SystemPrompt＋ToolRuntime），另以最小替身提供本包十项静态依赖中的非全局项
  * （tools 由 ToolRuntime 提供；jobs/shell/shellEnv/timer/sessionProjections/
- * workingDirectory/subagents/agents 与宿主组合的提供位置对应）。 */
+ * workingDirectory/subagents/agents/agentPresets 与宿主组合的提供位置对应）。 */
 async function bootComposition(profileDir, homeDir, compositionDir, siblingServices) {
   const { Context } = await import('@deepseek-ai/cordis');
   const Loader = (await import('@deepseek-ai/cordis-plugin-loader')).default;
@@ -108,7 +113,9 @@ async function bootComposition(profileDir, homeDir, compositionDir, siblingServi
   return ctx;
 }
 
-/** 九项静态依赖的最小替身（只喂饱 inject；工具 execute 走到的分支另有断言）。 */
+/** 十项静态依赖的最小替身（只喂饱 inject；工具 execute 走到的分支另有断言）。
+ * agentPresets 按域读契约应答「该会话无预设绑定」（presetForSession →
+ * undefined）——纯编排两腿不触预设行为，替身只在装载层满足静态 inject。 */
 function siblingServices({ jobRegistry }) {
   return {
     jobs: jobRegistry,
@@ -118,8 +125,25 @@ function siblingServices({ jobRegistry }) {
     sessionProjections: { stateOf: () => null },
     workingDirectory: { ensure: async () => process.cwd() },
     subagents: { getProvider: () => undefined, async startActivation() { throw new Error('[d05] no subagent expected in pure orchestration'); } },
-    agents: { get: () => undefined }
+    agents: { get: () => undefined },
+    agentPresets: { presetForSession: () => undefined }
   };
+}
+
+/** 静态表对账：lib/index.js 的 inject 导出必须与替身集合逐项一致（tools 由
+ * ToolRuntime 提供）。静态表加名而替身缺位时，真实 cordis 装载直接失败——
+ * 这条对账把该失败提前到可读断言（DS-01 修前红即此形态）。 */
+function assertInjectParity(services) {
+  const source = readFileSync(join(ROOT, 'lib', 'index.js'), 'utf8');
+  const match = source.match(/export const inject = \[([^\]]*)\]/);
+  const declared = match === null ? [] : [...match[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  const provided = new Set(['tools', ...Object.keys(services)]);
+  const missing = declared.filter((name) => !provided.has(name));
+  const extra = [...provided].filter((name) => !declared.includes(name));
+  if (match === null || missing.length > 0 || extra.length > 0) {
+    throw new Error(`d05 依赖对账失败：lib/index.js inject=${JSON.stringify(declared)} 替身=${JSON.stringify([...provided])}`
+      + `${missing.length > 0 ? `；缺 ${missing.join('/')}` : ''}${extra.length > 0 ? `；多 ${extra.join('/')}` : ''}`);
+  }
 }
 
 /** 最小作业登记表：记录注册（缺引擎对照的「零作业」判据）。 */
@@ -140,8 +164,10 @@ async function bootCase(tag, withEngine) {
   writeFileSync(join(compDir, 'package.json'), '{}\n');
   writeFileSync(join(compDir, 'cordis.yml'), delegationGroup(compDir, { withEngine }) + '\n');
   const jobRegistry = fakeJobRegistry();
+  const services = siblingServices({ jobRegistry });
+  assertInjectParity(services);
   const ctx = await bootComposition(
-    join(caseDir, 'profile'), join(caseDir, 'home'), compDir, siblingServices({ jobRegistry })
+    join(caseDir, 'profile'), join(caseDir, 'home'), compDir, services
   );
   const loader = ctx.get('loader');
   const groupEntry = loader.resolve('include:delegation');
