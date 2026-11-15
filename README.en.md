@@ -12,7 +12,7 @@ This third-party plugin is unaffiliated with DeepSeek. It is personally maintain
 
 ## Before installing
 
-**The current candidate has an issue that can prevent Agent model steps from continuing normally. Do not use it for production tasks until it is fixed and revalidated.** The table lists versions the package declares admissible, not proof that the candidate is usable. Before testing, confirm an accessible exact commit or artifact with the maintainer, use an isolated instance, and retain the source: the same version number can identify different source revisions. The branch address below works only when that branch has been published and is accessible; an unuploaded local commit cannot serve as a remote source.
+**An earlier build of this candidate had an issue that could prevent Agent model steps from continuing normally (a step listener truncating the event chain); it is fixed in this candidate's source. Do not use it for production tasks until it is revalidated.** The table lists versions the package declares admissible, not proof that the candidate is usable. Before testing, confirm an accessible exact commit or artifact with the maintainer, use an isolated instance, and retain the source: the same version number can identify different source revisions. The branch address below works only when that branch has been published and is accessible; an unuploaded local commit cannot serve as a remote source.
 
 | Component | Current applicable version |
 | --- | --- |

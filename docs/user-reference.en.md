@@ -11,7 +11,7 @@ Find the task you need:
 
 ## 1. Installation identity and prerequisites
 
-**The current candidate has an issue that can prevent Agent model steps from continuing normally. Do not use it for production tasks until it is fixed and revalidated.** The table lists versions the package declares admissible, not proof that the candidate is usable. Before testing, confirm an accessible exact commit or artifact with the maintainer, use an isolated instance, and retain matching source; the same version number can identify different implementations. Remote installation steps apply only to a published, accessible branch or commit, not an unuploaded local commit.
+**An earlier build of this candidate had an issue that could prevent Agent model steps from continuing normally (a step listener truncating the event chain); it is fixed in this candidate's source. Do not use it for production tasks until it is revalidated.** The table lists versions the package declares admissible, not proof that the candidate is usable. Before testing, confirm an accessible exact commit or artifact with the maintainer, use an isolated instance, and retain matching source; the same version number can identify different implementations. Remote installation steps apply only to a published, accessible branch or commit, not an unuploaded local commit.
 
 | Component | Current applicable version |
 | --- | --- |
@@ -216,7 +216,7 @@ A minimum is not a mandatory delay. Completion or an eligible message still retu
 
 The default list contains the two shipped presets; both switches default to off. Uncheck all entries and save the empty array `[]` to unbind all three features. **The list neither installs nor removes tools.** Custom presets still need [tools mounted first](<#7-advanced-composition>). An unlisted preset does not receive these auxiliary features even if it uses the same tool.
 
-Candidates come from the DSH preset registry; Refresh reads them again. Bound IDs that are currently absent remain available for removal. Failed-to-load entries show the host's reason and cannot be newly selected, but existing bindings can be removed. A failed registry read preserves saved bindings instead of displaying the failure as an empty list.
+Candidates come from the DSH preset registry; Refresh reads them again. Bound IDs that are currently absent remain available for removal. Failed-to-load entries show the host's reason and cannot be newly selected, but existing bindings can be removed. A failed registry read preserves saved bindings instead of displaying the failure as an empty list. While the directory is loading or has failed to load, entries checked in this editing session but not yet saved are listed alongside saved bindings, annotated with the current read state; a temporarily unreadable directory does not hide selections being drafted.
 
 Select Refresh to update the candidate list without saving settings or discarding selection drafts. Refreshing during a read schedules an update after that read finishes. Retry as prompted if an error appears; existing bindings remain removable. If loading persists or retries fail, keep the error details and ask the instance maintainer to check the preset directory service. Record unsaved drafts before reopening or reloading the page, because reloading discards them.
 
@@ -530,7 +530,7 @@ Enable `askTakeover` and save. Ordinary questions from root Agents on presets in
 
 With askUiSeat set to sidebar, click the unanswered count at the sidebar bottom to expand the panel. With overlay, questions appear at the lower right. The panel can open the original session, answer, ignore, or extend time. New questions announce the added count to assistive technology without taking keyboard focus or automatically reading the whole question. The countdown does not repeat the announcement.
 
-If the pending-state read fails, the sidebar entry remains available. Open the panel, or inspect the overlay, to read the error; automatic retries continue in the background. The sidebar shows “?” when no cached count is available, or keeps the cached count until a successful read supplies the actual number. **While reading has failed, the panel title can still show “0 pending”; this does not confirm that there are no questions.** If questions seem missing or errors persist, check the original session and its deadline, reply there if needed, and give the instance maintainer redacted symptoms and triggering steps.
+If the pending-state read fails, the sidebar entry remains available. Open the panel, or inspect the overlay, to read the error; automatic retries continue in the background. The sidebar shows “?” when no cached count is available, or keeps the cached count until a successful read supplies the actual number. **While reading has failed, the panel title reflects the read state: with no cached items it shows “count unknown (state fetch failed)”; with items from the last successful read it shows “last read: N pending” and still renders those cached items — neither form presents a cached count as currently confirmed. A successful read restores the actual count.** If questions seem missing or errors persist, check the original session and its deadline, reply there if needed, and give the instance maintainer redacted symptoms and triggering steps.
 
 ### Answer or ignore
 
@@ -552,7 +552,7 @@ After expiry, questions can still be answered or ignored in the panel. A notific
 
 ### Missing acknowledgement or failed submission
 
-Check the panel's submission response. Explicit delivery failure reopens the question for retry as instructed; replying directly in the original session is also possible. If the panel reports that the batch or question no longer exists and the answer was not delivered, reply in the original session. If confirmation is merely missing, wait for the panel to refresh before deciding. Do not resubmit when the panel says another client has already answered.
+Check the panel's submission response. Explicit delivery failure reopens the question for retry as instructed; replying directly in the original session is also possible. When a submission returns no acknowledgement at all (no gateway response), the panel shows a submission-channel error at the top and reopens the question for another attempt — this is a missing confirmation, neither delivered nor failed. Wait for the panel to refresh and confirm the actual state before retrying, and do not resubmit when the panel says another client has already answered. If the panel reports that the batch or question no longer exists and the answer was not delivered, reply in the original session.
 
 Panel records are held only in memory. Unhandled records more than 24 hours past expiry are cleared when a new question batch is intercepted. With no new batch, they can last longer, so 24 hours is not a fixed late-answer deadline.
 
@@ -570,7 +570,7 @@ The current diagnostic reports “execution unconfirmed” when a capture form, 
 
 Check in this order:
 
-1. Inspect the tool's exit information, `$LASTEXITCODE` where available, and expected side effects. For output redirection, check the target file first; no console output may be the intended result.
+1. Inspect the tool's exit information and expected side effects, plus `$LASTEXITCODE` on PowerShell (pwsh) deployments; platforms whose executor is not PowerShell have no such variable — check the exit-code marker instead. For output redirection, check the target file first; no console output may be the intended result.
 2. If the execution channel is still in doubt, run a separate harmless probe without capture, such as `Write-Output EXEC_CHECK`, and inspect host logs as needed.
 3. Decide what to do from the findings, whether the operation is safe to repeat, and the current authorization. Rerunning the original command is not the channel check. Wider permissions still require the current tool's escalation conditions and host approval; a warning does not add permission.
 
