@@ -73,7 +73,7 @@ async_wait(targets=[{kind:"job", id:"<returned job_id>"}], wait_ms=30000)
 
 Factory settings give `yield_ms` a default of 20000 ms and bound each request to 20000–600000 ms. `wait_ms` is required every time. Expiry leaves the task running; use `job_kill` explicitly for unwanted jobs, rather than rerunning commands to check progress.
 
-Results are not replayed indefinitely. Save anything that must be kept. For long output, failed reads, or canceled calls, continue with the original job using [result handling and recovery](<docs/user-reference.en.md#4-wait-states-and-direct-delivery>).
+Results are not replayed indefinitely; save anything that must be kept. **This candidate still has an allowance defect: once body content in a turn exhausts `maxResultChars`, zero-wait calls cannot immediately retrieve the remainder. Only normal turn completion resets the allowance; cancellation does not, and remaining bodies are not automatically sent.** Before handling long output, read [allowances and continued reading](<docs/user-reference.en.md#shortened-output-or-deferred-entries-continue-reading>). For failed reads or canceled calls, use [result recovery](<docs/user-reference.en.md#a-tool-result-may-not-have-arrived-request-a-recovery-copy>) on the original job rather than rerunning the task.
 
 ## Tools and presets
 
