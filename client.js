@@ -252,7 +252,8 @@ var CHAIN_PAIRS = [
  *   `{kind:'clear'}`，保存将 unset 覆盖、恢复默认语义）→ 不回退当前生效值
  *   ——生效值仍含即将被清除的旧覆盖，「先仅清 minWaitMs 保存、再调低
  *   defaultWaitMs」的合法两步组合会被旧下限误拦；预判值取保存后的预期生效值
- *   （组合层〔行 config〕对客户端不可见，以 schema 默认值为最近似——近似
+ *   ＝官方配置表单快照的 `base` 字段（清字段后回退的组合层解析值，逐字段可从
+ *   快照直接读取；快照无 base 的旧装载形态按 SCHEMA_DEFAULTS 近似——近似
  *   双向受影响：更宽方向造成假放行，由服务端保存校验按完整下一值终判；更严
  *   方向造成假拦截，可对该字段显式填写一个合法值绕过）；
  * - **不改动**（无覆盖的空草稿——保存不发出任何操作——与未编辑同判）→ 当前
@@ -266,6 +267,12 @@ function chainNumber(state, key) {
   var entry = state.fields === undefined ? undefined : state.fields[key];
   var text = entry !== undefined && typeof entry.text === "string" ? entry.text : "";
   if (text.trim() === "" && state.userHas !== undefined && state.userHas[key] === true) {
+    // 官方快照 base 层优先（设计 §5.4：清字段＝unset 覆盖、重新继承组合层，
+    // base 即保存后回退的组合层解析值）；快照无 base 的旧装载形态按
+    // SCHEMA_DEFAULTS 近似（更宽方向假放行由服务端保存校验终判）。
+    var baseLayer = state.base === undefined || state.base === null ? {} : state.base;
+    var fromBase = baseLayer[key];
+    if (typeof fromBase === "number" && Number.isFinite(fromBase)) return fromBase;
     return typeof SCHEMA_DEFAULTS[key] === "number" ? SCHEMA_DEFAULTS[key] : null;
   }
   var source = state.effective === undefined || state.effective === null ? {} : state.effective;
@@ -813,8 +820,13 @@ function makeTranslator(uiLang, hostT) {
  */
 function projectCardState(model, scope) {
   var snapshot = scope.getSnapshot();
-  var state = { shell: model.shell(), uiLang: uiLangOf(snapshot), fields: {}, effective: {}, userHas: {} };
+  var state = { shell: model.shell(), uiLang: uiLangOf(snapshot), fields: {}, effective: {}, userHas: {}, base: {} };
   var valueLayer = settingsLayerOf(snapshot !== undefined && snapshot !== null ? snapshot.value : undefined);
+  // 官方快照 base 层（设计 §5.4 清空侧预判）：清字段（unset 覆盖）后回退的
+  // 组合层解析值——chainNumber 的清空档以此预判保存后的完整下一值，不用
+  // schema 默认近似（组合层取值可比 schema 默认更宽或更严，近似会误拦合法
+  // 保存——UI-CLEAR-03）。
+  var baseLayer = settingsLayerOf(snapshot !== undefined && snapshot !== null ? snapshot.base : undefined);
   // 用户覆盖层键集（设计 §5.4 清空侧预判的「有覆盖」判据）：官方 parse 空文本得
   // clear——空草稿在有覆盖时＝保存将 unset 覆盖（chainNumber 据此不回退旧生效值），
   // 无覆盖时保存不发出任何操作（与未编辑同判）。
@@ -828,6 +840,7 @@ function projectCardState(model, scope) {
     // 毫秒字段的生效值（说明行读数与链式比较值）＋绑定字段的生效名单（绑定块的生效值行）。
     if (field.ms === true || field.binding === true) {
       state.effective[field.key] = valueLayer[field.key];
+      if (field.ms === true) state.base[field.key] = baseLayer[field.key];
     }
   }
   return state;
@@ -1409,7 +1422,7 @@ var DICTIONARIES = {
     "hint.minWaitMs": "适用于等待入口正等待（wait_ms > 0）的下限；请求低于此值时按下限取值。wait_ms=0 只做即时检查，不抬高到下限。到时结束本次等待，后台任务继续运行。",
     "hint.maxWaitMs": "适用于等待入口 wait_ms 的上限；请求高于此值时按上限取值。到时结束本次等待，后台任务继续运行。",
     "hint.pollIntervalMs": "async_wait 的子代理目标定期检查运行状态的间隔，用作变化事件未到达时的备用判断。",
-    "hint.maxResultChars": "同一交付批次中全部结果内容共享的字符上限（正整数）——首次返回、等待返回与完成消息里的多条结果共同占用；单条超出时保留首尾并说明截断，状态与提示另计。",
+    "hint.maxResultChars": "同一次模型输入内共同到达的全部结果内容合计的字符上限（正整数）——首次返回、等待返回与完成消息里的多条结果共同占用；额度随每次模型输入重置。单条超出时保留首尾并说明截断，状态与提示另计。",
     "hint.jobKind": "注册命令作业用的类型名称，便于在作业列表与日志中识别。",
     "hint.subagentProvider": "async_agent 创建子代理使用的后端服务。",
     "hint.uiLang": "控制本包设置表单、字段帮助与待答界面的语言；跟随宿主语言或显式选择中文／英文。",
@@ -1429,7 +1442,7 @@ var DICTIONARIES = {
     "help.minWaitMs": "配置键：minWaitMs（数值，毫秒）。\n\n正等待（wait_ms > 0）的下限：请求低于此值时按下限取值；wait_ms=0 是零等待例外——只做即时检查，不抬高到下限。到时交回控制权、作业句柄仍有效；消息到达可提前结束本次等待。",
     "help.maxWaitMs": "配置键：maxWaitMs（数值，毫秒）。\n\nwait_ms 的上限：请求高于此值时按上限取值。与 minWaitMs 共同构成正等待的取值区间（minWaitMs ≤ 生效值 ≤ maxWaitMs）；零等待不受区间抬高。到时交回控制权、作业句柄仍有效；消息到达可提前结束本次等待。",
     "help.pollIntervalMs": "配置键：pollIntervalMs（数值，毫秒）。\n\nasync_wait 的子代理目标以变化事件为主、轮询为备用的双通道检查是否仍在运行；本间隔是备用轮询的节奏，受 pollIntervalMs ≤ maxWaitMs 配对约束。",
-    "help.maxResultChars": "配置键：maxResultChars（数值，字符）。\n\n按 String.length 计量，必须是正整数，小数草稿在保存时被拒。额度按交付批次共享：同批到达模型输入的多条结果——首次等待直接返回、等待返回的批次条目、完成消息——共用这一份上限，先到先分配，后到且预算耗尽的内容延后或裁剪（保首尾并说明省略量与截断）；状态行与提示另计。例如两个并行命令都在首次等待内完成时，两条直接返回合计不超过一份上限。",
+    "help.maxResultChars": "配置键：maxResultChars（数值，字符）。\n\n按 String.length 计量，必须是正整数，小数草稿在保存时被拒。额度随每次模型输入重置，同一次输入内共同到达的多条结果合计一份：首次等待直接返回、等待返回的批次条目、完成消息——这些内容在同一份上限内先到先分配，额度用尽后到达的内容延后或裁剪（保首尾并说明省略量与截断），延后内容至迟在下一次模型输入内可领取；状态行与提示另计。例如两个并行命令都在首次等待内完成时，两条直接返回合计不超过一份上限；同一次输入内未能全部送达的剩余部分，在下一次模型输入内经 async_wait 领取。",
     "help.jobKind": "配置键：jobKind（文本）。\n\n注册命令作业时使用的类型名称，用于作业列表与日志的辨识；输入空串会被拒绝。",
     "help.subagentProvider": "配置键：subagentProvider（文本）。\n\nasync_agent 创建子代理使用的后端服务，默认 spawn；输入去掉首尾空白后为空时按默认值生效，填了不存在的后端时，创建子代理的请求会被拒绝并显示原因。需要指定模型时，在 async_agent 调用参数中用 provider 与 model 指定。",
     "help.uiLang": "配置键：uiLang（枚举：auto / zh / en）。\n\n界面文案与 Agent 文案是两个独立开关：本开关只影响界面文案，Agent 文案语言由 agentLang 设置；auto 档跟随宿主语言。",
@@ -1445,6 +1458,8 @@ var DICTIONARIES = {
     "opt.askUiSeat.overlay": "右下角浮窗",
     "ask.title": "待答问题",
     "ask.count": "{n} 题待答",
+    // 计数未知态（UI-STATE-04-B）：首读失败且无缓存时徽标不以 0 冒充确证零题。
+    "ask.countUnknown": "题目数未知（状态读取失败）",
     "ask.announceNew": "待答问题新增 {n} 题",
     "ask.answer": "提交",
     "ask.ignore": "不答",
@@ -1547,7 +1562,7 @@ var DICTIONARIES = {
     "hint.minWaitMs": "Lower bound for positive waits (wait_ms > 0) on the wait entry; requests below it use the lower bound. wait_ms=0 is an immediate check only and is not raised to the bound. When the wait ends, the background task keeps running.",
     "hint.maxWaitMs": "Upper bound for wait_ms on the wait entry; requests above it use the upper bound. When the wait ends, the background task keeps running.",
     "hint.pollIntervalMs": "Interval for async_wait's subagent targets to periodically check the running state — the backup judgment when the change event has not arrived.",
-    "hint.maxResultChars": "Character cap (a positive integer) shared by all result content in one delivery batch — first returns, wait returns, and completion messages draw on the same quota together; a single oversized entry keeps its head and tail with a truncation note, and status and notices are counted separately.",
+    "hint.maxResultChars": "Cap on the total result content arriving together within one model input (a positive integer) — first-wait direct returns, wait-return entries, and completion messages all draw on it; the quota resets with each model input. A single entry past the cap keeps its head and tail with the truncation noted; status lines and notices are counted separately.",
     "hint.jobKind": "Type name used to register command jobs, for identification in job lists and logs.",
     "hint.subagentProvider": "Backend service async_agent uses to create subagents.",
     "hint.uiLang": "Controls the language of this package's settings form, field help, and pending panel; follows the host language or an explicit Chinese/English choice.",
@@ -1567,7 +1582,7 @@ var DICTIONARIES = {
     "help.minWaitMs": "Config key: minWaitMs (number, ms).\n\nLower bound for positive waits (wait_ms > 0): a request below it is clamped to it; wait_ms=0 is the zero-wait exception — an immediate check only, not raised to the bound. When the budget ends, control returns with the job handle still valid; an arriving message can end the wait early.",
     "help.maxWaitMs": "Config key: maxWaitMs (number, ms).\n\nUpper bound for wait_ms: a request above it is clamped to it. Forms the effective range for positive waits together with minWaitMs (minWaitMs ≤ effective value ≤ maxWaitMs); the zero wait is not raised by the range. When the budget ends, control returns with the job handle still valid; an arriving message can end the wait early.",
     "help.pollIntervalMs": "Config key: pollIntervalMs (number, ms).\n\nasync_wait's subagent targets check whether the target is still running on two channels — change events first, polling as the backup; this interval sets the backup polling cadence and is bound by the pollIntervalMs ≤ maxWaitMs pairing.",
-    "help.maxResultChars": "Config key: maxResultChars (number, characters).\n\nMeasured by String.length; it must be a positive integer, and non-integer drafts are rejected at save. The quota is shared per delivery batch: the multiple results reaching the model input in one batch — first-wait direct returns, wait-return batch entries, and completion messages — draw on this single cap, first come first served; content arriving after the quota is exhausted is deferred or truncated (head and tail kept, omission and truncation stated), and status lines and notices are counted separately. For example, when two parallel commands both finish inside their first waits, the two direct returns together stay within one cap.",
+    "help.maxResultChars": "Config key: maxResultChars (number, characters).\n\nMeasured by String.length; it must be a positive integer, and non-integer drafts are rejected at save. The quota resets with each model input, and the multiple results arriving within one input share a single cap: first-wait direct returns, wait-return batch entries, and completion messages draw on it first come first served; content arriving after the quota is exhausted is deferred or truncated (head and tail kept, omission and truncation stated), and deferred leftovers are available in the next model input via async_wait; status lines and notices are counted separately. For example, when two parallel commands both finish inside their first waits, the two direct returns together stay within one cap.",
     "help.jobKind": "Config key: jobKind (text).\n\nType name used when registering command jobs, for identification in job lists and logs; an empty value is invalid.",
     "help.subagentProvider": "Config key: subagentProvider (text).\n\nBackend service async_agent uses to create subagents, spawn by default; an empty value after trimming falls back to the default, and an unknown backend is rejected with a readable reason when a subagent is created. To specify a model, use the provider and model parameters of the async_agent call.",
     "help.uiLang": "Config key: uiLang (enum: auto / zh / en).\n\nInterface copy and Agent-facing copy are two independent switches: this one only affects interface copy, and agentLang sets the Agent-facing language; the auto mode follows the host language.",
@@ -1583,6 +1598,8 @@ var DICTIONARIES = {
     "opt.askUiSeat.overlay": "Bottom-right overlay",
     "ask.title": "Pending questions",
     "ask.count": "{n} pending",
+    // Count-unknown state (UI-STATE-04-B): no verified zero while the first fetch failed with no cache.
+    "ask.countUnknown": "count unknown (state fetch failed)",
     "ask.announceNew": "Pending questions: {n} new",
     "ask.answer": "Submit",
     "ask.ignore": "Skip",
@@ -2795,7 +2812,8 @@ function AskOverlaySeat(props) {
  * 样式段注释），完整名称走 `aria-label`（屏幕阅读器与无障碍树恒可得，
  * 不依赖悬停），面板标题行（.ats-ask-title）承载可见全名。`aria-expanded`
  * 同步开合态。计数泡恒渲染、零题显示 0（VIS-BADGE-01：徽标计数＝未处理
- * 问题数，不因失败虚增、不显负值；失败态的可见性由面板内错误条承担）。 */
+ * 问题数，不因失败虚增、不显负值；失败态的可见性由面板内错误条承担）；
+ * 计数未知态（UI-STATE-04-B，函数内注释）泡体与 aria-label 都不报数字。 */
 function AskSidebarSeat(props) {
   var state = React.useSyncExternalStore(props.ask.store.subscribe, props.ask.store.getSnapshot);
   var openRef = React.useRef(false);
@@ -2803,10 +2821,18 @@ function AskSidebarSeat(props) {
   if (!state.enabled || state.seat !== "sidebar" || !askHasFace(state)) return null;
   injectAskStyles();
   var t = askTranslator(state.uiLang, props.ask.locale);
+  // 计数未知态（§4.3，UI-STATE-04-B）：首读失败且无缓存题目时题目数未知——
+  // 徽标不以 0 冒充确证零题（计数泡与 aria-label 都不报数字，改报状态未知），
+  // 侧栏入口保留在场、展开可读错误条（失败的可见性由错误条与座位显形承担，
+  // 不由计数冒充）；下一次成功读取清除失败档后计数恢复实际数（有缓存题目时
+  // 缓存计数照常显示——真实缓存数不虚增）。
+  var countUnknown = state.callFailed === 'state' && state.items.length === 0;
   return React.createElement(React.Fragment, null,
     React.createElement("button", {
       type: "button", className: "ats-ask-badge",
-      "aria-label": t("ask.title") + " · " + t("ask.count").replace("{n}", String(state.items.length)),
+      "aria-label": t("ask.title") + " · " + (countUnknown
+        ? t("ask.countUnknown")
+        : t("ask.count").replace("{n}", String(state.items.length))),
       "aria-expanded": openRef.current ? "true" : "false",
       onClick: function () { openRef.current = !openRef.current; rerender(function (n) { return n + 1; }); }
     },
@@ -2821,7 +2847,8 @@ function AskSidebarSeat(props) {
           x: 8, y: 11.6, textAnchor: "middle",
           fontSize: 9.5, fontWeight: 600, fill: "currentColor"
         }, "?")),
-      React.createElement("span", { className: "ats-ask-count" }, String(state.items.length))),
+      React.createElement("span", { className: "ats-ask-count" },
+        countUnknown ? "?" : String(state.items.length))),
     openRef.current
       ? React.createElement(AskList, { ask: props.ask, panelClass: "ats-ask-panel--sidebar" })
       : null);
@@ -3119,6 +3146,8 @@ module.exports = {
   boundedNumberSpec: boundedNumberSpec,
   pairViolated: pairViolated,
   chainHitOf: chainHitOf,
+  /** 设计 §5.4 清空侧预判接线（UI-CLEAR-03）：官方快照 base 层的投影面。 */
+  projectCardState: projectCardState,
   LANG_KEYS: LANG_KEYS,
   ENTRY: ENTRY,
   PACKAGE_NAME: PACKAGE_NAME,

@@ -4322,3 +4322,54 @@ test('J59：依赖撤下承接——reset 探测三态分判＋证实回收幂�
     unserved();
   }
 });
+
+test('J60：徽标计数未知态——首读失败无缓存不以 0 冒充确证零题，恢复后计数回真、确无题消隐（UI-STATE-04-B，修前红）', async () => {
+  const react = makeMiniReact();
+  const product = await loadClientProduct(react, { setInterval: () => 0, clearInterval: () => {} });
+  let snap = { status: 'ready', value: { askTakeover: true, askUiSeat: 'sidebar' }, user: {} };
+  const scope = {
+    getSnapshot: () => snap,
+    subscribe: () => () => {},
+    mutate: async () => true
+  };
+  // 首查被拒：callFailed＝'state' 档＋无缓存题目——§4.3 计数未知态（UI-STATE-04-B）。
+  const ctx = { configForms: { get: () => scope }, remote: {}, uiWorkspace: { openSession() {} } };
+  const model = product.createAskModel(ctx, { state: async () => ({ ok: false }) });
+  const renderComp = (fn) => react.render(fn);
+  const badgeButtonOrNull = () => {
+    const node = renderComp(() => product.AskSidebarSeat({ ask: model, ctx }));
+    if (node === null) return null;
+    return node.children.find((child) => child !== null && typeof child === 'object');
+  };
+  const countBubble = (button) =>
+    button.children.find((child) => child !== null && typeof child === 'object' && child.props?.className === 'ats-ask-count');
+  await Promise.resolve(); await Promise.resolve(); // 首查失败落账（microtask 链）
+  const live = model.store.getSnapshot();
+  assert.equal(live.callFailed, 'state', '前置：首读失败档在场');
+  assert.equal(live.items.length, 0, '前置：无缓存题目');
+  // 未知态：侧栏入口保留在场（失败档显形），计数泡与 aria-label 都不报数字。
+  const unknown = badgeButtonOrNull();
+  assert.ok(unknown !== null, '徽标在场（侧栏入口保留——展开可读错误条）');
+  const unknownLabel = String(unknown.props['aria-label']);
+  assert.ok(!unknownLabel.includes('0'), 'aria-label 不以 0 冒充确证零题（修前红：「0 pending」）');
+  assert.ok(unknownLabel.includes(product.DICTIONARIES.en['ask.countUnknown']),
+    'aria-label 报计数未知（ask.countUnknown 词典句在场）');
+  assert.equal(String(countBubble(unknown).children), '?',
+    '计数泡不报数字、改报状态未知形态（修前红：显示 0）');
+  // 有缓存题目＋读取失败：缓存计数照常显示（真实缓存数，不虚增、不问号）。
+  live.items = [{ batchId: 'b', sessionId: 's1', questionId: 'q1', question: 'q', options: [], multiSelect: false, receivedAt: 0, expiresAt: 1, phase: 'open' }];
+  const cached = badgeButtonOrNull();
+  assert.ok(cached !== null, '徽标在场（失败档＋缓存题目）');
+  assert.equal(String(countBubble(cached).children), '1', '缓存计数照常显示（不因失败虚增或问号化）');
+  // 恢复：下一次成功读取清失败档（渲染面手工模拟——清档链由 J23/J41 锚定）。
+  live.callFailed = null;
+  const recovered = badgeButtonOrNull();
+  assert.ok(String(recovered.props['aria-label']).includes('1'),
+    '恢复后 aria-label 报实际未处理数');
+  assert.equal(String(countBubble(recovered).children), '1', '恢复后计数泡报实际数');
+  // 确无题且无错误：回到消隐口径（既有 askHasFace——本锚复钉该边界）。
+  live.items = [];
+  live.lostAnswers = [];
+  live.undelivered = [];
+  assert.equal(badgeButtonOrNull(), null, '无题且无错误 → 徽标消隐');
+});

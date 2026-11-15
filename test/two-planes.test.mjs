@@ -2311,9 +2311,10 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     ],
     maxResultChars: [
       ['正整数', '必须是正整数'],
-      // DOC-04 批次共享口径：多条结果共享一份上限（不是「每次返回各自一份」）。
+      // DOC-U01 输入代口径：额度随每次模型输入重置，同一次输入内合计一份
+      //（不再按交付批次共享表述）。
       ['共享', '共用', '共同占用'],
-      ['交付批次', '同一交付批次', '一个交付批次'],
+      ['模型输入', '一次模型输入', '同一次模型输入'],
       ['保留首尾', '保留开头与结尾', '首尾都保留'],
       ['说明截断', '注明截断', '截断说明'],
       ['另计', '不计入', '单独计量']
@@ -2444,9 +2445,9 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     ],
     maxResultChars: [
       ['a positive integer', 'positive integer'],
-      // DOC-04 batch-shared quota.
-      ['shared', 'draw on the same quota', 'one shared quota'],
-      ['delivery batch', 'one delivery batch', 'per delivery batch'],
+      // DOC-U01 per-model-input quota.
+      ['draw on it', 'draw on the same quota', 'one shared quota'],
+      ['model input', 'one model input', 'within one input'],
       ['the head and tail are kept', 'head and tail kept', 'keeps its head and tail', 'keeps the head and tail'],
       ['truncation note', 'a note about the truncation', 'states the truncation'],
       ['counted separately', 'not counted toward the cap', 'separate from the cap']
@@ -2543,7 +2544,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minWaitMs: '作用于等待入口正等待（wait_ms > 0）的 wait_ms；请求低于下限时按下限取值。wait_ms=0 只做即时检查、不会被抬高到下限。等待到时结束，后台继续运行。',
     maxWaitMs: '作用于等待入口的 wait_ms；高于上限时按上限取值。等待到时结束，后台继续运行。',
     pollIntervalMs: 'async_wait 的子代理目标按这个间隔周期性检查目标是否还在跑，作为变化事件没到时的备用检查手段。',
-    maxResultChars: '同一交付批次内多条结果共享的字符数上限，必须是正整数；超限时保留开头与结尾并注明截断，状态与提示单独计量。',
+    maxResultChars: '同一次模型输入内共同到达的全部结果内容合计的字符上限（正整数）——首次返回、等待返回与完成消息里的多条结果共同占用；额度随每次模型输入重置。单条超出时保留首尾并说明截断，状态与提示另计。',
     jobKind: '命令作业注册时用的类型名，出现在作业列表和日志里方便辨认。',
     subagentProvider: 'async_agent 创建子代理的后端。',
     uiLang: '决定界面文案（设置表单、字段帮助、待答界面）显示中文还是英文；自动档跟随宿主语言。',
@@ -2566,7 +2567,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minWaitMs: 'Governs wait_ms of positive waits (wait_ms > 0) on the wait entry; a request below the floor is clamped to the lower bound; wait_ms=0 is an immediate check only and is not raised to the bound; the wait ends on schedule and the background task keeps running.',
     maxWaitMs: 'Governs wait_ms on the wait entry; a request above this ceiling uses the upper bound; the wait ends on schedule and the background task keeps running.',
     pollIntervalMs: 'async_wait\'s subagent targets decide how often to run a backup check of the target\'s running state when the change event has not arrived.',
-    maxResultChars: 'Cap on characters shared by the multiple results of one delivery batch (must be a positive integer); past it the head and tail are kept with a note about the truncation; status and notices are counted separately.',
+    maxResultChars: 'Cap on the total result content arriving together within one model input (a positive integer) — first-wait direct returns, wait-return entries, and completion messages all draw on it; the quota resets with each model input. A single entry past the cap keeps its head and tail with the truncation noted; status lines and notices are counted separately.',
     jobKind: 'The type name used when registering command jobs so they can be told apart in job lists and logs.',
     subagentProvider: 'The backend async_agent spawns subagents with.',
     uiLang: 'Sets the language (Chinese or English) of the settings form, field help, and pending panel; the auto choice follows the host language.',
@@ -2656,7 +2657,8 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     ],
     maxResultChars: [
       ['正整数', 'String.length'],
-      ['按交付批次共享', '交付批次'],
+      // DOC-U01：额度随每次模型输入重置、同一次输入内合计一份。
+      ['额度随每次模型输入重置', '随每次模型输入重置'],
       ['先到先分配', '先到先得'],
       ['保首尾并说明省略量与截断', '保首尾', '保留首尾、注明省略与截断'],
       ['另计', '单独计量']
@@ -2787,7 +2789,8 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     ],
     maxResultChars: [
       ['positive integer', 'String.length'],
-      ['shared per delivery batch', 'delivery batch'],
+      // DOC-U01: quota resets with each model input.
+      ['resets with each model input', 'the quota resets'],
       ['first come first served', 'first arrivals take the quota first'],
       ['head and tail kept', 'omission and truncation stated', 'keeping the head and tail'],
       ['counted separately', 'not counted toward the cap']
@@ -2888,7 +2891,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minWaitMs: '作用于正值等待（wait_ms > 0）的下限：低于它就取下限；wait_ms=0 只做即时检查、不会被抬高。到时还回控制权、句柄仍有效；消息来了可以提前结束本次等待。',
     maxWaitMs: 'wait_ms 的上界：高于它就取上限。与 minWaitMs 构成 wait_ms > 0 的取值区间；零等待不被抬高。到时还回控制权、句柄仍有效；消息来了可以提前结束本次等待。',
     pollIntervalMs: 'async_wait 的子代理按这个间隔定期查目标还在不在跑——变化事件优先、轮询作为备用通道；间隔受 pollIntervalMs ≤ maxWaitMs 约束。',
-    maxResultChars: '一个交付批次内到达模型输入的多条结果共享同一份字符额度（按 String.length 计量、必须是正整数），先到先得；额度耗尽后到的内容延后或裁剪，保留首尾、注明省略与截断；状态与提示单独计量。',
+    maxResultChars: '配置键：maxResultChars（数值，字符）。\n\n按 String.length 计量，必须是正整数，小数草稿在保存时被拒。额度随每次模型输入重置，同一次输入内共同到达的多条结果合计一份：首次等待直接返回、等待返回的批次条目、完成消息——这些内容在同一份上限内先到先分配，额度用尽后到达的内容延后或裁剪（保首尾并说明省略量与截断），延后内容至迟在下一次模型输入内可领取；状态行与提示另计。例如两个并行命令都在首次等待内完成时，两条直接返回合计不超过一份上限；同一次输入内未能全部送达的剩余部分，在下一次模型输入内经 async_wait 领取。',
     jobKind: '给命令作业注册用的类型名，方便在作业清单与日志里认出来；留空会被拒绝。',
     subagentProvider: 'async_agent 创建子代理的后端，缺省用 spawn；输入去空白后为空就回落到默认值；写了不存在的后端，创建时拒绝并说明原因。要指定模型，就用调用的 provider、model 两参数。',
     uiLang: '界面文字与 Agent 文案是互不联动的两个开关：本开关只管界面文案，Agent 文案语言 agentLang 决定；auto 跟宿主语言走。',
@@ -2910,7 +2913,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minWaitMs: 'Floor for waits with wait_ms > 0: below it the request clamps to the bound; wait_ms=0 is the exception — an immediate check only, not lifted. When the budget ends, hands control back; the handle stays valid; an arriving message can end the wait early.',
     maxWaitMs: 'Ceiling for wait_ms: above it the request clamps to the upper bound. With minWaitMs it forms the range for waits with wait_ms > 0; zero waits are not lifted. When the budget ends, hands control back; the handle stays valid; an arriving message can end the wait early.',
     pollIntervalMs: "async_wait's subagent side checks on two channels whether the target still runs — change events first, with polling as the fallback channel; the interval is bound by the pollIntervalMs ≤ maxWaitMs rule.",
-    maxResultChars: 'One delivery batch of results reaching the model input shares a single character allowance (measured by String.length, a positive integer), first arrivals take the quota first; past it content is deferred or cut, keeping the head and tail and noting what was omitted and truncated; status and notices are not counted toward the cap.',
+    maxResultChars: 'Config key: maxResultChars (number, characters).\n\nMeasured by String.length; it must be a positive integer, and non-integer drafts are rejected at save. The quota resets with each model input, and the multiple results arriving within one input share a single cap: first-wait direct returns, wait-return batch entries, and completion messages draw on it first come first served; content arriving after the quota is exhausted is deferred or truncated (head and tail kept, omission and truncation stated), and deferred leftovers are available in the next model input via async_wait; status lines and notices are counted separately. For example, when two parallel commands both finish inside their first waits, the two direct returns together stay within one cap.',
     jobKind: 'Registry entries carry the type label given to command jobs when they are registered, so they can be told apart in job listings and log entries; leaving it blank is rejected.',
     subagentProvider: 'The backend that spawns subagents for async_agent, defaulting to spawn; an empty trimmed value reverts to the default; an unknown backend is refused with an understandable reason at subagent creation. To pick a model, specify provider plus model on the call.',
     uiLang: 'Interface text and Agent-facing copy are two separate switches: this one governs just the interface text, and agentLang decides the Agent-facing language; auto tracks the host language.',
@@ -3694,7 +3697,7 @@ test('PCAT-C：补读与重读只换目录快照——不触碰草稿与已存�
   catalog.detach();
 });
 
-test('CHN：链式比较三方取值——合法草稿、清空草稿按 schema 默认、未改动按生效值（修前红）', async (t) => {
+test('CHN：链式比较三方取值——合法草稿、清空草稿按官方快照 base、未改动按生效值（修前红＋UI-CLEAR-03）', async (t) => {
   const product = await loadClientProduct();
   if (product === undefined) { t.skip(HOST_SKIP_REASON); return; }
   // 官方原语前提（§5.4 三方判定的第二档依赖）：数字字段空草稿 parse 得
@@ -3714,16 +3717,39 @@ test('CHN：链式比较三方取值——合法草稿、清空草稿按 schema 
   const s1 = baseState({ fields: { minWaitMs: { text: '90000' } } });
   assert.equal(product.chainHitOf(s1, 'minWaitMs'), 'defaultWaitMs', '① 合法草稿参与链式比较（命中参照字段）');
   assert.equal(product.pairViolated(s1), true, '① pairViolated 同判');
-  // ② 清空草稿＋该字段有用户覆盖：预判取保存后的预期生效值（schema 默认 20000）
-  //    ——不是仍含旧覆盖的当前生效值（修前回退 90000>30000 假拦截＝红）。
+  // ② 清空草稿＋该字段有用户覆盖＋快照 base 层在场：预判取保存后的预期生效值
+  //    ＝base（清字段后回退的组合层解析值）——不是仍含旧覆盖的当前生效值
+  //    （修前回退 90000>30000 假拦截＝红），也不是与组合层脱钩的 schema 默认
+  //    （组合层 min=10000、default=15000、用户 min=14000、仅手清 min 的合法
+  //    保存被 schema 20000>15000 误拦——UI-CLEAR-03 修前红）。
   const s2 = baseState({
+    fields: { minWaitMs: { text: '' } },
+    userHas: { minWaitMs: true },
+    effective: { minWaitMs: 90000, defaultWaitMs: 30000 },
+    base: { minWaitMs: 10000, defaultWaitMs: 15000 }
+  });
+  assert.equal(product.chainHitOf(s2, 'minWaitMs'), null,
+    '② 清空草稿＋覆盖在场 → 按快照 base（组合层 10000）预判：无违例（修前红）');
+  assert.equal(product.pairViolated(s2), false, '② pairViolated 同判');
+  // ②b base 在场且清空后仍真违例：组合层 min=40000 > default 15000——按 base
+  //    如实拦（预判与保存后服务端完整下一值一致，不放行必被拒的保存）。
+  const s2b = baseState({
+    fields: { minWaitMs: { text: '' } },
+    userHas: { minWaitMs: true },
+    effective: { minWaitMs: 90000, defaultWaitMs: 30000 },
+    base: { minWaitMs: 40000, defaultWaitMs: 15000 }
+  });
+  assert.equal(product.chainHitOf(s2b, 'minWaitMs'), 'defaultWaitMs',
+    '②b base 真违例按 base 拦（预判＝保存后完整下一值，不假放行）');
+  // ②c 快照 base 缺席（旧装载形态）：按 SCHEMA_DEFAULTS 近似（防御档保留，
+  //    更宽方向假放行由服务端保存校验按完整下一值终判）。
+  const s2c = baseState({
     fields: { minWaitMs: { text: '' } },
     userHas: { minWaitMs: true },
     effective: { minWaitMs: 90000, defaultWaitMs: 30000 }
   });
-  assert.equal(product.chainHitOf(s2, 'minWaitMs'), null,
-    '② 清空草稿＋覆盖在场 → 按 schema 默认 20000 预判：无违例（修前红）');
-  assert.equal(product.pairViolated(s2), false, '② pairViolated 同判');
+  assert.equal(product.chainHitOf(s2c, 'minWaitMs'), null,
+    '②c base 缺席 → schema 默认 20000 近似：无违例（防御档）');
   // ③ 未改动（空草稿＋无覆盖）：按当前生效值如实比较。
   const s3 = baseState({
     fields: { minWaitMs: { text: '' } },
@@ -3743,4 +3769,19 @@ test('CHN：链式比较三方取值——合法草稿、清空草稿按 schema 
   assert.deepEqual(Object.keys(product.SCHEMA_DEFAULTS).sort(),
     [...new Set([...chainKeys, 'maxResultChars', 'askTimeoutMs', 'askExtendMs'])].sort(),
     'SCHEMA_DEFAULTS 键集＝链式键集∪{maxResultChars, askTimeoutMs, askExtendMs}（增删字段两处同步）');
+  // ⑤ projectCardState 的 base 投影（UI-CLEAR-03 接线面）：官方快照 base 层的
+  //    settings 子树展平进 state.base（ms 字段逐键）——chainNumber 清空档的
+  //    数据源；漏接线时②的 base 判据面空转（清空档恒走 schema 近似）。
+  const scope5 = {
+    getSnapshot: () => ({
+      value: { settings: { minWaitMs: 14000, defaultWaitMs: 15000 } },
+      base: { settings: { minWaitMs: 10000, defaultWaitMs: 15000 } },
+      user: { settings: { minWaitMs: 14000 } }
+    })
+  };
+  const model5 = { shell: () => ({}), field: () => ({ text: '' }) };
+  const st5 = product.projectCardState(model5, scope5);
+  assert.equal(st5.base.minWaitMs, 10000, '⑤ base 层经 settings 子树展平入 state.base');
+  assert.equal(st5.base.defaultWaitMs, 15000, '⑤ base 的 ms 字段逐键投影');
+  assert.equal(st5.userHas.minWaitMs, true, '⑤ user 层键集同判（复钉：清除意图按原始用户层存在性识别）');
 });
