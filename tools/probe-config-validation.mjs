@@ -86,8 +86,11 @@ for (const [label, value] of crossIllegal) {
     `schema=${schemaRejected}; runtime=${runtimeRejected}`);
 }
 record('拒绝原因可读（双侧字段名齐备）', (() => {
+  // 显式给全界（minWaitMs=250、maxWaitMs=600000）——断言自包含：不依赖出厂默认
+  // minWaitMs=20000 的现值；若诊断文本退化（丢前缀、丢字段名、丢区间端点），
+  // 三个 includes 任一失配即红，检出降级。
   try {
-    Config({ settings: { defaultWaitMs: 1 } });
+    Config({ settings: { defaultWaitMs: 1, minWaitMs: 250, maxWaitMs: 600000 } });
     return false;
   } catch (error) {
     return /cross-field violation/.test(error.message)
