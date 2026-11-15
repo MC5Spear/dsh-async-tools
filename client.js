@@ -2793,8 +2793,8 @@ function AskOverlaySeat(props) {
  * 与底栏控件同排等高 28px，问号圆环图标与内联计数泡在盒内居中（几何见
  * 样式段注释），完整名称走 `aria-label`（屏幕阅读器与无障碍树恒可得，
  * 不依赖悬停），面板标题行（.ats-ask-title）承载可见全名。`aria-expanded`
- * 同步开合态。计数泡只计数未处理问题数（§4.3：不因读取失败虚增、不显负
- * 值），零题失败档不呈现计数泡 0——图标最小在场承载失败入口，点开见错误条。 */
+ * 同步开合态。计数泡恒渲染、零题显示 0（VIS-BADGE-01：徽标计数＝未处理
+ * 问题数，不因失败虚增、不显负值；失败态的可见性由面板内错误条承担）。 */
 function AskSidebarSeat(props) {
   var state = React.useSyncExternalStore(props.ask.store.subscribe, props.ask.store.getSnapshot);
   var openRef = React.useRef(false);
@@ -2820,9 +2820,7 @@ function AskSidebarSeat(props) {
           x: 8, y: 11.6, textAnchor: "middle",
           fontSize: 9.5, fontWeight: 600, fill: "currentColor"
         }, "?")),
-      state.items.length > 0
-        ? React.createElement("span", { className: "ats-ask-count" }, String(state.items.length))
-        : null),
+      React.createElement("span", { className: "ats-ask-count" }, String(state.items.length))),
     openRef.current
       ? React.createElement(AskList, { ask: props.ask, panelClass: "ats-ask-panel--sidebar" })
       : null);
@@ -3004,14 +3002,18 @@ function apply(ctx) {
         if (inner === null || lastNs === null) return;
         if (probing) return;
         probing = true;
-        Promise.resolve().then(function () { return lastNs.state(); }).then(function (result) {
+        // 探测快照（§4.3 竞态防护）：记录探测发起时的接线与命名空间代理——
+        // 回执落地时任一已变（注入回调重入重建了接线／换了代理）即作废，旧
+        // 代理的迟到缺席回执不得拆掉新接线。
+        var probedInner = inner;
+        var probedNs = lastNs;
+        Promise.resolve().then(function () { return probedNs.state(); }).then(function (result) {
           probing = false;
-          if (inner === null) return;
+          if (inner === null || inner !== probedInner) return;
           if (result !== null && typeof result === "object" && result.ok === true) return;
           if (result !== null && typeof result === "object" && result.ok !== true
             && result.error !== null && typeof result.error === "object"
-            && result.error.code === "gateway/invocation-unavailable"
-            && inner !== null) {
+            && result.error.code === "gateway/invocation-unavailable") {
             inner();
             inner = null;
           }

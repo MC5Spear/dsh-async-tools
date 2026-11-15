@@ -4282,6 +4282,26 @@ test('J59：依赖撤下承接——reset 探测三态分判＋证实回收幂�
     await fireReset();
     assert.equal(liveAskRegs(), 2, '腿 ④ 服务在场＝零动作（恢复不重复装配）');
     assert.equal(armed.length, 2, '腿 ④ 不额外武装第二套轮询');
+
+    // 腿 ⑤ 探测在途时的重入交错（§4.3 竞态防护）：探测发起后注入回调重跑
+    // 重建接线——旧代理的迟到缺席回执按探测快照令牌作废，不拆新接线
+    //（修前只判 inner 非空：新接线在场即被迟到回执误拆＝红）。
+    let gateResolve = null;
+    stateResult = () => new Promise((r) => { gateResolve = r; });
+    for (const fn of [...resetListeners]) fn(); // 触发探测（不 flush——回执悬置）
+    await Promise.resolve(); // 让探测链跑到 state() 调用点（gate 未解＝回执在途）
+    assert.ok(typeof gateResolve === 'function', '腿 ⑤ 前置：探测在途（回执悬置）');
+    const armedBeforeRace = armed.length;
+    askInjects[0].callback(scopeOf()); // fiber 重跑回调：重入重建一套新接线
+    assert.equal(liveAskRegs(), 2, '腿 ⑤ 前置：重入重建后新接线在册（旧接线已拆）');
+    assert.equal(armed.length, armedBeforeRace + 1, '腿 ⑤ 前置：新 ask 模型武装');
+    const clearedBeforeRace = cleared.length;
+    gateResolve({ ok: false, error: { code: 'gateway/invocation-unavailable', message: 'late stale probe' } });
+    await flush();
+    assert.equal(liveAskRegs(), 2,
+      '腿 ⑤ 迟到缺席回执不拆新接线（探测快照令牌校验——修前：inner 非空即拆＝0＝红）');
+    assert.equal(cleared.length, clearedBeforeRace,
+      '腿 ⑤ 新接线的轮询不被迟到回执撤销');
   } finally {
     unserved();
   }

@@ -3699,7 +3699,11 @@ hostTest('REC-K：完成消息载体回滚凭据四字段——装配后增量�
   assert.equal(rig.calls.inject.length, 0, '通道未送达（前置：记录器只在真通道上计数）');
   // 关批 → 下一批装配见到完整缓冲（凭据链完整性经装配的 original 再现）。
   ledger.closeBatchIfIdle(rig.OWNER);
-  // §2.6 输入代记账：回滚不退代额度（保守方向）、下一批装配＝下一回合——装置内手工重置代。
+  // §2.6 输入代记账（断言级）：装配份额 8 已计代、回滚后退缓冲但不退代
+  //（保守方向——内容是否已计入宿主不可知，宁可少发不可超发；修前无代记账
+  // ＝读不到 8＝红）；下一批装配＝下一回合——装置内手工重置代。
+  assert.equal(ledger.subjects.get(rig.OWNER).generation.spent, 8,
+    '回滚不退代额度：装配份额 8 保持计入');
   ledger.subjects.get(rig.OWNER).generation.spent = 0;
   const { delivered } = ledger.collectBatch(rig.OWNER, {});
   assert.equal(delivered.length, 1, '重装配进批');
@@ -4071,10 +4075,16 @@ hostTest('RN-B：100 条空输出结算——物理消息恰 14（10＋3＋1）�
   assert.match(aggregate, /wait_ms=0/, '聚合带领取出路');
   assert.ok(!/targets=/.test(aggregate), '聚合示例不带 targets（一并领取全部就绪结果）');
   const notesText = [...individual, aggregate].join('\n');
-  // 上限按现行词典文案定值：§2.6 修订为延后说明三键补「领取时机」句（至迟在
-  // 经正常收尾的回合结束后可领取）——en 档四条说明合计 ~803，上限取 900 容一句
-  // 内的措辞微调，仍钉住「无界增长必红」的本意。
-  assert.ok(notesText.length <= 900, `说明字符合计 ${String(notesText.length)} ≤ 900（数值固定可测）`);
+  // 上限口径与题文一致（≤800）：四条说明各经 clampNote(200) 入界＋3 个 join
+  // 分隔符＝上限 803 理论值；现行 en 词典（含 §2.6 领取时机句）实得 ~773，
+  // 上限 800 钉住「clampNote 入界＋无界增长必红」两个方向。
+  assert.ok(notesText.length <= 800, `说明字符合计 ${String(notesText.length)} ≤ 800（数值固定可测）`);
+  // 时机句在场（§2.6 领取时机）：三键 en 带最短时机句——本断言缺席时，en 档
+  // 被 clampNote(200) 截去句尾的回归（长句形态）不会被锚面捕获。
+  for (const text of individual) {
+    assert.match(text, /[Ll]eftovers follow at turn end\.|至迟在本回合经正常收尾结束后/, '逐条说明带领取时机句（截断即红）');
+  }
+  assert.match(aggregate, /[Ll]eftovers follow at turn end\.|至迟在本回合经正常收尾结束后/, '聚合说明带领取时机句（截断即红）');
   // 未逐一说明的候选不静默丢失：内容在缓冲（空正文零内容）＋下一批 FIFO 补投。
   ledger.closeBatchIfIdle(rig.OWNER);
   const token2 = ledger.claimWait(rig.OWNER);
@@ -7700,6 +7710,51 @@ hostTest('RC-GEN：输入代记账——同代串行装配合计封顶、关批�
     assert.ok(fifth.delivered.every((item) => item.jobId !== 'rc-gen-a'),
       '④ 代额度耗尽后同代新载体零份额：小额增量同样延后（修前：关批即全额＝红）');
     assert.ok(fifth.deferred.includes('rc-gen-a'), '延后随 deferred 清单可见');
+
+    // ⑤ 回显原文与恢复切片同计代额度（§2.6 合计约束覆盖全部扣减点：普通
+    // 份额（#takeShare）、回显（#takeEchoShare）、恢复条目正文（chargeDelivery）
+    // ——任一路径漏记＝同代超发＝红）。回显：正文 150＋原文 60 恰可并批
+    //（E ≤ R 全量附、扣 E）→ spent 210；同代关批后下一批按剩余 190 开。
+    ctx.emit('agent/turn-stopping', { agent: { id: owner } });
+    subject.batch = null;
+    const entryC = seedTerminalJob(
+      ctx, owner, 'rc-gen-c', { maxResultChars: 400, agentLang: 'en', fullCommandEcho: true }, 'e'.repeat(150)
+    );
+    entryC.echoText = 'E'.repeat(60);
+    entryC.echoKind = 'command';
+    const echoBatch = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en', triggerJobIds: ['rc-gen-c'] });
+    const echoItem = echoBatch.delivered.find((item) => item.jobId === 'rc-gen-c');
+    assert.ok(echoItem !== undefined && echoItem.echoAttached === true, '⑤ 前置：回显原文随批附带（E ≤ R 全量附）');
+    assert.equal(subject.generation.spent, 150 + 60,
+      '⑤ 回显份额计入代内已交付（正文 150＋原文 60——修前：echo 不记账＝150＝红）');
+    subject.batch = null;
+    seedTerminalJob(ctx, owner, 'rc-gen-d', { maxResultChars: 400, agentLang: 'en' }, 'd'.repeat(250));
+    const echoNext = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en', triggerJobIds: ['rc-gen-d'] });
+    const dItem = echoNext.delivered.find((item) => item.jobId === 'rc-gen-d');
+    assert.ok(dItem?.truncated === true && /\[output truncated: 60 chars omitted\]/.test(dItem.text),
+      '⑤ 回显扣减后同代下一批按剩余 190 开（250 截 190、省略量 60——修前：漏记回显＝开 400 整条＝红）');
+    // ⑥ 恢复条目正文切片：同上口径（chargeDelivery 同一记账点）——切片 200
+    // 计入 spent；同代下一批按剩余 200 开。装置先清 ⑤ 截断残留的续段候选
+    //（d 的省略中段在缓冲，FIFO 会先装它——与⑥判据无关的旁路候选）。
+    ledger.jobs.get('rc-gen-d').buffer = '';
+    ctx.emit('agent/turn-stopping', { agent: { id: owner } });
+    subject.batch = null;
+    subject.recoveries.set('rc-gen-c', [
+      { ord: 1, text: 'r'.repeat(200), partial: false, terminal: { status: 'completed' }, registeredAt: ledger.now(), returned: false, via: 'wait' }
+    ]);
+    subject.recoverySeqs.set('rc-gen-c', 1);
+    assert.equal(ledger.stageRecovery('rc-gen-c', owner)?.tier, 1, '⑥ 前置：恢复份额可取');
+    const recBatch = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' });
+    const recItem = recBatch.delivered.find((item) => item.recovery === true);
+    assert.ok(recItem !== undefined && recItem.chars === 200, '⑥ 前置：恢复切片 200 装配');
+    assert.equal(subject.generation.spent, 200,
+      '⑥ 恢复切片计入代内已交付（修前：恢复路径不记账＝0＝红）');
+    subject.batch = null;
+    seedTerminalJob(ctx, owner, 'rc-gen-e', { maxResultChars: 400, agentLang: 'en' }, 'f'.repeat(250));
+    const recNext = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en', triggerJobIds: ['rc-gen-e'] });
+    const fItem = recNext.delivered.find((item) => item.jobId === 'rc-gen-e');
+    assert.ok(fItem?.truncated === true && /\[output truncated: 50 chars omitted\]/.test(fItem.text),
+      '⑥ 恢复扣减后同代下一批按剩余 200 开（250 截 200、省略量 50——修前：漏记恢复＝开 400 整条＝红）');
   } finally {
     ledger.disposeRow(ctx);
   }
