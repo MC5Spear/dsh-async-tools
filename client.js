@@ -1109,7 +1109,11 @@ function PresetBindingBlock(props) {
     actions.edit("boundPresets", JSON.stringify(next));
   }
   // 展示行集合：ready 态 = 目录项＋草稿里不在目录的已勾选 ID（保留条目）；
-  // error/空目录态 = 生效名单（value 层）里的 ID（失败不显示为空列表）。
+  // loading/error 态 = 已存绑定（value 层）∪草稿勾选的**并集**（§10.1，F04：
+  // 新勾选未保存的草稿条目不因读取失败/装载中从界面消失——仍可见、可取消、
+  // 可保存；已保存但草稿中已取消的条目仍显示、可再勾回。读取状态由状态行
+  // 标注——preset.loading／preset.unavailable／preset.failed，两语既有键复用；
+  // 已保存名单与草稿勾选分离表达：生效值行报已保存名单，复选框报草稿勾选）。
   var rows = [];
   var listed = {};
   var i;
@@ -1129,7 +1133,11 @@ function PresetBindingBlock(props) {
     }
   } else {
     for (i = 0; i < effective.length; i += 1) {
+      listed[effective[i]] = true;
       rows.push({ id: effective[i], name: undefined, broken: undefined, absent: true });
+    }
+    for (i = 0; i < draft.length; i += 1) {
+      if (!listed[draft[i]]) rows.push({ id: draft[i], name: undefined, broken: undefined, absent: true });
     }
   }
   var draftIndex = {};

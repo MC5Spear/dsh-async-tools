@@ -2040,6 +2040,67 @@ test('T23（PRESET-BIND-01·需求 9.4.2）：预设绑定块——目录四态/
   tree = renderCard();
   assert.ok(textOf(tree).join('').includes('preset.unavailable|'),
     '宿主网关不可用 ⇒ preset.unavailable 专属文案');
+
+  // ── F04（§10.1）：loading/error 态行集合＝已存绑定∪草稿勾选的**并集**——
+  //    新勾选未保存的草稿条目不因读取失败/装载中从界面消失（可取消、可保存）；
+  //    已保存但草稿已取消的条目仍显示、可再勾回；读取状态由状态行标注
+  //    （preset.loading／preset.failed——两语既有键复用）。修前红：非 ready 态
+  //    行集合只取已存绑定——未保存草稿勾选在装载中/读取失败时从界面消失。
+  replace(snapshot(13, {}, { boundPresets: ['dsh-async'] }));
+  tree = renderCard();
+  // 目录先就绪（含 third-ok），在草稿里新增勾选 third-ok（未保存）＋取消已
+  // 保存的 dsh-async（未保存）。
+  buttonByLabel(tree, 'preset.refresh|').props.onClick();
+  await settle();
+  pendingLists.shift()({ ok: true, value: { presets: [
+    { id: 'dsh-async', name: '异步增强（演示）' }, { id: 'third-ok' }
+  ] } });
+  await settle();
+  tree = renderCard();
+  checkboxOf(tree, 'third-ok').props.onChange({ target: { checked: true } });
+  tree = renderCard();
+  checkboxOf(tree, 'dsh-async').props.onChange({ target: { checked: false } });
+  tree = renderCard();
+  // 装载中（刷新未解）腿：并集在场——third-ok（草稿新增）勾选可见可取消、
+  // dsh-async（已存、草稿已取消）在场未勾可再勾回；loading 状态行同场标注。
+  buttonByLabel(tree, 'preset.refresh|').props.onClick();
+  await settle();
+  tree = renderCard();
+  assert.ok(textOf(tree).join('').includes('preset.loading|'),
+    '装载中状态行在场（读取状态由状态行标注，不靠行内消失表达）');
+  const loadingThird = checkboxOf(tree, 'third-ok');
+  assert.ok(loadingThird !== undefined,
+    '装载中：未保存的草稿勾选条目仍可见（修前红＝行集合只取已存绑定、条目消失）');
+  assert.equal(loadingThird.props.checked, true, '装载中：草稿勾选维持勾选');
+  assert.notEqual(loadingThird.props.disabled, true, '装载中：草稿勾选可取消');
+  const loadingSaved = checkboxOf(tree, 'dsh-async');
+  assert.ok(loadingSaved !== undefined, '装载中：已保存条目在场（并集的已存侧）');
+  assert.equal(loadingSaved.props.checked, false,
+    '装载中：已保存但草稿已取消的条目显示未勾（保存事实与草稿勾选分离表达）');
+  assert.notEqual(loadingSaved.props.disabled, true, '装载中：已取消条目可再勾回');
+  // 读取失败腿：同款并集＋失败状态行。
+  pendingLists.shift()({ ok: false, error: { code: 'registry/broken', message: 'boom' } });
+  await settle();
+  tree = renderCard();
+  assert.ok(textOf(tree).join('').includes('preset.failed|boom'),
+    '失败状态行在场（读取状态标注）');
+  const errorThird = checkboxOf(tree, 'third-ok');
+  assert.ok(errorThird !== undefined,
+    '读取失败：未保存的草稿勾选条目仍可见（修前红＝条目消失）');
+  assert.equal(errorThird.props.checked, true, '读取失败：草稿勾选维持勾选');
+  assert.notEqual(errorThird.props.disabled, true, '读取失败：草稿勾选可取消');
+  const errorSaved = checkboxOf(tree, 'dsh-async');
+  assert.ok(errorSaved !== undefined, '读取失败：已保存条目在场');
+  assert.equal(errorSaved.props.checked, false, '读取失败：草稿已取消显示未勾');
+  errorSaved.props.onChange({ target: { checked: true } });
+  tree = renderCard();
+  assert.equal(checkboxOf(tree, 'dsh-async').props.checked, true, '读取失败：已取消条目可再勾回');
+  // 草稿整组保存口径不受读取状态影响（失败态照常按草稿整组写入）。
+  await buttonByLabel(tree, 'save|').props.onClick();
+  assert.deepEqual(mutateCalls[3].ops,
+    [{ op: 'set', path: ['settings', 'boundPresets'], value: ['third-ok', 'dsh-async'] }],
+    '失败态保存照常按草稿整组写入（草稿序：过滤＋追加）');
+
   // 通知接线在场（宿主无专门预设事件——文档更新/连接重置两通知，设计 §5.5）。
   // connection/reset 现有两份订阅＝两个职责：预设目录重读（§5.5）＋ask 座位
   // 依赖撤下的承接探测（§4.3，askTakeover 启用时）——判据按「事件集合＋每事件
