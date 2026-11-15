@@ -4194,7 +4194,7 @@ test('J58：探针守卫静态锚——pack 判空先于首处 stdout.match、�
       Object.assign(new Error('ENOENT: no such file routing.example.yml'), { code: 'ENOENT' })],
     ['⑥ 带路径的传输失败（cause 链连接层 errno）→装置 2',
       (() => { const inner = new Error('connect failed'); inner.code = 'ECONNRESET';
-        const outer = new Error('unrelated transport failure in C:/route/routing.example.yml'); outer.cause = inner; return outer; })()],
+        const outer = new Error('unrelated transport failure in route/routing.example.yml'); outer.cause = inner; return outer; })()],
     ['⑥ 缺 API key（HTTP 401 网关凭据层状态，message 无 credential 词）→装置 2',
       Object.assign(new Error('Invalid configuration in routing.example.yml: missing API key'), { status: 401 })],
     ['⑥ 401 响应解码错误（HTTP 401 状态＋SyntaxError 形态——非补丁解析）→装置 2',
@@ -4204,8 +4204,10 @@ test('J58：探针守卫静态锚——pack 判空先于首处 stdout.match、�
     assert.equal(classifySessionFailure(sample), 'device', label);
   }
   // 正例：运行期真实解析失败（YAML 异常对象无稳定 code/status）与身份未知的
-  // 运行期失败——一律 core FAIL 1（不升格装置、不靠词面归因）。
-  assert.equal(classifySessionFailure(new Error('YAMLException: bad indentation of a mapping entry (C:\\run\\patch\\routing.example.yml:3:1)')), 'core',
+  // 运行期失败——一律 core FAIL 1（不升格装置、不靠词面归因）。样例 message 用
+  // 相对路径（档位判定只认 code/status/cause——message 里写不写盘符不影响
+  // 断言语义；交付范围零盘符字面量＝R29-f 判据 12）。
+  assert.equal(classifySessionFailure(new Error('YAMLException: bad indentation of a mapping entry (routing.example.yml:3:1)')), 'core',
     '⑥ 运行期真实解析失败→核心 FAIL 1（不升格为装置故障）');
   assert.equal(classifySessionFailure(new Error('something broke mid-session')), 'core',
     '⑥ 身份未知的运行期失败如实按核心 FAIL 报错');
