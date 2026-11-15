@@ -4091,6 +4091,14 @@ hostTest('RN-B：100 条空输出结算——物理消息恰 14（10＋3＋1）�
   await ledger.releaseWait(token2, rig.OWNER);
   assert.equal(rig.calls.inject.length, 28, '下一批再 10 条目＋3 逐条＋1 聚合（配额随关批复位）');
   assert.match(textOf(rig.calls.inject[14]), /job-rn-b011/, 'FIFO：第 11 条最先补投');
+  // 真实宿主作业编号形态（async-command-<16hex>＝30 字符）：{jobId} 只在
+  // wait 示例出现一次（叙述句无插值），全文 ≤200 且时机句在尾完整存活——
+  // 12 字符夹具编号（上文逐条）恰好掩盖 clampNote(200) 截尾把时机句整句
+  // 截掉的风险（两处插值在真实编号下 229/231＝截尾）。
+  const notice30 = t('en', 'delivery.deferredNotice', { jobId: 'async-command-a61a75aea0a94c0d' });
+  assert.ok(notice30.length <= 200, `真实编号（30 字符）形态全文 ${String(notice30.length)} ≤ 200`);
+  assert.ok(notice30.endsWith('leftovers follow at turn end.'),
+    '真实编号形态时机句在尾完整存活（两处插值回归即红）');
 });
 
 hostTest('RN-C：非空正文超限两形态——预算 1 只容 1 条（1＋3＋1＝5）；预算充足由条目上限触发（10＋3＋1＝14）；延后正文留缓冲可恢复', async () => {
