@@ -8032,6 +8032,8 @@ hostTest('RC-AA：迟到回滚身份校验——流已前进不动游标只丢�
 hostTest('RC-AB：合法回滚对照——凭据与流前缀一致才回退；同份额更后推进＝迟到（修前红）', async () => {
   // RC-AA 的对照锚：身份校验放行的形态照常回退（回滚能力未被身份校验误伤）；
   // 同一份额上存在更后推进（装配后流已越过凭据区间）时按迟到分档——不回退。
+  // 凭据与推进记录按现行形态携带装配实例（CORE-LEG-B-01：三重身份＝份额序＋
+  // 装配实例＋发放时游标位置）；无实例标识的旧凭据走保守腿（RC-AI 保守锚）。
   resetDeliveryLedger();
   const ctx = new Context();
   ledger.registerRow(ctx);
@@ -8044,30 +8046,253 @@ hostTest('RC-AB：合法回滚对照——凭据与流前缀一致才回退；�
       { ord: 1, text: 'a'.repeat(400), partial: false, terminal: { status: 'completed' }, registeredAt: ledger.now(), returned: true, via: 'wait' }
     ]);
     subject.recoverySeqs.set('rc-ab-job', 1);
-    // ① 合法回滚：流停在份额 1、凭据区间之后无新推进 → 游标回退、推进记录清。
+    // ① 合法回滚：凭据实例是流前缀尾部、流游标停在发放位置 → 游标回退、记录清。
     subject.recoveryStreams.set('rc-ab-job', {
-      ord: 1, offset: 400, advances: [{ ord: 1, from: 0, to: 400, signal: null }]
+      ord: 1, offset: 400, advances: [{ ord: 1, from: 0, to: 400, signal: null, inst: 1 }]
     });
-    ledger.undoClaim(owner, [{ recovery: true, jobId: 'rc-ab-job', recoveryOrd: 1, recoveryFrom: 0 }]);
+    ledger.undoClaim(owner, [{
+      recovery: true, jobId: 'rc-ab-job', recoveryOrd: 1, recoveryFrom: 0,
+      recoveryInst: 1, recoveryOffset: 400
+    }]);
     const rolled = subject.recoveryStreams.get('rc-ab-job');
     assert.ok(rolled !== undefined && rolled.ord === 1 && rolled.offset === 0,
       '① 合法回滚：游标回退到装配前（份额 1、偏移 0）');
     assert.equal(rolled.advances.length, 0, '① 回退点之后的推进记录清空');
-    // ② 同份额更后推进：凭据 from=0 但流已推进到 400→480——凭据区间已被越过，
-    //    按迟到分档：只丢自身记录、游标不动。
+    // ② 同份额更后推进：凭据 from=0（实例 1）但流已推进到 400→480——凭据实例
+    //    不再是流前缀尾部，按迟到分档：只丢自身记录、游标不动。
     subject.recoveryStreams.set('rc-ab-job', {
       ord: 1, offset: 480,
       advances: [
-        { ord: 1, from: 0, to: 400, signal: null },
-        { ord: 1, from: 400, to: 480, signal: null }
+        { ord: 1, from: 0, to: 400, signal: null, inst: 1 },
+        { ord: 1, from: 400, to: 480, signal: null, inst: 2 }
       ]
     });
-    ledger.undoClaim(owner, [{ recovery: true, jobId: 'rc-ab-job', recoveryOrd: 1, recoveryFrom: 0 }]);
+    ledger.undoClaim(owner, [{
+      recovery: true, jobId: 'rc-ab-job', recoveryOrd: 1, recoveryFrom: 0,
+      recoveryInst: 1, recoveryOffset: 400
+    }]);
     const late = subject.recoveryStreams.get('rc-ab-job');
     assert.ok(late !== undefined && late.ord === 1 && late.offset === 480,
       '② 同份额更后推进＝迟到：游标不动（仍在偏移 480）');
     assert.deepEqual(late.advances.map((adv) => adv.from), [400],
       '② 只丢弃凭据自身记录（from 0 的出册、from 400 的保留）');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+// ── RC-AI（CORE-LEG-B-01：恢复回滚的装配实例三重身份——同区间重装形态下
+// 「份额序＋份额内区间」两重身份失效，装配实例标识补齐区分）──────────────
+
+hostTest('RC-AI-1：同区间重装后旧凭据二次回滚——游标不回退、新装配的推进记录保留、下一片自流当前位置续取（修前红）', async () => {
+  // §2.6 三重身份：份额 P 的装配合法回滚后，同区间再次装配（新装配的凭据区
+  // 间与 P 相同、起点恰为 P 的回滚起点），P 的迟到第二次回滚凭据与流位置一
+  // 致、其后没有「区间更靠后」的新推进可判迟到——修前两重身份核对会再次回
+  // 退游标、下一片重发已交付前缀。装配实例单调递增（跨份额、不随份额清理复
+  // 位）补齐区分：旧凭据的实例不再是流前缀尾部 → 迟到，只作废自身推进记录
+  // （已随首次回滚出册），游标不动。装置走真实装配链（stageRecovery＋
+  // collectBatch 两轮装配＋undoClaim 三次递交）。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  try {
+    const owner = `rc-ai1-owner-${rcSuffix()}`;
+    ledger.noteJobStarted(ctx, { maxResultChars: 250, agentLang: 'en' }, 'rc-ai1-job', owner);
+    ledger.collectBatch(owner, { lang: 'en' }); // 建主体（空候选：零装配、零扣减）
+    const subject = ledger.subjects.get(owner);
+    subject.recoveries.set('rc-ai1-job', [
+      { ord: 1, text: 'a'.repeat(400), partial: false, terminal: { status: 'completed' }, registeredAt: ledger.now(), returned: false, via: 'wait' }
+    ]);
+    subject.recoverySeqs.set('rc-ai1-job', 1);
+    // 第一轮装配 [0,250)（批剩余 250），凭据取真实装配条目上的三重身份字段。
+    assert.equal(ledger.stageRecovery('rc-ai1-job', owner)?.tier, 1, '前置：份额可恢复');
+    const firstAssembled = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' }).delivered
+      .find((one) => one.recovery === true);
+    assert.ok(firstAssembled !== undefined && firstAssembled.chars === 250, '前置：首轮装配 [0,250)');
+    const firstCredential = {
+      recovery: true, jobId: 'rc-ai1-job',
+      recoveryOrd: firstAssembled.recoveryOrd,
+      recoveryFrom: firstAssembled.recoveryFrom,
+      ...(firstAssembled.recoveryInst === undefined ? {} : { recoveryInst: firstAssembled.recoveryInst }),
+      ...(firstAssembled.recoveryOffset === undefined ? {} : { recoveryOffset: firstAssembled.recoveryOffset })
+    };
+    // 首次回滚合法（凭据实例是流前缀尾部）：游标回 0、推进记录清空。
+    ledger.undoClaim(owner, [firstCredential]);
+    const rolled = subject.recoveryStreams.get('rc-ai1-job');
+    assert.ok(rolled !== undefined && rolled.ord === 1 && rolled.offset === 0 && rolled.advances.length === 0,
+      '前置：首次回滚合法（游标回退到装配前）');
+    // 同区间重装：关批＋重置代（装置内手工重置，等价下一回合领取）后再次装配
+    // ——新装配的凭据区间同为 [0,250)。
+    subject.batch = null;
+    subject.generation.spent = 0;
+    assert.equal(ledger.stageRecovery('rc-ai1-job', owner)?.tier, 1, '前置：同区间重装可恢复');
+    const reAssembled = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' }).delivered
+      .find((one) => one.recovery === true);
+    assert.ok(reAssembled !== undefined && reAssembled.chars === 250, '前置：同区间重装 [0,250)');
+    // 旧凭据的迟到第二次回滚（调用方持有的首轮凭据重复递交）：游标不回退、
+    // 新装配的推进记录保留（修前：两重身份与流位置一致 → 回退 0 → 下一片重
+    // 发已交付前 250）。
+    ledger.undoClaim(owner, [firstCredential]);
+    const stream = subject.recoveryStreams.get('rc-ai1-job');
+    assert.ok(stream !== undefined && stream.ord === 1 && stream.offset === 250,
+      '迟到二次回滚不动游标（仍在偏移 250——修前红＝回退 0）');
+    assert.equal(stream.advances.length, 1,
+      '新装配的推进记录保留（旧凭据自身记录已随首次回滚出册）');
+    // 下一片自流当前位置续取：[250,400)（150 字符），不重发已交付前缀。
+    subject.batch = null;
+    subject.generation.spent = 0;
+    assert.equal(ledger.stageRecovery('rc-ai1-job', owner)?.tier, 1, '续取可恢复');
+    const next = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' }).delivered
+      .find((one) => one.recovery === true);
+    assert.ok(next !== undefined && next.text === 'a'.repeat(150),
+      '下一片自 250 续取至份额尾（150 字符——修前红＝自 0 重发 250）');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+hostTest('RC-AI-2：迟到凭据按装配实例只作废自身推进记录——回合收尾中止复检不得再按其信号定案', async () => {
+  // 三重身份任一不符＝迟到：按装配实例定位，只作废该次装配自身的推进记录，
+  // 其余装配的推进记录与游标不动。被作废记录的中止信号不得再驱动回合收尾的
+  // 回退定案——若收尾仍按其信号回退，游标会退回已按迟到分档交回的内容。
+  // 装置：同一份额两轮装配（首轮信号装配后置中止），份额标记 returned 绕开
+  // 收尾确认环、由推进定案环单独定案——作废在场时按未中止的后续推进定案
+  // （份额清除＋确认＋流移除），对照＝作废缺席时中止信号驱动回退（份额滞留、
+  // 游标退回）。生产凭据携带装配实例（三重身份字段按现行形状取真实装配条目）。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  ledger.attachClaimedListener(ctx);
+  try {
+    const owner = `rc-ai2-owner-${rcSuffix()}`;
+    ledger.noteJobStarted(ctx, { maxResultChars: 250, agentLang: 'en' }, 'rc-ai2-job', owner);
+    ledger.collectBatch(owner, { lang: 'en' }); // 建主体（空候选：零装配、零扣减）
+    const subject = ledger.subjects.get(owner);
+    subject.recoveries.set('rc-ai2-job', [
+      { ord: 1, text: 'b'.repeat(400), partial: false, terminal: { status: 'completed' }, registeredAt: ledger.now(), returned: true, via: 'wait' }
+    ]);
+    subject.recoverySeqs.set('rc-ai2-job', 1);
+    // 第一轮装配 [0,250)（批剩余 250）：装配调用携带尚未中止的信号，装配完成
+    // 后置中止——推进记录上的信号即「装配后取消」，收尾复检本会按它回退。
+    assert.equal(ledger.stageRecovery('rc-ai2-job', owner)?.tier, 1, '前置：份额可恢复');
+    const cancelLater = new AbortController();
+    const firstAssembled = ledger.collectBatch(
+      owner, { consumeRecovery: true, lang: 'en', carrierSignal: cancelLater.signal }
+    ).delivered.find((one) => one.recovery === true);
+    assert.ok(firstAssembled !== undefined && firstAssembled.chars === 250,
+      '前置：首轮装配 [0,250)');
+    cancelLater.abort();
+    let stream = subject.recoveryStreams.get('rc-ai2-job');
+    assert.ok(stream?.advances?.[0]?.signal?.aborted === true,
+      '前置：首轮推进记录携带已中止信号');
+    // 第二轮装配 [250,400)（续段、未中止）：旧凭据由此不再是流前缀尾部。
+    subject.batch = null;
+    subject.generation.spent = 0;
+    assert.equal(ledger.stageRecovery('rc-ai2-job', owner)?.tier, 1, '前置：续段可恢复');
+    const second = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' }).delivered
+      .find((one) => one.recovery === true);
+    assert.ok(second !== undefined && second.chars === 150, '前置：续段装配 [250,400)');
+    // 旧凭据迟到递交：按实例只作废自身推进记录——游标不动、续段推进保留。
+    ledger.undoClaim(owner, [{
+      recovery: true, jobId: 'rc-ai2-job',
+      recoveryOrd: firstAssembled.recoveryOrd,
+      recoveryFrom: firstAssembled.recoveryFrom,
+      ...(firstAssembled.recoveryInst === undefined ? {} : { recoveryInst: firstAssembled.recoveryInst }),
+      ...(firstAssembled.recoveryOffset === undefined ? {} : { recoveryOffset: firstAssembled.recoveryOffset })
+    }]);
+    stream = subject.recoveryStreams.get('rc-ai2-job');
+    assert.ok(stream !== undefined && stream.ord === 1 && stream.offset === 400,
+      '迟到凭据不动游标（仍在偏移 400）');
+    assert.deepEqual(stream.advances.map((adv) => adv.from), [250],
+      '迟到凭据只作废自身推进记录（中止的首轮记录出册、续段推进保留）');
+    // 回合收尾：被作废记录的中止信号不得再驱动回退定案——在册的续段推进未
+    // 中止且服务到末尾，按定案清除份额并置作业确认标记（对照＝作废缺席时
+    // 中止信号驱动回退：份额滞留在册、游标退回 0、不置确认）。
+    ctx.emit('agent/turn-stopping', { agent: { id: owner } });
+    assert.equal(subject.recoveries.get('rc-ai2-job'), undefined,
+      '收尾按在册信号定案：份额清除（被作废的中止记录不参与定案）');
+    assert.equal(ledger.jobs.get('rc-ai2-job')?.confirmedAt !== undefined, true, '作业置恢复确认标记');
+    assert.equal(subject.recoveryStreams.get('rc-ai2-job'), undefined, '流随定案移除（不回退滞留）');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+hostTest('RC-AI-3：合法回滚对照——携带实例的现行有效凭据正常回退（RC-AB 判据不回归）', async () => {
+  // RC-AB ① 同判据的真实装配形态：凭据实例是流前缀尾部、流游标停在发放位
+  // 置 → 整体回退合法（游标回装配前、回退点之后的推进记录清空），三重身份
+  // 核对不误伤现行有效凭据；回退后同区间续取自回退点起。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  try {
+    const owner = `rc-ai3-owner-${rcSuffix()}`;
+    ledger.noteJobStarted(ctx, { maxResultChars: 300, agentLang: 'en' }, 'rc-ai3-job', owner);
+    ledger.collectBatch(owner, { lang: 'en' }); // 建主体（空候选：零装配、零扣减）
+    const subject = ledger.subjects.get(owner);
+    subject.recoveries.set('rc-ai3-job', [
+      { ord: 1, text: 'd'.repeat(500), partial: false, terminal: { status: 'completed' }, registeredAt: ledger.now(), returned: false, via: 'wait' }
+    ]);
+    subject.recoverySeqs.set('rc-ai3-job', 1);
+    assert.equal(ledger.stageRecovery('rc-ai3-job', owner)?.tier, 1, '前置：份额可恢复');
+    const assembled = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' }).delivered
+      .find((one) => one.recovery === true);
+    assert.ok(assembled !== undefined && assembled.chars === 300, '前置：装配 [0,300)');
+    const credential = {
+      recovery: true, jobId: 'rc-ai3-job',
+      recoveryOrd: assembled.recoveryOrd,
+      recoveryFrom: assembled.recoveryFrom,
+      ...(assembled.recoveryInst === undefined ? {} : { recoveryInst: assembled.recoveryInst }),
+      ...(assembled.recoveryOffset === undefined ? {} : { recoveryOffset: assembled.recoveryOffset })
+    };
+    ledger.undoClaim(owner, [credential]);
+    const rolled = subject.recoveryStreams.get('rc-ai3-job');
+    assert.ok(rolled !== undefined && rolled.ord === 1 && rolled.offset === 0,
+      '合法回滚：游标回退到装配前（份额 1、偏移 0）');
+    assert.equal(rolled.advances.length, 0, '回退点之后的推进记录清空');
+    // 回退后续取自回退点起（0），整段重取。
+    subject.batch = null;
+    subject.generation.spent = 0;
+    assert.equal(ledger.stageRecovery('rc-ai3-job', owner)?.tier, 1, '回退后可恢复');
+    const again = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' }).delivered
+      .find((one) => one.recovery === true);
+    assert.ok(again !== undefined && again.text === 'd'.repeat(300),
+      '续取自回退点 0 重取整段（合法回滚的重取语义不变）');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+hostTest('RC-AI 保守腿：无实例标识旧凭据（热更边界）按份额序与区间作废自身记录、不回退游标（修前红）', async () => {
+  // 计数器引入前的在册凭据（热更边界）没有装配实例可核对——保守处理：按份
+  // 额序与区间定位作废自身推进记录，不回退游标（回退需要三重身份证实，缺实
+  // 例时无法证实；宁可保留已交回内容不重取）。修前红＝两重身份一致即回退
+  // （RC-AB ① 的旧形态对无实例凭据也回退 0）。装置：流推进记录按热更边界形
+  // 态手工构造（无 inst），凭据不带实例字段。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  try {
+    const owner = `rc-aic-owner-${rcSuffix()}`;
+    ledger.noteJobStarted(ctx, { maxResultChars: 1000, agentLang: 'en' }, 'rc-aic-job', owner);
+    ledger.collectBatch(owner, { lang: 'en' }); // 建主体（空候选：零装配、零扣减）
+    const subject = ledger.subjects.get(owner);
+    subject.recoveries.set('rc-aic-job', [
+      { ord: 1, text: 'e'.repeat(400), partial: false, terminal: { status: 'completed' }, registeredAt: ledger.now(), returned: false, via: 'wait' }
+    ]);
+    subject.recoverySeqs.set('rc-aic-job', 1);
+    // 热更边界形态：推进记录与凭据都无实例标识（计数器引入前在册）。
+    subject.recoveryStreams.set('rc-aic-job', {
+      ord: 1, offset: 400, advances: [{ ord: 1, from: 0, to: 400, signal: null }]
+    });
+    ledger.undoClaim(owner, [{ recovery: true, jobId: 'rc-aic-job', recoveryOrd: 1, recoveryFrom: 0 }]);
+    const stream = subject.recoveryStreams.get('rc-aic-job');
+    assert.ok(stream !== undefined && stream.ord === 1 && stream.offset === 400,
+      '无实例凭据不回退游标（仍在偏移 400——修前红＝回退 0）');
+    assert.equal(stream.advances.length, 0, '按份额序与区间作废自身推进记录');
+    // 行为面：续取自游标 400 起——份额取尽，按流取尽待定案档（不重发前缀）。
+    assert.equal(ledger.stageRecovery('rc-aic-job', owner)?.tier, 1,
+      '流取尽待定案（第 1 档 drained——份额在册、服务到末尾）');
   } finally {
     ledger.disposeRow(ctx);
   }
