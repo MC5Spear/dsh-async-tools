@@ -45,8 +45,9 @@ var module = { exports: {} }; var exports = module.exports;
 //   开合只存 `FieldShell` 局部 state，不碰草稿/保存/mutate；缺键回退＝按钮/说明行
 //   退场（`resolveCopy`）。20 字段的键组在场断言（标签/hint/help 三前缀两档齐全，
 //   含 `boundPresets` 的三个同前缀键）由 test/two-planes.test.mjs 的 T18c 在场
-//   断言循环守；两语键集一致性另由 tools/check-model-text.mjs 的静态键集层检查
-//  （T21 实际核对的是语言选择与缺键回退宿主，见同文件）。
+//   断言循环守；两语**词典全键集一致性**（DICTIONARIES.zh/en 逐键对照）由同文件
+//   的 T21 键集循环守（tools/check-model-text.mjs 只覆盖模型侧词典 TEXT，明确
+//   排除 client——改界面词典后勿按该检查器入口误判键集受检）。
 // - 毫秒字段的秒数读数（需求 §5.4）长在说明行里，
 //   **与字段说明换行**（行首不带点——设置页读数行统一形态）：说明行 =
 //   字段说明 + 换行 + 「生效：S s」+「 · 」+「输入：T s」。值**只写秒文本**
@@ -907,9 +908,9 @@ function createCardModel(ctx) {
  * **目录读取的补读与世代校验**（设计 §10.1，与 §4.3 的 state 读取代际同一
  * 纪律）：读取绑定目录世代与单调读取序号——世代随 `attach`（含注入回调重入）
  * 与 `detach` 每次运行递增，旧世代或同代乱序较旧的回执（成功与失败同判）零
- * 写入；读取在途时到达的变更/重连通知置待补读标记、在途回执落地后合并为恰
- * 一次补读；`attach` 递增世代并立即首读（在途旧请求不挡新首读，其回执按世代
- * 不符隔离）；`detach` 后在途回执失效，内部保留最后已知快照、展示态转服务
+ * 写入；读取在途时到达的变更/重连通知置待补读标记、在途请求完成后合并为恰
+ * 一次补读；`attach` 递增世代并立即首读（在途旧请求不挡新首读，其响应按世代
+ * 不符隔离）；`detach` 后在途响应失效，内部保留最后已知快照、展示态转服务
  * 缺席的可重试错误态。补读与重读只更新目录快照，不触碰复选草稿与已存绑定
  * （草稿在设置表单模型，本模型不持有）。
  *
@@ -935,7 +936,7 @@ function createPresetCatalog() {
   // （含旧空快照）不覆盖目录、不污染错误态。
   var generation = 0;
   var readSeq = 0;
-  // 待补读标记：读取在途时到达的变更/重连通知不丢弃——在途回执落地后自动补
+  // 待补读标记：读取在途时到达的变更/重连通知不丢弃——在途请求完成后自动补
   // 读恰一次（多次通知合并为一次补读），补读本身同样受代际纪律约束。
   var pendingReload = false;
   function publish() {
@@ -997,8 +998,8 @@ function createPresetCatalog() {
   }
   function load() {
     if (snapshot.status === "loading") {
-      // 读取在途：通知不丢弃——置待补读标记，在途回执落地后自动补读恰一次
-      //（多次通知合并为一次；按回执落地后的新读取取新快照）。
+      // 读取在途：通知不丢弃——置待补读标记，在途请求完成后自动补读恰一次
+      //（多次通知合并为一次；按完成后的新读取取新快照）。
       pendingReload = true;
       return;
     }
@@ -3003,8 +3004,8 @@ function apply(ctx) {
         if (probing) return;
         probing = true;
         // 探测快照（§4.3 竞态防护）：记录探测发起时的接线与命名空间代理——
-        // 回执落地时任一已变（注入回调重入重建了接线／换了代理）即作废，旧
-        // 代理的迟到缺席回执不得拆掉新接线。
+        // 请求完成时任一已变（注入回调重入重建了接线／换了代理）即作废，旧
+        // 代理的迟到缺席响应不得拆掉新接线。
         var probedInner = inner;
         var probedNs = lastNs;
         Promise.resolve().then(function () { return probedNs.state(); }).then(function (result) {
