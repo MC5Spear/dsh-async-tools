@@ -2035,6 +2035,150 @@ test('T23（PRESET-BIND-01·需求 9.4.2）：预设绑定块——目录四态/
   unmount();
 });
 
+// ── T-BIND-DRAFT（2026-11-15 验收 F04／UI-02；设计 §10.1 绑定目录草稿可见）──
+// 目录 loading／error 态的条目区＝生效名单 ∪ 草稿已勾选：ready 期间新勾的
+// 预设在目录重读期间保持可见、可直接取消（草稿内部从未丢，但藏在草稿文本
+// 里的条目等于不能操作——修前红＝loading/error 只画生效名单，新勾选条目
+// 消失且无法取消）。loading 态不标 preset.absent（目录回来前未知）；error
+// 态保留 absent 注记（目录确实没读出来）。
+test('T-BIND-DRAFT（F04）：目录 loading／error 态条目区＝生效∪草稿——新勾选可见可取消；loading 不标缺席、error 保留注记', async () => {
+  const { react, begin, flush, unmount } = makeReactShim();
+  const { makePrimitivesDouble } = await import('./_primitives-double.mjs');
+  const double = makePrimitivesDouble(react);
+  const source = readFileSync(resolve(ROOT, 'client.js'), 'utf8');
+  let loaded;
+  new Function('window', source)({ __ModuleLoader__: { load: (spec) => { loaded = spec; } } });
+  const product = loaded.factory((name) => (name === 'react' ? react : double));
+
+  const DEFAULTS = {
+    defaultYieldMs: 20000, minYieldMs: 20000, maxYieldMs: 600000,
+    defaultWaitMs: 30000, minWaitMs: 20000, maxWaitMs: 600000,
+    pollIntervalMs: 500, maxResultChars: 12000,
+    jobKind: 'async-command', subagentProvider: '', uiLang: 'auto', agentLang: 'en',
+    silentFailureGuard: false, workflowProgressLog: false, fullCommandEcho: false,
+    askTakeover: false, askTimeoutMs: 60000, askExtendMs: 60000, askUiSeat: 'sidebar',
+    // 生效名单只有一项；目录里另有 third-ok 可勾（制造「草稿新勾、目录外无」形态）。
+    boundPresets: ['dsh-async']
+  };
+  const snapshot = (revision, user, overrides) => ({
+    status: 'ready',
+    value: { settings: { ...DEFAULTS, ...overrides } },
+    base: {},
+    user: { settings: user },
+    revision,
+    writable: true,
+    mode: 'host'
+  });
+  let current = snapshot(3, {});
+  const listeners = [];
+  const mutateCalls = [];
+  const controller = {
+    getSnapshot: () => current,
+    subscribe: (listener) => { listeners.push(listener); return () => {
+      const at = listeners.indexOf(listener); if (at >= 0) listeners.splice(at, 1);
+    }; },
+    mutate: async (ops, rev) => { mutateCalls.push({ ops, rev }); return true; }
+  };
+  const pendingLists = [];
+  const fakeAgentPresets = {
+    list: () => new Promise((resolveList) => { pendingLists.push(resolveList); })
+  };
+  const registrations = [];
+  product.apply({
+    locale: { register: () => () => {} },
+    configForms: { whileServed: (ids, load) => load(), get: () => controller },
+    remote: { $mount: () => Promise.resolve(() => {}), $on: () => () => {} },
+    on: () => () => {},
+    uiWorkspace: { openSession: () => {} },
+    inject: (list, fn) => fn({ remote: { 'async-tools-ask': {}, agentPresets: fakeAgentPresets } }),
+    slots: { inject: (slotName, load) => load(), register: (options, Component) => { registrations.push(Component); } },
+    effect: (fn) => fn()
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  const Card = registrations[0];
+  const t = (key) => (key === 'preset.failed' || key === 'preset.brokenReason' ? `${key}|{reason}` : `${key}|`);
+  const expand = (node) => {
+    if (node === null || node === undefined || typeof node !== 'object') return node;
+    if (Array.isArray(node)) return node.map(expand);
+    if (typeof node.type === 'function') {
+      const component = node.type;
+      begin(component, node.props?.key);
+      const rendered = component(node.props ?? {});
+      flush();
+      return expand(rendered);
+    }
+    const children = node.props?.children;
+    if (children !== undefined) {
+      const expanded = expand(children);
+      if (expanded !== children) return { ...node, props: { ...node.props, children: expanded } };
+    }
+    return node;
+  };
+  const renderCard = () => expand({ type: Card, props: { view: 'page', t } });
+  const settle = () => new Promise((resolveTick) => { setTimeout(resolveTick, 0); });
+  const buttonByLabel = (aTree, label) =>
+    findNode(aTree, (node) => node.type === 'button' && textOf(node).join('') === label);
+  const checkboxOf = (aTree, presetId) =>
+    findNode(aTree, (node) => node.type === 'input' && node.props.type === 'checkbox'
+      && node.props.id === `plugin-config-boundPresets-${presetId}`);
+  const noteOf = (aTree, presetId) =>
+    findNode(aTree, (node) => node.type === 'li' && node.props.key === presetId
+      && findNode(node, (child) => child.type === 'input'
+        && child.props.id === `plugin-config-boundPresets-${presetId}`) !== undefined);
+
+  // ready：勾上 third-ok（草稿＝生效 dsh-async ∪ 新勾 third-ok）。
+  await settle();
+  pendingLists.shift()({ ok: true, value: { presets: [
+    { id: 'dsh-async', name: '异步增强（演示）' },
+    { id: 'third-ok' }
+  ] } });
+  await settle();
+  let tree = renderCard();
+  checkboxOf(tree, 'third-ok').props.onChange({ target: { checked: true } });
+  tree = renderCard();
+  assert.equal(checkboxOf(tree, 'third-ok').props.checked, true, '前置：ready 态勾上新预设（进草稿）');
+
+  // loading（刷新重读、promise 未解）：草稿新勾的 third-ok 行仍在场、可取消；
+  // 生效与草稿行都不标 preset.absent（目录回来前未知——loading 不声称
+  // 「未在当前预设列表中发现」）。修前红＝非 ready 态只画生效名单，
+  // third-ok 行消失。
+  buttonByLabel(tree, 'preset.refresh|').props.onClick();
+  await settle();
+  tree = renderCard();
+  const loadingThird = checkboxOf(tree, 'third-ok');
+  assert.ok(loadingThird !== undefined && loadingThird.props.checked === true,
+    'loading 态草稿新勾条目保持可见且维持勾选（修前红＝只画生效名单、行消失）');
+  assert.notEqual(loadingThird.props.disabled, true, 'loading 态草稿条目可取消（不经保存即可撤回新勾）');
+  assert.ok(!textOf(noteOf(tree, 'third-ok')).join('').includes('preset.absent|'),
+    'loading 态不标缺席注记（目录未读出前不声称「未在列表中发现」）');
+  assert.ok(!textOf(noteOf(tree, 'dsh-async')).join('').includes('preset.absent|'),
+    'loading 态生效名单行同样不标缺席注记');
+
+  // error（重读失败）：行集合仍是 生效∪草稿；error 态保留 absent 注记
+  //（目录确实没读出来——与既有失败态注记口径一致）。
+  pendingLists.shift()({ ok: false, error: { code: 'registry/broken', message: 'boom' } });
+  await settle();
+  tree = renderCard();
+  const errorThird = checkboxOf(tree, 'third-ok');
+  assert.ok(errorThird !== undefined && errorThird.props.checked === true,
+    'error 态草稿新勾条目仍可见、维持勾选（可不经保存直接取消）');
+  assert.ok(textOf(noteOf(tree, 'third-ok')).join('').includes('preset.absent|'),
+    'error 态草稿条目带缺席注记（目录读失败——注记口径与生效行一致）');
+  assert.ok(textOf(noteOf(tree, 'dsh-async')).join('').includes('preset.absent|'),
+    'error 态生效名单行保留缺席注记（既有口径）');
+
+  // 取消路径：error 态直接取消 third-ok —— 行随之消失（草稿移除、不在生效
+  // 名单——「可直接取消」的完整判据）。
+  errorThird.props.onChange({ target: { checked: false } });
+  tree = renderCard();
+  assert.equal(checkboxOf(tree, 'third-ok'), undefined,
+    '取消后草稿条目行消失（新勾选不经保存即可完全撤回）');
+  assert.ok(checkboxOf(tree, 'dsh-async') !== undefined, '生效名单行不受草稿取消影响');
+  assert.equal(mutateCalls.length, 0, '全程零保存（可见性是渲染层修复，不是写操作）');
+  unmount();
+});
+
 test('T24（VIS-INPUT-01/VIS-BADGE-01/VIS-ACTION-TIER-01，设计 §8.2.5）：待答面板两档字号、命中区档位与徽标几何', async () => {
   // 布局级判据：从样式表原文解析可计算尺寸（两档字号、命中区档位、槽宽、
   // 面板避让公式）。这不替代真机渲染测量——真实浏览器合成、触屏命中与
@@ -2292,11 +2436,16 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     ],
     maxResultChars: [
       ['正整数', '必须是正整数'],
-      // DOC-04 批次共享口径：多条结果共享一份上限（不是「每次返回各自一份」）。
-      ['共享', '共用', '共同占用'],
-      ['交付批次', '同一交付批次', '一个交付批次'],
+      // P01-N 批次额度口径（设计 5.6 maxResultChars 行）：同一次模型输入内
+      // 共享一份——普通规则下同一开放批次内的多次调用合批，间隔与其他工具
+      // 工作不刷新额度；延后内容按批次继续交付。
+      ['同一次模型输入', '一次模型输入内', '同一次输入内'],
+      ['共享一份字符额度', '共享一份额度', '共用这一份'],
+      ['合批共享', '并入同一开放批次', '并成一个批次共享'],
+      ['不刷新额度', '不会刷新额度'],
       ['保留首尾', '保留开头与结尾', '首尾都保留'],
       ['说明截断', '注明截断', '截断说明'],
+      ['按批次继续交付', '延后内容按批次', '随下一批次继续交付'],
       ['另计', '不计入', '单独计量']
     ],
     jobKind: [
@@ -2425,11 +2574,16 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     ],
     maxResultChars: [
       ['a positive integer', 'positive integer'],
-      // DOC-04 batch-shared quota.
-      ['shared', 'draw on the same quota', 'one shared quota'],
-      ['delivery batch', 'one delivery batch', 'per delivery batch'],
-      ['the head and tail are kept', 'head and tail kept', 'keeps its head and tail', 'keeps the head and tail'],
-      ['truncation note', 'a note about the truncation', 'states the truncation'],
+      // P01-N batch-allowance wording (design 5.6): shared within one model
+      // input — calls in the same open batch merge; gaps and other tool work
+      // do not refresh the allowance; deferred content keeps arriving per batch.
+      ['one model input', 'within one model input', 'a single model input'],
+      ['a single character allowance', 'one shared character allowance', 'this one allowance'],
+      ['share it as one batch', 'the same open delivery batch', 'merge into one batch'],
+      ['refreshes the allowance', 'refresh the allowance'],
+      ['the head and tail are kept', 'keeps the head and tail', 'head and tail kept'],
+      ['a truncation note', 'a note about the truncation', 'the truncation stated'],
+      ['batch by batch', 'deferred content', 'goes on arriving batch by batch'],
       ['counted separately', 'not counted toward the cap', 'separate from the cap']
     ],
     jobKind: [
@@ -2524,7 +2678,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minWaitMs: '作用于等待入口正等待（wait_ms > 0）的 wait_ms；请求低于下限时按下限取值。wait_ms=0 只做即时检查、不会被抬高到下限。等待到时结束，后台继续运行。',
     maxWaitMs: '作用于等待入口的 wait_ms；高于上限时按上限取值。等待到时结束，后台继续运行。',
     pollIntervalMs: 'async_wait 的子代理目标按这个间隔周期性检查目标是否还在跑，作为变化事件没到时的备用检查手段。',
-    maxResultChars: '同一交付批次内多条结果共享的字符数上限，必须是正整数；超限时保留开头与结尾并注明截断，状态与提示单独计量。',
+    maxResultChars: '同一次输入内共同到达的多条结果并成一个批次共享，共用这一份额度，必须是正整数；调用之间隔多久、中间插入其他工具工作都不刷新额度；超限时保留开头与结尾并注明截断；装不下的内容随下一批次继续交付，状态与提示单独计量。',
     jobKind: '命令作业注册时用的类型名，出现在作业列表和日志里方便辨认。',
     subagentProvider: 'async_agent 创建子代理的后端。',
     uiLang: '决定界面文案（设置表单、字段帮助、待答界面）显示中文还是英文；自动档跟随宿主语言。',
@@ -2547,7 +2701,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minWaitMs: 'Governs wait_ms of positive waits (wait_ms > 0) on the wait entry; a request below the floor is clamped to the lower bound; wait_ms=0 is an immediate check only and is not raised to the bound; the wait ends on schedule and the background task keeps running.',
     maxWaitMs: 'Governs wait_ms on the wait entry; a request above this ceiling uses the upper bound; the wait ends on schedule and the background task keeps running.',
     pollIntervalMs: 'async_wait\'s subagent targets decide how often to run a backup check of the target\'s running state when the change event has not arrived.',
-    maxResultChars: 'Cap on characters shared by the multiple results of one delivery batch (must be a positive integer); past it the head and tail are kept with a note about the truncation; status and notices are counted separately.',
+    maxResultChars: 'Results from this package landing inside a single model input merge into one batch and draw on one shared character allowance (a positive integer); gaps between calls and other tool work never refresh the allowance; past it, head and tail kept and the truncation stated; what does not fit goes on arriving batch by batch, with status and notices counted separately.',
     jobKind: 'The type name used when registering command jobs so they can be told apart in job lists and logs.',
     subagentProvider: 'The backend async_agent spawns subagents with.',
     uiLang: 'Sets the language (Chinese or English) of the settings form, field help, and pending panel; the auto choice follows the host language.',
@@ -2637,9 +2791,21 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     ],
     maxResultChars: [
       ['正整数', 'String.length'],
-      ['按交付批次共享', '交付批次'],
+      // P01-N（设计 5.6 展开列）：合批共享示例＋间隔不刷新；窄例外（输入
+      // 边界证据关批后、下一次模型请求前完成消息开新批可另取额度）＝不是
+      // 绝对总量上限；截断标记与延后内容的继续取得（边界后主动领取）。
+      ['同一次模型输入', '一次模型输入内', '同一次输入内'],
+      ['合批共享', '并入同一开放批次', '并成一个批次共享'],
       ['先到先分配', '先到先得'],
-      ['保首尾并说明省略量与截断', '保首尾', '保留首尾、注明省略与截断'],
+      ['不刷新额度', '不会刷新额度'],
+      ['窄例外', '例外——'],
+      ['完成消息开新批', '按完成消息开新批'],
+      ['另取额度', '可能另取'],
+      ['不是一次输入全部本包结果的绝对总量上限', '并非一次输入的绝对总量上限'],
+      ['主动领取', 'wait_ms=0'],
+      ['保留首尾', '保首尾'],
+      ['说明截断', '注明截断'],
+      ['按批次继续交付', '延后内容按批次', '随下一批次继续交付'],
       ['另计', '单独计量']
     ],
     jobKind: [
@@ -2720,7 +2886,11 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
       ['不代替开关', '仍分别受各自开关控制', '各开关照旧各管各的'],
       ['按会话当前实际预设匹配', '当前实际预设', '按会话当下实际生效的预设算'],
       ['全部取消勾选并保存', '取消勾选并保存', '把预设全部清空再保存'],
-      ['「刷新」重读', '点「刷新」重新读取']
+      ['「刷新」重读', '点「刷新」重新读取'],
+      // F04（T-BIND-DRAFT）：loading／error 不显示为空列表；未保存勾选草稿
+      // 保持可见、可取消。
+      ['读取失败或加载中不显示为空列表', '不显示为空列表'],
+      ['未保存的勾选草稿保持可见、可取消', '勾选草稿保持可见', '草稿保持可见可取消']
     ]
   };
   const HELP_FACTS_EN = {
@@ -2768,9 +2938,24 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     ],
     maxResultChars: [
       ['positive integer', 'String.length'],
-      ['shared per delivery batch', 'delivery batch'],
+      // P01-N (design 5.6 expanded column): merged-batch example + no refresh
+      // on gaps; the narrow exception (after boundary-evidence close, a
+      // completion message before the next model request opens a new batch
+      // with a fresh allowance) = not an absolute total cap; truncation note
+      // and how deferred content keeps arriving (active fetch after the
+      // boundary).
+      ['one model input', 'within one model input', 'a single model input'],
+      ['share it as one batch', 'the same open delivery batch', 'merge into one batch'],
       ['first come first served', 'first arrivals take the quota first'],
-      ['head and tail kept', 'omission and truncation stated', 'keeping the head and tail'],
+      ['refreshes the allowance', 'refresh the allowance'],
+      ['Narrow exception', 'narrow exception'],
+      ['opens a new batch', 'completion message opens a new batch'],
+      ['a fresh allowance', 'draw a fresh allowance'],
+      ['not an absolute total cap', 'not an absolute total cap on all'],
+      ['fetch it actively', 'wait_ms=0', 'async_wait'],
+      ['the head and tail are kept', 'head and tail kept', 'keeps the head and tail'],
+      ['a truncation note', 'states the truncation', 'the truncation stated'],
+      ['batch by batch', 'goes on arriving batch by batch', 'deferred content'],
       ['counted separately', 'not counted toward the cap']
     ],
     jobKind: [
@@ -2856,7 +3041,12 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
       ["session's current effective preset", 'current effective preset',
         'the preset actually in effect for the session'],
       ['unchecking every preset and saving', 'unchecking every preset', 'clear every checkbox and save'],
-      ['reloads via "Refresh"', 'the Refresh button reloads']
+      ['reloads via "Refresh"', 'the Refresh button reloads'],
+      // F04 (T-BIND-DRAFT): loading/error never shows an empty list; unsaved
+      // checked drafts stay visible and can be unchecked.
+      ['does not show an empty list', 'not show an empty list'],
+      ['unsaved checked drafts stay visible', 'drafts stay visible and can be unchecked',
+        'unsaved drafts remain visible']
     ]
   };
   // 等义改写样本（同 ② 的自由度声明）：与词典同事实、不同措辞——刻意使用组内
@@ -2869,7 +3059,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minWaitMs: '作用于正值等待（wait_ms > 0）的下限：低于它就取下限；wait_ms=0 只做即时检查、不会被抬高。到时还回控制权、句柄仍有效；消息来了可以提前结束本次等待。',
     maxWaitMs: 'wait_ms 的上界：高于它就取上限。与 minWaitMs 构成 wait_ms > 0 的取值区间；零等待不被抬高。到时还回控制权、句柄仍有效；消息来了可以提前结束本次等待。',
     pollIntervalMs: 'async_wait 的子代理按这个间隔定期查目标还在不在跑——变化事件优先、轮询作为备用通道；间隔受 pollIntervalMs ≤ maxWaitMs 约束。',
-    maxResultChars: '一个交付批次内到达模型输入的多条结果共享同一份字符额度（按 String.length 计量、必须是正整数），先到先得；额度耗尽后到的内容延后或裁剪，保留首尾、注明省略与截断；状态与提示单独计量。',
+    maxResultChars: '这一项按 String.length 数字符、必须是正整数。同一次输入内到的多条结果并成一个批次共享、先到先得，调用间隔与别的工具工作不会刷新额度。窄例外——批次已在认领、回合停止或步骤边界这类输入边界证据上关掉之后，下一次模型请求前恰有作业以完成消息开新批，同一次输入可能另取额度；所以它并非一次输入的绝对总量上限。超限的保首尾并注明截断，装不下的随下一批次继续交付，可在此边界之后 wait_ms=0 主动领取；状态与提示单独计量。',
     jobKind: '给命令作业注册用的类型名，方便在作业清单与日志里认出来；留空会被拒绝。',
     subagentProvider: 'async_agent 创建子代理的后端，缺省用 spawn；输入去空白后为空就回落到默认值；写了不存在的后端，创建时拒绝并说明原因。要指定模型，就用调用的 provider、model 两参数。',
     uiLang: '界面文字与 Agent 文案是互不联动的两个开关：本开关只管界面文案，Agent 文案语言 agentLang 决定；auto 跟宿主语言走。',
@@ -2881,7 +3071,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     askTimeoutMs: '从收到一批提问开始计时，一批多题共用一个期限；到期没答的算作超时，Agent 继续处理任务。面板过期后还能作答；迟到作答送回所属会话：会话空闲且无未领取的本插件通知，就开新回合直接送达；会话在忙或已有未领取通知，就跟下一次消息一起领，不马上开回合。',
     askExtendMs: '待答面板的「增加等待时间」每点一下，就给该会话此刻还没到期的批次各加这段时间，叠加在原截止时点上；新批次按自己的初始期限计时。',
     askUiSeat: '两种位置共用同一套答题交互，切换后提问、计时、答案交付都不变；全部处理完徽标就隐去。',
-    boundPresets: '勾选后，使用该预设的会话得到本包的执行纪律段——为选中的预设补上操作要求；静默失败提示与提问接管各开关照旧各管各的，名单不越权。匹配按会话当下实际生效的预设算。默认是本包两份预设；把预设全部清空再保存＝全部解除；目录里没有的已绑定项保留、可取消。点「刷新」重新读取；读失败时显示已保存绑定，可取消。'
+    boundPresets: '勾选后，使用该预设的会话得到本包的执行纪律段——为选中的预设补上操作要求；静默失败提示与提问接管各开关照旧各管各的，名单不越权。匹配按会话当下实际生效的预设算。默认是本包两份预设；把预设全部清空再保存＝全部解除；目录里没有的已绑定项保留、可取消。点「刷新」重新读取；读失败或还在装载时都不显示为空列表，没保存的勾选草稿保持可见，随手可撤。'
   };
   const HELP_REWRITE_EN = {
     defaultYieldMs: "async_run and async_workflow bound each call's occupancy with the first wait — past it with work unfinished, you get a job id back and the task keeps running in the background; messages or cancellation end the wait sooner. Settled bodies are delivered alongside a wait return or completion message. The default must sit inside minYieldMs ≤ defaultYieldMs ≤ maxYieldMs.",
@@ -2891,7 +3081,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minWaitMs: 'Floor for waits with wait_ms > 0: below it the request clamps to the bound; wait_ms=0 is the exception — an immediate check only, not lifted. When the budget ends, hands control back; the handle stays valid; an arriving message can end the wait early.',
     maxWaitMs: 'Ceiling for wait_ms: above it the request clamps to the upper bound. With minWaitMs it forms the range for waits with wait_ms > 0; zero waits are not lifted. When the budget ends, hands control back; the handle stays valid; an arriving message can end the wait early.',
     pollIntervalMs: "async_wait's subagent side checks on two channels whether the target still runs — change events first, with polling as the fallback channel; the interval is bound by the pollIntervalMs ≤ maxWaitMs rule.",
-    maxResultChars: 'One delivery batch of results reaching the model input shares a single character allowance (measured by String.length, a positive integer), first arrivals take the quota first; past it content is deferred or cut, keeping the head and tail and noting what was omitted and truncated; status and notices are not counted toward the cap.',
+    maxResultChars: 'This one counts characters by String.length and must be a positive integer. Results of this package landing inside a single model input merge into one batch, first arrivals take the quota first, and neither gaps between calls nor other tool work refresh the allowance. Narrow exception — once a batch has closed on input-boundary evidence such as a claim, turn stopping, or a step boundary, a job landing as a completion message before the next model request opens a new batch and the same input may draw a fresh allowance; so this is not an absolute total cap on everything this package returns within one input. Past it, head and tail kept and the truncation stated; what does not fit goes on arriving batch by batch, and can be fetched by calling async_wait with wait_ms=0 after the next model-input boundary; status and notices counted separately.',
     jobKind: 'Registry entries carry the type label given to command jobs when they are registered, so they can be told apart in job listings and log entries; leaving it blank is rejected.',
     subagentProvider: 'The backend that spawns subagents for async_agent, defaulting to spawn; an empty trimmed value reverts to the default; an unknown backend is refused with an understandable reason at subagent creation. To pick a model, specify provider plus model on the call.',
     uiLang: 'Interface text and Agent-facing copy are two separate switches: this one governs just the interface text, and agentLang decides the Agent-facing language; auto tracks the host language.',
@@ -2903,7 +3093,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     askTimeoutMs: 'Timed from receiving a batch of questions; all questions in the batch share a single deadline; unanswered ones count as timed out and the Agent continues the task. The panel still takes answers past the deadline; a late answer reaches the owning session: if the session is idle with no unclaimed notices from this plugin, it starts a fresh turn and is delivered directly; if it is busy or already has unclaimed notices, it waits for the next claim instead of opening a turn at once.',
     askExtendMs: 'Each press of "Extend wait" in the pending panel adds this much time to the batches of that session still inside their window, piled onto the original deadline; new batches run on their own starting deadlines.',
     askUiSeat: 'Both placements use one shared interaction for questions — questioning, timing, and delivery all stay the same; the badge disappears when all are handled.',
-    boundPresets: "Checking a preset gives its sessions this package's execution-discipline section — it adds operating requirements for Agents on that preset; the silent-failure hint and question takeover keep answering to their own switches — the list only marks the scope. Matching goes by the preset actually in effect for the session. The default is this package's two presets; clear every checkbox and save to unbind them all; bound ids missing from the list stay and can be unchecked. Clicking the Refresh button reloads it; on a read failure saved bindings are shown and can be unchecked."
+    boundPresets: "Checking a preset gives its sessions this package's execution-discipline section — it adds operating requirements for Agents on that preset; the silent-failure hint and question takeover keep answering to their own switches — the list only marks the scope. Matching goes by the preset actually in effect for the session. The default is this package's two presets; clear every checkbox and save to unbind them all; bound ids missing from the list stay and can be unchecked. Clicking the Refresh button reloads it; on a read failure or while it loads, the block does not show an empty list, and unsaved checked drafts stay visible and can be unchecked."
   };
   for (const key of Object.keys(HELP_FACTS_ZH)) {
     // a) 词典两语言全部命中——改写不红、删事实才红。
@@ -2949,6 +3139,21 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
       assert.ok(!text.includes(marker),
         `${lang} 档 ${key} 不得出现「${marker}」（审定文案以「仅为示例」正面表达，任何出现都是退化）`);
     }
+  }
+
+  // ⑥b 字段表全量判（5.6 表内 20 项）：三层夹具的键集＝FIELDS 全量——夹具
+  //    丢一行只会让对应循环静默跳过（该字段退出对账、漏判不可见），此处键集
+  //    对账兜底：漏一项即红。help/hint 夹具按 20 项全覆盖（含 boundPresets）。
+  const FIELD_KEYS = product.FIELDS.map((field) => field.key);
+  assert.equal(FIELD_KEYS.length, 20, '5.6 字段表共 20 项（PRESET-BIND-01 后含 boundPresets）');
+  assert.deepEqual(Object.keys(NAMES_ZH).sort(), [...FIELD_KEYS].sort(),
+    '字段名夹具必须恰覆盖全部 20 项（漏一项＝该字段退出名字对账）');
+  for (const [fixture, name] of [
+    [HINT_FACTS_ZH, 'HINT_FACTS_ZH'], [HINT_FACTS_EN, 'HINT_FACTS_EN'],
+    [HELP_FACTS_ZH, 'HELP_FACTS_ZH'], [HELP_FACTS_EN, 'HELP_FACTS_EN']
+  ]) {
+    assert.deepEqual(Object.keys(fixture).sort(), [...FIELD_KEYS].sort(),
+      `${name} 必须恰覆盖全部 20 项（漏一项＝该字段退出事实组判据，等义改写防护静默失效）`);
   }
 
   // ⑦ 在场断言扩展（T18c 内循环）：20 字段的字段名键、hint.<键>、help.<键> 两档
@@ -3559,9 +3764,9 @@ test('T-CAT-2（CAT-STALE）：stale 回执零写入——attach 换代理/detac
   await flush();
   assert.deepStrictEqual(catalog.store.getSnapshot(), before,
     '旧代际回执零写入：items/status/error 一概不动（成功回执不冒充新代理结果）');
-  // detach 撤代理：代际再进——被撤代理上的在途回执零写入（items 不落 ghost），
-  // 在途回执落定后按 §10.1 在途 detach 收尾（UI-CATALOG-02-A）：loading 收尾
-  // 为可重试错误态、不悬挂（修前仅推进世代、loading 悬挂——T-CAT-4 修前红）。
+  // detach 撤代理：代际再进——被撤代理上的在途回执零写入（items 不落 ghost）；
+  // detach 即刻把 loading 折进可重试错误态、不悬挂（UI-CATALOG-02-A；同步
+  // 即刻的判据由 T-CAT-5 钉，修前仅推进世代、loading 悬挂）。
   let detachedResolve;
   catalog.attach({ list: () => new Promise((resolve) => { detachedResolve = resolve; }) });
   await flush(); // 让该读真正进入在途（list 已调）
@@ -3615,7 +3820,7 @@ test('T-CAT-3（CAT-ATTACH）：服务缺席走可重试 error 态；attach 即�
   assert.deepEqual(settled.items.map((one) => one.id), ['new-agent'], '条目＝新代理结果');
 });
 
-test('T-CAT-4（CAT-DETACH-CLOSE／UI-CATALOG-02-A）：在途 detach 的状态收尾——服务撤下无替代时在途回执落定后 loading 收尾为可重试错误态；手动刷新服务缺席立即交回错误态、不排补读（待补读标记＝服务在场时的重读意图）；新服务到场 attach 首读照常（修前红：仅推进世代、loading 悬挂、刷新只排补读）', async () => {
+test('T-CAT-4（CAT-DETACH-CLOSE／UI-CATALOG-02-A）：在途 detach 的状态收尾——detach 即刻把 loading 折进可重试错误态、旧代际在途回执零写入；手动刷新服务缺席立即交回错误态、不排补读（待补读标记＝服务在场时的重读意图）；新服务到场 attach 首读照常（修前红：仅推进世代、loading 悬挂、刷新只排补读）', async () => {
   const { makePrimitivesDouble } = await import('./_primitives-double.mjs');
   const reactStub = { createElement: () => undefined, useState: () => [undefined, () => {}], useEffect: () => {}, useRef: (v) => ({ current: v }) };
   const double = makePrimitivesDouble(reactStub);
@@ -3633,17 +3838,18 @@ test('T-CAT-4（CAT-DETACH-CLOSE／UI-CATALOG-02-A）：在途 detach 的状态�
   // 在途期间一次通知触发的 load（置待重读标记）——detach 后该意图随服务
   // 撤下作废，不把补读排到无服务的将来。
   catalog.load();
-  // 服务撤下且无替代（卸载／行停服务／断线不重连的注入清理形态）。
+  // 服务撤下且无替代（卸载／行停服务／断线不重连的注入清理形态）：已知
+  // 撤下事实立即收尾（T-CAT-5 同判据）——loading 同步折进可重试错误态。
   catalog.detach();
-  assert.equal(catalog.store.getSnapshot().status, 'loading',
-    'detach 即刻不动在途状态（收尾在在途回执落定后，不抢先伪落定）');
-  // 在途回执落定（携带旧代际）：零写入，随后收尾检查把悬挂的 loading 折进
-  // 可重试错误态——修前形态在此之后仍停在 loading（悬挂）＝红。
+  assert.equal(catalog.store.getSnapshot().status, 'error',
+    'detach 即刻收尾为可重试错误态（修前仅推进世代、loading 悬挂＝红）');
+  assert.equal(catalog.store.getSnapshot().unavailable, true, '与绑定块服务缺席 error 态同口径（unavailable 标记）');
+  // 在途回执落定（携带旧代际）：零写入——不伪落定 ready、不回滚已收尾的
+  // 错误态（收尾发生在 detach 时点，回执迟到只经代际失配自弃）。
   gate[0]({ ok: true, value: { presets: [{ id: 'ghost' }] } });
   await flush();
   const closed = catalog.store.getSnapshot();
-  assert.equal(closed.status, 'error', '在途回执落定 ∧ 无新服务 ⇒ loading 收尾为可重试错误态（修前：悬挂＝红）');
-  assert.equal(closed.unavailable, true, '与绑定块服务缺席 error 态同口径（unavailable 标记）');
+  assert.equal(closed.status, 'error', '旧代际回执零写入（不覆盖已收尾的错误态）');
   assert.deepEqual(closed.items, [], '收尾不落旧回执条目（ghost 不入 items）');
   assert.equal(gate.length, 1, '收尾不发新读取（旧服务已撤，无 list 可调）');
   // 手动刷新（服务仍缺席）：立即交回错误态——不排补读（修前：loading 期间
@@ -3666,6 +3872,37 @@ test('T-CAT-4（CAT-DETACH-CLOSE／UI-CATALOG-02-A）：在途 detach 的状态�
   assert.deepEqual(settled.items.map((one) => one.id), ['back'], '条目＝新服务结果');
   // 目录只读写自身快照（收尾/刷新不触表单模型）：结构上 store 不持模型引用，
   // 草稿不受影响由 T23 系列守，此处不重复装置。
+});
+
+test('T-CAT-5（CAT-DETACH-NOW）：detach 即刻收尾——撤下事实已知时同步折进可重试错误态，不等在途回执、不悬挂（修前红：loading 悬挂到回执落定，回执永不来＝永久 loading）', async () => {
+  const { makePrimitivesDouble } = await import('./_primitives-double.mjs');
+  const reactStub = { createElement: () => undefined, useState: () => [undefined, () => {}], useEffect: () => {}, useRef: (v) => ({ current: v }) };
+  const double = makePrimitivesDouble(reactStub);
+  let loaded;
+  new Function('window', readFileSync(resolve(ROOT, 'client.js'), 'utf8'))({ __ModuleLoader__: { load: (spec) => { loaded = spec; } } });
+  const product = loaded.factory((name) => (name === 'react' ? reactStub : double));
+
+  const flush = () => new Promise((resolve) => { setTimeout(resolve, 0); });
+  const catalog = product.createPresetCatalog();
+  const gate = [];
+  catalog.attach({ list: () => new Promise((resolve) => { gate.push(resolve); }) });
+  await flush();
+  assert.equal(catalog.store.getSnapshot().status, 'loading', '前置：读取在途');
+  // 撤下事实已知：detach 返回后**不 flush、不解回执**直接取快照——收尾必须
+  // 已同步发生（等待在途回执落定的收尾没有可等的证据，回执永不来时 loading
+  // 永久悬挂；修前红＝此处仍 loading）。
+  catalog.detach();
+  const closed = catalog.store.getSnapshot();
+  assert.equal(closed.status, 'error', 'detach 返回时快照已收尾（同步收尾，不等在途回执）');
+  assert.equal(closed.unavailable, true, '可重试错误态带 unavailable 标记（绑定块服务缺席同口径）');
+  assert.deepEqual(closed.items, [], '条目为空（不冒充 ready）');
+  assert.equal(gate.length, 1, '收尾不发新读取（旧服务已撤，无 list 可调）');
+  // 在途回执永不来也不悬挂；迟到的旧代际回执零写入（不覆盖已收尾的错误态）。
+  gate[0]({ ok: true, value: { presets: [{ id: 'ghost' }] } });
+  await flush();
+  const after = catalog.store.getSnapshot();
+  assert.equal(after.status, 'error', '迟到回执零写入（错误态不被旧回执覆盖）');
+  assert.deepEqual(after.items, [], 'ghost 不入 items');
 });
 
 test('T8b（R29-a·判据 15 附）：settings 的悬空动态 import 必须 .catch——快照已落，广播失败不得杀实例', () => {

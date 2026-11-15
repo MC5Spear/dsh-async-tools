@@ -1173,3 +1173,29 @@ test('R28 判据13：设置界面 20 字段逐项在场 + flag spec 矩阵 + res
     /type violation: silentFailureGuard must be a boolean, got string "yes"/,
     'Ref 里的非布尔候选同样被类型检查拒绝');
 });
+
+// ── DOC-SHELL-01 断言扩展（2026-11-15 验收 U3；设计 §5.2 描述警示平台两态）──
+// b 防线警示段（tool.run.warnCapture）与纪律段同款按 process.platform 取形：
+// win32 档保留 pwsh 专有的 $LASTEXITCODE 核实指引；非 win32 档只锚定退出码
+// 标记与无捕获形探针——非 Windows 执行器的退出状态表达不由本包预设。两态
+// 在模块装载时一次定稿。源级断言（不在运行期切平台）：en/zh 两档各一组
+// ON_WINDOWS 平台分支、两分支文本按上述判。修前红＝单档字面量（非 win32
+// 部署也拿到 $LASTEXITCODE 指引）。
+test('DOC-SHELL-01：warnCapture 平台两态——win32 分支含 $LASTEXITCODE，非 win32 分支不含但保留退出码标记与探针指引', () => {
+  const source = readFileSync(new URL('../lib/text.js', import.meta.url), 'utf8');
+  const branchRe = /'tool\.run\.warnCapture':\s*ON_WINDOWS\s*\?\s*'((?:[^'\\]|\\.)*)'\s*:\s*'((?:[^'\\]|\\.)*)'/g;
+  const branches = [...source.matchAll(branchRe)];
+  assert.equal(branches.length, 2,
+    `en/zh 两档各一组 ON_WINDOWS 平台分支（实得 ${String(branches.length)}，修前红＝无分支单档字面量）`);
+  for (const [, winBranch, otherBranch] of branches) {
+    assert.ok(winBranch.includes('$LASTEXITCODE'), 'win32 分支保留 $LASTEXITCODE（pwsh 退出码变量）');
+    assert.ok(!otherBranch.includes('$LASTEXITCODE'), '非 win32 分支不含 $LASTEXITCODE（非 Windows 执行器的退出状态表达不预设）');
+    assert.ok(otherBranch.includes('exit-code marker') || otherBranch.includes('[exit code]'),
+      '非 win32 分支保留退出码标记锚（退出码 0＝合法空输出）');
+    for (const branch of [winBranch, otherBranch]) {
+      assert.ok(/probe|探针/.test(branch), '两分支都保留无捕获形独立探针指引（副作用核实通用动作）');
+      assert.ok(/can die silently at process creation|可能在进程创建层被杀/.test(branch),
+        '两分支都保留捕获形进程创建层击杀事实（受限沙箱部署特有规则，两平台同判）');
+    }
+  }
+});

@@ -956,11 +956,6 @@ function createPresetCatalog() {
   // 后自动补恰一次重读。语义＝「服务在场时的重读意图」——服务撤下（detach）
   // 后作废，不把补读排到无服务的将来。
   var pendingReread = false;
-  // 最近一次发起的读取落定追踪（§10.1 在途 detach 收尾，UI-CATALOG-02-A）：
-  // detach 撤代理后旧回执按代际失配零写入，loading 不得悬挂——在途回执落定
-  // 且无新服务在场时，状态收尾为可重试错误态。只追踪读取 promise 的落定，
-  // 不引其结果（结果仍只经回执双重校验路径落写）。
-  var inFlight = null;
   function publish() {
     for (var i = 0; i < listeners.length; i += 1) listeners[i]();
   }
@@ -1014,8 +1009,7 @@ function createPresetCatalog() {
         };
       });
     });
-    settled.catch(function () { /* 落定追踪不受回执链异常影响（快照不在此写） */ });
-    inFlight = settled;
+    settled.catch(function () { /* 落定链异常不写快照（快照只经回执双重校验路径落写） */ });
   }
   function load() {
     if (snapshot.status === "loading") {
@@ -1058,21 +1052,15 @@ function createPresetCatalog() {
       // 在途的待重读意图作废（待补读标记＝服务在场时的重读意图，§10.1）：
       // 服务已撤下，标记不再有可服务的将来。
       pendingReread = false;
-      // 在途 detach 的状态收尾（§10.1，UI-CATALOG-02-A）：仅推进世代会使
-      // 在途回执零写入、但 loading 悬挂（受控缺陷形态）。在途回执落定且无新
-      // 服务在场时，状态收尾为可重试错误态——与绑定块的服务缺席 error 态同
-      // 口径（unavailable 标记）；新服务在收尾前到场（attach）则免收尾、由
-      // 其首读接管。收尾只写目录自身快照，不触设置表单模型（未保存草稿不受
-      // 影响）。
-      if (inFlight !== null) {
-        var closing = inFlight;
-        inFlight = null;
-        closing.then(function () {
-          if (service === null && snapshot.status === "loading") {
-            snapshot = { status: "error", items: [], error: undefined, unavailable: true };
-            publish();
-          }
-        }, function () { /* 收尾链异常处理：回执链异常不在此写快照（读取链自带落写路径，此处只承接未捕获拒绝） */ });
+      // 即刻收尾（§10.1，UI-CATALOG-02-A）：detach 时服务已确定缺席，等待
+      // 在途回执落定没有可等的证据——回执永不来时 loading 永久悬挂。已知
+      // 撤下事实立即把 loading 同步折进可重试错误态（unavailable 标记，与
+      // 绑定块的服务缺席 error 态同口径）；旧回执按代际失配零写入（回执迟到
+      // 时快照已非 loading，双保险），新服务在后续 attach 场次到场时由其首读
+      // 接管。收尾只写目录自身快照，不触设置表单模型（未保存草稿不受影响）。
+      if (snapshot.status === "loading") {
+        snapshot = { status: "error", items: [], error: undefined, unavailable: true };
+        publish();
       }
     }
   };
@@ -1132,8 +1120,12 @@ function PresetBindingBlock(props) {
     if (checked) next = next.concat([idToToggle]);
     actions.edit("boundPresets", JSON.stringify(next));
   }
-  // 展示行集合：ready 态 = 目录项＋草稿里不在目录的已勾选 ID（保留条目）；
-  // error/空目录态 = 生效名单（value 层）里的 ID（失败不显示为空列表）。
+  // 展示行集合（§10.1）：ready 态 = 目录项＋草稿里不在目录的已勾选 ID（保留
+  // 条目）；loading/error 态 = 生效名单 ∪ 草稿已勾选（T-BIND-DRAFT）——ready
+  // 期间新勾的预设不能因目录重读而消失：草稿内部虽未丢，藏在草稿文本里的
+  // 条目等于不能操作（不可见＝不可取消）。absent 注记只在 error 态标注
+  //（目录确实没读出来）；loading 态不声称「未在当前预设列表中发现」——目录
+  // 回来前未知，注记只能是已证实的事实。
   var rows = [];
   var listed = {};
   var i;
@@ -1152,8 +1144,14 @@ function PresetBindingBlock(props) {
       if (!listed[draft[i]]) rows.push({ id: draft[i], name: undefined, broken: undefined, absent: true });
     }
   } else {
+    var markAbsent = catalogState.status === "error";
+    var seen = {};
     for (i = 0; i < effective.length; i += 1) {
-      rows.push({ id: effective[i], name: undefined, broken: undefined, absent: true });
+      rows.push({ id: effective[i], name: undefined, broken: undefined, absent: markAbsent });
+      seen[effective[i]] = true;
+    }
+    for (i = 0; i < draft.length; i += 1) {
+      if (!seen[draft[i]]) rows.push({ id: draft[i], name: undefined, broken: undefined, absent: markAbsent });
     }
   }
   var draftIndex = {};
@@ -1446,7 +1444,7 @@ var DICTIONARIES = {
     "hint.minWaitMs": "适用于等待入口正等待（wait_ms > 0）的下限；请求低于此值时按下限取值。wait_ms=0 只做即时检查，不抬高到下限。到时结束本次等待，后台任务继续运行。",
     "hint.maxWaitMs": "适用于等待入口 wait_ms 的上限；请求高于此值时按上限取值。到时结束本次等待，后台任务继续运行。",
     "hint.pollIntervalMs": "async_wait 的子代理目标定期检查运行状态的间隔，用作变化事件未到达时的备用判断。",
-    "hint.maxResultChars": "同一交付批次中全部结果内容共享的字符上限（正整数）——首次返回、等待返回与完成消息里的多条结果共同占用；单条超出时保留首尾并说明截断，状态与提示另计。",
+    "hint.maxResultChars": "同一次模型输入内共同到达的本包结果内容共享一份字符额度（正整数）——普通规则下同一开放批次内的多次调用（含同一步骤先后结算的调用）合批共享，调用间隔与其他工具工作不刷新额度；超出时保留首尾并说明截断，延后内容按批次继续交付，状态和裁剪说明另计。",
     "hint.jobKind": "注册命令作业用的类型名称，便于在作业列表与日志中识别。",
     "hint.subagentProvider": "async_agent 创建子代理使用的后端服务。",
     "hint.uiLang": "控制本包设置表单、字段帮助与待答界面的语言；跟随宿主语言或显式选择中文／英文。",
@@ -1466,7 +1464,7 @@ var DICTIONARIES = {
     "help.minWaitMs": "配置键：minWaitMs（数值，毫秒）。\n\n正等待（wait_ms > 0）的下限：请求低于此值时按下限取值；wait_ms=0 是零等待例外——只做即时检查，不抬高到下限。到时交回控制权、作业句柄仍有效；消息到达可提前结束本次等待。",
     "help.maxWaitMs": "配置键：maxWaitMs（数值，毫秒）。\n\nwait_ms 的上限：请求高于此值时按上限取值。与 minWaitMs 共同构成正等待的取值区间（minWaitMs ≤ 生效值 ≤ maxWaitMs）；零等待不受区间抬高。到时交回控制权、作业句柄仍有效；消息到达可提前结束本次等待。",
     "help.pollIntervalMs": "配置键：pollIntervalMs（数值，毫秒）。\n\nasync_wait 的子代理目标以变化事件为主、轮询为备用的双通道检查是否仍在运行；本间隔是备用轮询的节奏，受 pollIntervalMs ≤ maxWaitMs 配对约束。",
-    "help.maxResultChars": "配置键：maxResultChars（数值，字符）。\n\n按 String.length 计量，必须是正整数，小数草稿在保存时被拒。额度按内部交付批次共享，不是对单次模型输入总量的封顶：同批的多条结果——首次等待直接返回、等待返回的批次条目、完成消息——共用这一份上限，先到先分配，后到且预算耗尽的内容延后或裁剪（保首尾并说明省略量与截断）；状态行与提示另计。批次只在输入边界证据后闭合（认领、回合停止、步骤边界），一步之内先后结算的多批可并入同一次模型输入，每批各得一份额度——单次输入的合计因此可超过一份。例如两个并行命令都在首次等待内完成且同批结算时，两条直接返回合计不超过一份上限。",
+    "help.maxResultChars": "配置键：maxResultChars（数值，字符）。\n\n按 String.length 计量，必须是正整数，小数草稿在保存时被拒。同一次模型输入内共同到达的本包结果内容共享一份额度——普通规则下同一开放批次内的多次调用（含同一步骤先后结算的调用）合批共享、先到先分配；调用间隔与其他工具工作不刷新额度。例如两个并行命令先后在首次等待内完成，两条直接返回并入同一开放批次、合计占用这一份。\n\n窄例外——批次已在输入边界证据（认领、回合停止、步骤边界）处关闭后、下一次模型请求前恰有作业按完成消息开新批，同一次输入可能另取额度；该设置因此不是一次输入全部本包结果的绝对总量上限。\n\n超出时保留首尾并说明截断，延后内容按批次继续交付；如需主动领取，可在下一次模型输入边界后用 wait_ms=0 的 async_wait 点名领取（延后说明随附该时机）。状态行与提示另计。",
     "help.jobKind": "配置键：jobKind（文本）。\n\n注册命令作业时使用的类型名称，用于作业列表与日志的辨识；输入空串会被拒绝。",
     "help.subagentProvider": "配置键：subagentProvider（文本）。\n\nasync_agent 创建子代理使用的后端服务，默认 spawn；输入去掉首尾空白后为空时按默认值生效。后端须为可续后端——支持创建可继续会话的子代理；已注册但只有一次外部执行方式的后端不能用于 async_agent，填了不存在的后端或不可续后端时，创建子代理的请求会被拒绝并显示原因。需要指定模型时，在 async_agent 调用参数中用 provider 与 model 指定。",
     "help.uiLang": "配置键：uiLang（枚举：auto / zh / en）。\n\n界面文案与 Agent 文案是两个独立开关：本开关只影响界面文案，Agent 文案语言由 agentLang 设置；auto 档跟随宿主语言。",
@@ -1482,6 +1480,10 @@ var DICTIONARIES = {
     "opt.askUiSeat.overlay": "右下角浮窗",
     "ask.title": "待答问题",
     "ask.count": "{n} 题待答",
+    // 标题计数三态（§4.3）：未知（尚无已证实计数）与旧缓存（读取失败但有
+    // 上次成功计数——如实标注读取时点，不冒充当前值）。
+    "ask.countUnknown": "题数未知",
+    "ask.countStale": "上次读取 {n} 题",
     "ask.announceNew": "待答问题新增 {n} 题",
     "ask.answer": "提交",
     "ask.ignore": "不答",
@@ -1500,6 +1502,10 @@ var DICTIONARIES = {
     // 面板不自动代用户重交，允许手动消除。
     "ask.callFailed": "提交后没有收到宿主确认——可能已送达，也可能没有；稍候面板自动刷新，若仍显示未作答可再提交一次。",
     "ask.answerRejected": "宿主明确拒绝：本次提交没有生效",
+    // 无有效确认（§4.3 空回执）：回执不可读，结果未知——不伪成功也不伪失败；
+    // 与「未收到宿主确认」（RPC 拒绝）分开：那处是响应没回来，此处是回执
+    // 形状不可读。文案不把未知送达说成失败或成功。
+    "ask.submitUnconfirmed": "提交结果未确认——回执不可读，不能据此判断答案是否送达；面板将以状态刷新为准，请先等待状态更新再决定是否重新提交",
     "ask.rejectUnknownOption": "所选答案不在本题选项内",
     "ask.rejectSingleMultiple": "单选题只能选择一项答案",
     "ask.rejectBlankCustom": "自定义回答已选中但内容为空",
@@ -1524,7 +1530,7 @@ var DICTIONARIES = {
     // 在场断言守护；preset.* 系列两语成对由词典键集相等断言守护。
     "boundPresets": "适用预设",
     "hint.boundPresets": "选中后向该预设的会话注入异步执行纪律；静默失败提示与待答面板提问处理仍分别受各自开关控制。按会话当前实际预设匹配。",
-    "help.boundPresets": "配置键：boundPresets（预设 ID 数组）。\n\n勾选预设后：使用该预设的会话获得本包的执行纪律段——即给所选预设的 Agent 添加操作要求；静默失败提示（silentFailureGuard）与提问接管（askTakeover）仍分别受各自开关控制——名单只决定作用范围，不代替开关。判定按会话当前实际预设匹配，同一工具被多个预设复用时未勾选预设的会话不受影响。\n\n默认绑定本包两份预设（dsh-async / dsh-async-create）；全部取消勾选并保存＝解除全部绑定；已绑定但不在当前预设列表中的条目保留显示，可取消。列表来自宿主预设注册表，「刷新」重读；读取失败时显示已保存绑定，可取消。",
+    "help.boundPresets": "配置键：boundPresets（预设 ID 数组）。\n\n勾选预设后：使用该预设的会话获得本包的执行纪律段——即给所选预设的 Agent 添加操作要求；静默失败提示（silentFailureGuard）与提问接管（askTakeover）仍分别受各自开关控制——名单只决定作用范围，不代替开关。判定按会话当前实际预设匹配，同一工具被多个预设复用时未勾选预设的会话不受影响。\n\n默认绑定本包两份预设（dsh-async / dsh-async-create）；全部取消勾选并保存＝解除全部绑定；已绑定但不在当前预设列表中的条目保留显示，可取消。列表来自宿主预设注册表，「刷新」重读；读取失败或加载中不显示为空列表，未保存的勾选草稿保持可见、可取消。",
     "preset.refresh": "刷新",
     "preset.retry": "重试",
     "preset.loading": "正在读取预设列表…",
@@ -1584,7 +1590,7 @@ var DICTIONARIES = {
     "hint.minWaitMs": "Lower bound for positive waits (wait_ms > 0) on the wait entry; requests below it use the lower bound. wait_ms=0 is an immediate check only and is not raised to the bound. When the wait ends, the background task keeps running.",
     "hint.maxWaitMs": "Upper bound for wait_ms on the wait entry; requests above it use the upper bound. When the wait ends, the background task keeps running.",
     "hint.pollIntervalMs": "Interval for async_wait's subagent targets to periodically check the running state — the backup judgment when the change event has not arrived.",
-    "hint.maxResultChars": "Character cap (a positive integer) shared by all result content in one delivery batch — first returns, wait returns, and completion messages draw on the same quota together; a single oversized entry keeps its head and tail with a truncation note, and status and notices are counted separately.",
+    "hint.maxResultChars": "Result content from this package arriving within one model input shares a single character allowance (a positive integer) — under the ordinary rule, multiple calls in the same open delivery batch (including calls settled one after another within one step) share it as one batch, and neither time between calls nor other tool work refreshes the allowance; past it the head and tail are kept with a truncation note, deferred content goes on arriving batch by batch, and status and trim notes are counted separately.",
     "hint.jobKind": "Type name used to register command jobs, for identification in job lists and logs.",
     "hint.subagentProvider": "Backend service async_agent uses to create subagents.",
     "hint.uiLang": "Controls the language of this package's settings form, field help, and pending panel; follows the host language or an explicit Chinese/English choice.",
@@ -1604,7 +1610,7 @@ var DICTIONARIES = {
     "help.minWaitMs": "Config key: minWaitMs (number, ms).\n\nLower bound for positive waits (wait_ms > 0): a request below it is clamped to it; wait_ms=0 is the zero-wait exception — an immediate check only, not raised to the bound. When the budget ends, control returns with the job handle still valid; an arriving message can end the wait early.",
     "help.maxWaitMs": "Config key: maxWaitMs (number, ms).\n\nUpper bound for wait_ms: a request above it is clamped to it. Forms the effective range for positive waits together with minWaitMs (minWaitMs ≤ effective value ≤ maxWaitMs); the zero wait is not raised by the range. When the budget ends, control returns with the job handle still valid; an arriving message can end the wait early.",
     "help.pollIntervalMs": "Config key: pollIntervalMs (number, ms).\n\nasync_wait's subagent targets check whether the target is still running on two channels — change events first, polling as the backup; this interval sets the backup polling cadence and is bound by the pollIntervalMs ≤ maxWaitMs pairing.",
-    "help.maxResultChars": "Config key: maxResultChars (number, characters).\n\nMeasured by String.length; it must be a positive integer, and non-integer drafts are rejected at save. The quota is shared per internal delivery batch, not a cap on the total of one model input: the multiple results in one batch — first-wait direct returns, wait-return batch entries, and completion messages — draw on this single cap, first come first served; content arriving after the quota is exhausted is deferred or truncated (head and tail kept, omission and truncation stated), and status lines and notices are counted separately. A batch closes only on input-boundary evidence (claims, turn stopping, step boundary); several batches settled within one step may merge into the same model input, each with its own cap — the total of a single input can therefore exceed one cap. For example, when two parallel commands both finish inside their first waits and settle in the same batch, the two direct returns together stay within one cap.",
+    "help.maxResultChars": "Config key: maxResultChars (number, characters).\n\nMeasured by String.length; it must be a positive integer, and non-integer drafts are rejected at save. Result content from this package arriving within one model input shares a single allowance — under the ordinary rule, multiple calls in the same open delivery batch (including calls settled one after another within one step) share it as one batch, first come first served; neither time between calls nor other tool work refreshes the allowance. For example, two parallel commands finishing inside their first waits one after the other merge into the same open delivery batch, and their two direct returns together draw on this one allowance.\n\nNarrow exception — after a batch has already closed on input-boundary evidence (a claim, turn stopping, a step boundary), a job whose completion message lands before the next model request opens a new batch, and the same input may draw a fresh allowance; the setting is therefore not an absolute total cap on all of this package's results within one input.\n\nPast the allowance the head and tail are kept with a truncation note, and deferred content goes on arriving batch by batch; to fetch it actively, call async_wait with wait_ms=0 naming the job after the next model-input boundary (the deferral note carries that timing). Status lines and notices are counted separately.",
     "help.jobKind": "Config key: jobKind (text).\n\nType name used when registering command jobs, for identification in job lists and logs; an empty value is invalid.",
     "help.subagentProvider": "Config key: subagentProvider (text).\n\nBackend service async_agent uses to create subagents, spawn by default; an empty value after trimming falls back to the default. The backend must be continuable — it must support creating subagents with continuable sessions; a registered backend that offers only one-shot external execution cannot be used for async_agent, and an unknown or non-continuable backend is rejected with a readable reason when a subagent is created. To specify a model, use the provider and model parameters of the async_agent call.",
     "help.uiLang": "Config key: uiLang (enum: auto / zh / en).\n\nInterface copy and Agent-facing copy are two independent switches: this one only affects interface copy, and agentLang sets the Agent-facing language; the auto mode follows the host language.",
@@ -1620,6 +1626,11 @@ var DICTIONARIES = {
     "opt.askUiSeat.overlay": "Bottom-right overlay",
     "ask.title": "Pending questions",
     "ask.count": "{n} pending",
+    // Title count three states (§4.3): unknown (no confirmed count yet) and
+    // stale (read failed but a previous successful count exists — labeled by
+    // read timing, never posing as the current value).
+    "ask.countUnknown": "count unknown",
+    "ask.countStale": "last read: {n} pending",
     "ask.announceNew": "Pending questions: {n} new",
     "ask.answer": "Submit",
     "ask.ignore": "Skip",
@@ -1638,6 +1649,11 @@ var DICTIONARIES = {
     // 用户重交。（与 zh 词典区同款说明：文案本身是英文界面文本，注释是中文。）
     "ask.callFailed": "No confirmation was received from the host after submitting — it may or may not have arrived; the panel refreshes automatically, and if it still shows unanswered, you can submit again.",
     "ask.answerRejected": "The host explicitly refused this submission — it did not take effect",
+    // No valid confirmation (§4.3 empty receipt): the receipt was unreadable,
+    // outcome unknown — neither success nor failure is claimed. Distinct from
+    // "no confirmation from the host" (RPC rejection): there the response
+    // never came back, here the receipt's shape is unreadable.
+    "ask.submitUnconfirmed": "The submission is unconfirmed — the receipt was unreadable, so delivery cannot be judged from it. The panel follows the next state refresh; wait for it before resubmitting.",
     "ask.rejectUnknownOption": "the selected options are not offered by this question",
     "ask.rejectSingleMultiple": "a single-select question accepts at most one option",
     "ask.rejectBlankCustom": "the custom answer is selected but its text is blank",
@@ -1663,7 +1679,7 @@ var DICTIONARIES = {
     // dictionary key-set equality assertion (zh/en must stay paired).
     "boundPresets": "Applicable presets",
     "hint.boundPresets": "When checked, sessions under that preset get the async execution discipline injected; the silent-failure hint and pending-panel question handling still answer to their own switches. Matching follows each session's current effective preset.",
-    "help.boundPresets": "Config key: boundPresets (an array of preset ids).\n\nWhen a preset is checked: sessions under it get this package's execution-discipline section — operating requirements added for Agents on the chosen preset; the silent-failure hint (silentFailureGuard) and question takeover (askTakeover) still answer to their own switches — the list decides the scope only, it does not replace the switches. Matching follows the session's current effective preset; when the same tool is reused by several presets, sessions on unchecked presets are unaffected.\n\nThe default binds this package's two presets (dsh-async / dsh-async-create); unchecking every preset and saving unbinds them all; ids bound but absent from the current preset list stay listed and can be unchecked. The list comes from the host preset registry and reloads via \"Refresh\"; on a read failure the saved bindings are shown and can be unchecked.",
+    "help.boundPresets": "Config key: boundPresets (an array of preset ids).\n\nWhen a preset is checked: sessions under it get this package's execution-discipline section — operating requirements added for Agents on the chosen preset; the silent-failure hint (silentFailureGuard) and question takeover (askTakeover) still answer to their own switches — the list decides the scope only, it does not replace the switches. Matching follows the session's current effective preset; when the same tool is reused by several presets, sessions on unchecked presets are unaffected.\n\nThe default binds this package's two presets (dsh-async / dsh-async-create); unchecking every preset and saving unbinds them all; ids bound but absent from the current preset list stay listed and can be unchecked. The list comes from the host preset registry and reloads via \"Refresh\"; on a read failure or while it is loading the block does not show an empty list, and unsaved checked drafts stay visible and can be unchecked.",
     "preset.refresh": "Refresh",
     "preset.retry": "Retry",
     "preset.loading": "Reading the preset list…",
@@ -1841,6 +1857,10 @@ function createAskModel(ctx, remote) {
   var state = {
     enabled: false, seat: "sidebar", uiLang: "auto",
     serverNow: 0, fetchedAt: 0, items: [], callFailed: null, answerRejectReason: null, answerRejectReasonKey: null,
+    // 最近一次成功读取的题目数（§4.3 面板标题三态）：null＝本会话尚无已证实
+    // 计数（未知态）；成功读取记数值，读取失败后据此进旧缓存态。关闭清档时
+    // 复位——重开从首查口径重新取证实。
+    lastConfirmedCount: null,
     lostAnswers: [], undelivered: [], announce: null
   };
 
@@ -1927,6 +1947,9 @@ function createAskModel(ctx, remote) {
       timer = null;
       state.items = [];
       state.serverNow = 0;
+      // 已证实计数随之清零（§4.3 标题三态）：关闭清档后重开从首查口径重新
+      // 取证实——不把上个开启期的计数带入新生命周期冒充已证实。
+      state.lastConfirmedCount = null;
       // 关闭同步清播报（ASK-ANNOUNCE-01）：已播集合清空、区域文本清空——不残留
       // 失效消息；重开按首查口径重新播报（开关往返的重复播报是显式操作的结果）。
       announcedKeys.clear();
@@ -1965,6 +1988,9 @@ function createAskModel(ctx, remote) {
     state.serverNow = result.value.serverNow;
     state.fetchedAt = Date.now();
     state.items = result.value.items;
+    // 已证实计数（§4.3 标题三态）：成功读取记当前数——此后读取失败时标题进
+    // 旧缓存态（上次读取 {n} 题），不再冒充当前值；确证零题同记 0。
+    state.lastConfirmedCount = state.items.length;
     // 新题识别与播报（ASK-ANNOUNCE-01）：成功路径、代数检查后——旧代/乱序回执到
     // 不了这里，已播事实不被回退。差集非空才生成新 announce（同 items 重复轮询差
     // 集为空 → announce 引用不变 → DOM 文本不变，读屏只读变化）；文案只含数量、
@@ -2021,11 +2047,32 @@ function createAskModel(ctx, remote) {
   var actions = {
     answer: function (item, selected, custom, onDone) {
       if (remote === undefined) { onDone(false); return; }
+      // 完成回调恰一次归还（§4.3 空回执安全处理）：多分支（含末端 catch）
+      // 竞争时 busy 不双重释放；onDone 是 AskItem 的 busy 释放通道，不归还＝
+      // 提交按钮永久禁用。
+      var done = false;
+      var finish = function (ok) {
+        if (done) return;
+        done = true;
+        onDone(ok);
+      };
       remote.answer({ batchId: item.batchId, questionId: item.questionId, selected: selected, custom: custom })
         .then(function (result) {
+          // 回执不可读（undefined／null／非对象，含缺 ok/value 形状的其余形态）
+          // ＝无有效确认（§4.3）：不能断定执行与否——不伪成功也不伪失败，
+          // 不读空回执的字段（修前在失败分支读 result.error 抛 TypeError、
+          // onDone 不归还）。与明确拒绝（ok:false，可断定未执行）分开报；
+          // 不立即重试——以 state 轮询刷新为准，先等面板状态再决定。
+          if (result === undefined || result === null || typeof result !== "object") {
+            state.callFailed = 'submitUnconfirmed';
+            notify();
+            finish(false);
+            poll();
+            return;
+          }
           // 成功只有两种回执；failed（迟到注入没送达）与记录缺席的 gone
           // （undelivered，需求 §4.4）都记可消除报错名单，普通 gone 交轮询收敛。
-          if (result === undefined || result === null || result.ok !== true) {
+          if (result.ok !== true) {
             // 失败三分——ok:false 是宿主**明确拒绝**（请求已送达、被拒）：可断定
             // 未执行；与 RPC 拒绝（'submit'，执行与否未知）分开报，不混说"未送达"。
             // 回执 error 按 gateway 契约携带 {code,message,details}：message
@@ -2039,7 +2086,7 @@ function createAskModel(ctx, remote) {
               && typeof result.error.details.reasonKey === "string"
               ? result.error.details.reasonKey : null;
             notify();
-            onDone(false);
+            finish(false);
             return;
           }
           var outcome = result.value !== undefined && result.value !== null ? result.value.outcome : undefined;
@@ -2052,32 +2099,57 @@ function createAskModel(ctx, remote) {
             if (outcome === "failed") recordLost(item);
             if (outcome === "gone" && result.value !== undefined && result.value !== null
               && result.value.undelivered === true) recordUndelivered(item);
-            onDone(false);
+            finish(false);
             return;
           }
-          // 成功只清**本动作族**的旗标（'submit'/'answerRejected'）——延长族
-          // （'extend'/'extendRejected'）与读取档（'state'）不受牵连；丢失/未送达
-          // 名单是逐条事实记录，不随成功清除（「知道了」手动消除）。
-          if (state.callFailed === 'submit' || state.callFailed === 'answerRejected') {
+          // 成功只清**本动作族**的旗标（'submit'/'answerRejected'/
+          // 'submitUnconfirmed'）——延长族（'extend'/'extendRejected'）与读取档
+          // （'state'）不受牵连；丢失/未送达名单是逐条事实记录，不随成功清除
+          // （「知道了」手动消除）。
+          if (state.callFailed === 'submit' || state.callFailed === 'answerRejected'
+            || state.callFailed === 'submitUnconfirmed') {
             state.callFailed = null;
             state.answerRejectReason = null;
             state.answerRejectReasonKey = null;
           }
-          onDone(true);
+          finish(true);
           poll();
         }, function () {
           // RPC 拒绝＝没有确认（'submit'，可重试）——不确定结果不能断定"未送达"
           // （服务端可能已执行，只是响应丢失）。
           state.callFailed = 'submit';
           notify();
-          onDone(false);
+          finish(false);
+        })
+        // 动作链末端最终 catch（§4.3）：任何回调链异常（名单记录、通知等）都
+        // 经它归还 busy 并显错——结果未知，按无有效确认口径报，提交按钮不因
+        // 链上异常永久禁用。
+        .catch(function () {
+          state.callFailed = 'submitUnconfirmed';
+          notify();
+          finish(false);
         });
     },
     ignore: function (item, onDone) {
       if (remote === undefined) { onDone(false); return; }
+      var done = false;
+      var finish = function (ok) {
+        if (done) return;
+        done = true;
+        onDone(ok);
+      };
       remote.ignore({ batchId: item.batchId, questionId: item.questionId })
         .then(function (result) {
-          if (result === undefined || result === null || result.ok !== true) {
+          // 与 answer 同判：回执不可读＝无有效确认（§4.3）——不读空回执字段、
+          // 不伪成功也不伪失败，先等 state 轮询刷新再决定是否重试提交。
+          if (result === undefined || result === null || typeof result !== "object") {
+            state.callFailed = 'submitUnconfirmed';
+            notify();
+            finish(false);
+            poll();
+            return;
+          }
+          if (result.ok !== true) {
             // 与 answer 共用拒绝状态：同时更新原串与原因键，避免沿用上次作答的键。
             // 忽略路径现无自有拒绝生产者；未知或无键的 message 在面板原样显示。
             state.callFailed = 'answerRejected';
@@ -2088,7 +2160,7 @@ function createAskModel(ctx, remote) {
               && typeof result.error.details.reasonKey === "string"
               ? result.error.details.reasonKey : null;
             notify();
-            onDone(false);
+            finish(false);
             return;
           }
           var outcome = result.value !== undefined && result.value !== null ? result.value.outcome : undefined;
@@ -2097,21 +2169,27 @@ function createAskModel(ctx, remote) {
             // 与作答同口径（需求 §4.4）：忽略提交命中记录缺席 → 未送达名单。
             if (outcome === "gone" && result.value !== undefined && result.value !== null
               && result.value.undelivered === true) recordUndelivered(item);
-            onDone(false);
+            finish(false);
             return;
           }
           // 与 answer 同族：成功清提交族旗标与拒绝原因；名单不随成功清除。
-          if (state.callFailed === 'submit' || state.callFailed === 'answerRejected') {
+          if (state.callFailed === 'submit' || state.callFailed === 'answerRejected'
+            || state.callFailed === 'submitUnconfirmed') {
             state.callFailed = null;
             state.answerRejectReason = null;
             state.answerRejectReasonKey = null;
           }
-          onDone(true);
+          finish(true);
           poll();
         }, function () {
           state.callFailed = 'submit';
           notify();
-          onDone(false);
+          finish(false);
+        })
+        .catch(function () {
+          state.callFailed = 'submitUnconfirmed';
+          notify();
+          finish(false);
         });
     },
     jump: function (sessionId) {
@@ -2652,6 +2730,18 @@ function AskList(props) {
     if (!groups.has(item.sessionId)) groups.set(item.sessionId, []);
     groups.get(item.sessionId).push(item);
   }
+  // 面板标题计数三态（§4.3，与徽标同一「不以 0 冒充确证零题」口径）：确证
+  // 计数（最近成功读取，ask.count，含确证零题「0 题待答」）／旧缓存（读取
+  // 失败但有上次成功计数，ask.countStale——如实标注读取时点、不冒充当前值）
+  // ／未知（本会话尚无已证实计数，ask.countUnknown——不以空 items 生成的 0
+  // 冒充确证零题，失败与无题不可区分即失败不可发现）。可见文本与 aria-label
+  // 各自独立组装同一构造；计数词后不拼失败说明（失败说明由 .ats-ask-failed
+  // 专行承载，不以失败长句充当计数词）。
+  var titleCountWord = state.lastConfirmedCount === null
+    ? t("ask.countUnknown")
+    : state.callFailed === "state"
+    ? t("ask.countStale").replace("{n}", String(state.lastConfirmedCount))
+    : t("ask.count").replace("{n}", String(state.items.length));
   var nodes = [];
   groups.forEach(function (items, sessionId) {
     nodes.push(React.createElement("div", { key: sessionId, className: "ats-ask-group" },
@@ -2683,8 +2773,11 @@ function AskList(props) {
   return React.createElement("div", {
     className: props.panelClass === undefined ? "ats-ask-panel" : "ats-ask-panel " + props.panelClass
   },
-    React.createElement("p", { className: "ats-ask-title" },
-      t("ask.title") + " · " + t("ask.count").replace("{n}", String(state.items.length))),
+    React.createElement("p", {
+      className: "ats-ask-title",
+      "aria-label": t("ask.title") + " · " + titleCountWord
+    },
+      t("ask.title") + " · " + titleCountWord),
     state.callFailed ? React.createElement("p", { className: "ats-ask-failed" },
       (state.callFailed === 'answerRejected'
         // 基础句与已知原因键都按 uiLang 显示；agentLang 的 message 仅在
@@ -2696,6 +2789,9 @@ function AskList(props) {
           ? "ask.stateFailed"
           : state.callFailed === 'extend' ? "ask.extendFailed"
           : state.callFailed === 'extendRejected' ? "ask.extendRejected"
+          // 无有效确认（§4.3 空回执）：结果未知——文案不把未知送达说成失败或
+          // 成功，出路＝先等 state 轮询刷新再决定是否重试提交。
+          : state.callFailed === 'submitUnconfirmed' ? "ask.submitUnconfirmed"
           : "ask.callFailed"))) : null,
     state.undelivered.map(function (und) {
       // 与 lostAnswers 同款逐条「知道了」——记录已不在，报错必须被人看到，看到后

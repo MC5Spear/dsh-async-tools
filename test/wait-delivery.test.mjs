@@ -1746,6 +1746,72 @@ hostTest('W-TIME-C：目标屏障悬置 → 周期内交回 unconfirmed，不无
   }
 });
 
+// ── W-UNPROVEN-EXIT（2026-11-15 验收 F02／CORE-AB-02；设计 §3.2.6 已证状态
+//    的资格前提）────────────────────────────────────────────────────────
+// 关系查询挂起时被插话／取消切断的出口，未证关系目标一律 unknown：注册表
+// running 只证明该 id 当前驻留且驱动在跑，不证明它与本主体的等待关系成立。
+// 未确认集合独立于出口类型——先到的控制信号只结束等待，不放行注册表现值
+// 读取。修前红＝屏障被切断的出口直接读全局注册表、未证目标被报 running。
+
+hostTest('W-UNPROVEN-EXIT：关系查询挂起时取消切断——未证关系目标标 unknown，不因注册表恰报 running 改标', async () => {
+  resetAgentBaselines();
+  const rig = await buildRig('unproven-cancel', [], {
+    listChildren: () => new Promise(() => {}),
+    agentsGet: (id) => ({ id, status: 'running' })
+  });
+  try {
+    const controller = new AbortController();
+    const pending = rig.waiter.execute(
+      { wait_ms: 5000, targets: [{ kind: 'agent', id: 'at-unproven-a' }] },
+      { agent: rig.parent, signal: controller.signal }
+    );
+    setTimeout(() => controller.abort(new Error('tool call aborted')), 150);
+    const result = await pending;
+    assert.equal(result.status, 'cancelled', '前置：取消切断挂起的关系查询（W-TIME-B 同款时序）');
+    const row = (result.targets ?? []).find((target) => target.id === 'at-unproven-a');
+    assert.ok(row !== undefined, 'cancelled 出口附 targets 行（不因切断丢弃观察）');
+    assert.equal(row.status, 'unknown',
+      '未证关系目标标 unknown——注册表对任意 id 报 running 也不冒充已证观察（修前红＝running）');
+    const rendered = rig.waiter.output.render(undefined, result).map((part) => part.text).join('\n');
+    assert.match(rendered, /agent at-unproven-a: unknown/, '模型可见文本同判 unknown（render 镜像）');
+    assert.doesNotMatch(rendered, /agent at-unproven-a: running/, '不渲染未证 running 行');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('W-UNPROVEN-EXIT②：关系查询挂起时插话切断——interrupted 出口同判 unknown（集合独立于出口类型）', async () => {
+  resetAgentBaselines();
+  const rig = await buildRig('unproven-interrupt', [], {
+    listChildren: () => new Promise(() => {}),
+    agentsGet: (id) => ({ id, status: 'running' })
+  });
+  try {
+    const pending = rig.waiter.execute(
+      { wait_ms: 5000, targets: [{ kind: 'agent', id: 'at-unproven-b' }] },
+      rig.exec()
+    );
+    // 屏障查询在途（listChildren 永不结算）时经真实事件总线发用户插话——
+    // watchWakeSignal 只认 agent/inbox/inserted 事件，预先入箱不构成唤醒。
+    const payload = inboxPayload({
+      agent: rig.parent, sourceKind: 'user', form: 'message',
+      summary: 'user interjects', text: 'stop and report', target: 'next-step'
+    });
+    setTimeout(() => {
+      rig.parent.inbox.nextStep.push(payload);
+      rig.ctx.emit('agent/inbox/inserted', payload);
+    }, 120);
+    const outcome = await pending;
+    assert.equal(outcome.status, 'interrupted', '前置：屏障在途窗口内先到用户插话切断校验');
+    const row = (outcome.targets ?? []).find((target) => target.id === 'at-unproven-b');
+    assert.ok(row !== undefined, 'interrupted 出口附 targets 行');
+    assert.equal(row.status, 'unknown',
+      '插话出口同判 unknown——控制信号不放行注册表现值读取（修前红＝running）');
+  } finally {
+    await rig.dispose();
+  }
+});
+
 hostTest('W-SETTLED-A：已报告静止目标再次等待 → 立即返回「维持静止」，不挂起', async () => {
   const rig = await buildRig('quiet', [{ id: 'at-child-quiet' }], {
     agentsGet: (id) => ({ id, status: 'idle' })
@@ -3474,7 +3540,7 @@ hostTest('REC-D：条目上限对空正文条目同样生效——12 条空输�
   assert.ok(batchTexts.every((text) => /0 chars/.test(text)), '前 10 条都是状态行（零字符形态）');
   assert.ok(!batchTexts.some((text) => /job-rec-d1[12]/.test(text)), '第 11/12 条不在本批');
   for (const text of rig.calls.inject.slice(10).map(textOf)) {
-    assert.match(text, /did not fit the current delivery batch|没有排进当前交付批次/, '延后说明形态');
+    assert.match(text, /did not fit the current delivery batch|未排进当前交付批次/, '延后说明形态');
     assert.match(text, /wait_ms=0/, '延后说明给领取出路');
   }
   // 关批判定＋闭合证据①（§2.6）→ 下一轮窗口补投剩余两条状态行。
@@ -4180,13 +4246,13 @@ hostTest('RN-A：12 条空输出结算——10 状态行＋2 逐条延后说明�
   await ledger.releaseWait(token, rig.OWNER);
   assert.equal(rig.calls.inject.length, 12, '10 状态行＋2 逐条说明（2 ≤ 配额 3，无聚合）');
   for (const text of rig.calls.inject.slice(10).map(textOf)) {
-    assert.match(text, /did not fit the current delivery batch|没有排进当前交付批次/, '逐条说明形态');
+    assert.match(text, /did not fit the current delivery batch|未排进当前交付批次/, '逐条说明形态');
     assert.match(text, /wait_ms=0/, '领取出路照抄（定向示例）');
     assert.ok(!/also deferred|同样延后/.test(text), '配额内不投聚合');
   }
 });
 
-hostTest('RN-B：100 条空输出结算——物理消息恰 14（10＋3＋1），说明字符合计 ≤800；关批后下一批补投 FIFO（再 14 条封顶）', async () => {
+hostTest('RN-B：100 条空输出结算——物理消息恰 14（10＋3＋1），说明字符合计 ≤1500；关批后下一批补投 FIFO（再 14 条封顶）', async () => {
   const rig = sRig({ budget: 4000 });
   const token = ledger.claimWait(rig.OWNER);
   for (let i = 1; i <= 100; i += 1) {
@@ -4198,14 +4264,17 @@ hostTest('RN-B：100 条空输出结算——物理消息恰 14（10＋3＋1）�
     `10 状态行＋3 逐条＋1 聚合（实得 ${String(rig.calls.inject.length)}，修前 100）`);
   const individual = rig.calls.inject.slice(10, 13).map(textOf);
   for (const text of individual) {
-    assert.match(text, /did not fit the current delivery batch|没有排进当前交付批次/, '逐条说明恰 3 条（配额）');
+    assert.match(text, /did not fit the current delivery batch|未排进当前交付批次/, '逐条说明恰 3 条（配额）');
   }
   const aggregate = textOf(rig.calls.inject[13]);
   assert.match(aggregate, /were also deferred|同样延后/, '聚合摘要在场');
   assert.match(aggregate, /wait_ms=0/, '聚合带领取出路');
   assert.ok(!/targets=/.test(aggregate), '聚合示例不带 targets（一并领取全部就绪结果）');
   const notesText = [...individual, aggregate].join('\n');
-  assert.ok(notesText.length <= 800, `说明字符合计 ${String(notesText.length)} ≤ 800（数值固定可测）`);
+  // 上限随 2.6「延后说明的可取得时机语义」事实组文本调升（旧无时机说明的短
+  // 文案 ≤800）：锚定的是说明体量有界（3 逐条＋1 聚合、与候选数无关），
+  // 数值固定可测；条数线性回归由上方恰 14 条物理消息判据承担。
+  assert.ok(notesText.length <= 1500, `说明字符合计 ${String(notesText.length)} ≤ 1500（数值固定可测）`);
   // 未逐一说明的候选不静默丢失：内容在缓冲（空正文零内容）＋下一批 FIFO 补投。
   ledger.closeBatchIfIdle(rig.OWNER);
   fireClaimed(rig);
@@ -4254,6 +4323,59 @@ hostTest('RN-C：非空正文超限两形态——预算 1 只容 1 条（1＋3�
     const { delivered } = ledger.collectBatch(rig.OWNER, {});
     assert.equal(delivered.length, 10, '零等待批装配交付 10 条延后正文');
     assert.equal(delivered[0].text, 'Z', '延后正文完整恢复（全额批预算）');
+  }
+});
+
+// ── RN-D（2026-11-15 验收 U1；设计 §2.6「延后说明的可取得时机语义」）───────
+// 三键（汇总行／逐条／聚合）不承诺「立即领取／fetch it now」：都携带「正文
+// 保留＋下一批优先送达＋额度于下一次模型输入边界后复位」事实组，主动领取
+// 写成时点限定动作（边界之后的零等待）。修前红＝旧文案在场（「fetch it
+// now」「立即领取」「可调用 async_wait…领取」的无时点承诺）。恢复出口的
+// 零等待领取行为不变——判据只改说明语义，不改交付行为（上方 RN-A/B/C 行为
+// 判据照旧全绿即为行为不变的对照锚）。
+hostTest('RN-D：延后说明时机语义——正文保留／下一批优先／边界后复位事实组在场，立即领取承诺缺席', async () => {
+  // 汇总行（delivery.deferred）：批预算 1 容不下第二条 → collectBatch 附延后汇总。
+  {
+    const rig = sRig({ budget: 1 });
+    const token = ledger.claimWait(rig.OWNER);
+    await rig.readyJob('job-rn-e1', 'X');
+    await rig.readyJob('job-rn-e2', 'Y');
+    const { deferred, deferredNote } = ledger.collectBatch(rig.OWNER, {});
+    assert.equal(deferred.length, 1, '前置：预算 1 → 第二条延后（汇总行在场的前提）');
+    assert.ok(deferredNote !== undefined && deferredNote.length > 0, '延后汇总行在场');
+    assert.match(deferredNote, /the bodies are kept|正文已保留/, '事实组①：正文保留');
+    assert.match(deferredNote, /go out first with the next delivery batch|下一交付批次优先送达/, '事实组②：下一批优先送达');
+    assert.match(deferredNote, /resets only at the next model-input boundary|只在下一次模型输入边界后复位/, '事实组③：额度于输入边界后复位');
+    await ledger.releaseWait(token, rig.OWNER);
+    assert.ok(!/fetch it now|立即领取|可调用 async_wait|to collect them\./.test(deferredNote),
+      '不承诺无时点领取（修前红＝「可调用 async_wait…领取」在场）');
+  }
+  // 逐条（delivery.deferredNotice）与聚合（delivery.deferredAggregate）：完成
+  // 消息路径的超限说明同判（预算 1 → 1 条目＋3 逐条＋1 聚合）。
+  {
+    const rig = sRig({ budget: 1 });
+    const token = ledger.claimWait(rig.OWNER);
+    await rig.readyJob('job-rn-f1', 'X');
+    for (let i = 2; i <= 6; i += 1) {
+      await rig.readyJob(`job-rn-f${String(i)}`, 'Y');
+    }
+    await ledger.releaseWait(token, rig.OWNER);
+    const texts = rig.calls.inject.map(textOf);
+    const notices = texts.filter((text) => /did not fit the current delivery batch|未排进当前交付批次/.test(text));
+    assert.equal(notices.length, 3, '前置：逐条说明恰 3 条（配额）');
+    for (const text of notices) {
+      assert.match(text, /is kept in the ledger|正文已保留/, '逐条·事实组①：正文保留');
+      assert.match(text, /go(es)? out first with the next delivery batch|下一交付批次优先送达/, '逐条·事实组②：下一批优先送达');
+      assert.match(text, /resets at the next model-input boundary|在下一次模型输入边界后复位/, '逐条·事实组③：边界后复位');
+      assert.match(text, /only after that boundary|请在此之后再调用/, '主动领取＝时点限定动作（边界之后）');
+      assert.ok(!/fetch it now|立即领取/.test(text), '逐条旧承诺缺席（修前红＝在场）');
+    }
+    const aggregate = texts.find((text) => /were also deferred|同样延后/.test(text));
+    assert.ok(aggregate !== undefined, '前置：聚合摘要在场');
+    assert.match(aggregate, /the bodies are kept|正文均已保留/, '聚合·事实组①：正文保留');
+    assert.match(aggregate, /go out first with the next delivery batch|下一交付批次优先送达/, '聚合·事实组②：下一批优先送达');
+    assert.match(aggregate, /after the next model-input boundary|在下一次模型输入边界后/, '聚合·事实组③＋时点限定（边界之后）');
+    assert.ok(!/fetch it now|立即领取|可调用 async_wait/.test(aggregate), '聚合不承诺无时点领取');
   }
 });
 
@@ -4613,7 +4735,7 @@ hostTest('RN-F：两处关批点后配额复位——单独触发得新批条目
   await rig.readyJob('job-rn-g15', '');
   assert.equal(rig.calls.inject.length, 15, '新批条目交付（一条状态行）');
   assert.match(textOf(rig.calls.inject[14]), /job-rn-g15/, '第 15 条以状态行交付');
-  assert.ok(!/did not fit|没有排进/.test(textOf(rig.calls.inject[14])), '不是延后说明（条目分支）');
+  assert.ok(!/did not fit|排进当前交付批次/.test(textOf(rig.calls.inject[14])), '不是延后说明（条目分支）');
   // 关批点②：closeBatchIfIdle（活等待全提交的关批判定）＋闭合证据①（§2.6——
   // 在册清空为必要条件，claimed 事件为闭合证据；生产两事件天然同点到达）——
   // 再 17 个就绪条目再次超限：
@@ -5158,7 +5280,7 @@ hostTest('T8 真实注册表：准入上限与领取窗口解耦——触顶拒�
     const wave3 = await startWave(5, 'setTimeout(function(){process.stdout.write("T8")},2500)');
     const third = wave3.handles[0];
     assert.equal(third.deferred?.length ?? 0, 10, '首个让出出口附延后清单（10 条结构化 deferred）');
-    assert.match(third.note ?? '', /deferred by the batch budget|因批次预算延后/,
+    assert.match(third.note ?? '', /deferred by the batch budget|因批次额度延后/,
       '让出出口的延后说明在场（单条 note，非逐条线性）');
     assert.equal(rig.injections.length, 0, '让出出口仍零消息（载体是工具返回）');
     await awaitTerminal(wave3.ids);
@@ -5170,7 +5292,7 @@ hostTest('T8 真实注册表：准入上限与领取窗口解耦——触顶拒�
     assert.equal(rig.injections.length, 4,
       `15 个延后候选：恰 3 逐条＋1 聚合（实得 ${String(rig.injections.length)}，修前 15）`);
     for (const text of rig.injections.slice(0, 3).map(textOf)) {
-      assert.match(text, /did not fit the current delivery batch|没有排进当前交付批次/, '逐条说明形态');
+      assert.match(text, /did not fit the current delivery batch|未排进当前交付批次/, '逐条说明形态');
     }
     const aggregate = textOf(rig.injections[3]);
     assert.match(aggregate, /12 more settled job|另有 12 个/, '聚合计数＝12（集合最终值）');

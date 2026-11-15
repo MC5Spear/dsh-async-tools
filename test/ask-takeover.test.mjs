@@ -2039,6 +2039,153 @@ test('座位显形计入 callFailed=state（§4.3 失败档）——读取失败
   model.dispose();
 });
 
+// ── 面板标题计数三态（2026-11-15 验收 U2；设计 §4.3「面板标题计数的三态」）──
+// 与徽标同一「不以 0 冒充确证零题」口径：确证计数（最近成功读取，ask.count）
+// ／旧缓存（读取失败但有上次成功计数，ask.countStale——如实标注读取时点）
+// ／未知（尚无已证实计数，ask.countUnknown）。aria-label 与可见文本各自独立
+// 组装同一构造（计数词后不拼失败说明）。修前红＝首读失败时标题渲染
+// 「0 pending／0 题待答」（空 items 生成的 0 冒充确证零题）、旧缓存态不标注
+// 读取时点。
+test('面板标题计数三态（§4.3）——未知／旧缓存／确证与 aria 独立组装；首读失败不以 0 冒充确证零题', async () => {
+  const react = makeMiniReact();
+  const intervals = [];
+  const product = await loadClientProduct(react, {
+    setInterval: (fn, ms) => { intervals.push({ fn, ms }); return intervals.length; },
+    clearInterval: () => {}
+  });
+  const D = product.DICTIONARIES.en;
+  let snap = { status: 'ready', value: { askTakeover: true, askUiSeat: 'sidebar', uiLang: 'en' }, user: {} };
+  let scopeListener = () => {};
+  const scope = {
+    getSnapshot: () => snap,
+    subscribe: (fn) => { scopeListener = fn; return () => {}; }
+  };
+  const ctx = { configForms: { get: () => scope }, remote: {}, uiWorkspace: { openSession() {} } };
+  const item = (qid) => ({
+    batchId: 'b1', sessionId: 's1', questionId: qid, question: 'q', options: [],
+    multiSelect: false, receivedAt: 0, expiresAt: 1, phase: 'open'
+  });
+  // 可控远端：state() 依次交失败／成功（2 题）／失败——同一会话内走完三态。
+  let current = { ok: false };
+  const model = product.createAskModel(ctx, {
+    state: async () => current,
+    answer: async () => ({ ok: true, value: { outcome: 'delivered' } }),
+    ignore: async () => ({ ok: true, value: { outcome: 'delivered' } })
+  });
+  const tick = () => new Promise((resolve) => { setTimeout(resolve, 0); });
+  await tick(); // applyConfig 的立即首查落定
+  const titleOf = () => {
+    const panel = react.render(() => product.AskList({ ask: model }));
+    return panel.children.find((child) => child?.props?.className === 'ats-ask-title');
+  };
+  // ① 未知态：首读失败且无任何已证实计数——count unknown，aria 同构造、
+  //    不含 0 计数词、不拼失败长句（失败说明由专行承载）。
+  let title = titleOf();
+  assert.ok(title !== undefined, '前置：面板标题行在场');
+  assert.equal(String(title.children), `${D['ask.title']} · ${D['ask.countUnknown']}`,
+    '首读失败：计数词＝ask.countUnknown（修前红＝「0 pending」冒充确证零题）');
+  assert.equal(String(title.props['aria-label']), `${D['ask.title']} · ${D['ask.countUnknown']}`,
+    '标题 aria-label 独立组装同一构造（未知态携带 countUnknown）');
+  assert.ok(!String(title.props['aria-label']).includes(D['ask.stateFailed']),
+    '计数词后不拼失败说明（失败说明由 .ats-ask-failed 专行承载）');
+  // ② 确证态：成功读取 2 题 →「2 pending」；确证零题同构造（0 待答是已证实的 0）。
+  current = { ok: true, value: { serverNow: 5, items: [item('q1'), item('q2')], lost: [] } };
+  intervals[0].fn();
+  await tick();
+  title = titleOf();
+  assert.equal(String(title.children), `${D['ask.title']} · ${D['ask.count'].replace('{n}', '2')}`,
+    '成功读取：确证计数（最近一次成功读取的 items 数）');
+  // ③ 旧缓存态：再次失败但有上次成功计数 →「last read: 2 pending」，不冒充当前值。
+  current = { ok: false };
+  intervals[0].fn();
+  await tick();
+  title = titleOf();
+  assert.equal(String(title.children), `${D['ask.title']} · ${D['ask.countStale'].replace('{n}', '2')}`,
+    '读取失败但有上次计数：ask.countStale（如实标注读取时点；修前红＝仍渲染当前计数形态）');
+  assert.equal(String(title.props['aria-label']), `${D['ask.title']} · ${D['ask.countStale'].replace('{n}', '2')}`,
+    '旧缓存态 aria 同构造（携带 countStale，不拼失败长句）');
+  model.dispose();
+});
+
+// ── 空回执＝无有效确认（2026-11-15 验收 F03；设计 §4.3「空回执的安全处理」）──
+// 回执不可读（undefined／null／非对象）与明确拒绝（ok:false）分开报：不读
+// result.error（修前在失败分支再读空回执字段抛 TypeError、onDone 不归还、
+// busy 永久占用）；onDone(false) 恰一次、题目保持可再操作、提示走
+// ask.submitUnconfirmed（不把未知送达说成失败或成功）；成功清本动作族旗标。
+test('空回执＝无有效确认（§4.3）——answer／ignore 回执不可读不抛 TypeError、busy 经 onDone 归还、提示在场', async () => {
+  const react = makeMiniReact();
+  const product = await loadClientProduct(react, { setInterval: () => 0, clearInterval: () => {} });
+  const D = product.DICTIONARIES.en;
+  let snap = { status: 'ready', value: { askTakeover: true, askUiSeat: 'sidebar', uiLang: 'en' }, user: {} };
+  const scope = { getSnapshot: () => snap, subscribe: () => () => {} };
+  const ctx = { configForms: { get: () => scope }, remote: {}, uiWorkspace: { openSession() {} } };
+  const item = {
+    batchId: 'b', sessionId: 's1', questionId: 'q1', question: 'q?', options: [],
+    multiSelect: false, receivedAt: 0, expiresAt: 1, phase: 'open'
+  };
+  const tick = () => new Promise((resolve) => { setTimeout(resolve, 0); });
+  // ① answer 回执 undefined——无有效确认档。
+  {
+    let answerResult; // 可变：先交不可读回执，再交成功回执（验成功清档）。
+    const model = product.createAskModel(ctx, {
+      state: async () => ({ ok: true, value: { serverNow: 1, items: [item], lost: [] } }),
+      answer: async () => answerResult
+    });
+    await tick();
+    answerResult = undefined;
+    const dones = [];
+    model.actions.answer(item, ['a'], undefined, (ok) => { dones.push(ok); });
+    await tick();
+    await tick();
+    assert.deepEqual(dones, [false],
+      'onDone(false) 恰一次（busy 归还、题目可再操作——修前红＝读空回执字段抛 TypeError 后不归还）');
+    assert.equal(model.store.getSnapshot().callFailed, 'submitUnconfirmed',
+      '无有效确认档（不伪成功也不伪失败——修前红＝TypeError／无档）');
+    const panel = react.render(() => product.AskList({ ask: model }));
+    const line = panel.children.find((child) => child?.props?.className === 'ats-ask-failed');
+    assert.ok(line !== undefined && String(line.children).includes(D['ask.submitUnconfirmed']),
+      '无有效确认提示在场（词典键 ask.submitUnconfirmed，随面板可见）');
+    // 同族成功清档：后续成功回执清 submitUnconfirmed（与 'submit'/'answerRejected' 同族）。
+    answerResult = { ok: true, value: { outcome: 'delivered' } };
+    const dones2 = [];
+    model.actions.answer(item, ['a'], undefined, (ok) => { dones2.push(ok); });
+    await tick();
+    assert.deepEqual(dones2, [true], '成功回执照常 onDone(true)');
+    assert.equal(model.store.getSnapshot().callFailed, null, '成功清本动作族旗标（submitUnconfirmed 随成功清档）');
+    model.dispose();
+  }
+  // ② ignore 回执 null——同判。
+  {
+    const model = product.createAskModel(ctx, {
+      state: async () => ({ ok: true, value: { serverNow: 1, items: [item], lost: [] } }),
+      ignore: async () => null
+    });
+    await tick();
+    const dones = [];
+    model.actions.ignore(item, (ok) => { dones.push(ok); });
+    await tick();
+    await tick();
+    assert.deepEqual(dones, [false], 'ignore：onDone(false) 恰一次（修前红＝result.error 上抛 TypeError）');
+    assert.equal(model.store.getSnapshot().callFailed, 'submitUnconfirmed', 'ignore 同判无有效确认');
+    model.dispose();
+  }
+  // ③ 非对象回执（字符串）——同判（「回执不可读」含非对象形态）。
+  {
+    const model = product.createAskModel(ctx, {
+      state: async () => ({ ok: true, value: { serverNow: 1, items: [item], lost: [] } }),
+      answer: async () => 'garbage'
+    });
+    await tick();
+    const dones = [];
+    model.actions.answer(item, ['a'], undefined, (ok) => { dones.push(ok); });
+    await tick();
+    await tick();
+    assert.deepEqual(dones, [false], '非对象回执：onDone(false) 恰一次');
+    assert.equal(model.store.getSnapshot().callFailed, 'submitUnconfirmed', '非对象回执同判无有效确认');
+    model.dispose();
+  }
+});
+
 test('AskItem 作答选择与提交（需求 §4.2.1–§4.2.4）——单选互斥、多选组合、草稿排除与两侧有效性', async () => {
   const react = makeMiniReact();
   const product = await loadClientProduct(react, { setInterval: () => 0, clearInterval: () => {} });
