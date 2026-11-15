@@ -3387,7 +3387,7 @@ test('T23c（R29-d）：client 内联上界与 lib/budget-limits.js 逐条比对
   assert.match(clientCode(), /var CHAIN_PAIRS = \[[\s\S]*?pollIntervalMs[\s\S]*?maxWaitMs/, '链式判定常量在场（以 CHAIN_PAIRS 为唯一键源）');
 });
 
-test('T23e（R29-d·判据 14·设计 §5.4）：链式候选三档——有效草稿优先、无改动走生效值、覆盖在场＋空草稿＝候选不可知（跳过比较、不禁保存、不拿过期覆盖值比较）', async () => {
+test('T23e（R29-d·判据 14·设计 §5.4／UI-CLEAR-03）：链式候选三档——有效草稿优先、清覆盖按 userHas 位取 base 回退值（base 不可得＝候选未知）、无改动走生效值；判定不经字段级 overridden 预演位（官方完整投影修前红：清 min 并调低 default 的合法保存被旧生效快照误拦）', async () => {
   const { makePrimitivesDouble } = await import('./_primitives-double.mjs');
   const reactStub = { createElement: () => undefined, useState: () => [undefined, () => {}], useEffect: () => {}, useRef: (v) => ({ current: v }) };
   const double = makePrimitivesDouble(reactStub);
@@ -3395,27 +3395,33 @@ test('T23e（R29-d·判据 14·设计 §5.4）：链式候选三档——有效�
   new Function('window', readFileSync(resolve(ROOT, 'client.js'), 'utf8'))({ __ModuleLoader__: { load: (spec) => { loaded = spec; } } });
   const product = loaded.factory((name) => (name === 'react' ? reactStub : double));
 
-  const state = (fields, effective) => ({ fields, effective });
+  const state = (fields, effective, userHas, base) => ({ fields, effective, userHas, base });
   // ① 有效草稿 → 草稿值：只判一侧草稿会把「把上限改小」漏成可保存——两侧任意
-  //    组合（覆盖在场与否）都以草稿为准。
+  //    组合都以草稿为准（覆盖与否不影响草稿优先）。
   assert.equal(product.chainNumber(
-    state({ defaultWaitMs: { text: '40000', overridden: true } }, { defaultWaitMs: 30000 }), 'defaultWaitMs'),
-    40000, '草稿在场 ⇒ 候选＝草稿值（覆盖标记不否决草稿）');
+    state({ defaultWaitMs: { text: '40000' } }, { defaultWaitMs: 30000 }), 'defaultWaitMs'),
+    40000, '草稿在场 ⇒ 候选＝草稿值');
   assert.equal(product.chainNumber(
     state({ defaultWaitMs: { text: ' 40000 ' } }, { defaultWaitMs: 30000 }), 'defaultWaitMs'),
     40000, '草稿首尾空白照常解析');
-  // ② 无草稿条目 / 空草稿无覆盖 → 生效值（空草稿＝无改动，不参与比较就取快照）。
+  // ② 无草稿条目 / 空草稿且原始用户层无键 → 生效值（无改动；userHas 缺席的
+  //    旧形态投影同样走此档）。
   assert.equal(product.chainNumber(state({}, { defaultWaitMs: 30000 }), 'defaultWaitMs'),
     30000, '无草稿条目 ⇒ 候选＝生效值');
   assert.equal(product.chainNumber(
     state({ defaultWaitMs: { text: '   ' } }, { defaultWaitMs: 30000 }), 'defaultWaitMs'),
     30000, '空草稿且无覆盖 ⇒ 候选＝生效值');
-  // ③ 覆盖在场＋空草稿 → CHAIN_UNKNOWN：空草稿对覆盖字段是清除语义，落存值由
-  //    服务端按配置优先级重取（客户端不可算）；生效快照里的旧覆盖值是**不得
-  //    拿来比较**的过期快照。
-  const unknown = product.chainNumber(
-    state({ defaultWaitMs: { text: '', overridden: true } }, { defaultWaitMs: 900000 }), 'defaultWaitMs');
-  assert.strictEqual(unknown, product.CHAIN_UNKNOWN, '覆盖在场＋空草稿 ⇒ 候选不可知哨兵');
+  // ③ 清覆盖形态（userHas 位＝原始用户层键存在性）→ 候选＝base 层回退值
+  //    （清字段后按 5.1 优先级重取的组合层＝恢复默认将写入的真实值）。不经
+  //    字段级 overridden 标志：暂存清除后该预演位翻转 false，而用户键仍在场。
+  assert.equal(product.chainNumber(
+    state({ defaultWaitMs: { text: '', overridden: false } }, { defaultWaitMs: 900000 },
+      { defaultWaitMs: true }, { defaultWaitMs: 30000 }), 'defaultWaitMs'),
+    30000, 'userHas ∧ base 在场 ⇒ 候选＝base 回退值（不拿旧生效快照 900000 比较）');
+  assert.equal(product.chainNumber(
+    state({ maxWaitMs: { text: '', overridden: false } }, { maxWaitMs: 900000 },
+      { maxWaitMs: true }, {}), 'maxWaitMs') === product.CHAIN_UNKNOWN, true,
+    'userHas ∧ base 不可得 ⇒ 候选不可知哨兵（交服务端终判）');
   // ④ 非法草稿 → null（单字段档缺席：非法性由单字段校验报出，链式不叠加）。
   assert.equal(product.chainNumber(state({ defaultWaitMs: { text: 'abc' } }, {}), 'defaultWaitMs'),
     null, '非法草稿 ⇒ 链式候选缺席');
@@ -3423,16 +3429,18 @@ test('T23e（R29-d·判据 14·设计 §5.4）：链式候选三档——有效�
   assert.equal(product.chainComparable(product.CHAIN_UNKNOWN), false, 'UNKNOWN 不参与链式比较');
   // ⑤ UNKNOWN 侧跳过比较：保存不因此禁用（服务端终判）——两侧各验一次。
   assert.equal(product.pairViolated(state(
-    { defaultWaitMs: { text: '', overridden: true }, maxWaitMs: { text: '1' } },
-    { defaultWaitMs: 900000, maxWaitMs: 600000 })), false,
-    '左值 UNKNOWN ⇒ 跳过该链（修前拿过期覆盖值 900000 与右值草稿 1 比较、按 900000 > 1 判违例＝红：保存被误禁）');
+    { defaultWaitMs: { text: '' }, maxWaitMs: { text: '1' } },
+    { defaultWaitMs: 900000, maxWaitMs: 600000 },
+    { defaultWaitMs: true }, {})), false,
+    '左值 UNKNOWN（userHas ∧ base 缺席）⇒ 跳过该链（不折算成违例）');
   assert.equal(product.pairViolated(state(
-    { defaultWaitMs: { text: '9999999' }, maxWaitMs: { text: '', overridden: true } },
-    { defaultWaitMs: 30000, maxWaitMs: 600000 })), false,
+    { defaultWaitMs: { text: '9999999' }, maxWaitMs: { text: '' } },
+    { defaultWaitMs: 30000, maxWaitMs: 600000 },
+    { maxWaitMs: true }, {})), false,
     '右值 UNKNOWN ⇒ 跳过该链（候选不可知不折算成违例）');
   assert.equal(product.chainHitOf(state(
-    { defaultWaitMs: { text: '', overridden: true }, maxWaitMs: { text: '1' } },
-    { defaultWaitMs: 900000 }), 'defaultWaitMs'), null,
+    { defaultWaitMs: { text: '' }, maxWaitMs: { text: '1' } },
+    { defaultWaitMs: 900000 }, { defaultWaitMs: true }, {}), 'defaultWaitMs'), null,
     'UNKNOWN 侧不挂链式原因文案（单字段层无跨字段结论可给）');
   // ⑥ 有效比较照常：纯生效值对（两侧无改动）与双侧草稿对（改小上限的形态）。
   assert.equal(product.pairViolated(state({}, { defaultWaitMs: 700000, maxWaitMs: 600000 })), true,
@@ -3440,6 +3448,46 @@ test('T23e（R29-d·判据 14·设计 §5.4）：链式候选三档——有效�
   assert.equal(product.pairViolated(state(
     { defaultWaitMs: { text: '500000' }, maxWaitMs: { text: '400000' } }, {})), true,
     '双侧草稿改到越界 ⇒ 违例（只判一侧草稿会漏「把上限改小」形态）');
+  // ⑦ 官方完整投影下的清覆盖场景（UI-CLEAR-03 修前红，忠实适配器装置）：
+  //    旧覆盖 minWaitMs=50000／defaultWaitMs=60000（user 层在场），本次保存
+  //    清 minWaitMs（resetField：暂存清除 → 字段级 overridden 预演位翻转
+  //    false）并把 defaultWaitMs 调至 30000。恢复默认写入的真实值是 base
+  //    层组合层（min 250）——合法组合。修前据 overridden 预演位判「无覆盖」、
+  //    拿旧生效快照 50000 与草稿 30000 比较 ⇒ 误判违例、误禁合法保存（红）；
+  //    修正后按 userHas 位取 base 回退值 250 比较 ⇒ 无违例。
+  const scope = {
+    getSnapshot: () => ({
+      status: 'ready', writable: true, revision: 7,
+      value: { minWaitMs: 50000, defaultWaitMs: 60000 },
+      user: { minWaitMs: 50000, defaultWaitMs: 60000 },
+      base: { minWaitMs: 250, defaultWaitMs: 30000 }
+    }),
+    subscribe: () => () => {},
+    mutate: async () => true
+  };
+  // 装置：全部字段的 spec 经卡片层 boundedNumberSpec 造（投影只消费
+  // format/parse 通道，非数值字段不被断言、仅要求 spec 在场）。
+  const allSpecs = product.FIELDS.map((one) => product.boundedNumberSpec(one.key));
+  const model = new double.SettingsFormModel(scope, allSpecs);
+  const actions = model.actions();
+  actions.resetField('minWaitMs'); // 暂存清除（草稿文本＝base 格式化、clear 位）
+  actions.edit('defaultWaitMs', '30000');
+  const fieldMin = model.field('minWaitMs');
+  assert.equal(fieldMin.overridden, false,
+    '前置：官方模型预演位已翻转（暂存清除 ⇒ overridden=false——据它判「无覆盖」即缺陷形态）');
+  const projected = product.projectCardState(model, scope);
+  assert.equal(projected.userHas.minWaitMs, true,
+    '投影按原始用户层键存在性判覆盖（保存落定前 unset 未发生，键仍在场）');
+  assert.equal(projected.base.minWaitMs, 250, 'base 回退值随投影在场');
+  assert.equal(product.pairViolated(projected), false,
+    '清 min（回退 250）∧ 调低 default（30000）的合法保存不被误拦（修前：拿旧生效 50000 比较 ⇒ 违例＝红）');
+  assert.equal(product.chainHitOf(projected, 'minWaitMs'), null,
+    '该链不挂左值原因文案（minWaitMs ≤ defaultWaitMs 成立）');
+  // 同装置对照组：不清覆盖、只把 default 调到低于现行 min 时仍照常判出。
+  const model2 = new double.SettingsFormModel(scope, allSpecs);
+  model2.actions().edit('defaultWaitMs', '40000');
+  assert.equal(product.pairViolated(product.projectCardState(model2, scope)), true,
+    '未清覆盖时拿生效 min 50000 比较 ⇒ 50000 > 40000 违例照常（不因修正放松）');
 });
 
 // ── 预设目录模型（§10.1 CAT 系列）：通知触发的重读合并、stale 回执零写入、
@@ -3504,15 +3552,20 @@ test('T-CAT-2（CAT-STALE）：stale 回执零写入——attach 换代理/detac
   await flush();
   assert.deepStrictEqual(catalog.store.getSnapshot(), before,
     '旧代际回执零写入：items/status/error 一概不动（成功回执不冒充新代理结果）');
-  // detach 撤代理：代际再进——被撤代理上的在途回执同样自弃。
+  // detach 撤代理：代际再进——被撤代理上的在途回执零写入（items 不落 ghost），
+  // 在途回执落定后按 §10.1 在途 detach 收尾（UI-CATALOG-02-A）：loading 收尾
+  // 为可重试错误态、不悬挂（修前仅推进世代、loading 悬挂——T-CAT-4 修前红）。
   let detachedResolve;
   catalog.attach({ list: () => new Promise((resolve) => { detachedResolve = resolve; }) });
   await flush(); // 让该读真正进入在途（list 已调）
   catalog.detach();
   detachedResolve({ ok: true, value: { presets: [{ id: 'ghost' }] } });
   await flush();
-  assert.equal(catalog.store.getSnapshot().status, 'loading',
-    '被撤代理的回执零写入（loading 不被旧回执伪落定——新读取由下一次 attach/load 发起）');
+  const closed = catalog.store.getSnapshot();
+  assert.equal(closed.status, 'error',
+    '被撤代理的回执零写入（不伪落定为 ready），落定后收尾为可重试错误态——loading 不悬挂');
+  assert.equal(closed.unavailable, true, '收尾态带 unavailable 标记（绑定块服务缺席同口径）');
+  assert.deepEqual(closed.items, [], '旧回执零写入（items 一概不动，ghost 不落条目）');
 });
 
 test('T-CAT-3（CAT-ATTACH）：服务缺席走可重试 error 态；attach 即首读、attach 自身满足在途期间的待重读意图（不双读）', async () => {
@@ -3553,6 +3606,59 @@ test('T-CAT-3（CAT-ATTACH）：服务缺席走可重试 error 态；attach 即�
   const settled = catalog.store.getSnapshot();
   assert.equal(settled.status, 'ready', '新代理回执落定 → ready');
   assert.deepEqual(settled.items.map((one) => one.id), ['new-agent'], '条目＝新代理结果');
+});
+
+test('T-CAT-4（CAT-DETACH-CLOSE／UI-CATALOG-02-A）：在途 detach 的状态收尾——服务撤下无替代时在途回执落定后 loading 收尾为可重试错误态；手动刷新服务缺席立即交回错误态、不排补读（待补读标记＝服务在场时的重读意图）；新服务到场 attach 首读照常（修前红：仅推进世代、loading 悬挂、刷新只排补读）', async () => {
+  const { makePrimitivesDouble } = await import('./_primitives-double.mjs');
+  const reactStub = { createElement: () => undefined, useState: () => [undefined, () => {}], useEffect: () => {}, useRef: (v) => ({ current: v }) };
+  const double = makePrimitivesDouble(reactStub);
+  let loaded;
+  new Function('window', readFileSync(resolve(ROOT, 'client.js'), 'utf8'))({ __ModuleLoader__: { load: (spec) => { loaded = spec; } } });
+  const product = loaded.factory((name) => (name === 'react' ? reactStub : double));
+
+  const flush = () => new Promise((resolve) => { setTimeout(resolve, 0); });
+  const catalog = product.createPresetCatalog();
+  const gate = [];
+  catalog.attach({ list: () => new Promise((resolve) => { gate.push(resolve); }) });
+  await flush();
+  assert.equal(catalog.store.getSnapshot().status, 'loading', '前置：读取在途');
+  assert.equal(gate.length, 1, '前置：恰一次 list 在途');
+  // 在途期间一次通知触发的 load（置待重读标记）——detach 后该意图随服务
+  // 撤下作废，不把补读排到无服务的将来。
+  catalog.load();
+  // 服务撤下且无替代（卸载／行停服务／断线不重连的注入清理形态）。
+  catalog.detach();
+  assert.equal(catalog.store.getSnapshot().status, 'loading',
+    'detach 即刻不动在途状态（收尾在在途回执落定后，不抢先伪落定）');
+  // 在途回执落定（携带旧代际）：零写入，随后收尾检查把悬挂的 loading 折进
+  // 可重试错误态——修前形态在此之后仍停在 loading（悬挂）＝红。
+  gate[0]({ ok: true, value: { presets: [{ id: 'ghost' }] } });
+  await flush();
+  const closed = catalog.store.getSnapshot();
+  assert.equal(closed.status, 'error', '在途回执落定 ∧ 无新服务 ⇒ loading 收尾为可重试错误态（修前：悬挂＝红）');
+  assert.equal(closed.unavailable, true, '与绑定块服务缺席 error 态同口径（unavailable 标记）');
+  assert.deepEqual(closed.items, [], '收尾不落旧回执条目（ghost 不入 items）');
+  assert.equal(gate.length, 1, '收尾不发新读取（旧服务已撤，无 list 可调）');
+  // 手动刷新（服务仍缺席）：立即交回错误态——不排补读（修前：loading 期间
+  // 只置待重读标记、永无落定消费＝红）。
+  catalog.load();
+  const refreshed = catalog.store.getSnapshot();
+  assert.equal(refreshed.status, 'error', '手动刷新服务缺席 ⇒ 立即错误态（不悬挂、不排队）');
+  assert.equal(refreshed.unavailable, true, '刷新后的错误态同样可重试');
+  assert.equal(gate.length, 1, '刷新不产生任何 list 调用（不把补读排到无服务的将来）');
+  // 新服务到场：attach 首读照常——收尾态可重试、后续生命周期不受损伤。
+  const gate2 = [];
+  catalog.attach({ list: () => new Promise((resolve) => { gate2.push(resolve); }) });
+  assert.equal(catalog.store.getSnapshot().status, 'loading', 'attach 即首读（error 态可重试）');
+  await flush();
+  assert.equal(gate2.length, 1, '新服务恰一次 list');
+  gate2[0]({ ok: true, value: { presets: [{ id: 'back' }] } });
+  await flush();
+  const settled = catalog.store.getSnapshot();
+  assert.equal(settled.status, 'ready', '新服务回执照常落定');
+  assert.deepEqual(settled.items.map((one) => one.id), ['back'], '条目＝新服务结果');
+  // 目录只读写自身快照（收尾/刷新不触表单模型）：结构上 store 不持模型引用，
+  // 草稿不受影响由 T23 系列守，此处不重复装置。
 });
 
 test('T8b（R29-a·判据 15 附）：settings 的悬空动态 import 必须 .catch——快照已落，广播失败不得杀实例', () => {

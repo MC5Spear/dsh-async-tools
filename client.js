@@ -230,27 +230,36 @@ var CHAIN_PAIRS = [
 ];
 
 /**
- * 链式比较的「候选不可知」哨兵（设计 §5.4 第三档）：覆盖在场＋空草稿——空草稿
- * 对覆盖字段是"清除"语义，落存值是服务端的推荐/默认（客户端不可算），而生效
- * 快照里的旧覆盖值正是**不得拿来比较**的过期快照。该侧跳过客户端比较，保存
- * 不因此禁用，终判在服务端。
+ * 链式比较的「候选不可知」哨兵（设计 §5.4 第三档）：清覆盖形态下 base 层
+ * 值不可得（客户端投影缺席该层或该字段）——候选＝取消覆盖后按 5.1 优先级
+ * 重取的组合层值或 schema 默认，客户端不可算。该侧跳过客户端比较，保存不
+ * 因此禁用，终判在服务端。
  */
 var CHAIN_UNKNOWN = { chainUnknown: true };
 
 /**
- * 链式比较值（设计 §5.4 三档）：**有效草稿 → 草稿值**（覆盖与生效值的任意组合
- * 都以草稿为准——只判一侧草稿会把"把上限改小"漏成可保存）；**无草稿条目或
- * （空草稿且无覆盖）→ 生效值**（空草稿＝无改动）；**覆盖在场＋空草稿 →
- * `CHAIN_UNKNOWN`**（候选不可知，比较跳过、服务端终判）。非法草稿属单字段档
- * （返回 null，该侧不参与链式比较——非法性由单字段校验报出、保存随之禁用，
- * 链式不叠加）。
+ * 链式比较值（设计 §5.4 三档，UI-CLEAR-03）：**有效草稿 → 草稿值**（覆盖与
+ * 生效值的任意组合都以草稿为准——只判一侧草稿会把"把上限改小"漏成可保存）；
+ * **原始用户层含该字段键（userHas 位）→ 清覆盖候选＝base 层回退值**（清字段
+ * 后按 5.1 优先级重取的组合层，即恢复默认将写入的真实值；base 不可得 →
+ * `CHAIN_UNKNOWN` 交服务端终判）——判定**不经字段级 overridden 标志**：该
+ * 标志是官方模型对「暂存后生效来源」的预演，暂存清除后即翻转为 false，而
+ * 原始用户键仍在场（保存落定前 unset 未发生），据该位判「无覆盖」会回退旧
+ * 生效快照比较（受控形态：旧覆盖 50000/60000 下清 `minWaitMs` 并把
+ * `defaultWaitMs` 调至 30000 的合法保存被误拦——unset＝重新继承组合层）。
+ * **无用户键 → 生效值**（无草稿条目或空草稿均＝无改动）。非法草稿属单字段
+ * 档（返回 null，该侧不参与链式比较——非法性由单字段校验报出、保存随之
+ * 禁用，链式不叠加）。
  */
 function chainNumber(state, key) {
   var entry = state.fields === undefined ? undefined : state.fields[key];
   var hasDraftText = entry !== undefined && typeof entry.text === "string"
     && entry.text.trim() !== "";
   if (hasDraftText) return draftNumber(state, key);
-  if (entry !== undefined && entry.overridden === true) return CHAIN_UNKNOWN;
+  if (state.userHas !== undefined && state.userHas[key] === true) {
+    var baseValue = state.base === undefined ? undefined : state.base[key];
+    return typeof baseValue === "number" && Number.isFinite(baseValue) ? baseValue : CHAIN_UNKNOWN;
+  }
   var source = state.effective === undefined || state.effective === null ? {} : state.effective;
   var effective = source[key];
   return typeof effective === "number" && Number.isFinite(effective) ? effective : null;
@@ -801,11 +810,27 @@ function makeTranslator(uiLang, hostT) {
  */
 function projectCardState(model, scope) {
   var snapshot = scope.getSnapshot();
-  var state = { shell: model.shell(), uiLang: uiLangOf(snapshot), fields: {}, effective: {} };
-  var valueLayer = settingsLayerOf(snapshot !== undefined && snapshot !== null ? snapshot.value : undefined);
+  var present = snapshot !== undefined && snapshot !== null;
+  var state = {
+    shell: model.shell(), uiLang: uiLangOf(snapshot), fields: {}, effective: {},
+    userHas: {}, base: {}
+  };
+  var valueLayer = settingsLayerOf(present ? snapshot.value : undefined);
+  var userLayer = settingsLayerOf(present ? snapshot.user : undefined);
+  var baseLayer = settingsLayerOf(present ? snapshot.base : undefined);
   for (var i = 0; i < FIELDS.length; i += 1) {
     var field = FIELDS[i];
     state.fields[field.key] = model.field(field.key);
+    // 清覆盖判定原料（UI-CLEAR-03，设计 §5.4）：`userHas`＝原始用户层的键
+    // 存在性（保存落定前 unset 未发生，键在场即「本次保存将清除的覆盖」——
+    // 不经字段级 overridden 标志，那是官方模型对暂存后来源的预演、暂存清除
+    // 即翻转）；`base`＝base 层回退值（清字段后按 5.1 优先级重取的组合层，
+    // 即恢复默认将写入的真实值；数值字段才有链式用途，非数值形态不收）。
+    state.userHas[field.key] = Object.prototype.hasOwnProperty.call(userLayer, field.key);
+    var baseValue = baseLayer[field.key];
+    if (typeof baseValue === "number" && Number.isFinite(baseValue)) {
+      state.base[field.key] = baseValue;
+    }
     // 毫秒字段的生效值（说明行读数）＋绑定字段的生效名单（绑定块的生效值行）。
     if (field.ms === true || field.binding === true) {
       state.effective[field.key] = valueLayer[field.key];
@@ -897,8 +922,13 @@ function createCardModel(ctx) {
  *   不得把旧代理的回执冒充新代理的结果）。
  * - **attach 首读不被旧在途请求挡**：attach 即推进代际并即时发起新读——旧
  *   在途回执按代际失配自弃，新代理的首读不等待、不缺席。
- * - 目录只读写自身快照，不触设置表单模型——重读/失败/重试期间未保存草稿
- *   原样保留。
+ * - **在途 detach 的状态收尾**（§10.1，UI-CATALOG-02-A）：detach（服务撤下且
+ *   无替代）推进代际后，在途回执零写入、loading 不悬挂——在途回执全部落定
+ *   且无新服务在场时，状态收尾为可重试错误态（unavailable 标记，与绑定块的
+ *   服务缺席 error 态同口径）；其后手动刷新在服务仍缺席时立即交回错误态、
+ *   不再排补读（待补读标记的语义是「服务在场时的重读意图」，随 detach 作废）。
+ * - 目录只读写自身快照，不触设置表单模型——重读/失败/重试/收尾期间未保存
+ *   草稿原样保留。
  *
  * 服务代理经 `attach(service)` 注入（apply 的动态 inject 接线，见
  * `createPresetCatalog` 用法处注释），服务实现变化／fiber 退出时经 `detach()`
@@ -923,8 +953,14 @@ function createPresetCatalog() {
   // （同代内先发后至）同样自弃。
   var readSeq = 0;
   // 待重读标记（§10.1）：loading 期间到达的读取请求只置位一次，在途回执落定
-  // 后自动补恰一次重读。
+  // 后自动补恰一次重读。语义＝「服务在场时的重读意图」——服务撤下（detach）
+  // 后作废，不把补读排到无服务的将来。
   var pendingReread = false;
+  // 最近一次发起的读取落定追踪（§10.1 在途 detach 收尾，UI-CATALOG-02-A）：
+  // detach 撤代理后旧回执按代际失配零写入，loading 不得悬挂——在途回执落定
+  // 且无新服务在场时，状态收尾为可重试错误态。只追踪读取 promise 的落定，
+  // 不引其结果（结果仍只经回执双重校验路径落写）。
+  var inFlight = null;
   function publish() {
     for (var i = 0; i < listeners.length; i += 1) listeners[i]();
   }
@@ -952,7 +988,7 @@ function createPresetCatalog() {
       });
       return;
     }
-    Promise.resolve().then(function () { return service.list(); }).then(function (result) {
+    var settled = Promise.resolve().then(function () { return service.list(); }).then(function (result) {
       settleRead(seq, atGeneration, function () {
         if (result !== null && typeof result === "object" && result.ok === true
           && result.value !== null && typeof result.value === "object"
@@ -978,6 +1014,8 @@ function createPresetCatalog() {
         };
       });
     });
+    settled.catch(function () { /* 落定追踪不受回执链异常影响（快照不在此写） */ });
+    inFlight = settled;
   }
   function load() {
     if (snapshot.status === "loading") {
@@ -1017,6 +1055,25 @@ function createPresetCatalog() {
     detach: function () {
       service = null;
       generation += 1;
+      // 在速能力意图作废（待重读标记＝服务在场时的重读意图，§10.1）：服务已
+      // 撤下，标记不再有可服务的将来。
+      pendingReread = false;
+      // 在途 detach 的状态收尾（§10.1，UI-CATALOG-02-A）：仅推进世代会使
+      // 在途回执零写入、但 loading 悬挂（受控缺陷形态）。在途回执落定且无新
+      // 服务在场时，状态收尾为可重试错误态——与绑定块的服务缺席 error 态同
+      // 口径（unavailable 标记）；新服务在收尾前到场（attach）则免收尾、由
+      // 其首读接管。收尾只写目录自身快照，不触设置表单模型（未保存草稿不受
+      // 影响）。
+      if (inFlight !== null) {
+        var closing = inFlight;
+        inFlight = null;
+        closing.then(function () {
+          if (service === null && snapshot.status === "loading") {
+            snapshot = { status: "error", items: [], error: undefined, unavailable: true };
+            publish();
+          }
+        }, function () { /* 收尾链兜底：回执链异常不在此写快照 */ });
+      }
     }
   };
 }
@@ -1409,9 +1466,9 @@ var DICTIONARIES = {
     "help.minWaitMs": "配置键：minWaitMs（数值，毫秒）。\n\n正等待（wait_ms > 0）的下限：请求低于此值时按下限取值；wait_ms=0 是零等待例外——只做即时检查，不抬高到下限。到时交回控制权、作业句柄仍有效；消息到达可提前结束本次等待。",
     "help.maxWaitMs": "配置键：maxWaitMs（数值，毫秒）。\n\nwait_ms 的上限：请求高于此值时按上限取值。与 minWaitMs 共同构成正等待的取值区间（minWaitMs ≤ 生效值 ≤ maxWaitMs）；零等待不受区间抬高。到时交回控制权、作业句柄仍有效；消息到达可提前结束本次等待。",
     "help.pollIntervalMs": "配置键：pollIntervalMs（数值，毫秒）。\n\nasync_wait 的子代理目标以变化事件为主、轮询为备用的双通道检查是否仍在运行；本间隔是备用轮询的节奏，受 pollIntervalMs ≤ maxWaitMs 配对约束。",
-    "help.maxResultChars": "配置键：maxResultChars（数值，字符）。\n\n按 String.length 计量，必须是正整数，小数草稿在保存时被拒。额度按交付批次共享：同批到达模型输入的多条结果——首次等待直接返回、等待返回的批次条目、完成消息——共用这一份上限，先到先分配，后到且预算耗尽的内容延后或裁剪（保首尾并说明省略量与截断）；状态行与提示另计。例如两个并行命令都在首次等待内完成时，两条直接返回合计不超过一份上限。",
+    "help.maxResultChars": "配置键：maxResultChars（数值，字符）。\n\n按 String.length 计量，必须是正整数，小数草稿在保存时被拒。额度按内部交付批次共享，不是对单次模型输入总量的封顶：同批的多条结果——首次等待直接返回、等待返回的批次条目、完成消息——共用这一份上限，先到先分配，后到且预算耗尽的内容延后或裁剪（保首尾并说明省略量与截断）；状态行与提示另计。批次只在输入边界证据后闭合（认领、回合停止、步骤边界），一步之内先后结算的多批可并入同一次模型输入，每批各得一份额度——单次输入的合计因此可超过一份。例如两个并行命令都在首次等待内完成且同批结算时，两条直接返回合计不超过一份上限。",
     "help.jobKind": "配置键：jobKind（文本）。\n\n注册命令作业时使用的类型名称，用于作业列表与日志的辨识；输入空串会被拒绝。",
-    "help.subagentProvider": "配置键：subagentProvider（文本）。\n\nasync_agent 创建子代理使用的后端服务，默认 spawn；输入去掉首尾空白后为空时按默认值生效，填了不存在的后端时，创建子代理的请求会被拒绝并显示原因。需要指定模型时，在 async_agent 调用参数中用 provider 与 model 指定。",
+    "help.subagentProvider": "配置键：subagentProvider（文本）。\n\nasync_agent 创建子代理使用的后端服务，默认 spawn；输入去掉首尾空白后为空时按默认值生效。后端须为可续后端——支持创建可继续会话的子代理；已注册但只有一次外部执行方式的后端不能用于 async_agent，填了不存在的后端或不可续后端时，创建子代理的请求会被拒绝并显示原因。需要指定模型时，在 async_agent 调用参数中用 provider 与 model 指定。",
     "help.uiLang": "配置键：uiLang（枚举：auto / zh / en）。\n\n界面文案与 Agent 文案是两个独立开关：本开关只影响界面文案，Agent 文案语言由 agentLang 设置；auto 档跟随宿主语言。",
     "help.agentLang": "配置键：agentLang（枚举：en / zh）。\n\n控制模型可见文案（工具描述、参数说明、提示、错误与执行纪律）；界面文案语言由 uiLang 单独设置，两者互不影响。",
     "help.silentFailureGuard": "配置键：silentFailureGuard（布尔）。\n\n开启后，命令可能未执行且缺少明显报错的特定条件下，诊断提醒和检查建议出现在返回提示、命令描述与执行纪律三处。",
@@ -1547,9 +1604,9 @@ var DICTIONARIES = {
     "help.minWaitMs": "Config key: minWaitMs (number, ms).\n\nLower bound for positive waits (wait_ms > 0): a request below it is clamped to it; wait_ms=0 is the zero-wait exception — an immediate check only, not raised to the bound. When the budget ends, control returns with the job handle still valid; an arriving message can end the wait early.",
     "help.maxWaitMs": "Config key: maxWaitMs (number, ms).\n\nUpper bound for wait_ms: a request above it is clamped to it. Forms the effective range for positive waits together with minWaitMs (minWaitMs ≤ effective value ≤ maxWaitMs); the zero wait is not raised by the range. When the budget ends, control returns with the job handle still valid; an arriving message can end the wait early.",
     "help.pollIntervalMs": "Config key: pollIntervalMs (number, ms).\n\nasync_wait's subagent targets check whether the target is still running on two channels — change events first, polling as the backup; this interval sets the backup polling cadence and is bound by the pollIntervalMs ≤ maxWaitMs pairing.",
-    "help.maxResultChars": "Config key: maxResultChars (number, characters).\n\nMeasured by String.length; it must be a positive integer, and non-integer drafts are rejected at save. The quota is shared per delivery batch: the multiple results reaching the model input in one batch — first-wait direct returns, wait-return batch entries, and completion messages — draw on this single cap, first come first served; content arriving after the quota is exhausted is deferred or truncated (head and tail kept, omission and truncation stated), and status lines and notices are counted separately. For example, when two parallel commands both finish inside their first waits, the two direct returns together stay within one cap.",
+    "help.maxResultChars": "Config key: maxResultChars (number, characters).\n\nMeasured by String.length; it must be a positive integer, and non-integer drafts are rejected at save. The quota is shared per internal delivery batch, not a cap on the total of one model input: the multiple results in one batch — first-wait direct returns, wait-return batch entries, and completion messages — draw on this single cap, first come first served; content arriving after the quota is exhausted is deferred or truncated (head and tail kept, omission and truncation stated), and status lines and notices are counted separately. A batch closes only on input-boundary evidence (claims, turn stopping, step boundary); several batches settled within one step may merge into the same model input, each with its own cap — the total of a single input can therefore exceed one cap. For example, when two parallel commands both finish inside their first waits and settle in the same batch, the two direct returns together stay within one cap.",
     "help.jobKind": "Config key: jobKind (text).\n\nType name used when registering command jobs, for identification in job lists and logs; an empty value is invalid.",
-    "help.subagentProvider": "Config key: subagentProvider (text).\n\nBackend service async_agent uses to create subagents, spawn by default; an empty value after trimming falls back to the default, and an unknown backend is rejected with a readable reason when a subagent is created. To specify a model, use the provider and model parameters of the async_agent call.",
+    "help.subagentProvider": "Config key: subagentProvider (text).\n\nBackend service async_agent uses to create subagents, spawn by default; an empty value after trimming falls back to the default. The backend must be continuable — it must support creating subagents with continuable sessions; a registered backend that offers only one-shot external execution cannot be used for async_agent, and an unknown or non-continuable backend is rejected with a readable reason when a subagent is created. To specify a model, use the provider and model parameters of the async_agent call.",
     "help.uiLang": "Config key: uiLang (enum: auto / zh / en).\n\nInterface copy and Agent-facing copy are two independent switches: this one only affects interface copy, and agentLang sets the Agent-facing language; the auto mode follows the host language.",
     "help.agentLang": "Config key: agentLang (enum: en / zh).\n\nControls model-visible copy (tool descriptions, parameter notes, notices, errors, and execution discipline); interface copy is set by uiLang separately, and the two do not affect each other.",
     "help.silentFailureGuard": "Config key: silentFailureGuard (boolean).\n\nWhen on, in the specific cases where a command may not have run with no visible error, the diagnostic reminders and checking advice appear in three places: return notes, command descriptions, and execution discipline.",
@@ -3064,6 +3121,8 @@ module.exports = {
   chainComparable: chainComparable,
   pairViolated: pairViolated,
   chainHitOf: chainHitOf,
+  /** 卡片状态投影（测试锚定用，UI-CLEAR-03）：userHas＝原始用户层键存在性、base＝清覆盖回退值。 */
+  projectCardState: projectCardState,
   LANG_KEYS: LANG_KEYS,
   ENTRY: ENTRY,
   PACKAGE_NAME: PACKAGE_NAME,
