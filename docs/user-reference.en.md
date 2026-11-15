@@ -147,13 +147,13 @@ Settings can come from three places, in descending priority: **user overrides** 
 
 Restore default stages removal of that field's user override and still needs Save; other fields remain unchanged. The field then takes the composition value, using the factory default only when no composition value exists. For example, a composition value of `45000` overridden with `90000` returns to `45000`, not the factory `20000`.
 
-When a numeric override draft is manually emptied, the current form checks field relationships using the factory value. The actual restored composition value may differ, so a valid combination can be blocked, or a submission can pass the form and then fail server validation. Manually emptying even one field can be blocked; splitting the change into two saves is not always effective.
+When a numeric override draft is manually emptied, the form checks field relationships against the **composition-layer value the field will take after clearing** (not the factory value), so its prediction matches the complete candidate the server validates on save; valid combinations are not blocked. If the composition layer is modified concurrently before saving, or the client cannot obtain the composition snapshot (older deployments), the server still makes the final call on the complete candidate at save time; a rejected submission retains the draft for correction.
 
 To remove an override, prefer the field's Restore default action rather than manually emptying its input. This stages removal of the override, not an explicit write of the same number:
 
 1. Select Restore default beside the field. If the input was already emptied manually, the button can disappear with the Overridden indicator. First re-enter the field's previous effective override value without saving, then select the button when it reappears.
 2. Check the restored value and related field relationships. Submit when the form permits saving, then check the effective value after success. The server validates the complete candidate, and failed saves retain the draft.
-3. If still blocked or the previous value is uncertain, defer removal and give the instance maintainer the field name, composition default, effective value, and validation message. To use a valid value in the meantime, enter and save it explicitly; that retains a user override rather than restoring the default.
+3. If a submission is still rejected by the server or the previous value is uncertain, defer removal and give the instance maintainer the field name, composition default, effective value, and validation message. To use a valid value in the meantime, enter and save it explicitly; that retains a user override rather than restoring the default.
 
 ### 2.1 All 20 settings
 
@@ -170,7 +170,7 @@ Wait durations use milliseconds (ms); 1000 ms is one second. The ranges below de
 | `minWaitMs` | number | `20000` | 1..2147483647; fractions allowed | ms | Lower request bound for the next positive async_wait; zero-wait checks are exempt |
 | `maxWaitMs` | number | `600000` | 1..2147483647; fractions allowed | ms | Upper request bound for the next positive async_wait |
 | `pollIntervalMs` | number | `500` | 1..2147483647; fractions allowed | ms | Interval for fallback child-state checks, work rechecks in untargeted waits, and retries when a child is temporarily absent from the directory; all share the call's total budget |
-| `maxResultChars` | integer | `12000` | 1..1000000 | JS String.length | Current candidate accumulates bodies across a turn; batches share the remainder. See section 4 for retrieval limits |
+| `maxResultChars` | integer | `12000` | 1..1000000 | JS String.length | Results arriving together within one model input share one allowance; the allowance resets with each model input. See section 4 |
 
 All numbers must be finite and satisfy:
 
@@ -416,21 +416,19 @@ A failed read gives an explanation and retry instructions rather than saying the
 
 Other plugins may provide jobs accessible to multiple sessions. Each authorized session can check their status, but content read by one session is not replayed to the others. Later reads return only content not yet read. If a result is needed in another session, save it in the session that receives it.
 
-For running jobs with no owning session and public access, the current zero-wait path can return only status without delivering available incremental output. This known defect does not mean the output is empty. If that content is needed, keep the job ID and symptoms and ask the instance maintainer to check available sources; do not repeat a side-effecting task.
+For running jobs with no owning session and public access, the zero-wait path also reads and delivers unread incremental output. Increments are accounted per reading subject without crowding each other out, while body consumption still goes to the session that reads it first (see the previous paragraph).
 
 ### Shortened output or deferred entries: continue reading
 
-Use the zero-wait entry below for results marked `truncated`, omitted middle sections, or deferred entries. **First read the turn-allowance limitation below: once exhausted, retries in the same turn cannot retrieve the body.**
+Use the zero-wait entry below for results marked `truncated`, omitted middle sections, or deferred entries. Deferred leftovers are available in the next model input.
 
 ```text
 async_wait(wait_ms=0)
 ```
 
-`maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes. **The current candidate accumulates body content for one Agent across an entire turn; each model step does not receive a fresh allowance.** A turn can contain several model responses and tool calls. Closing a batch only recalculates its remaining allowance, not a new full amount. Each batch has at most 10 entries, prioritizing the triggering target and then readiness order; empty entries also count.
+`maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes. **The allowance resets with each model input: the host opens a fresh full amount every time it composes a new model input, and the multiple results arriving within one input—first-wait direct returns, wait-return batch entries, and completion messages—draw on it together, first come first served.** Calls queued within the same step naturally belong to one model input and share that single allowance. Each batch has at most 10 entries, prioritizing the triggering target and then readiness order; empty entries also count.
 
-This differs from the required per-model-input budget and remains a defect. Once the allowance is exhausted, further zero-wait calls in the same turn can return only status and deferral notices, without the retained middle or later nonempty results. Do not repeatedly retry merely because a notice says “fetch it now.” Ending a wait does not restore the allowance.
-
-The allowance resets only when the whole turn ends normally. The Agent can report available results, outstanding job IDs, and missing content, then end its current turn. On a later normal continuation, call the zero-wait example above again. **Turn end restores the allowance but does not automatically send the remaining body.** Cancellation or abnormal termination does not reset it; the used allowance can carry into another turn until one ends normally. If the current task needs the missing body before it can proceed, report the blockage and involve the maintainer rather than repeatedly fetching nothing, rerunning side-effecting work, or claiming a complete result.
+Once this input's allowance is exhausted, further zero-wait calls within the same input return only status and deferral notices. **The next model input (the Agent's next step) starts with the allowance already reset**, so deferred middle sections and later entries can be collected then without any extra action. Do not retry in place once the allowance is exhausted: do other work or end the current step, let the host compose the next input, then call the zero-wait entry to read.
 
 Status, necessary explanations, and retained paths are separate. Other sources and conversation history are outside this allowance too. Do not use `maxResultChars` to estimate the full model-input length; inspect actual requests when checking consumption.
 
@@ -442,7 +440,7 @@ In normal delivery, each job's source is attached at most once, not again in lat
 
 ### A tool result may not have arrived: request a recovery copy
 
-If a call was canceled and the Agent did not receive the expected body, find its ID with `job_list` and name it in a zero-wait call. Recovery also uses the turn allowance described above. Cancellation does not restore it; do not repeatedly retry an exhausted allowance.
+If a call was canceled and the Agent did not receive the expected body, find its ID with `job_list` and name it in a zero-wait call. Recovery shares the per-model-input allowance described above; when this input's allowance is exhausted, deferred recovery content is likewise available in the next model input—no repeated retrying needed.
 
 ```text
 async_wait(targets=[{kind:"job", id:"<original job_id>"}], wait_ms=0)
@@ -532,7 +530,7 @@ Enable `askTakeover` and save. Ordinary questions from root Agents on presets in
 
 With askUiSeat set to sidebar, click the unanswered count at the sidebar bottom to expand the panel. With overlay, questions appear at the lower right. The panel can open the original session, answer, ignore, or extend time. New questions announce the added count to assistive technology without taking keyboard focus or automatically reading the whole question. The countdown does not repeat the announcement.
 
-If the pending-state read fails, the sidebar entry remains available. Open the panel, or inspect the overlay, to read the error; automatic retries continue in the background. With no cached questions, the sidebar can still say “0 questions.” That number does not confirm that none are pending: open it and check for an error. If questions seem missing or errors persist, check the original session and its deadline, reply there if needed, and give the instance maintainer redacted symptoms and triggering steps.
+If the pending-state read fails, the sidebar entry remains available. Open the panel, or inspect the overlay, to read the error; automatic retries continue in the background. When the read fails and no questions have been confirmed yet, the badge shows no number and instead carries an unknown-state note ("count unknown")—it never passes 0 off as a confirmed zero. With confirmed cached questions, the cached count still displays. After the next successful read, the count returns to the actual value. If questions seem missing or errors persist, check the original session and its deadline, reply there if needed, and give the instance maintainer redacted symptoms and triggering steps.
 
 ### Answer or ignore
 
