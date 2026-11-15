@@ -11,7 +11,7 @@ Find the task you need:
 
 ## 1. Installation identity and prerequisites
 
-**This candidate has not passed release acceptance.** The table lists versions the package declares admissible. Before testing, confirm an accessible exact commit or artifact with the maintainer, use an isolated instance, and retain matching source; the same version number can identify different implementations. Remote installation steps apply only to a published, accessible branch or commit, not an unuploaded local commit.
+**The current candidate has an issue that can prevent Agent model steps from continuing normally. Do not use it for production tasks until it is fixed and revalidated.** The table lists versions the package declares admissible, not proof that the candidate is usable. Before testing, confirm an accessible exact commit or artifact with the maintainer, use an isolated instance, and retain matching source; the same version number can identify different implementations. Remote installation steps apply only to a published, accessible branch or commit, not an unuploaded local commit.
 
 | Component | Current applicable version |
 | --- | --- |
@@ -147,7 +147,7 @@ Settings can come from three places, in descending priority: **user overrides** 
 
 Restore default stages removal of that field's user override and still needs Save; other fields remain unchanged. The field then takes the composition value, using the factory default only when no composition value exists. For example, a composition value of `45000` overridden with `90000` returns to `45000`, not the factory `20000`.
 
-When a numeric override draft is manually emptied, the form checks field relationships against the **composition-layer value the field will take after clearing** (not the factory value), so its prediction matches the complete candidate the server validates on save; valid combinations are not blocked. If the composition layer is modified concurrently before saving, or the client cannot obtain the composition snapshot (older deployments), the server still makes the final call on the complete candidate at save time; a rejected submission retains the draft for correction.
+When restoring a wait minimum or maximum, also check the related default duration against the field relationships below. Related fields can be edited and saved together. If saving fails, correct the retained draft as prompted.
 
 To remove an override, prefer the field's Restore default action rather than manually emptying its input. This stages removal of the override, not an explicit write of the same number:
 
@@ -218,7 +218,7 @@ The default list contains the two shipped presets; both switches default to off.
 
 Candidates come from the DSH preset registry; Refresh reads them again. Bound IDs that are currently absent remain available for removal. Failed-to-load entries show the host's reason and cannot be newly selected, but existing bindings can be removed. A failed registry read preserves saved bindings instead of displaying the failure as an empty list.
 
-Refresh requests received during a read are combined into a follow-up read after it finishes. Replacing the directory service starts a new read immediately; old responses cannot overwrite the new directory, and unsaved selection drafts remain unchanged. Failed reads or an unavailable service show a reason and a retry action, while existing bindings remain removable. Refresh still waits for a pending request that never returns. Ask the instance maintainer to check persistent loading or unsuccessful retries. Before reloading the whole browser page, record unsaved drafts: reloading discards them and does not establish that the service has recovered. Do not restart an instance in use just for this.
+Select Refresh to update the candidate list without saving settings or discarding selection drafts. Refreshing during a read schedules an update after that read finishes. Retry as prompted if an error appears; existing bindings remain removable. If loading persists or retries fail, keep the error details and ask the instance maintainer to check the preset directory service. Record unsaved drafts before reopening or reloading the page, because reloading discards them.
 
 ### Configuration warnings and recovery
 
@@ -263,7 +263,7 @@ Use this when a background result or message is needed. Ending the call ends thi
 
 | Argument | Type | Required/default | Rules |
 | --- | --- | --- | --- |
-| `wait_ms` | number | Required; no default | Positive values clamped to minWaitMs..maxWaitMs; 0 checks without waiting |
+| `wait_ms` | number | Required; no default | Finite nonnegative number; fractions allowed. Negative or non-finite values are rejected. Positive values clamp to minWaitMs..maxWaitMs; 0 checks without waiting |
 | `targets` | array | Optional; defaults to no targets | Each item has kind and a nonempty id; kind is job or agent; repeated targets are deduplicated |
 
 These are Agent tool calls:
@@ -414,9 +414,9 @@ Job results arrive in the initial call's return, an in-flight `async_wait` retur
 
 A failed read gives an explanation and retry instructions rather than saying the result is empty. Retry the original target as instructed to continue reading unread content.
 
-Other plugins may provide jobs accessible to multiple sessions. Each authorized session can check their status, but content read by one session is not replayed to the others. Later reads return only content not yet read. If a result is needed in another session, save it in the session that receives it.
+Other plugins may provide jobs accessible to multiple sessions. Each authorized session can check status, but each does not receive its own copy of the body. The host supplies only unread content: once session A reads a portion, session B cannot retrieve that portion and can read only later content that no other session has consumed. Save needed content in the session that receives it before using it elsewhere.
 
-For running jobs with no owning session and public access, the zero-wait path also reads and delivers unread incremental output. Increments are accounted per reading subject without crowding each other out, while body consumption still goes to the session that reads it first (see the previous paragraph).
+Zero-wait calls can also read unread increments from public running jobs with no owning session. The plugin manages received content and reading allowances separately for each session; this does not copy body content already consumed from the host by another session.
 
 ### Shortened output or deferred entries: continue reading
 
@@ -530,7 +530,7 @@ Enable `askTakeover` and save. Ordinary questions from root Agents on presets in
 
 With askUiSeat set to sidebar, click the unanswered count at the sidebar bottom to expand the panel. With overlay, questions appear at the lower right. The panel can open the original session, answer, ignore, or extend time. New questions announce the added count to assistive technology without taking keyboard focus or automatically reading the whole question. The countdown does not repeat the announcement.
 
-If the pending-state read fails, the sidebar entry remains available. Open the panel, or inspect the overlay, to read the error; automatic retries continue in the background. When the read fails and no questions have been confirmed yet, the badge shows no number and instead carries an unknown-state note ("count unknown")—it never passes 0 off as a confirmed zero. With confirmed cached questions, the cached count still displays. After the next successful read, the count returns to the actual value. If questions seem missing or errors persist, check the original session and its deadline, reply there if needed, and give the instance maintainer redacted symptoms and triggering steps.
+If the pending-state read fails, the sidebar entry remains available. Open the panel, or inspect the overlay, to read the error; automatic retries continue in the background. The sidebar shows “?” when no cached count is available, or keeps the cached count until a successful read supplies the actual number. **While reading has failed, the panel title can still show “0 pending”; this does not confirm that there are no questions.** If questions seem missing or errors persist, check the original session and its deadline, reply there if needed, and give the instance maintainer redacted symptoms and triggering steps.
 
 ### Answer or ignore
 
