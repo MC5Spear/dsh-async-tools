@@ -147,7 +147,9 @@ Settings can come from three places, in descending priority: **user overrides** 
 
 Restore default stages removal of that field's user override and still needs Save; other fields remain unchanged. The field then takes the composition value, using the factory default only when no composition value exists. For example, a composition value of `45000` overridden with `90000` returns to `45000`, not the factory `20000`.
 
-When manually clearing a wait-minimum override while also lowering the related default, the current form can validate against the old minimum and reject a valid combination. Clear and save only the minimum override first, confirm its effective value, then change and save the default. For example, a minimum/default pair of `50000/60000` can become `20000/60000` after clearing the override, then `20000/30000` after the second save. The restored minimum comes from composition or factory values, and every step must satisfy the field relationships; do not apply this example to unrelated combinations.
+When a wait-minimum override is manually cleared while its related default is lowered, the current form can still compare against the minimum before removal and block a valid combination. For example, with no composition-level minimum configured, a minimum/default pair of `50000/60000` should become `20000/30000` when the minimum is cleared and the default changed to `30000`, but the form can still disable saving because it compares `50000 > 30000`.
+
+For this case, clear and save only the minimum override first, check its restored value, then change the default. Every step must satisfy the field relationships. The restored value comes from composition or factory defaults; do not apply this example to unrelated combinations. Failed saves retain the draft. If the change remains blocked, give the instance maintainer the field names, composition defaults, effective values, and validation message.
 
 ### 2.1 All 20 settings
 
@@ -181,7 +183,7 @@ A minimum is not a mandatory delay. Completion or an eligible message still retu
 | Field | Type | Default | Saved range | Unit | Purpose and effective time |
 | --- | --- | --- | --- | --- | --- |
 | `jobKind` | string | `async-command` | Nonempty string | — | Kind identifier for new command jobs, useful in job listings |
-| `subagentProvider` | string | `spawn` | Backend name; trimmed empty value uses spawn | — | Execution backend for later child creation, not the model provider; confirm that DSH has registered it before changing |
+| `subagentProvider` | string | `spawn` | Backend name; trimmed empty value uses spawn | — | Execution backend for later child creation, not the model provider; first confirm that DSH has registered it and that it supports resumable children |
 | `uiLang` | enum | `auto` | auto / zh / en | — | Package settings and question-panel language; auto follows the host |
 | `agentLang` | enum | `en` | en / zh | — | Package tool descriptions, results, and operating instructions, independently of uiLang |
 | `silentFailureGuard` | boolean | `false` | true / false | — | Silent-command-failure diagnostics and warnings for listed presets; see section 6 |
@@ -212,7 +214,7 @@ The default list contains the two shipped presets; both switches default to off.
 
 Candidates come from the DSH preset registry; Refresh reads them again. Bound IDs that are currently absent remain available for removal. Failed-to-load entries show the host's reason and cannot be newly selected, but existing bindings can be removed. A failed registry read preserves saved bindings instead of displaying the failure as an empty list.
 
-Directory updates currently have a limitation: while a read is pending, a refresh triggered by a preset change or reconnection can be ignored, and an old response can overwrite the new directory. Once the original request finishes, select Refresh to read again. While it is still loading, there is no cancel or force-refresh action; closing and reopening settings does not rebuild the directory model. If reloading the entire browser page is necessary, record unsaved drafts first: the reload discards them and does not guarantee that a service failure has recovered. If reading still fails, ask the instance maintainer to check the directory service rather than restarting an instance in use.
+Refresh requests received during a read are combined into a follow-up read after it finishes. Replacing the directory service starts a new read immediately; old responses cannot overwrite the new directory, and unsaved selection drafts remain unchanged. A request that never returns, or removal of the service without a replacement, can still leave the list loading. Closing and reopening settings does not force cancellation. Ask the instance maintainer to check persistent loading or directory errors. Before reloading the whole browser page, record unsaved drafts: reloading discards them and does not establish that the service has recovered. Do not restart an instance in use just for this.
 
 ### Configuration warnings and recovery
 
@@ -293,7 +295,7 @@ Creates a resumable child in the background and immediately returns `agent_id`, 
 | `reasoning_effort` | string | Conditionally available | May be supplied alone; nonempty effort ID supported by the effective model |
 | `agent_preset` | string | Conditionally available | Selects a child preset from the allowed list; see section 7 for configuration |
 
-Model arguments appear only when the execution backend supports them; passing them without support fails. The `subagentProvider` setting selects the execution backend, default `spawn`; the call's `provider` selects the model provider. These are different. With a context-inheriting backend, the child's access to the parent conversation follows that backend.
+The execution backend must support resumable children. A registered backend supporting only one-off external execution cannot be used by `async_agent`. Model arguments appear only if that backend also supports them; passing unsupported arguments is an error. The `subagentProvider` setting selects the execution backend, default `spawn`; the call's `provider` selects the model provider. These are different. With a context-inheriting backend, the child's access to the parent conversation follows that backend.
 
 A label and complete task are usually sufficient, with a default or inherited model. Success returns `status=started`, `agent_id`, and an explanation including the model's source. A rejected creation does not return a successful ID. Keep the ID and do independent work, then use `async_wait` for target changes when needed. Continue the conversation with `send_message`, or stop the child with `interrupt_agent`.
 
@@ -418,11 +420,11 @@ When a result is marked `truncated`, says its middle was omitted, or reports def
 async_wait(wait_ms=0)
 ```
 
-`maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes. Results share this allowance within one internal delivery batch. The target triggering delivery has priority, followed by readiness order. A batch contains at most 10 entries, including empty ones.
+`maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes. Results share the allowance within a delivery batch. The target triggering delivery has priority, followed by readiness order. A batch contains at most 10 entries, including empty ones.
 
-Concurrent commands or workflows that have started executing share the batch allowance from preparation onward; different directory-preparation times do not by themselves start a fresh allowance. The current candidate does not cover calls in the same model step that are still queued and have not started executing. When the host executes one tool call at a time, later calls can each receive a fresh allowance even though their results enter the next model input together. Their combined body content can therefore exceed `maxResultChars`. This defect is not yet fixed; it does not mean that tasks failed or bodies were lost.
+This candidate now shares the allowance across preparing calls and queued calls that enter execution, starting a new batch at observable boundaries such as a model-step transition. A timing defect remains: a long scheduling gap or other tool work between result-returning calls in the same step can close the earlier batch too soon, giving a later call a fresh allowance. Controlled checks reproduced combined content above the limit. This does not mean tasks failed or bodies were lost.
 
-Results arriving after a batch closes can also enter the same model input as that earlier batch. Do not use `maxResultChars` to estimate the maximum length of one input; inspect actual model requests when controlling or checking consumption. Issuing only one result-returning call per model step avoids the queued-call combination above, but is not a batch fix or a guarantee on total input length.
+Do not treat `maxResultChars` as a strict limit on one model input. Status explanations, conversation history, and other sources are also outside this body allowance. Check actual model requests when controlling consumption. One result-returning call per step avoids the multiple-call combination above, but does not bound total input length. Batch timing and deployment parameters still need verification across admitted hosts.
 
 An oversized entry keeps its head and tail while its middle remains for later reading. Excess entries are deferred in full. Status, necessary error explanations, and retained-output paths are outside the body allowance. **Shortened display does not mean the content was lost.**
 
@@ -444,7 +446,7 @@ Copies are retained for at most 30 minutes by default, subject to per-session ca
 
 Different output copies from the same job are handled separately. Confirmation of one portion does not make known expired content count as fully delivered. For a terminal job with some content confirmed and other copies unavailable, recovery reports partial confirmation and the missing portions.
 
-Two recovery limits remain. Continuing recovery of the same job's output can repeat an opening section already provided. Also, after an unconfirmed incremental copy expires while its job is still running, a zero-wait return can show only the running state without explaining that the earlier portion is unavailable. The first case still carries the “may duplicate” marker; do not treat repeated text as new output. In the second case, a running state is not proof that the earlier body was delivered. If content is incomplete, keep the job ID, check original records and known retained paths, and contact the instance maintainer if needed. Do not repeat a side-effecting task to recover its result.
+Once no unread body remains and the request enters copy recovery, it reports known expired or removed copies even while the job is running; a running state is not treated as proof that earlier content arrived. Recovery continues from its current position. The “may duplicate” marker means the original carrier may already have been received, so resent text is not new output. A rare cancellation interleaving can still make continued reading of one copy repeat an opening section already provided. Check the ranges if this occurs rather than repeating the task. If content is incomplete, keep the job ID, inspect original records and known retained paths, and contact the instance maintainer if needed. Do not repeat a side-effecting task to recover its result.
 
 ### The host reports lost buffering: inspect known retained paths
 
@@ -518,7 +520,7 @@ Enable `askTakeover` and save. Ordinary questions from root Agents on presets in
 
 With askUiSeat set to sidebar, click the unanswered count at the sidebar bottom to expand the panel. With overlay, questions appear at the lower right. The panel can open the original session, answer, ignore, or extend time. New questions announce the added count to assistive technology without taking keyboard focus or automatically reading the whole question. The countdown does not repeat the announcement.
 
-If the current candidate's first pending-state read fails and no older questions are cached, it also hides the error entry. The absence of a badge or overlay is therefore not confirmation that no questions are pending. If a question appears to be missing, check the original session and its deadline; replying there is an alternative. The panel continues retrying in the background. If it still does not appear, give the instance maintainer redacted symptoms and triggering steps.
+If the pending-state read fails, the sidebar entry remains available and the overlay shows an error. The panel retries automatically. The sidebar error entry has no question count; open it to read the error. Actual counts return after a successful read. If questions seem missing or errors persist, check the original session and its deadline, reply there if needed, and give the instance maintainer redacted symptoms and triggering steps.
 
 ### Answer or ignore
 
