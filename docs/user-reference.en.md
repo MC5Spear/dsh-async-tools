@@ -147,9 +147,7 @@ Settings can come from three places, in descending priority: **user overrides** 
 
 Restore default stages removal of that field's user override and still needs Save; other fields remain unchanged. The field then takes the composition value, using the factory default only when no composition value exists. For example, a composition value of `45000` overridden with `90000` returns to `45000`, not the factory `20000`.
 
-Clearing an override means inheriting the composition layer's value again, and the form's relationship checks use the value that will take effect after the clearing: when a wait minimum is cleared, the comparison uses the composition file's minimum (or the factory value when none is preset), not the removed override. For example, with no composition-level minimum configured, a minimum/default pair of `50000/60000` can have its minimum cleared and its default changed to `30000` in one save—nothing blocks it over `50000 > 30000`.
-
-In the rare shape where the page cannot obtain the post-clearing composition value (for example, the host projection omits that layer), saving is not disabled; the server makes the final check against actual values when saving. A rejection returns a readable reason—correct the fields as prompted and retry. Restored values come from composition or factory defaults; do not apply the example numbers to unrelated combinations.
+When restoring a wait minimum or maximum, also check the related default duration against the field relationships below. Related fields can be edited and saved together. A failed save retains the draft; correct the fields as prompted, then check the effective values after a successful save.
 
 ### 2.1 All 20 settings
 
@@ -214,7 +212,7 @@ The default list contains the two shipped presets; both switches default to off.
 
 Candidates come from the DSH preset registry; Refresh reads them again. Bound IDs that are currently absent remain available for removal. Failed-to-load entries show the host's reason and cannot be newly selected, but existing bindings can be removed. A failed registry read preserves saved bindings instead of displaying the failure as an empty list.
 
-Refresh requests received during a read are combined into a follow-up read after it finishes. Replacing the directory service starts a new read immediately; old responses cannot overwrite the new directory, and unsaved selection drafts remain unchanged. When the directory service is removed without a replacement, the list settles into a retryable error state once the in-flight read finishes instead of staying on loading; clicking Refresh then returns the same error notice immediately without queuing, selection drafts and form contents are unaffected, and reading resumes once a service is available again. If the host service's read request itself never returns (an unresponsive service rather than a removed one), loading continues until that request answers; ask the instance maintainer to check persistent loading or directory errors. Before reloading the whole browser page, record unsaved drafts: reloading discards them and does not establish that the service has recovered. Do not restart an instance in use just for this.
+Select Refresh to update the candidate list without saving settings or discarding selection drafts. Refreshing during a read schedules an update after that read finishes. Retry as prompted if an error appears. If loading persists or retries fail, keep the error details and ask the instance maintainer to check the preset directory service. Record unsaved drafts before reopening or reloading the page, because reloading discards them.
 
 ### Configuration warnings and recovery
 
@@ -259,7 +257,7 @@ Use this when a background result or message is needed. Ending the call ends thi
 
 | Argument | Type | Required/default | Rules |
 | --- | --- | --- | --- |
-| `wait_ms` | number | Required; no default | Positive values clamped to minWaitMs..maxWaitMs; 0 checks without waiting |
+| `wait_ms` | number | Required; no default | Finite nonnegative number; fractions allowed. Negative or non-finite values are rejected. Positive values clamp to minWaitMs..maxWaitMs; 0 checks without waiting |
 | `targets` | array | Optional; defaults to no targets | Each item has kind and a nonempty id; kind is job or agent; repeated targets are deduplicated |
 
 These are Agent tool calls:
@@ -422,9 +420,12 @@ async_wait(wait_ms=0)
 
 `maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes. Results share the allowance within a delivery batch. The target triggering delivery has priority, followed by readiness order. A batch contains at most 10 entries, including empty ones.
 
-A batch closes only after a real input boundary: a new input message is claimed, the turn ends, or the host emits a step-boundary event between steps where available. Calls from this package within one model input therefore share a single allowance—a long scheduling gap or other tool work between calls never grants a fresh allowance—and entries that do not fit are deferred and become available in the new batch after the next input boundary. Allowance reset follows only these boundaries, never elapsed time.
+Once the allowance is exhausted, immediately repeating zero-wait may return only another deferral notice. How to continue depends on the DSH version:
 
-Status explanations, conversation history, and other sources are outside this body allowance; check actual model requests when controlling consumption. On hosts without a step-boundary event, a batch stays open between input messages (shared across steps, conservative), which does not affect the same-input sharing guarantee.
+- **rc.5:** Let the Agent process the current return, then make a zero-wait call in the next model step.
+- **rc.2, rc.3, and rc.4:** Later steps in the same turn may still have no new allowance. Keep the job ID, report the unread content, and end the current turn. After later input arrives, name the original job in a zero-wait call to continue. If no later input is arranged, hand over the job ID and the required continuation action rather than repeatedly calling to prompt delivery.
+
+The plugin updates allowances when new input messages are claimed, a turn ends, or rc.5 emits a step event. A long interval between calls does not grant a fresh allowance. On rc.2–rc.4, one allowance can span multiple model steps. If more background results arrive after an allowance update but before the next model request is sent, they may join the previous batch's return in that same request, exceeding one allowance in total. `maxResultChars` is not a strict total model-input length limit. Status explanations, conversation history, and other sources are also counted separately; inspect actual requests when checking consumption.
 
 An oversized entry keeps its head and tail while its middle remains for later reading. Excess entries are deferred in full. Status, necessary error explanations, and retained-output paths are outside the body allowance. **Shortened display does not mean the content was lost.**
 
@@ -446,7 +447,7 @@ Copies are retained for at most 30 minutes by default, subject to per-session ca
 
 Different output copies from the same job are handled separately. Confirmation of one portion does not make known expired content count as fully delivered. For a terminal job with some content confirmed and other copies unavailable, recovery reports partial confirmation and the missing portions.
 
-Once no unread body remains and the request enters copy recovery, it reports known expired or removed copies even while the job is running; a running state is not treated as proof that earlier content arrived. Recovery continues from its current position. The “may duplicate” marker means the original carrier may already have been received, so resent text is not new output. A rare cancellation interleaving can still make continued reading of one copy repeat an opening section already provided. Check the ranges if this occurs rather than repeating the task. If content is incomplete, keep the job ID, inspect original records and known retained paths, and contact the instance maintainer if needed. Do not repeat a side-effecting task to recover its result.
+Once no unread body remains and the request enters copy recovery, it reports known expired or removed copies even while the job is running; a running state is not treated as proof that earlier content arrived. Recovery continues from its current position. The “may duplicate” marker means the original result may already have been received, so resent text is not new output. Check the content ranges if this occurs rather than repeating the task. If content is incomplete, keep the job ID, inspect original records and known retained paths, and contact the instance maintainer if needed. Do not repeat a side-effecting task to recover its result.
 
 ### The host reports lost buffering: inspect known retained paths
 
@@ -520,7 +521,7 @@ Enable `askTakeover` and save. Ordinary questions from root Agents on presets in
 
 With askUiSeat set to sidebar, click the unanswered count at the sidebar bottom to expand the panel. With overlay, questions appear at the lower right. The panel can open the original session, answer, ignore, or extend time. New questions announce the added count to assistive technology without taking keyboard focus or automatically reading the whole question. The countdown does not repeat the announcement.
 
-If the pending-state read fails, the sidebar entry remains available and the overlay shows an error. The panel retries automatically. The sidebar error entry has no question count; open it to read the error. Actual counts return after a successful read. If questions seem missing or errors persist, check the original session and its deadline, reply there if needed, and give the instance maintainer redacted symptoms and triggering steps.
+If the pending-state read fails, the sidebar entry remains available and the overlay shows an error. The panel retries automatically. The sidebar error entry has no question count; open it to read the error. Actual counts return after a successful read. **While reading has failed, the panel title can still show “0 pending”; this does not confirm that there are no questions.** If questions seem missing or errors persist, check the original session and its deadline, reply there if needed, and give the instance maintainer redacted symptoms and triggering steps.
 
 ### Answer or ignore
 
