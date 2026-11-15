@@ -4107,7 +4107,7 @@ test('J57：座位接线同步抛错可见——ctx.inject 同步抛错走单链
 // 直接 match 会 TypeError 绕过一切收尾）；认证首跳 try/catch 承接（主 try 之外
 // 裸抛同样绕过收尾）；进程级 uncaughtException／unhandledRejection 统一转 die
 // 清运行目录。
-test('J58：探针守卫静态锚——pack 判空先于首处 stdout.match、认证首跳承接走 die、进程级异常统一 die、承接先于建目录、aborted 三档收束、cleanup 删失败 WARN（DOC-06）', () => {
+test('J58：探针守卫静态锚——pack 判空先于首处 stdout.match、认证首跳承接走 die、进程级异常统一 die、承接先于建目录、退出码含清理档、cleanup 三段结构化、运行期错误身份判别（DOC-03-N1/DOC-06）', () => {
   const source = readFileSync(resolve(ROOT, 'verify/probe-recovery-identity.mjs'), 'utf8');
   // ① pack spawnSync 判空守卫：在场，且先于首处 packRun.stdout.match。
   const guardPos = source.indexOf('packRun.error !== undefined');
@@ -4134,8 +4134,9 @@ test('J58：探针守卫静态锚——pack 判空先于首处 stdout.match、�
   const runDirPos = source.indexOf('mkdirSync(RUN_DIR');
   assert.ok(uncaughtPos !== -1 && runDirPos !== -1 && uncaughtPos < runDirPos,
     '④ 承接注册先于 mkdirSync(RUN_DIR)（修前：承接后挂＝目录已建无承接的窗口＝红）');
-  // ⑤ 主 try 的 catch 置 aborted、finally 按三档收束：装置故障（aborted）以
-  // 退出码 2 与核心判据失败（退出码 1）区分——空 verdicts 不得读成全过。
+  // ⑤ 主 try 的 catch 置 aborted、finally 按档收束：装置故障（aborted 或清理
+  // 未证实）以退出码 2 与核心判据失败（退出码 1）区分——空 verdicts 不得读成
+  // 全过，核心全 PASS 而清理未证实不得退出 0（DOC-06-RESULT）。
   const abortedDeclPos = source.indexOf('let aborted = false');
   const abortedSetPos = source.indexOf('aborted = true');
   const finallyPos = source.indexOf('} finally {');
@@ -4143,19 +4144,34 @@ test('J58：探针守卫静态锚——pack 判空先于首处 stdout.match、�
     '⑤ aborted 初值先于 catch 置位');
   assert.ok(finallyPos !== -1 && abortedSetPos < finallyPos,
     '⑤ catch 置位在主 try 段内（finally 之前）');
-  assert.ok(source.includes('process.exit(aborted ? 2 : (failed > 0 ? 1 : 0))'),
-    '⑤ finally 按 aborted／failed 三档收束退出码（修前：装置故障与判据失败不分＝红）');
-  // ⑥ cleanup 的 rmSync 包 try/catch＋WARN 留现场：Windows 文件锁（EBUSY/
-  // EPERM）只告警不中断——cleanup 自身永不抛（进程级异常承接路径里再抛会把
-  // Node 打成 fatal，清理反而做不完）。
+  assert.ok(source.includes('process.exit(aborted ? 2 : (failed > 0 ? 1 : (cleanupResult.ok ? 0 : 2)))'),
+    '⑤ finally 按 aborted／failed／cleanupResult 四档收束退出码（修前：核心全过而清理失败仍退出 0＝红）');
+  // ⑥ cleanup 三段结构化（DOC-06）：终止（taskkill 回执＋ESRCH 结束复核）→
+  // 归属（pid＋探针名双身份）→删除（删除后存在性核对）；任一段未证实即留
+  // 现场交接 pid／目录；rmSync 包 try（Windows 文件锁 EBUSY/EPERM 只留现场）
+  // ——cleanup 自身永不抛（承接路径里再抛会把 Node 打成 fatal）。「已清除」
+  // 只在核实后出现（reportCleanup），失败交接目录路径与进程标识。
   const cleanupStart = source.indexOf('const cleanup');
   const dieStart = source.indexOf('const die', cleanupStart);
   assert.ok(cleanupStart !== -1 && dieStart !== -1, '⑥ cleanup 函数在场');
   const cleanupBody = source.slice(cleanupStart, dieStart);
   assert.ok(cleanupBody.indexOf('try') !== -1 && cleanupBody.indexOf('try') < cleanupBody.indexOf('rmSync(RUN_DIR'),
     '⑥ rmSync 包 try（修前：裸抛把承接路径打成 fatal＝红）');
-  assert.ok(/catch\s*\(/.test(cleanupBody) && cleanupBody.includes('WARN'),
-    '⑥ 删除失败按 WARN 告警留现场');
+  assert.ok(cleanupBody.includes('ESRCH'),
+    '⑥ 终止段带进程结束复核（ESRCH＝不存在的可证信号；修前：只凭 taskkill 状态 0＝红）');
+  assert.ok(cleanupBody.includes("owned.probe !== 'probe-recovery-identity'"),
+    '⑥ 归属段核 pid＋探针名双身份（修前：只核 pid＝红）');
+  assert.ok(cleanupBody.includes('!existsSync(RUN_DIR)'),
+    '⑥ 删除段带删除后存在性核对（修前：rmSync 返回即当作已清除＝红）');
+  assert.ok(source.indexOf('const reportCleanup') !== -1 && source.indexOf('已清除并核实') !== -1,
+    '⑥ 「已清除」只在核实后出现（reportCleanup 报告实际结果）');
+  // 运行期错误身份判别（DOC-03-N1）：按「错误文本点名补丁文件」的可证来源
+  // 分档，不再用 /patch|yaml|model.?rout/i 词面匹配（transport dispatch failed
+  // 因含 patch 被误判核心 FAIL＝红；凭据不足带 model routing 前缀同）。
+  assert.ok(!/\/patch\|yaml\|model\.\?rout\/i/.test(source),
+    '⑥ 运行期分类不再按词面 regex（修前：dispatch 含 patch 被误判＝红）');
+  assert.ok(source.includes('errText.includes(PATCH)'),
+    '⑥ 运行期分类以错误点名补丁路径为可证来源');
 });
 
 // ── 依赖撤下承接（设计 §4.3）：connection/reset → 探测 → 按结果分判 ─────────

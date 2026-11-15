@@ -19,13 +19,13 @@
  *  - RI-3 先丢弃再领取（尝试）：忙碌窗排队消息＋session/cancel——RPC 面不
  *    可触发 discard（事件不进转录、pending 消息取消后不可见），如实登记为
  *    装置边界缺口（事件形态由 T-RC-1 ⑥ 真投影锚定）。
- *  - RC-1 取消可达性（④ 登记的实例级探针，预期不可达）：首等窗内长命令
+ *  - RC-1 首等窗内取消（实际取得的是普通首等取消样本）：首等窗内长命令
  *    执行中取消会话 → 会话停止运行＝普通首等取消的实际观察（session/list
  *    不再 running；未悬挂 execute／审批，也未观察 runGroup 或收尾事件，不
- *    据此称排空／无悬挂；「窗口不可达」仍以宿主源码静态推断为准）。装置边
- *    界：宿主 tool/call 记录先于派遣入转录，转录
- *    不可判派遣时点——「取消后作业正文经等待照达」子项若命中取消落在派遣
- *    前（无作业可领）按未取得登记，不判产品红。
+ *    据此称排空／无悬挂；悬挂准备窗口形态未取得实例样本，可达性仍以宿主
+ *    源码静态推断为准并保留为未验分层）。装置边界：宿主 tool/call 记录先于
+ *    派遣入转录，转录不可判派遣时点——「取消后作业正文经等待照达」子项若
+ *    命中取消落在派遣前（无作业可领）按未取得登记，不判产品红。
  *
  * 模型依从性边界：RI-1 阻断回合超时、RI-2 消费回显未取得均按信息项登记
  * （单步指令的模型依从波动不判产品红）；核心判据（注入形态、交错在册、
@@ -84,7 +84,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, basename } from 'node:path';
 import { authCookieFromFirstHop, assertApiNotRedirected } from './_auth.mjs';
 
 // ── 参数（机器坐标一律外部传入——判据 12：交付代码不内置开发机路径） ─────────
@@ -168,54 +168,103 @@ const HOME = join(RUN_DIR, 'home');
 const PLAYGROUND = join(RUN_DIR, 'playground');
 const EVIDENCE = join(OUT_DIR, `probe-recovery-identity-${LABEL}.json`);
 let child = null;
-// 统一收尾（DOC-06）：杀实例进程树＋删整个运行目录（home/playground/tgz/标记）；
-// 共享 npm 缓存不在域内。所有失败/完成路径都经本函数，不留早退泄漏。删除遇
-// Windows 文件锁（EBUSY/EPERM）只告警留现场——cleanup 自身永不抛（进程级异常承接
-// 路径里再抛会把 Node 打成 fatal，清理反而做不完）。收尾核验（§8.3 契约）：
-// - taskkill 按**实际结果**判——退出状态非 0 或未能运行时告警留现场（运行目录
-//   不删除：进程仍活时删目录会抹掉现场、留下无主的活实例），清理「已清」的
-//   断言只在核验通过后成立；
-// - 删除前读 PROBE-OWNED 归属标记——pid 与本进程一致才删；标记缺失或不符
-//   （并发/复用形态）不动目录。
+// 统一收尾（DOC-06）：终止（taskkill 回执＋进程结束复核）→归属（PROBE-OWNED
+// 的 pid＋探针名双身份）→删除（rmSync＋删除后存在性核对）三段结构化记录；
+// 任一段未证实即停止后续步骤、留存现场并交接 pid／目录路径。删除遇 Windows
+// 文件锁（EBUSY/EPERM）同样只留现场——cleanup 自身永不抛（进程级异常承接
+// 路径里再抛会把 Node 打成 fatal，清理反而做不完）。结果对象随证据 JSON
+// 落盘（cleanup.ok / .stage 可机判），「已清除」只在删除后存在性核实成立。
 const cleanup = () => {
+  const result = {
+    ok: false,
+    stage: 'terminate',
+    pid: child !== null ? child.pid : null,
+    runDir: RUN_DIR,
+    terminate: { needed: false, method: 'none', verified: false, detail: '实例未启动' },
+    ownership: { checked: false, matched: false, detail: '未到达' },
+    removal: { attempted: false, deleted: false, detail: '未到达' }
+  };
   if (child !== null && child.exitCode === null && child.signalCode === null) {
-    let killOk = true;
-    let killDetail = '';
+    result.terminate.needed = true;
+    result.terminate.method = 'taskkill';
     try {
       const kill = spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F']);
-      killOk = kill.status === 0;
-      if (!killOk) killDetail = `taskkill status=${String(kill.status)}${kill.stderr ? `：${String(kill.stderr).slice(0, 200)}` : ''}${kill.error !== undefined ? ` spawn：${String(kill.error)}` : ''}`;
+      if (kill.status !== 0) {
+        result.terminate.detail = `taskkill status=${String(kill.status)}${kill.stderr ? `：${String(kill.stderr).slice(0, 200)}` : ''}${kill.error !== undefined ? ` spawn：${String(kill.error)}` : ''}`;
+        return result;
+      }
     } catch (killError) {
-      killOk = false;
-      killDetail = `taskkill 未运行（${String(killError instanceof Error ? killError.message : killError)}）`;
+      result.terminate.detail = `taskkill 未运行（${String(killError instanceof Error ? killError.message : killError)}）`;
+      return result;
     }
-    if (!killOk) {
-      console.error(`[launcher] WARN: 实例进程树终止未证实（${killDetail}）——留存现场，pid=${String(child.pid)}、运行目录：${RUN_DIR}`);
-      return;
+    // 进程结束复核：process.kill(pid,0) 的 ESRCH 是「进程不存在」的可证信号；
+    // 权限等其它异常＝未知，不当退出证明（不据未知继续删除现场）。
+    try {
+      process.kill(child.pid, 0);
+      result.terminate.detail = '复核时进程仍响应信号（未退出）';
+      return result;
+    } catch (signalError) {
+      if (signalError?.code !== 'ESRCH') {
+        result.terminate.detail = `结束复核未知（${String(signalError instanceof Error ? signalError.message : signalError)}）`;
+        return result;
+      }
     }
+    result.terminate.verified = true;
+    result.terminate.detail = 'taskkill status=0＋ESRCH 复核';
+  } else if (child !== null) {
+    result.terminate.needed = false;
+    result.terminate.method = 'self-exited';
+    result.terminate.verified = true;
+    result.terminate.detail = `实例已自行退出（exitCode=${String(child.exitCode)} signal=${String(child.signalCode)}）`;
   }
+  result.stage = 'ownership';
   try {
     const owned = JSON.parse(readFileSync(join(RUN_DIR, 'PROBE-OWNED'), 'utf8'));
-    if (owned.pid !== process.pid) {
-      console.error(`[launcher] WARN: 运行目录归属核验不符（标记 pid=${String(owned.pid)} ≠ 本进程 ${String(process.pid)}）——不删除：${RUN_DIR}`);
-      return;
+    result.ownership.checked = true;
+    if (owned.pid !== process.pid || owned.probe !== 'probe-recovery-identity') {
+      result.ownership.detail = `标记 pid=${String(owned.pid)} probe=${String(owned.probe)} ≠ 本进程 ${String(process.pid)} / probe-recovery-identity（并发或复用形态）`;
+      return result;
     }
+    result.ownership.matched = true;
+    result.ownership.detail = 'pid＋探针名双身份一致';
   } catch (verifyError) {
-    console.error(`[launcher] WARN: PROBE-OWNED 归属核验失败（${String(verifyError instanceof Error ? verifyError.message : verifyError)}）——不删除，留存现场：${RUN_DIR}`);
-    return;
+    result.ownership.detail = `PROBE-OWNED 归属核验失败（${String(verifyError instanceof Error ? verifyError.message : verifyError)}）`;
+    return result;
   }
+  result.stage = 'removal';
+  result.removal.attempted = true;
   try {
     rmSync(RUN_DIR, { recursive: true, force: true });
   } catch (rmError) {
-    console.error(`[launcher] WARN: 运行目录清理失败，留存现场：${RUN_DIR}（${String(rmError instanceof Error ? rmError.message : rmError)}）`);
+    result.removal.detail = `rmSync 失败（${String(rmError instanceof Error ? rmError.message : rmError)}）`;
+    return result;
   }
+  result.removal.deleted = !existsSync(RUN_DIR);
+  if (!result.removal.deleted) {
+    result.removal.detail = 'rmSync 后目录仍存在';
+    return result;
+  }
+  result.removal.detail = '删除后存在性核实通过';
+  result.ok = true;
+  return result;
 };
-const die = (code, message) => { console.error(message); cleanup(); process.exit(code); };
+// 收尾行按 cleanup 实际结果陈述：「已清除」只在核实后出现；失败交接目录路径
+// 与进程标识（调用方按收尾行或证据 JSON 的 cleanup 段可判清理结局）。
+const reportCleanup = (cleanupResult) => {
+  if (cleanupResult.ok) {
+    console.error(`[launcher] cleanup: 已清除并核实（${cleanupResult.runDir}）`);
+  } else {
+    const stageDetail = cleanupResult[cleanupResult.stage]?.detail ?? '';
+    console.error(`[launcher] cleanup: ${cleanupResult.stage} 未证实——留存现场，pid=${String(cleanupResult.pid)}、运行目录：${cleanupResult.runDir}${stageDetail ? `（${stageDetail}）` : ''}`);
+  }
+  return cleanupResult;
+};
+const die = (code, message) => { console.error(message); reportCleanup(cleanup()); process.exit(code); };
 // 进程级异常承接（DOC-06）：先于任何目录创建（含证据目录与运行目录）注册——本文件
 // 任何未捕获异常都统一转 die() 清理并以 2 收束，不混入「1＝核心 FAIL」档，也不留
 // 「目录已建、承接未挂」的窗口。
-process.on('uncaughtException', (err) => { die(2, `FAULT：未捕获异常（${String(err instanceof Error ? err.stack : err)}）——运行目录已随收尾清除`); });
-process.on('unhandledRejection', (err) => { die(2, `FAULT：未处理的 Promise 拒绝（${String(err instanceof Error ? err.stack : err)}）——运行目录已随收尾清除`); });
+process.on('uncaughtException', (err) => { die(2, `FAULT：未捕获异常（${String(err instanceof Error ? err.stack : err)}）——运行目录清理结果见收尾行`); });
+process.on('unhandledRejection', (err) => { die(2, `FAULT：未处理的 Promise 拒绝（${String(err instanceof Error ? err.stack : err)}）——运行目录清理结果见收尾行`); });
 // 运行目录原子独占创建（§8.3 契约）：父目录递归建好后，运行目录本体用无
 // recursive 的单次 mkdir——已存在即抛 EEXIST，预建目录（重跑同名/并行互踩）
 // 按装置故障退出 2，不接受复用。目录名含时间戳＋pid，正常形态不重名；EEXIST
@@ -268,7 +317,7 @@ const packRun = spawnSync('npm', ['pack', '--ignore-scripts', '--pack-destinatio
 // spawn 层失败（如受限沙箱 EPERM 击杀）时 stdout 缺失，下面直接 match 会 TypeError
 // 绕过一切收尾——先判空走 die()（DOC-06：全退出路径统一清理运行目录）。
 if (packRun.error !== undefined || typeof packRun.stdout !== 'string') {
-  die(2, `FAULT：npm pack 未运行（spawn：${String(packRun.error ?? 'stdout 缺失')}）——运行目录已随收尾清除`);
+  die(2, `FAULT：npm pack 未运行（spawn：${String(packRun.error ?? 'stdout 缺失')}）——运行目录清理结果见收尾行`);
 }
 const tgzName = (packRun.stdout.match(/dsh-async-tools-[^\s]+\.tgz/g) ?? []).pop();
 if (tgzName === undefined) {
@@ -301,9 +350,11 @@ for (let i = 0; i < 120 && URL === null; i += 1) {
 }
 if (URL === null) {
   // 实例启动期暴露的补丁解析失败点名归因（§8.3：此阶段按装置故障 2）——宿主
-  // 对 --patch 的解析错误落在启动 stderr，点名报文免得「120s 未就绪」掩盖
-  // 真实成因；无特征时保持通用报错。
-  const patchParseHit = /patch|yaml|model.?rout/i.test(stderrTail);
+  // 对 --patch 的解析错误落在启动 stderr；判据同运行期 catch：错误文本点名
+  // 补丁文件（绝对路径或文件名）才算可证归因（词面匹配会把无关的 dispatch/
+  // routing 字样误读成因），点名报文免得「120s 未就绪」掩盖真实成因；无点名
+  // 时保持通用报错、不推断成因。
+  const patchParseHit = PATCH !== null && (stderrTail.includes(PATCH) || stderrTail.includes(basename(PATCH)));
   die(2, `实例 120s 未就绪${patchParseHit ? '（stderr 含模型路由 patch 解析失败特征——按补丁前提未满足处理，检查 --model-patch / DSAT_MODEL_PATCH 指向的文件）' : ''}；stderr 尾：${stderrTail}`);
 }
 console.log('[launcher] instance ready on', URL.split('?')[0]);
@@ -319,7 +370,7 @@ try {
   const indexResponse = await fetch(`${ORIGIN}/?token=${TOKEN}`, { redirect: 'manual' });
   COOKIE = authCookieFromFirstHop(indexResponse, ORIGIN);
 } catch (authError) {
-  die(2, `FAULT：认证首跳失败（${String(authError instanceof Error ? authError.message : authError)}）——运行目录已随收尾清除`);
+  die(2, `FAULT：认证首跳失败（${String(authError instanceof Error ? authError.message : authError)}）——运行目录清理结果见收尾行`);
 }
 
 // 只读方法（DOC-07）：无副作用，fetch 拒绝可安全重试一次；其余（create／
@@ -542,7 +593,7 @@ try {
   judge('RI-3 取消后待决消息处置可观察（形态如实登记）', 'SKIP',
     `取消后：queued note 在转录=${String(queued3Visible)}；会话 running=${String(row3.running)}；discard 事件不进转录——RPC 面不可触发「先丢弃再领取」形态，按装置边界登记（事件形态由套件层 T-RC-1 ⑥ 真投影锚定）`, false);
 
-  // ── RC-1 取消可达性探针（④，预期不可达） ─────────────────────────────────
+  // ── RC-1 首等窗内取消（普通首等取消样本；悬挂准备窗口未取得、静态推断分层） ──
   const sc = await rpc('session/create', { request: { cwd: PLAYGROUND, agentPreset: 'dsh-async' } });
   await promptOn(sc.sessionId, [
     'Isolated cancel probe RC-1. Execute exactly, no questions:',
@@ -583,30 +634,38 @@ try {
   }
   evidence.steps.RC1 = {
     sessionStopped: stopped, bodyDeliveredTested: dispatched && rcText !== '' && bodyDelivered(rcText),
-    note: 'turn-stopping/收尾事件不进转录——不可观测面如实登记；窗口不可达判定以宿主源码契约分析为准（设计 §2.6 准备期窗口条）'
+    note: 'turn-stopping/收尾事件不进转录——不可观测面如实登记；本样本为普通首等取消，悬挂准备窗口形态未取得，可达性以宿主源码契约静态推断为准（设计 §2.6 准备期窗口条）'
   };
 } catch (probeError) {
-  // 补丁不可解析的退出码边界（§8.3）：实例启动期可观察的解析失败按装置故障
-  // （2，见就绪等待处的点名）；**运行期**（会话驱动中）暴露的解析失败按核心
-  // 判据 FAIL（1）如实报错——它发生在被测链路上，升格为装置故障会掩盖判据
-  // 层的真实失败形态。错误文本按特征判别（patch/yaml/model routing），无
-  // 特征按装置故障收束（保守档）。
+  // 运行期错误的身份判别（DOC-03-N1：不靠词面补造产品失败）：本探针注入模型
+  // 路由补丁的**路径**是可证来源标识——错误文本点名补丁文件（绝对路径或文件
+  // 名）时，失败发生在被测链路的补丁解析上，按核心判据 FAIL（1）如实报错；
+  // 其余错误（传输失败、凭据不足等——即使文本带 patch/yaml/model routing
+  // 字样，只要未点名补丁文件）不推断成因，按装置故障（2）收束。升格为装置
+  // 故障不会掩盖判据层的真实失败：补丁解析失败的宿主报告必然指名出错的
+  // 补丁文件。
   const errText = String(probeError instanceof Error ? `${probeError.message}\n${probeError.stack ?? ''}` : probeError);
-  if (/patch|yaml|model.?rout/i.test(errText)) {
+  const patchNamed = PATCH !== null && (errText.includes(PATCH) || errText.includes(basename(PATCH)));
+  if (patchNamed) {
     judge('运行期模型路由补丁解析失败（核心判据链路被中断）', 'FAIL', errText.slice(0, 400), true);
     console.error(`FAIL：判级在会话阶段遭遇补丁解析失败（${errText.slice(0, 400)}）——按核心判据 FAIL 以退出码 1 收束`);
   } else {
     // 中止≠核心判据全过（README 退出码契约）：已判级照常落证据，收束以 2 报装置故障。
     aborted = true;
-    console.error(`FAULT：判级中途中止（${String(probeError instanceof Error ? probeError.stack : probeError)}）——按装置故障以退出码 2 收束`);
+    console.error(`FAULT：判级中途中止（${String(probeError instanceof Error ? probeError.stack : probeError)}）——按装置故障以退出码 2 收束（错误未点名补丁文件，不推断成因）`);
   }
 } finally {
-  writeFileSync(EVIDENCE, JSON.stringify({ ...evidence, verdicts, aborted }, null, 2));
+  // 清理结果先取得再落证据（DOC-06-RESULT）：证据 JSON 附三段结构化清理状态，
+  // 自动化读 cleanup.ok / .stage 即可判定资源结束是否核实——不再只有退出码。
+  const cleanupResult = cleanup();
+  reportCleanup(cleanupResult);
+  writeFileSync(EVIDENCE, JSON.stringify({ ...evidence, verdicts, aborted, cleanup: cleanupResult }, null, 2));
   console.log(`[launcher] evidence → ${EVIDENCE}`);
   const failed = verdicts.filter((v) => v.kind === 'FAIL' && CORE.has(v.name)).length;
   const passed = verdicts.filter((v) => v.kind === 'PASS').length;
-  const verdictLine = `[launcher] verdicts: ${String(passed)} PASS / ${String(failed)} core-FAIL（其余为信息项登记）${aborted ? '；ABORTED（装置故障，退出码 2）' : ''}`;
-  cleanup();
+  const verdictLine = `[launcher] verdicts: ${String(passed)} PASS / ${String(failed)} core-FAIL（其余为信息项登记）${aborted ? '；ABORTED（装置故障，退出码 2）' : ''}${cleanupResult.ok ? '' : '；CLEANUP-FAULT（清理未证实，留存现场，退出码 2）'}`;
   console.log(verdictLine);
-  process.exit(aborted ? 2 : (failed > 0 ? 1 : 0));
+  // 退出码：核心 FAIL → 1；aborted 或清理未证实 → 2（装置故障档——核心全
+  // PASS 而清理失败不再退出 0）；全过且清理核实 → 0。
+  process.exit(aborted ? 2 : (failed > 0 ? 1 : (cleanupResult.ok ? 0 : 2)));
 }
