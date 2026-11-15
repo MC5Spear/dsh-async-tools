@@ -4,7 +4,7 @@
  * ## 这不是端到端证据
  *
  * 本脚本**不启动任何进程、不连任何 dsh 实例、不碰验证实例**。它做四件事：
- * 1. 断言入口的 inject 与九项固定服务逐项一致（严格比长度，多一项少一项都红）；
+ * 1. 断言入口的 inject 与十项固定服务逐项一致（严格比长度，多一项少一项都红）；
  * 2. 真 `@deepseek-ai/cordis` 起最小 Context，注册**替身**服务，把五个工具行
  *    （`config.toolName` = async_run / async_wait / async_agent /
  *    async_workflow / async_list_subagent_models）各挂载一次：
@@ -203,7 +203,7 @@ function makeJobs() {
 }
 
 /**
- * 造一个最小上下文：九项固定服务全部提供替身，并记录工具注册。
+ * 造一个最小上下文：十项固定服务全部提供替身，并记录工具注册。
  * @returns {object} 环境探针。
  */
 function makeContext() {
@@ -249,6 +249,11 @@ function makeContext() {
   // 探针路径不消费投影（silentFailureGuard 默认关）；提供它是 inject 完整性——
   // fiber 启动条件，缺了挂载用例全红。
   ctx.provide('sessionProjections', { stateOf: () => undefined });
+  // agentPresets：dsh-agent-preset-registry 的预设域读服务（0.2.2 起为固定
+  // 依赖，lib/index.js inject 十项之一）。探针流程不启用预设绑定防护
+  //（silentFailureGuard 默认关），替身按「无会话预设绑定」回答——真实消费
+  // 点 guardPresetFor／ask 接管对 null 一律走防护关闭分支，探针行为不受影响。
+  ctx.provide('agentPresets', { presetForSession: () => null });
   // wait_agent 的入口注册表三态消费：读 .status 只认 running/idle，undefined 即 absent；
   // idle 命中 settled 出口。
   ctx.provide('agents', {
@@ -281,8 +286,8 @@ async function mount(env, toolName, config = {}) {
   return { fork, state };
 }
 
-await verify('inject 恰好是九项服务', () => {
-  const expected = ['tools', 'jobs', 'shell', 'shellEnv', 'subagents', 'timer', 'sessionProjections', 'agents', 'workingDirectory'];
+await verify('inject 恰好是十项服务', () => {
+  const expected = ['tools', 'jobs', 'shell', 'shellEnv', 'subagents', 'timer', 'sessionProjections', 'agentPresets', 'agents', 'workingDirectory'];
   const missing = expected.filter((service) => !inject.includes(service));
   if (missing.length > 0 || inject.length !== expected.length) {
     throw new Error(`实际 inject=${JSON.stringify(inject)}，缺 ${missing.join(', ') || '(无)'}`);

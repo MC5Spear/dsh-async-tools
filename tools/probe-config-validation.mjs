@@ -90,10 +90,14 @@ record('拒绝原因可读（双侧字段名齐备）', (() => {
     Config({ settings: { defaultWaitMs: 1 } });
     return false;
   } catch (error) {
-    return /cross-field violation/.test(error.message)
-      && error.message.includes('defaultWaitMs=1')
-      && error.message.includes('minWaitMs=250')
-      && error.message.includes('maxWaitMs=600000');
+    if (!/cross-field violation/.test(error.message)) return false;
+    if (!error.message.includes('defaultWaitMs=1')) return false;
+    // 边界值按当前默认动态对账（诊断退化反例：字段名或解析后真实值从错误
+    // 文本消失即红）。默认值改动后本探针不随硬编码失效——旧断言写死
+    // minWaitMs=250，默认改为 20000 后把正确诊断误判 FAIL（VT-01）。
+    const defaults = resolveConfig({ settings: {} });
+    return error.message.includes(`minWaitMs=${defaults.minWaitMs}`)
+      && error.message.includes(`maxWaitMs=${defaults.maxWaitMs}`);
   }
 })());
 
