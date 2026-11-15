@@ -685,6 +685,33 @@ hostTest('R28 判据12：c 段经 ctx.inject 注册 systemPrompt（预设过滤�
   clearSnapshot();
 });
 
+test('DOC-SHELL-01／U3：warnCapture 平台两态——win32 保留 $LASTEXITCODE，非 win32 去执行器专有变量、保留退出码标记与副作用核实', () => {
+  // 装置在 Windows 宿主上跑（现役执行器 pwsh）——非 win32 变体无法经装载时
+  // 平台常量（process.platform）在运行期取用，按**源码结构**断言（与
+  // discipline.block 的平台两态同一组装模式）：lib/text.js 里 en/zh 两档的
+  // warnCapture 键都以 ON_WINDOWS 三元组装——win32 臂含 $LASTEXITCODE（pwsh
+  // 判别特征逐字保留）；非 win32 臂不得含 pwsh 专有变量，但保留退出码标记与
+  // 副作用核实的核实顺序（捕获形与探针句两臂同构）。修前红＝单一文本（无
+  // 三元组装），且该文本对非 Windows 平台宣传 pwsh 专有判别特征。
+  const source = readFileSync(resolve(import.meta.dirname, '../lib/text.js'), 'utf8');
+  const arms = [...source.matchAll(/'tool\.run\.warnCapture': ON_WINDOWS\s*\n\s*\? ('(?:[^'\\]|\\.)*')\s*\n\s*: ('(?:[^'\\]|\\.)*'),/g)];
+  assert.equal(arms.length, 2, 'en/zh 两档的 warnCapture 都按 ON_WINDOWS 三元组装（修前红＝单一文本、无平台两态）');
+  const [enPair, zhPair] = arms;
+  assert.match(enPair[1], /\$LASTEXITCODE/, 'en win32 臂保留 $LASTEXITCODE（pwsh 判别特征）');
+  assert.doesNotMatch(enPair[2], /\$LASTEXITCODE/, 'en 非 win32 臂不带 pwsh 专有变量');
+  assert.match(enPair[2], /exit-code marker/, 'en 非 win32 臂保留退出码标记核实');
+  assert.match(enPair[2], /expected side effects/, 'en 非 win32 臂保留副作用核实');
+  assert.match(zhPair[1], /\$LASTEXITCODE/, 'zh win32 臂保留 $LASTEXITCODE');
+  assert.doesNotMatch(zhPair[2], /\$LASTEXITCODE/, 'zh 非 win32 臂不带 pwsh 专有变量');
+  assert.match(zhPair[2], /\[exit code\] 标记/, 'zh 非 win32 臂保留退出码标记核实');
+  assert.match(zhPair[2], /预期副作用/, 'zh 非 win32 臂保留副作用核实');
+  // win32 臂＝当前部署（pwsh）实证文本逐字保留——运行期 t() 取到的就是它
+  //（比对前把源码字面量的 \n 转义还原成真实换行）。
+  const unescapeLiteral = (literal) => literal.slice(1, -1).replace(/\\n/g, '\n').replace(/\\'/g, "'");
+  assert.equal(t('en', 'tool.run.warnCapture'), unescapeLiteral(enPair[1]),
+    '当前 win32 部署的运行期文本＝三元 win32 臂（实证文本未改写）');
+});
+
 hostTest('执行纪律 section：语言档现读 agentLang、变体按目标预设、不受开关控制、失效安全空串（设计 §3.6）', () => {
   const f = fakeCtx();
   const injectFns = new Map();
