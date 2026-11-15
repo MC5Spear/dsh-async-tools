@@ -7,9 +7,10 @@
  * 1. 安全检查：验证实例上无 `running` 会话、近 10 分钟无活动；操作会话不在验证实例的进程树里
  *    （本 GUI 是开发实例，天然满足）；验证实例端口当前在听。
  * 2. 裸调用 `powershell -NoProfile -ExecutionPolicy Bypass -File
- *    <dsh-service 仓根>\service\restart-one.ps1`（Restart-Service 的带日志包装——脚本在
- *    服务仓根的 service\ 目录，不在任何实例家目录下；缺省服务名 dsh-web、日志落本包
- *    verify\logs\restart-once.log；需要管理员令牌，沙箱拒绝时按一次性提权重试该命令）。
+ *    <DSH 服务仓根>\service\restart-one.ps1`（Restart-Service 的带日志包装——脚本在
+ *    服务仓根的 service\ 目录，不在任何实例家目录下；缺省服务名与日志落点见脚本
+ *    自身 param 块，日志缺省落本包 verify\logs\restart-once.log；需要管理员令牌，
+ *    沙箱拒绝时按一次性提权重试该命令）。
  * 3. 等验证实例端口重新在听（TcpClient 探活）。
  * 4. 本脚本（新进程 → 重新读令牌文件的新 token）。
  *
