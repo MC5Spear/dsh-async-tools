@@ -9459,6 +9459,118 @@ hostTest('RA-BARRIER-LATE-ROW：重查周期后清单在场目标＝关系证据
   }
 });
 
+// ── RA-UNCONFIRMED-EXIT（F02，设计 §3.2.6：未证实关系的子代理目标在全部
+// 出口都以 unknown 呈现——关系证据未取得前不读注册表现读猜测）────────────
+
+hostTest('RA-UNCONFIRMED-EXIT-A：屏障在途取消——未证实目标行报 unknown 且全程零注册表读取（修前红＝现读注册表冒认 running）', async () => {
+  resetAgentBaselines();
+  // F02：目标的关系证据（目录行/结算通知）未取得时，注册表现读的 running/idle
+  // 都是对未证实关系的猜测——目标可能不是本主体的子代理，注册表按 id 现读
+  // 会把同名无关主体冒认成目标。屏障在途被打断（本腿＝取消信号）时未走完的
+  // 目标保留在未证实集合中，出口 targets 行一律 unknown 且不读注册表。装置：
+  // listChildren 永挂（屏障在途不可完成）、注册表 get 计数（目标在场且状态
+  // running——修前出口行冒认 running＝红、读取 ≥1＝红）。
+  const targetId = 'at-ue-a-target';
+  let registryReads = 0;
+  const rig = await buildWaitRig('ue-a', [], {
+    agentsGet: (id) => {
+      if (id === targetId) registryReads += 1;
+      return { id, status: 'running' };
+    },
+    listChildren: () => new Promise(() => {})
+  });
+  try {
+    const controller = new AbortController();
+    const pending = rig.waiter.execute(
+      { wait_ms: 5000, targets: [{ kind: 'agent', id: targetId }] },
+      { agent: rig.parent, signal: controller.signal }
+    );
+    setTimeout(() => controller.abort(new Error('tool call aborted')), 150);
+    const outcome = await pending;
+    assert.equal(outcome.status, 'cancelled', '前置：取消出口');
+    const row = (outcome.targets ?? []).find((one) => one.id === targetId);
+    assert.ok(row !== undefined, 'targets 行在场');
+    assert.equal(row.status, 'unknown',
+      '未证实目标行报 unknown（修前红＝注册表现读冒认 running）');
+    assert.equal(registryReads, 0,
+      `全程零注册表读取（修前红＝出口现读注册表，实得 ${String(registryReads)} 次）`);
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('RA-UNCONFIRMED-EXIT-B：屏障在途用户插话——未证实目标行报 unknown 且全程零注册表读取（修前红）', async () => {
+  resetAgentBaselines();
+  // F02 同判据的插话出口：屏障查询在途窗口内用户插话到达并切断校验（§3.2.2
+  // 只有用户插话切断）——中断出口对未走完的目标同样不读注册表、报 unknown。
+  const targetId = 'at-ue-b-target';
+  let registryReads = 0;
+  const rig = await buildWaitRig('ue-b', [], {
+    agentsGet: (id) => {
+      if (id === targetId) registryReads += 1;
+      return { id, status: 'running' };
+    },
+    listChildren: () => new Promise(() => {})
+  });
+  try {
+    const pending = rig.waiter.execute(
+      { wait_ms: 5000, targets: [{ kind: 'agent', id: targetId }] },
+      rig.exec()
+    );
+    await sleep(80); // 屏障查询在途（listChildren 永挂）
+    const { message } = inboxPayload({
+      agent: rig.parent, sourceKind: 'user', form: 'message',
+      summary: 'user interjects during barrier', target: 'next-step'
+    });
+    rig.ctx.emit('agent/inbox/inserted', { agent: { id: rig.parent.id }, message });
+    const outcome = await pending;
+    assert.equal(outcome.status, 'interrupted', '前置：插话出口');
+    const row = (outcome.targets ?? []).find((one) => one.id === targetId);
+    assert.ok(row !== undefined, 'targets 行在场');
+    assert.equal(row.status, 'unknown',
+      '未证实目标行报 unknown（修前红＝注册表现读冒认 running）');
+    assert.equal(registryReads, 0,
+      `全程零注册表读取（修前红＝出口现读注册表，实得 ${String(registryReads)} 次）`);
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('RA-UNCONFIRMED-EXIT-C：对照——屏障已证实的目标行照常现读注册表（unknown 口径不误伤已证目标）', async () => {
+  resetAgentBaselines();
+  // F02 对照锚：目录行命中即关系证据——目标从未证实集合移除，出口行照常现读
+  // 注册表报真实状态（running）、读取恰一次。未证实口径只压「关系未证」的
+  // 目标，不把已证目标一并压成 unknown（修前同样绿；防修正过冲）。
+  const targetId = 'at-ue-c-target';
+  let registryReads = 0;
+  const rig = await buildWaitRig('ue-c', [{ id: targetId, label: '已证目标', activity: 'running' }], {
+    agentsGet: (id) => {
+      if (id === targetId) registryReads += 1;
+      return { id, status: 'running' };
+    }
+  });
+  try {
+    // 预置用户插话（屏障校验完成后由入口返回条件消费——P1b 同款形态）。
+    inboxPayload({
+      agent: rig.parent, sourceKind: 'user', form: 'message',
+      summary: 'user interjects', target: 'next-step'
+    });
+    const outcome = await rig.waiter.execute(
+      { wait_ms: 500, targets: [{ kind: 'agent', id: targetId }] },
+      rig.exec()
+    );
+    assert.equal(outcome.status, 'interrupted', '前置：插话出口');
+    const row = (outcome.targets ?? []).find((one) => one.id === targetId);
+    assert.ok(row !== undefined, 'targets 行在场');
+    assert.equal(row.status, 'running',
+      '已证目标行按注册表现读报真实状态（不因未证实口径误伤）');
+    assert.ok(registryReads >= 1,
+      `已证目标照常读注册表（实得 ${String(registryReads)} 次）`);
+  } finally {
+    await rig.dispose();
+  }
+});
+
 hostTest('RA-UNKNOWN-SUSPEND-B：unknown 目标混入已确认运行目标——不提前交回，挂起观察至预算到期（running＋两行已证状态）', async () => {
   resetAgentBaselines();
   // RA-UNKNOWN-SUSPEND 的边界：立即按未证实交回仅适用于「没有任何已确认运行
