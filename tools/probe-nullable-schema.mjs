@@ -5,12 +5,16 @@
  * `{status:'completed', exit_code:0, signal:null, output, truncated:false}`，
  * 宿主校验器对写错的可空声明会判
  * `"value" must match exactly one oneOf branch (matched 0)`——那一支就**通不过校验**，
- * 调用会变成 `tool "async_run" returned invalid output`。包内单测挡不住它：单测只断言字段、
- * 没有用宿主校验器验过 schema 本体。
+ * 调用会变成 `tool "async_run" returned invalid output`。
  *
  * 嫌疑点：`exit_code` 与 `signal` 声明成 `{ type: 'number' }` / `{ type: 'string' }`，
  * 而 `signal` 的实际值是 `null`、`exit_code` 在进程未给码时也可能是 `null`。
  * 未知的是**该 DSL 允许哪一种可空写法**——这里逐个试。
+ *
+ * 现行防线：本脚本的历史结论已进常规防线——test/_helpers.mjs 的
+ * assertOutputShape／checkedTool 把每条用例的 execute 返回值都过一遍宿主
+ * 校验器，可空声明写错会当场红；本脚本保留为方言探索与复现入口，不再是
+ * 唯一把关者。
  *
  * 用法：node --import ./tools/_host-hooks.mjs tools/probe-nullable-schema.mjs
  */

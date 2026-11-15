@@ -161,8 +161,8 @@ const Q = (id, extra = {}) => ({
   ...extra
 });
 
-/** 注册表快配：假 timer + 可变快照（默认窗口 5000 ms、en 档）；clock 可注入——
- * 固定时钟会让时延恒 0、判据无区分度。
+/** 注册表测试夹具（快速装配）：假 timer + 可变快照（默认窗口 5000 ms、en 档）；
+ * clock 可注入——固定时钟会让时延恒 0、判据无区分度。
  * `#onExpiry` 有真期限复验（需求 §4.3：未到 expiresAt 的触发只重挂不结清）——
  * 冻结在 1_000_000 的裸假钟会让到期回调永远判「未到」。默认 timer 因此带
  * **自走钟**：`fire()` 把假钟推到该次武装的到期时刻，旧 J 族（纯 fire 驱动
@@ -2835,7 +2835,7 @@ hostTest('J26（ASK-PENDING-IDENTITY）：待领账本按批次＋题号对账�
 /**  中止形状断言（plain object，非 Error——按 code 判）。 */
 const isAskAborted = (error) => error?.name === 'UserQuestionError' && error?.code === 'ASK_ABORTED';
 
-/** 快配注入时钟（剩余与平移判据要有可推进的钟）。 */
+/** 夹具注入时钟（剩余与平移判据要有可推进的钟）。 */
 function makeClock(start = 1_000_000) {
   let now = start;
   return { now: () => now, advance: (ms) => { now += ms; return now; } };
@@ -3180,7 +3180,7 @@ test('E7：客户端组头延长按钮——extend 裸传 {sessionId}、失败�
   model.dispose();
 });
 
-/** E 族快配：makeRegistry 不返回 take 便捷（与旧 K 族直呼 registry.take 同一形状）。 */
+/** E 族便捷封装：makeRegistry 不返回 take 便捷方法（与旧 K 族直呼 registry.take 同一形状）。 */
 function registry_take(rig, agent, questionId) {
   return rig.registry.take(makeRequest(agent, [Q(questionId)]), agent);
 }
@@ -4339,7 +4339,8 @@ test('J58：探针守卫静态锚——pack 判空先于首处 stdout.match、�
   const fnClose = probeSource.indexOf('\n}', fnStart);
   const fnSource = probeSource.slice(codesStart, fnClose + 2);
   const { classifySessionFailure } = new Function(`${fnSource}\nreturn { classifySessionFailure };`)();
-  // 反例五条（盲审定稿样例，均须装置档——不得 core FAIL）：
+  // 反例五条（装置前提故障族——凭据无效／文件缺失／传输层失败／网关状态
+  // 码，均为会话外环境故障：按 DOC-03-N1 判装置档、不得 core FAIL）：
   const deviceCases = [
     ['⑥ 带路径的凭据失败（公开 code INVALID_CREDENTIAL）→装置 2',
       Object.assign(new Error('model routing: provider credential unavailable (routing.example.yml)'), { code: 'INVALID_CREDENTIAL' })],
@@ -4397,8 +4398,8 @@ test('J58：探针守卫静态锚——pack 判空先于首处 stdout.match、�
 // ask 命名空间的服务依赖撤下（宿主行停止服务）不产生明确事件——只有
 // `connection/reset` 这类粗信号。承接是幂等三态：探测证实缺席才回收、探测
 // 成功零动作（瞬态闪断自愈）、其余未决（下次重探）。装置＝J55 骨架＋
-// `ctx.on` 捕获 connection/reset 监听＋`lastNs.state()` 手控门闩（回执形态
-// 与时点全部受控——三态分判必须精确编排探测回执）。
+// `ctx.on` 捕获 connection/reset 监听＋`lastNs.state()` 探测回执由用例手工
+// 编排（回执形态与时点全部受控——三态分判必须精确编排探测回执）。
 test('J59：依赖撤下承接——reset 探测三态分判＋证实回收幂等＋恢复经既有装配路径重建（§4.3，修前红）', async () => {
   const react = makeMiniReact();
   const armed = [];

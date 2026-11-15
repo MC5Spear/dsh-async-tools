@@ -107,16 +107,20 @@ npm run check:alias-tokens
 
 ## 3. 真实实例与页面探针
 
-先读所选脚本，再确认目标实例、版本和认证来源。只创建自己的隔离测试会话；会写共享设置的脚本先保存原值与用户覆盖状态，安排恢复并读回确认。涉及拆装、重启或浏览器时，另外确认维护窗口及运行权限。结束后检查自己的作业与会话，恢复自己的设置修改，记录未清理和未验证项。
+本节按执行路径组织：**选择入口 → 准备 → 命令与成功判定 → 故障分档 → 自有资源清理**。先读所选脚本的表格行与头注，再确认目标实例、版本和认证来源。
 
-### 实例入口与模型路由前提
+**选择入口**——真机脚本两类入口，前提不同：
 
-真机脚本有两类入口，前提不同：
-
-- **连接已有实例**：经[本机配置加载器](<../tools/_local-config.mjs>)取得实例 URL、认证文件与宿主模块树（形状见[示例](<../tools/local-config.example.mjs>)），不自建服务；改共享设置的脚本按上段纪律保存并恢复。
+- **连接已有实例**：经[本机配置加载器](<../tools/_local-config.mjs>)取得实例 URL、认证文件与宿主模块树（形状见[示例](<../tools/local-config.example.mjs>)），不自建服务；改共享设置的脚本按下文纪律保存并恢复。
 - **自建临时实例**（下表标明「官方 tgz 临时实例」的探针）：`--service-root` 指向装有各宿主安装树的目录（`--host-subdir` 选树），脚本用官方 CLI 把候选 tgz 安装进独立临时 home、随机端口起隔离实例、结束自清，不动任何既有实例。
 
-自建实例中需要真实模型的步骤还依赖**模型路由 patch**。缺省路径与传参入口按探针组分三档（以各脚本实际取用为准）：①无显式传参入口的自建探针——恒取 `<serviceRoot>/patches/zai-glm.yml`（本机部署环境常驻名），无二级回退；②[probe-workflow-engine](<probe-workflow-engine.mjs>)——支持 `--model-patch`／`DSAT_MODEL_PATCH` 显式传入，缺省同取该单一路径；③[probe-recovery-identity](<probe-recovery-identity.mjs>)——同样支持显式传入，缺省两级查找 `<serviceRoot>/patches/zai-glm.yml` → `<serviceRoot>/ops/patches/zai-glm.yml`（历史部署形态兼容），并在启动日志打印实际取用的 patch 与宿主 CLI 路径。把自备 patch 放到 `<serviceRoot>/patches/zai-glm.yml` 即对三组全部生效；只有②③可经参数替换来源。显式传入即按选定来源执行：文件缺席/不可读按装置故障（2）退出并指名该路径，不静默回落缺省候选；probe-recovery-identity 的自备有效 patch 免 `--r` 与 ZAI 凭据前提（凭据经子进程环境由调用方提供；缺省 ZAI 形态无凭据才 SKIP 3，自备形态凭据不足在会话阶段按装置故障如实暴露）。模板与凭据准备方法见 [`patches/model-routing.example.yml`](<patches/model-routing.example.yml>)——密钥经 `apiKeyEnv` 指向的环境变量或隔离 home 凭据文件提供，不写进 patch、仓库或证据。patch 缺失时的形态分两档：带启动前置检查的探针（probe-workflow-engine、probe-approval-variants、probe-recovery-identity）在启动前置检查即 FAULT 并指向模板；其余自建探针（第①组——模型路由经缺省路径取用、无显式传参入口）在实例就绪等待处 FAULT——同属环境前提未满足，不是产品缺陷，第 2 节的静态／离线入口不依赖它。
+**准备**（自建实例中需要真实模型的步骤）——模型路由 patch，缺省路径与传参入口按探针组分档（以各脚本实际取用为准）：①无显式传参入口的自建探针——固定取部署常驻路径（多数取 `<serviceRoot>/patches/zai-glm.yml`；`_visual` 组的[probe-settings-ax](<_visual/probe-settings-ax.mjs>)固定取 `<serviceRoot>/ops/patches/zai-glm.yml` 绝对路径，避免相对路径的 ops\patches 歧义），无参数替换、无回退；②[probe-workflow-engine](<probe-workflow-engine.mjs>)——支持 `--model-patch`／`DSAT_MODEL_PATCH` 显式传入，缺省取 `<serviceRoot>/patches/zai-glm.yml`；③[probe-recovery-identity](<probe-recovery-identity.mjs>)——同样支持显式传入，缺省两级查找 `<serviceRoot>/patches/zai-glm.yml` → `<serviceRoot>/ops/patches/zai-glm.yml`（历史部署形态兼容），并在启动日志打印实际取用的 patch 与宿主 CLI 路径。自备 patch 放到目标探针实际取用的路径即生效；只有②③可经参数替换来源。显式传入即按选定来源执行：文件缺席/不可读按装置故障（2）退出并指名该路径，不静默回落缺省候选；probe-recovery-identity 的自备有效 patch 免 `--r` 与 ZAI 凭据前提（凭据经子进程环境由调用方提供；缺省 ZAI 形态无凭据才 SKIP 3，自备形态凭据不足在会话阶段按装置故障如实暴露）。模板与凭据准备方法见 [`patches/model-routing.example.yml`](<patches/model-routing.example.yml>)——密钥经 `apiKeyEnv` 指向的环境变量或隔离 home 凭据文件提供，不写进 patch、仓库或证据。
+
+**命令与成功判定**——每个脚本的命令行在其头注「用法」段（多数为 `node verify/<脚本>.mjs …`，参数与凭据来源同见头注）；成功判定按退出码，口径以各行与各脚本头注为准：多数 0＝判据全过／1＝判据 FAIL／2＝装置故障（未捕获异常也归入 2）；probe-vis-ratify 的 3＝必需未验证（不以旁路生成虚假 PASS）；probe-recovery-identity 另有 0 含清理核实、3＝无凭据 SKIP 的档位。历史读数与旧计数不是当前通过依据，每行判据以现行脚本为准。
+
+**故障分档**——环境前提未满足（patch 缺失、凭据缺席、宿主树缺席）与装置自身故障一律按 2 退出，不判产品红：patch 缺失的暴露位点按组分档（带启动前置检查的探针——probe-workflow-engine、probe-approval-variants、probe-recovery-identity——在启动前置检查即 FAULT 并指向模板；第①组在实例就绪等待处 FAULT）。会话/运行期暴露的失败按各脚本的阶段位点分档（如 probe-recovery-identity 的启动期→装置、运行期→核心 FAIL），第 2 节的静态／离线入口不依赖这些前提。
+
+**自有资源清理**——自建实例的运行目录按「终止（进程结束复核）→归属（所有权标记双身份）→删除（删除后存在性核对）」三段结构化收尾并附证据；任一段未证实即留现场、交接 pid 与目录路径（DOC-06）。连接已有实例的脚本不动实例本身，只恢复自己的设置写入与会话。只创建自己的隔离测试会话；会写共享设置的脚本先保存原值与用户覆盖状态，安排恢复并读回确认。涉及拆装、重启或浏览器时，另外确认维护窗口及运行权限。结束后检查自己的作业与会话，恢复自己的设置修改，记录未清理和未验证项。
 
 下表说明脚本实际覆盖什么、会改变什么，不表示已获执行授权或已经完成全部当前要求。条目文件名中的 `rNN`／`acceptance-NNN` 编号是条目诞生时的验收轮次标识（acceptance-017 行的「文件名只是标识，不是兼容基准」对全表适用），不代表顺序、版本或兼容基准；条目按现行有效性与主题维护，退役条目集中在表尾。新目标超出现有覆盖时，先维护探针再运行。
 
@@ -203,7 +207,7 @@ npm run check:alias-tokens
 
 **装置边界与失败分类**：
 
-- 两步式装置（三变体统一）——单步式（凭空主动带提权参数）依从性不可靠（AV-1 环境无审批策略系统声明、模型拒绝；解释挂起缘由的 prompt 反触发模型安全审查——迭代留痕于头注），定稿为先普通调用吃沙箱拒绝、按宿主 escalation hint 官方路径重试提权（AV-3 定稿为中性操作指令）；第一步是普通调用（进程启动注册在场后被 fence 拒绝），「零注册」判据因此收窄为提权调用零注册（注册数<调用数）。
+- 两步式装置（三变体统一）——单步式（凭空主动带提权参数）依从性不可靠（AV-1 环境无审批策略系统声明、模型拒绝；解释挂起缘由的 prompt 反触发模型安全审查——各变体拒绝形态原文留痕于证据快照 modelTail），定稿为先普通调用吃沙箱拒绝、按宿主 escalation hint 官方路径重试提权（AV-3 定稿为中性操作指令）；第一步是普通调用（进程启动注册在场后被 fence 拒绝），「零注册」判据因此收窄为提权调用零注册（注册数<调用数）。
 - 模型依从性存在时窗波动（同 prompt 时过时拒，拒绝形态留痕于证据快照 modelTail），重试上限 3、重试轮在原指令前加 harness 确认段（不改判据——判据只认工具与审计载体）。
 - 宿主改组时 overlay 落空（Loader warn「patch: entry not found」）→形态互换按 FAIL 取证归因；「零审计对／无 decided」为缺席断言（宿主把审批事件改走其他投影载体时假 FAIL，保守方向）。
 - AV-1 文案锚定宿主 dsh-sandbox 现行英文串、AV-2 outcome='unavailable' 为宿主 fail-closed 回退现行词表值（宿主改形态按 FAIL 取证）；cancelled 变体不装置（与 rejected 同链）；「无主体」由插件入口拒绝并经套件层覆盖。
@@ -306,7 +310,7 @@ npm run check:alias-tokens
 | [`cdp.mjs`](<_visual/cdp.mjs>) | 创建独立用户目录与 CDP 连接，不复用用户真实浏览资料 |
 | [`check-ps1-bom.mjs`](<check-ps1-bom.mjs>)、[`check-ps1-syntax.mjs`](<check-ps1-syntax.mjs>)、[`restore-ps1-bom.mjs`](<restore-ps1-bom.mjs>) | 只针对明确 PS1 对象；恢复工具可能写文件，先核对原值和范围。Git 错误分类：只有 git 明确诊断「HEAD 里没有该对象」才跳过补 BOM；git 缺席、权限失败或其他 Git 错误单独报错并以非零退出——不把「工具没跑成」吞成「HEAD 无 BOM」 |
 
-服务、profile 和认证属于实例基础设施，不放进插件可交付目录。连接已有实例的探针只使用实例、不拥有服务；自建临时实例的探针（第 3 节标明「官方 tgz 临时实例」者）在隔离 home 内自建自有一次性实例并按三段收尾自清（DOC-06），同样不动任何既有实例。真实运行产物按本机配置写内部证据目录。
+服务、profile 和认证属于实例基础设施，不放进插件可交付目录。连接已有实例的探针只使用实例、不拥有服务；自建临时实例的探针（第 3 节标明「官方 tgz 临时实例」者）在隔离 home 内自建自有一次性实例并按三段收尾自清，同样不动任何既有实例。正常与异常收尾、留现场条件（任一清理段未证实即留现场、交接 pid 与目录路径）见第 3 节「自有资源清理」。真实运行产物按本机配置写内部证据目录。
 
 ## 5. 变异证明
 

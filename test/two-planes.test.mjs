@@ -3651,7 +3651,8 @@ async function loadClientProduct() {
   return loaded.factory((name) => (name === 'react' ? reactStub : double));
 }
 
-/** 手控假服务：list 计数、每次调用返回一个手控的 {resolve} 门闩。 */
+/** 手工控制的假服务：list 计数；每次调用返回一个 Promise，其 resolve 存入
+ * gates、由用例择时解开（解开即回执）。 */
 function makeGatedService() {
   const gates = [];
   return {
@@ -3709,7 +3710,7 @@ test('PCAT-B：attach 重入隔离旧代理在途回执；detach 后旧凭据零
   await settle();
   assert.equal(serviceB.calls, 1, '重入立即对新代理首读');
   assert.equal(catalog.store.getSnapshot().status, 'loading', 'loading（B 在途）');
-  // A 的迟到回执落地：世代不符——零写入（items 与 error 均不落）。
+  // A 的迟到回执返回：世代不符——零写入（items 与 error 均不写）。
   serviceA.gates[0]({ ok: true, value: { presets: [{ id: 'stale-a', isDefault: false }] } });
   await settle();
   assert.equal(catalog.store.getSnapshot().status, 'loading',
@@ -3743,7 +3744,7 @@ test('PCAT-C：补读与重读只换目录快照——不触碰草稿与已存�
   await settle();
   const before = catalog.store.getSnapshot();
   assert.equal(before.status, 'ready', '前置：ready');
-  // ready 态再通知：走新读取（非在途窗口），落地只换 items/status——
+  // ready 态再通知：走新读取（非在途窗口），回执返回时只更新 items/status——
   // 快照形状不含草稿/绑定键（草稿在设置表单模型，绑定在 value 层；目录模型
   // 持有这两者＝越权，重读就会覆盖用户编辑）。
   catalog.load();

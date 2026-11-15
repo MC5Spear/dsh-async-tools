@@ -415,7 +415,8 @@ await driveStep({
     const singleCall = (ctx.toolCallCounts.get('async_workflow') ?? 0) === 1;
     const textAll = [...ctx.toolResults, ...ctx.completions].join('\n');
     const agentToken = textAll.includes('WF3-AGENT-8c4');
-    // 进度日志缺席正文（默认关闭——需求 773：观察日志仅供界面与既有记录）。
+    // 进度日志缺席正文（展示开关默认关闭——观察日志仅供界面与既有记录，
+    // 最终结果不属可关闭日志、必须到达）。
     // 缺席锚只查交付正文（tool/result∪完成消息）——模型转述不算交付。
     const phaseAbsent = !textAll.includes('WF3-PHASE-MARK');
     const logAbsent = !textAll.includes('WF3-LOG-MARK');

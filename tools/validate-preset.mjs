@@ -201,8 +201,9 @@ const BASELINE_IDENTITY = 'You are a coding agent powered by the {{model}} model
 
 /**
  * 期望集：`baselineTop` 是**改动后**的顶层行 id 序列（基线 − tool-pwsh +
- * 五行 async，插在 tool-bash 之后）；`expectedTopFromBaseline()` 从真实基线
- * 补丁反推并对账，改这里必须同时过那条用例。
+ * 四行 async——async-run/wait/agent/list-models，插在 tool-bash 之后）；
+ * `expectedTopFromBaseline()` 从真实基线补丁反推并对账，改这里必须同时过
+ * 那条用例。
  */
 export const EXPECTATIONS = {
   'dsh-async': {
