@@ -3450,11 +3450,11 @@ test('T23e（R29-d·判据 14·设计 §5.4／UI-CLEAR-03）：链式候选三�
     '双侧草稿改到越界 ⇒ 违例（只判一侧草稿会漏「把上限改小」形态）');
   // ⑦ 官方完整投影下的清覆盖场景（UI-CLEAR-03 修前红，忠实适配器装置）：
   //    旧覆盖 minWaitMs=50000／defaultWaitMs=60000（user 层在场），本次保存
-  //    清 minWaitMs（resetField：暂存清除 → 字段级 overridden 预演位翻转
-  //    false）并把 defaultWaitMs 调至 30000。恢复默认写入的真实值是 base
-  //    层组合层（min 250）——合法组合。修前据 overridden 预演位判「无覆盖」、
-  //    拿旧生效快照 50000 与草稿 30000 比较 ⇒ 误判违例、误禁合法保存（红）；
-  //    修正后按 userHas 位取 base 回退值 250 比较 ⇒ 无违例。
+  //    清空 minWaitMs 草稿（edit 空串：plan 走 unset → 字段级 overridden 预演
+  //    位翻转 false）并把 defaultWaitMs 调至 30000。恢复默认写入的真实值是
+  //    base 层组合层（min 250）——合法组合。修前据 overridden 预演位判
+  //    「无覆盖」、拿旧生效快照 50000 与草稿 30000 比较 ⇒ 误判违例、误禁合法
+  //    保存（红）；修正后按 userHas 位取 base 回退值 250 比较 ⇒ 无违例。
   const scope = {
     getSnapshot: () => ({
       status: 'ready', writable: true, revision: 7,
@@ -3470,9 +3470,14 @@ test('T23e（R29-d·判据 14·设计 §5.4／UI-CLEAR-03）：链式候选三�
   const allSpecs = product.FIELDS.map((one) => product.boundedNumberSpec(one.key));
   const model = new double.SettingsFormModel(scope, allSpecs);
   const actions = model.actions();
-  actions.resetField('minWaitMs'); // 暂存清除（草稿文本＝base 格式化、clear 位）
+  // 清除手势＝清空草稿（edit 空串）：text 为空、plan 走 unset。不用 resetField
+  // ——它把草稿回填成 base 格式化值「250」，旧实现对回填形态同样走有效草稿
+  // 优先、修前并不误拦（旧 pair=false），锚钉不住缺陷；空草稿＋预演位翻转
+  // false 才是误拦形态（旧实现落回生效快照比较）。
+  actions.edit('minWaitMs', '');
   actions.edit('defaultWaitMs', '30000');
   const fieldMin = model.field('minWaitMs');
+  assert.equal(fieldMin.text, '', '前置：清除形态＝空草稿（空 text，plan 走 unset）');
   assert.equal(fieldMin.overridden, false,
     '前置：官方模型预演位已翻转（暂存清除 ⇒ overridden=false——据它判「无覆盖」即缺陷形态）');
   const projected = product.projectCardState(model, scope);
@@ -3480,9 +3485,11 @@ test('T23e（R29-d·判据 14·设计 §5.4／UI-CLEAR-03）：链式候选三�
     '投影按原始用户层键存在性判覆盖（保存落定前 unset 未发生，键仍在场）');
   assert.equal(projected.base.minWaitMs, 250, 'base 回退值随投影在场');
   assert.equal(product.pairViolated(projected), false,
-    '清 min（回退 250）∧ 调低 default（30000）的合法保存不被误拦（修前：拿旧生效 50000 比较 ⇒ 违例＝红）');
+    '清 min（回退 250）∧ 调低 default（30000）的合法保存不被误拦（修前：空草稿落回生效 50000 与草稿 30000 比较 ⇒ 违例＝红）');
   assert.equal(product.chainHitOf(projected, 'minWaitMs'), null,
     '该链不挂左值原因文案（minWaitMs ≤ defaultWaitMs 成立）');
+  assert.equal(model.shell().invalid, false,
+    '表单计划全为合法 op（unset min＋set default）⇒ 保存不被单字段层误禁（链式误拦排除后无禁用来源）');
   // 同装置对照组：不清覆盖、只把 default 调到低于现行 min 时仍照常判出。
   const model2 = new double.SettingsFormModel(scope, allSpecs);
   model2.actions().edit('defaultWaitMs', '40000');

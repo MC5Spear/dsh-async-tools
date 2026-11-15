@@ -3631,8 +3631,8 @@ hostTest('WN-1：同窗排队调用共享批预算——在册清空无证据不
   // 在此关批、后到者拿新批全额 60（双份预算形态），本断言必红。
   assert.notEqual(ledger.subjects.get(rig.OWNER).batch, null,
     '在册清空 ∧ 无闭合证据 ⇒ 批次仍开（保守合批）');
-  // 同窗第二条（排队调用的装配）：只吃余量 8（截断标注另计，不入份额数——
-  // chars 含内嵌省略标注，预算扣减以 take 计）。
+  // 同窗第二条（排队调用的装配）：只吃余量 8——chars＝计入预算的份额 take，
+  // 不含附带的截断/省略标注行（TEXT-NOTE-01 口径），预算扣减同以 take 计。
   const token2 = ledger.claimWait(rig.OWNER);
   await rig.readyJob('job-wn1b', 'B'.repeat(52));
   const second = ledger.collectBatch(rig.OWNER, {});
@@ -3684,7 +3684,7 @@ hostTest('WN-3：证据闩锁——证据在册非空时闩而不消费，在册
   // 独立期望：宿主边界事件与窗口成员离场的次序不保证同拍——证据先到（此刻
   // 活等待仍压住窗口）必须闩住不丢；成员离场路径消费闩完成闭合。「证据只在
   // 到达瞬间有效」的形态会把这条证据丢掉，窗口无限期停在待闭合（静默不构成
-  // 输入边界证据，SOL-BATCH-01-A 后无兜底路径）。
+  // 输入边界证据，SOL-BATCH-01-A 后无其他关批路径）。
   fireClaimed(rig);
   assert.notEqual(subject.batch, null, '在册非空 ⇒ 证据①不立即关批（必要条件缺）');
   assert.equal(subject.windowEvidence, true, '证据已闩（在册非空时闩而不消费）');

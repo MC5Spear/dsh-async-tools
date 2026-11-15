@@ -1055,8 +1055,8 @@ function createPresetCatalog() {
     detach: function () {
       service = null;
       generation += 1;
-      // 在速能力意图作废（待重读标记＝服务在场时的重读意图，§10.1）：服务已
-      // 撤下，标记不再有可服务的将来。
+      // 在途的待重读意图作废（待补读标记＝服务在场时的重读意图，§10.1）：
+      // 服务已撤下，标记不再有可服务的将来。
       pendingReread = false;
       // 在途 detach 的状态收尾（§10.1，UI-CATALOG-02-A）：仅推进世代会使
       // 在途回执零写入、但 loading 悬挂（受控缺陷形态）。在途回执落定且无新
@@ -1072,7 +1072,7 @@ function createPresetCatalog() {
             snapshot = { status: "error", items: [], error: undefined, unavailable: true };
             publish();
           }
-        }, function () { /* 收尾链兜底：回执链异常不在此写快照 */ });
+        }, function () { /* 收尾链异常处理：回执链异常不在此写快照（读取链自带落写路径，此处只承接未捕获拒绝） */ });
       }
     }
   };
