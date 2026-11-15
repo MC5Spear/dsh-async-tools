@@ -2953,8 +2953,9 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
 
   // ⑦ 在场断言扩展（T18c 内循环）：20 字段的字段名键、hint.<键>、help.<键> 两档
   //    全必须在场（删任一键即红——本循环逐键断言；含 PRESET-BIND-01 的
-  //    boundPresets）。两语键集一致性另由 tools/check-model-text.mjs 的静态键集层
-  //    检查；T21 是另一条用例，核对语言选择与缺键回退宿主。
+  //    boundPresets）。两语键集一致性（zh/en 全键集相等）由本文件 T21 直接断言
+  //    守；tools/check-model-text.mjs 的键集层只读 lib/text.js（模型词典），扫描
+  //    范围明确不含 client.js 的界面词典。
   for (const key of Object.keys(NAMES_ZH)) {
     for (const lang of ['zh', 'en']) {
       for (const prefix of ['', 'hint.', 'help.']) {
@@ -3288,8 +3289,8 @@ test('T23d（正整数体系）：maxResultChars 非整数草稿 parse 拒绝＋
   assert.match(code, /notInteger\s*\? t\("invalidInteger"\)/, '非整数草稿必须给出 invalidInteger 档的原因文案');
   assert.match(code, /INTEGER_FIELDS = \{ maxResultChars: true \}/, '整数字段表只登记 maxResultChars');
 
-  // ④ 词典两档都带 invalidInteger 键（zh/en 键集一致由 tools/check-model-text.mjs
-  //    的静态键集层守，这里守内容）。
+  // ④ 词典两档都带 invalidInteger 键（zh/en 键集一致由本文件 T21 的键集相等
+  //    断言守，这里守内容）。
   assert.ok(product.DICTIONARIES.zh.invalidInteger.length > 0, 'zh invalidInteger 在场');
   assert.ok(product.DICTIONARIES.en.invalidInteger.length > 0, 'en invalidInteger 在场');
   assert.match(product.DICTIONARIES.zh.invalidInteger, /整数/, 'zh 文案必须说"整数"');
@@ -3344,8 +3345,8 @@ test('T23b（R29-d·判据 14）：卡片层跨字段配对——pollIntervalMs 
   assert.match(code, /t\("invalidPair\." \+ field\.key\)\.replace\(\/\\{ref\\}\/g, t\(pairHit\)\)/,
     '配对违例要有专用文案（按字段键拼 invalidPair.<键> 并把 {ref} 换成参照字段名）');
 
-  // 词典两语言键集成对（词典纪律：zh/en 键集一致由 tools/check-model-text.mjs
-  // 的静态键集层守，这里守新增键的内容）。
+  // 词典两语言键集成对（词典纪律：zh/en 键集一致由本文件 T21 的键集相等断言
+  // 守，这里守新增键的内容）。
   assert.ok(product.DICTIONARIES.zh['invalidPair.pollIntervalMs'].length > 0, 'zh 配对文案在场');
   assert.ok(product.DICTIONARIES.en['invalidPair.pollIntervalMs'].length > 0, 'en 配对文案在场');
   assert.match(product.DICTIONARIES.zh.invalidRange, /\{max\}/, 'zh invalidRange 必须带 {max} 插位');

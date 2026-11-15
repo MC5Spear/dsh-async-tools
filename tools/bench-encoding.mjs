@@ -1,8 +1,20 @@
 /**
  * 编码判据实验台：用真实 CP936 双重编码样本给判据定量，决定阈值。
  *
- * 样本由本机 .NET 的 CP936 生成脚本产出
- * （Buffer 不支持 cp936；用 latin1 模拟出来的"乱码"不含汉字，调参无意义）。
+ * 样本由本机 .NET 的 CP936 生成（Buffer 不支持 cp936；用 latin1 模拟出来的
+ * "乱码"不含汉字，调参无意义）。可照抄的生成步骤（PowerShell；$out＝样本目录，
+ * 生成后用 `node tools/bench-encoding.mjs <样本目录>` 跑本台）：
+ *
+ *   $gbk = [System.Text.Encoding]::GetEncoding(936)
+ *   $src = '这是一段正常的中文技术文档样本，包含标点、async_wait 等英文与数字 123。'
+ *   [System.IO.File]::WriteAllText("$out\normal-a.txt", $src)            # 正常对照（应过）
+ *   $moji = $gbk.GetString([System.Text.Encoding]::UTF8.GetBytes($src))   # UTF-8 字节误按 CP936 解码
+ *   [System.IO.File]::WriteAllText("$out\double-a.txt", $moji)           # 双重编码样本（应报）
+ *
+ * 期望按文件名约定（见 expectedDouble）：`double-` 前缀＝双重编码（判 DOUBLE-ENC），
+ * 其余＝正常（pass）；换不同长度／领域的 $src 多生成几对，观察占比分布的安全带。
+ * WriteAllText 缺省 UTF-8 无 BOM（Windows PowerShell 5.1 与 PowerShell 7 同），
+ * BOM 本身也不进汉字统计。
  *
  * 用法：node tools/bench-encoding.mjs <样本目录>
  *

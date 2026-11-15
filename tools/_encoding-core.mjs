@@ -105,7 +105,7 @@ const EXAMPLE_MARKERS = ['ENCODING-EXAMPLE', '损坏长什么样', '乱码示例
 /** 合法非简体内容的**文件级**豁免标记（防误报通道，C-01）：任一行含标记
  *  即豁免**本份文件**的双重编码占比判定——繁体、生僻字、古文等天然低占比的
  *  整份内容由此放行；行级 U+FFFD 豁免由 EXAMPLE_MARKERS 单独承担（见
- *  inspectText 内注释），两条豁免通道互不覆盖。检测行为不变，只正文案。 */
+ *  inspectText 内注释），两条豁免通道互不覆盖。 */
 const LEGITIMATE_MARKERS = ['ENCODING-OK'];
 
 /**

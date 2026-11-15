@@ -279,7 +279,8 @@ export const EXPECTATIONS = {
 /**
  * 从一份真实 shipped 基线补丁的解析结果反推改动后的顶层行序列（对账用）：
  * 去掉 tool-pwsh，把 tool-jobs 前移到 tool-bash 之后，再在 tool-jobs 之后插入
- * 五行 async（前移原因见 ASYNC_ROW_IDS 注释——job_output 隐藏登记的时序）。
+ * 四行顶层 async 工具（ASYNC_ROW_IDS；第五行 async_workflow 在 delegation 组内
+ * ——见 EXPECTED_TOOL_NAMES 注释）。行位只供对账：隐藏挂点与行序无关。
  * @param {object} doc - 基线补丁的解析结果（一条 insert 一行）。
  * @returns {string[]} 改动后的顶层行 id 序列。
  */

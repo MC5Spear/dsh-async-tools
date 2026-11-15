@@ -1,11 +1,13 @@
 /**
- * 探针：本机能不能制造"回滚也失败"？
+ * 探针：本机能不能制造"递归删除也失败"？（rmSync recursive/force 的故障注入手段盘点）
  *
- * 背景：若某些情形让 `rollbackFailure` **恒为 `null`**，
- * 则"回滚也失败"那条分支的 warn 与消息都没有被覆盖（末尾还是 `void logged;`）。
- * 要真正覆盖它，必须先找到一种让 `rmSync(dir, {recursive:true, force:true})` 抛错的办法。
+ * 用途（通用环境实验，不指向特定产品分支）：覆盖「回滚／收尾路径上的删除也失败」
+ * 类分支（如交付账本回滚凭据、收尾清理保留现场的判定）前，先确认本机有哪些真实
+ * 可用的 rmSync 失败形态——只有真形态能支撑非注入式用例；全都造不出来时，该类
+ * 分支只能靠注入失败（把 rmSync 换掉）覆盖。
  *
- * 逐种尝试并如实记录哪种有效。用法：node probe-rollback-failure.mjs
+ * 逐种尝试并如实记录哪种有效。用法（仓库根执行，无需宿主模块与凭据）：
+ *   node tools/probe-rollback-failure.mjs
  */
 import { chmodSync, mkdirSync, mkdtempSync, openSync, closeSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

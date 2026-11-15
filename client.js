@@ -45,8 +45,9 @@ var module = { exports: {} }; var exports = module.exports;
 //   开合只存 `FieldShell` 局部 state，不碰草稿/保存/mutate；缺键回退＝按钮/说明行
 //   退场（`resolveCopy`）。20 字段的键组在场断言（标签/hint/help 三前缀两档齐全，
 //   含 `boundPresets` 的三个同前缀键）由 test/two-planes.test.mjs 的 T18c 在场
-//   断言循环守；两语键集一致性另由 tools/check-model-text.mjs 的静态键集层检查
-//  （T21 实际核对的是语言选择与缺键回退宿主，见同文件）。
+//   断言循环守；两语界面词典（`DICTIONARIES.zh/en`）的键集一致性由同文件 T21
+//   直接断言守——tools/check-model-text.mjs 的键集层只读 lib/text.js（模型词典，
+//   扫描范围明确不含 client.js），不覆盖界面词典，别按它报漏检界面键集。
 // - 毫秒字段的秒数读数（需求 §5.4）长在说明行里，
 //   **与字段说明换行**（行首不带点——设置页读数行统一形态）：说明行 =
 //   字段说明 + 换行 + 「生效：S s」+「 · 」+「输入：T s」。值**只写秒文本**
