@@ -39,9 +39,12 @@ const bareHostTest = await hostTestFor('../lib/jobs.js');
 // §2.6 关批装置补丁：本文件共用主体（模块级 exec.agent＝'session-1'），而
 // 合取关批（在册清空 ∧ 闭合证据）在没有宿主事件的假 ctx 上永不闭合——批会
 // 跨用例滞留，把上一用例的余量带进下一用例（完成分支份额被吃空→status 误
-// running、正文只剩截断标注、echo/留存行被挤掉）。生产形态里每条工具结果都
-// 被宿主领取（证据① agent/inbox/claimed），用例边界＝回合边界；这里在每条
-// 用例收尾按同一判据直达关批（RC 系列装置先例：直达置空），账面其余状态不动。
+// running、正文只剩截断标注、echo/留存行被挤掉）。生产形态的用例边界：两次
+// 工具调用之间先到回合收尾（② agent/turn-stopping）或步边界
+// （③ agent/pre-step）——工具结果本身不是收件箱消息，证据①（claimed）不因
+// 工具结算触发；这里在每条用例收尾以直达置空批对象模拟该边界（RC 系列装置
+// 先例）。该直达 poke 绕过生产闭合路径、也不校验「在册清空」必要条件（用例
+// 收尾强制丢批）——测试隔离的取舍，非生产形态等价；账面其余状态不动。
 const hostTest = (name, fn) => bareHostTest(name, async (...args) => {
   try {
     return await fn(...args);

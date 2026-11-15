@@ -3424,7 +3424,7 @@ test('T23e（R29-d·判据 14·设计 §5.4）：链式候选三档——有效�
   assert.equal(product.pairViolated(state(
     { defaultWaitMs: { text: '', overridden: true }, maxWaitMs: { text: '1' } },
     { defaultWaitMs: 900000, maxWaitMs: 600000 })), false,
-    '左值 UNKNOWN ⇒ 跳过该链（修前按过期覆盖值 900000 > 600000 判违例＝红：保存被误禁）');
+    '左值 UNKNOWN ⇒ 跳过该链（修前拿过期覆盖值 900000 与右值草稿 1 比较、按 900000 > 1 判违例＝红：保存被误禁）');
   assert.equal(product.pairViolated(state(
     { defaultWaitMs: { text: '9999999' }, maxWaitMs: { text: '', overridden: true } },
     { defaultWaitMs: 30000, maxWaitMs: 600000 })), false,

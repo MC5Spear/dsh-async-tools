@@ -3748,6 +3748,42 @@ hostTest('WN-4：静默复查窗④合取门限——K 静默节拍 ∧ T_rt 时
   }
 });
 
+hostTest('WN-5：证据③被动放行契约——(payload, next) 瀑布形态记证据后原样放行', async () => {
+  // rc.5 的步边界瀑布以 (payload, next) 双参调用监听器：监听器记证据后必须
+  // `return next()`——next 恰被调一次、返回值原样透传、载荷零改动、不拒绝
+  //（把监听器改成拒绝/吞返回值/代调多次/改写载荷，宿主步进链当场断，本锚
+  // 必红）。现有装置 firePreStep（L3218）经单参形态只盖「next 缺席」分支
+  //（记证据不代调）；本锚直接以双参瀑布形态驱动 sRig 捕获的监听器本体。
+  const rig = sRig({ budget: 60 });
+  await rig.readyJob('job-wn5', 'W'.repeat(30));
+  ledger.collectBatch(rig.OWNER, {});
+  const subject = ledger.subjects.get(rig.OWNER);
+  assert.ok(subject.batch !== null, '前置：批在场且在册清空（证据到达即闭合可观测）');
+
+  const listener = rig.listeners.get('agent/pre-step');
+  assert.equal(typeof listener, 'function', '装置：pre-step 监听器在场');
+
+  let nextCalls = 0;
+  const sentinel = { marker: 'prestep-next-return' };
+  const payload = { agent: { id: rig.OWNER }, turn: 2, step: 5 };
+  const payloadCopy = structuredClone(payload);
+  const result = listener(payload, () => { nextCalls += 1; return sentinel; });
+
+  assert.equal(nextCalls, 1, 'next 恰被调一次（不代调多次、不吞调用）');
+  assert.equal(result, sentinel, '监听器返回值＝next() 的返回值（原样透传，不换值不拒绝）');
+  assert.deepEqual(payload, payloadCopy, '载荷零改动（不改写、不增删键）');
+  assert.equal(subject.batch, null, '证据③照常登记——在册清空 ⇒ 窗口闭合（放行不碍记证据）');
+
+  // 无在册账面的主体：被动契约不因无关载荷变形（不抛错、next 照常恰一次）。
+  let strayCalls = 0;
+  const strayPayload = { agent: { id: 'wn5-unrelated' } };
+  const strayCopy = structuredClone(strayPayload);
+  const strayResult = listener(strayPayload, () => { strayCalls += 1; return sentinel; });
+  assert.equal(strayCalls, 1, '无关主体：next 照常恰一次');
+  assert.equal(strayResult, sentinel, '无关主体：返回值照常透传');
+  assert.deepEqual(strayPayload, strayCopy, '无关主体：载荷零改动');
+});
+
 hostTest('REC-F：无活等待的读取失败——注记三要素（真实结局＋失败标记＋重试出路）经完成消息可见，不置已交付事实（REL-READ-02）', async () => {
   const rig = sRig({ injectFailsAt: 0 });
   ledger.noteJobStarted(rig.ctx, rig.config, 'job-rec-f', rig.OWNER);
@@ -5125,6 +5161,19 @@ hostTest('T8 真实注册表：准入上限与领取窗口解耦——触顶拒�
     await ledger.releaseWait(rehold, rig.parent.id);
     assert.equal(rig.injections.length, 4, '同批重复让位复查零新 send');
     // 延后候选不丢：关批后批装配交付下一批 10 条完整正文。
+    // §2.6 装置内关批：生产形态里两次领取之间隔着回合边界——先到回合收尾
+    // （② agent/turn-stopping）或步边界（③ agent/pre-step）窗口才闭合（工具
+    // 结果不是收件箱消息，证据①不因工具结算触发），延后候选按新批全额预算
+    // 恢复。本装置时钟受控且无宿主事件，静默复查窗④在装置时间内不闭合；
+    // 此处按 RC 系列装置先例直达置空批对象模拟该边界——直达 poke 绕过生产
+    // 闭合路径、不校验「在册清空」必要条件（测试隔离取舍；closeBatchIfIdle
+    // 在 §2.6 下只凭证据关批，批已置空时它走「无窗可关」的清闩路径，无副作用）。
+    const t8Subject = ledger.subjects.get(rig.parent.id);
+    if (t8Subject !== undefined) {
+      t8Subject.batch = null;
+      t8Subject.windowEvidence = false;
+      t8Subject.pendingClose = null;
+    }
     ledger.closeBatchIfIdle(rig.parent.id);
     const { delivered } = ledger.collectBatch(rig.parent.id, {});
     assert.equal(delivered.length, 10, '零等待批装配：延后条目下一批 FIFO 恢复');
@@ -7230,6 +7279,14 @@ hostTest('RC-Y1：恢复请求批满延后在场——async_run 首次等待让�
       '让出 outputs 无 recovery_line 形态（恢复条目不属于让出载体）');
     assert.equal(ledger.subjects.get(owner).stagedRecovery?.jobId, 'rc-y1-job',
       'stagedRecovery 未被让出批次消费（挂起原样保持）');
+    // §2.6 装置内关批：生产形态里让出载体结果先经回合收尾（②
+    // agent/turn-stopping）或步边界（③ agent/pre-step）之后才发生下一次等待
+    // 调用——工具结果不是收件箱消息，证据①不因工具结算触发；恢复切片按新
+    // 批全额预算装配，不受让出批已用份额挤占。装置无宿主事件（前面的批置空
+    // 只服务让出批自身），此处按 RC 系列装置先例直达置空复现该回合边界。
+    subject.batch = null;
+    subject.windowEvidence = false;
+    subject.pendingClose = null;
     // 恢复仍可经等待载体装配（consumeRecovery 显式选择加入）：自游标（份额 1 起点）续取全文。
     const served = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' });
     const item = served.delivered.find((one) => one.recovery === true);
