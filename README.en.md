@@ -73,7 +73,7 @@ async_wait(targets=[{kind:"job", id:"<returned job_id>"}], wait_ms=30000)
 
 Factory settings give `yield_ms` a default of 20000 ms and bound each request to 20000–600000 ms. `wait_ms` is required every time. Expiry leaves the task running; use `job_kill` explicitly for unwanted jobs, rather than rerunning commands to check progress.
 
-Results are not replayed indefinitely. Save anything that must be kept. For long output, failed reads, or canceled calls, continue with the original job using [result handling and recovery](<docs/user-reference.en.md#4-wait-states-and-direct-delivery>). Batch timing still has a defect, so the result-length setting is not a strict limit on the full model input; see [allowances and continued reading](<docs/user-reference.en.md#shortened-output-or-deferred-entries-continue-reading>).
+Results are not replayed indefinitely. Save anything that must be kept. For long output, failed reads, or canceled calls, continue with the original job using [result handling and recovery](<docs/user-reference.en.md#4-wait-states-and-direct-delivery>). Calls from this package within one model input share the result-length allowance; a batch closes only after an input boundary, and status explanations are counted separately. See [allowances and continued reading](<docs/user-reference.en.md#shortened-output-or-deferred-entries-continue-reading>).
 
 ## Tools and presets
 
