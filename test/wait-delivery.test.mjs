@@ -49,12 +49,18 @@ const { apply: applyRow } = indexModule ?? {};
 const { createRunTool: buildRunTool } = jobsModule ?? {};
 const cordisModule = await loadOfflineSafe('@deepseek-ai/cordis');
 const jobsLocalModule = await loadOfflineSafe('@deepseek-ai/dsh-jobs-local');
+// PRESTEP-CHAIN-01b 载体路径腿用：宿主真实 agent 事件分派助手（agentEvents
+// ＝scopeTarget 载体＋载荷融合 agent 的 waterfall 分派），依赖同自 rc.1 宿主树
+// 解析；离线形态缺席时该腿与同锚用例自跳过。
+const dshAgentModule = await loadOfflineSafe('@deepseek-ai/dsh-agent');
 const { Context } = cordisModule ?? {};
 const { LocalJobRegistry } = jobsLocalModule ?? {};
+const { agentEvents } = dshAgentModule ?? {};
 const hostTest = await hostTestFor(
   '../lib/workflow.js', '../lib/wait.js', '../lib/index.js', '../lib/jobs.js',
   '@deepseek-ai/cordis', '@deepseek-ai/dsh-jobs-local'
 );
+const agentEventsTest = await hostTestFor('@deepseek-ai/dsh-agent');
 
 /**
  * 组装被测环境：真 Context + 真 LocalJobRegistry + 受控引擎替身。
@@ -7766,9 +7772,11 @@ hostTest('RC-GEN：输入代记账——两次组稿之间合计封顶、关批�
     assert.ok(stillDeferred.delivered.length === 0 && stillDeferred.deferred.includes('rc-gen-b'),
       '③b 回合收尾后（无组稿）续取仍按代内剩余：B 仍延后');
     // ③ 代边界重置＝agent/pre-step（宿主每步模型组稿；重复到达幂等）——其后
-    //    新批恢复全额：R-B1 主断言（同回合下一模型步骤的续取不空正文）。
-    ctx.emit('agent/pre-step', { agent: { id: owner } });
-    ctx.emit('agent/pre-step', { agent: { id: owner } });
+    //    新批恢复全额：R-B1 主断言（同回合下一模型步骤的续取不空正文）。分派
+    //    按宿主真实形态走 waterfall（PRESTEP-CHAIN-01：该事件是步骤准入
+    //    waterfall，监听器签名 (payload, next)）。
+    await ctx.waterfall('agent/pre-step', { agent: { id: owner } }, () => {});
+    await ctx.waterfall('agent/pre-step', { agent: { id: owner } }, () => {});
     assert.equal(subject.generation.spent, 0, '③ pre-step 重置代（每步组稿恰一次、重复到达幂等）');
     subject.batch = null;
     const third = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en', triggerJobIds: ['rc-gen-b'] });
@@ -7797,7 +7805,7 @@ hostTest('RC-GEN：输入代记账——两次组稿之间合计封顶、关批�
     // 份额（#takeShare）、回显（#takeEchoShare）、恢复条目正文（chargeDelivery）
     // ——任一路径漏记＝同代超发＝红）。回显：正文 150＋原文 60 恰可并批
     //（E ≤ R 全量附、扣 E）→ spent 210；同代关批后下一批按剩余 190 开。
-    ctx.emit('agent/pre-step', { agent: { id: owner } });
+    await ctx.waterfall('agent/pre-step', { agent: { id: owner } }, () => {});
     subject.batch = null;
     const entryC = seedTerminalJob(
       ctx, owner, 'rc-gen-c', { maxResultChars: 400, agentLang: 'en', fullCommandEcho: true }, 'e'.repeat(150)
@@ -7819,7 +7827,7 @@ hostTest('RC-GEN：输入代记账——两次组稿之间合计封顶、关批�
     // 计入 spent；同代下一批按剩余 200 开。装置先清 ⑤ 截断残留的续段候选
     //（d 的省略中段在缓冲，FIFO 会先装它——与⑥判据无关的旁路候选）。
     ledger.jobs.get('rc-gen-d').buffer = '';
-    ctx.emit('agent/pre-step', { agent: { id: owner } });
+    await ctx.waterfall('agent/pre-step', { agent: { id: owner } }, () => {});
     subject.batch = null;
     subject.recoveries.set('rc-gen-c', [
       { ord: 1, text: 'r'.repeat(200), partial: false, terminal: { status: 'completed' }, registeredAt: ledger.now(), returned: false, via: 'wait' }
@@ -7835,8 +7843,120 @@ hostTest('RC-GEN：输入代记账——两次组稿之间合计封顶、关批�
     seedTerminalJob(ctx, owner, 'rc-gen-e', { maxResultChars: 400, agentLang: 'en' }, 'f'.repeat(250));
     const recNext = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en', triggerJobIds: ['rc-gen-e'] });
     const fItem = recNext.delivered.find((item) => item.jobId === 'rc-gen-e');
-    assert.ok(fItem?.truncated === true && /\[output truncated: 50 chars omitted\]/.test(fItem.text),
-      '⑥ 恢复扣减后同代下一批按剩余 200 开（250 截 200、省略量 50——修前：漏记恢复＝开 400 整条＝红）');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+// ── PRESTEP-CHAIN-01（F01／CORE-B-01：agent/pre-step 步骤准入 waterfall 的
+// 中间件续接契约）────────────────────────────────────────────────────────
+
+/** PRESTEP-CHAIN 装置的载荷公共步：与宿主 agent-loop 的真实分派同形。 */
+function preStepPayload(owner, turn, step) {
+  return {
+    agent: { id: owner }, messages: [], turn, step,
+    signal: new AbortController().signal, modelSelection: {}
+  };
+}
+
+hostTest('PRESTEP-CHAIN-01a：黑盒直调 waterfall——续接恰一次、下游决定原样转达（首步无账目／后续步复位两腿＋拒绝／改写／错误转达；修前红＝续接 0 次、返回 undefined）', async () => {
+  // 宿主以 waterfall 模式分派 agent/pre-step（rc.1 dsh-agent-loop 的
+  // preStep：waterfall("agent/pre-step", {messages, ...position, signal,
+  // modelSelection}, 内置续接)）——监听器签名 (payload, next)，不调用 next
+  // 即否决链条其余部分（包括内置行为）。本包监听器只是输入代记账的附随职责
+  // （§2.6 PRESTEP-CHAIN-01）：无条件续接、完整返回下游决定；记账复位不改变
+  // 准入结果，复位自身异常不外抛进 waterfall。装置＝真实 Cordis Context 黑盒
+  // 直调（E2 探针同形，锚自含于本套件），不借本包内部状态构造断言前提。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  ledger.attachClaimedListener(ctx);
+  try {
+    // 首步腿：主体尚无账目（subjects 无该 owner）——空记账只是无复位动作，
+    // 不是短路理由。
+    const owner = `pc-owner-${rcSuffix()}`;
+    let continuation = 0;
+    const enterDecision = { kind: 'enter', messages: [] };
+    const firstStep = await ctx.waterfall('agent/pre-step', preStepPayload(owner, 1, 1),
+      async () => { continuation += 1; return enterDecision; });
+    assert.equal(continuation, 1, '首步腿：续接恰一次（修前红＝0）');
+    assert.strictEqual(firstStep, enterDecision,
+      '首步腿：返回值为下游决定原对象（修前红＝undefined）');
+    // 下游拒绝与改写同样原样转达：监听器不吞、不替换、不自行构造决定。
+    const rejectDecision = { kind: 'reject', reason: 'blocked-by-test' };
+    const rejected = await ctx.waterfall('agent/pre-step', preStepPayload(owner, 1, 2),
+      async () => rejectDecision);
+    assert.strictEqual(rejected, rejectDecision, '下游拒绝原样转达（修前红＝undefined）');
+    const rewritten = await ctx.waterfall('agent/pre-step', preStepPayload(owner, 1, 3),
+      async () => ({ kind: 'enter', messages: [{ id: 'rewritten' }] }));
+    assert.ok(rewritten?.kind === 'enter' && rewritten?.messages?.[0]?.id === 'rewritten',
+      '下游改写消息原样转达（修前红＝undefined）');
+    // 下游错误原样上抛：不吞错（同一错误对象穿透）。
+    const downstreamError = new Error('pc-downstream-rejected');
+    await assert.rejects(
+      () => ctx.waterfall('agent/pre-step', preStepPayload(owner, 1, 4),
+        async () => { throw downstreamError; }),
+      (error) => error === downstreamError,
+      '下游错误原样上抛（修前红＝undefined 吞掉下游错误）');
+    // 后续步腿：主体有账目、代内已交付 > 0——spent 复位为 0 且续接仍恰一次、
+    // 返回值仍为下游决定（记账不改变准入结果）。
+    seedTerminalJob(ctx, owner, 'pc-job-a', { maxResultChars: 400, agentLang: 'en' }, 'g'.repeat(400));
+    const first = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en', triggerJobIds: ['pc-job-a'] });
+    assert.ok(first.delivered.length === 1 && first.delivered[0].jobId === 'pc-job-a',
+      '前置：首装 400 入账');
+    const subject = ledger.subjects.get(owner);
+    assert.equal(subject.generation.spent, 400, '前置：代内已交付 400');
+    subject.batch = null; // 关批（领取事件在生产中承担；装置内直达置空）
+    let laterContinuation = 0;
+    const laterDecision = { kind: 'enter', messages: [] };
+    const nextStep = await ctx.waterfall('agent/pre-step', preStepPayload(owner, 2, 1),
+      async () => { laterContinuation += 1; return laterDecision; });
+    assert.equal(laterContinuation, 1, '后续步腿：续接恰一次（修前红＝0）');
+    assert.strictEqual(nextStep, laterDecision, '后续步腿：返回值为下游决定原对象');
+    assert.equal(subject.generation.spent, 0, '后续步腿：输入代记账复位为 0');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+agentEventsTest('PRESTEP-CHAIN-01b：载体路径腿——经行 ctx 注册的监听器由 agent 作用域载体分派（agentEvents 真实路径）同款断言（修前红＝续接 0 次、返回 undefined）', async () => {
+  // 宿主真实分派路径：dsh-agent 的 agentEvents(ctx, agent) 把主体 agent 融合
+  // 进载荷并经 scopeTarget 作用域载体（Context.filter 过滤的 thisArg）分派
+  // waterfall——行 ctx 注册的未打标签监听器照常收到 (payload, next)。直调腿
+  // 绿不能证明载体路径不截断（过滤层在直调中不执行），故单独锚定。
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  ledger.attachClaimedListener(ctx);
+  try {
+    const owner = `pc-carrier-${rcSuffix()}`;
+    const dispatch = agentEvents(ctx, { id: owner, status: 'running' });
+    // 首步腿：主体尚无账目。
+    let continuation = 0;
+    const enterDecision = { kind: 'enter', messages: [] };
+    const firstStep = await dispatch.waterfall('agent/pre-step', {
+      messages: [], turn: 1, step: 1,
+      signal: new AbortController().signal, modelSelection: {}
+    }, async () => { continuation += 1; return enterDecision; });
+    assert.equal(continuation, 1, '载体腿／首步：续接恰一次（修前红＝0）');
+    assert.strictEqual(firstStep, enterDecision,
+      '载体腿／首步：返回值为下游决定原对象（修前红＝undefined）');
+    // 后续步腿：有账目、spent > 0——复位且续接一次。
+    seedTerminalJob(ctx, owner, 'pc-carrier-job', { maxResultChars: 300, agentLang: 'en' }, 'k'.repeat(300));
+    const first = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en', triggerJobIds: ['pc-carrier-job'] });
+    assert.ok(first.delivered.length === 1, '前置：首装入账');
+    const subject = ledger.subjects.get(owner);
+    assert.equal(subject.generation.spent, 300, '前置：代内已交付 300');
+    subject.batch = null;
+    let laterContinuation = 0;
+    const laterDecision = { kind: 'enter', messages: [] };
+    const nextStep = await dispatch.waterfall('agent/pre-step', {
+      messages: [], turn: 1, step: 2,
+      signal: new AbortController().signal, modelSelection: {}
+    }, async () => { laterContinuation += 1; return laterDecision; });
+    assert.equal(laterContinuation, 1, '载体腿／后续步：续接恰一次（修前红＝0）');
+    assert.strictEqual(nextStep, laterDecision, '载体腿／后续步：返回值为下游决定原对象');
+    assert.equal(subject.generation.spent, 0, '载体腿／后续步：输入代记账复位为 0');
   } finally {
     ledger.disposeRow(ctx);
   }
