@@ -1846,6 +1846,159 @@ test('J23（失败三分）：明确拒绝 ≠ 未收到确认；延长失败先
   model.dispose();
 });
 
+test('J23b（F03 空回执与终态兜底）：answer/ignore 空回执＝未收到确认档（不冒称被拒、不悬置 busy）；处理异常同档释放', async () => {
+  // 设计 §4.3（F03）：answer/ignore 的空回执（undefined/null/非对象——gateway
+  // 异常形态下 resolve 出的非回执值）＝没有确认：不同于宿主明确拒绝（ok:false，
+  // 可断定未执行），不冒称被拒、不对非对象回执取 result.error；按「未收到确认」
+  // 档（ask.callFailed）交回并释放 busy。回执处理自身的异常同样以该档收尾——
+  // 动作链终端兜底不悬置 busy。
+  const react = makeMiniReact();
+  const intervals = [];
+  const product = await loadClientProduct(react, {
+    setInterval: (fn, ms) => { intervals.push({ fn, ms }); return intervals.length; },
+    clearInterval: () => {}
+  });
+  const snap = { status: 'ready', value: { askTakeover: true, askUiSeat: 'overlay' }, user: {} };
+  const scope = { getSnapshot: () => snap, subscribe: () => () => {}, mutate: async () => true };
+  let stateResult = { ok: true, value: { serverNow: 10_000, items: [] } };
+  let answerMode = 'ok';
+  let ignoreMode = 'ok';
+  const remoteNs = {
+    state: () => Promise.resolve(stateResult),
+    // 空回执三形态＋malformed（对象但字段读取抛错——终态兜底腿用）。
+    answer: () => answerMode === 'emptyUndef' ? Promise.resolve(undefined)
+      : answerMode === 'emptyNull' ? Promise.resolve(null)
+      : answerMode === 'primitive' ? Promise.resolve('receipt lost')
+      : answerMode === 'malformed'
+        ? Promise.resolve({ get ok() { throw new Error('malformed receipt'); } })
+      : Promise.resolve({ ok: true, value: { outcome: 'delivered' } }),
+    ignore: () => ignoreMode === 'emptyUndef' ? Promise.resolve(undefined)
+      : ignoreMode === 'emptyNull' ? Promise.resolve(null)
+      : ignoreMode === 'primitive' ? Promise.resolve('')
+      : Promise.resolve({ ok: true, value: { outcome: 'delivered' } }),
+    extend: () => Promise.resolve({ ok: true, value: { extended: 1 } })
+  };
+  const ctx = { configForms: { get: () => scope }, uiWorkspace: { openSession() {} } };
+  const model = product.createAskModel(ctx, remoteNs);
+  stateResult = { ok: true, value: { serverNow: 10_000, items: [{
+    batchId: 'ask-f03-a', sessionId: 's1', questionId: 'qf', question: '题目',
+    options: [{ label: 'a' }], multiSelect: false, receivedAt: 0, expiresAt: 20_000, phase: 'open'
+  }] } };
+  await intervals[0].fn();
+  await Promise.resolve();
+  await Promise.resolve();
+  const item = model.store.getSnapshot().items[0];
+
+  // ① answer 空回执＝没有确认：三形态都进「未收到确认」档并释放按钮（修前红：
+  //    undefined/null 形态读 result.error 抛 TypeError、busy 悬置〔done 不被
+  //    调用〕；原语形态冒称 answerRejected）。
+  for (const mode of ['emptyUndef', 'emptyNull', 'primitive']) {
+    answerMode = mode;
+    let done = null;
+    model.actions.answer(item, ['a'], undefined, (ok) => { done = ok; });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(done, false, `answer 空回执（${mode}）：onDone(false) 释放按钮（修前红＝悬置）`);
+    assert.equal(model.store.getSnapshot().callFailed, 'submit',
+      `answer 空回执（${mode}）：未收到确认档（修前红＝冒称明确拒绝/抛错）`);
+  }
+  // ② ignore 同口径（修前红同判据）。
+  for (const mode of ['emptyUndef', 'emptyNull', 'primitive']) {
+    ignoreMode = mode;
+    let done = null;
+    model.actions.ignore(item, (ok) => { done = ok; });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(done, false, `ignore 空回执（${mode}）：onDone(false) 释放按钮`);
+    assert.equal(model.store.getSnapshot().callFailed, 'submit',
+      `ignore 空回执（${mode}）：未收到确认档`);
+  }
+  // ③ 处理异常终态兜底：回执字段读取抛错 → 记日志、同档释放（修前红＝busy 悬置）。
+  answerMode = 'malformed';
+  let doneBoom = null;
+  model.actions.answer(item, ['a'], undefined, (ok) => { doneBoom = ok; });
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(doneBoom, false, '处理异常：onDone(false) 释放按钮（修前红＝悬置）');
+  assert.equal(model.store.getSnapshot().callFailed, 'submit', '处理异常：未收到确认档收尾');
+  // ④ 契约不回归：正常回执照常 onDone(true) 且清档。
+  answerMode = 'ok';
+  let doneOk = null;
+  model.actions.answer(item, ['a'], undefined, (ok) => { doneOk = ok; });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(doneOk, true, '正常回执照常成功释放');
+  assert.equal(model.store.getSnapshot().callFailed, null, '成功清失败档');
+  model.dispose();
+});
+
+test('J23c（U2-B 标题计数三态）：首读失败无缓存＝题目数未知（不以 0 冒充）；失败有缓存＝上次读取计数；恢复后＝实际计数', async () => {
+  // 设计 §4.3（U2-B）：面板标题（.ats-ask-title）计数三态——读取失败且无缓存
+  // 题目 → ask.countUnknown（复用既有键，不带数字，不以 0 冒充确证零题）；
+  // 读取失败但有缓存题目 → ask.countStale（{n}＝缓存计数，如实标注「上次
+  // 读取」）；读取正常 → ask.count。徽标侧计数逻辑不变（UI-STATE-04-B 两态）。
+  const react = makeMiniReact();
+  const intervals = [];
+  const product = await loadClientProduct(react, {
+    setInterval: (fn, ms) => { intervals.push({ fn, ms }); return intervals.length; },
+    clearInterval: () => {}
+  });
+  let snap = { status: 'ready', value: {}, user: {} };
+  let scopeListener = null;
+  const scope = {
+    getSnapshot: () => snap,
+    subscribe: (fn) => { scopeListener = fn; return () => {}; },
+    mutate: async () => true
+  };
+  const cachedItem = () => ({ batchId: 'b', sessionId: 's1', questionId: 'q1', question: 'q', options: [], multiSelect: false, receivedAt: 0, expiresAt: 90_000, phase: 'open' });
+  let stateOk = false;
+  const remoteNs = {
+    state: () => Promise.resolve(stateOk
+      ? { ok: true, value: { serverNow: 10_000, items: [cachedItem()] } }
+      : { ok: false })
+  };
+  const ctx = { configForms: { get: () => scope }, remote: {}, uiWorkspace: { openSession() {} } };
+  const model = product.createAskModel(ctx, remoteNs);
+  const titleText = () => {
+    const panel = react.render(() => product.AskList({ ask: model }));
+    const title = panel.children.find((child) => child?.props?.className === 'ats-ask-title');
+    return String(title.children);
+  };
+  const en = product.DICTIONARIES.en;
+  const zh = product.DICTIONARIES.zh;
+  // 词典契约：countStale 两语文本＝设计给定文本（{n}＝缓存计数占位）。
+  assert.equal(zh['ask.countStale'], '上次读取 {n} 题待答', 'zh countStale＝设计文本');
+  assert.equal(en['ask.countStale'], 'last read: {n} pending', 'en countStale＝设计文本');
+  // 开门（enabled）→ 首读失败：无缓存题目 → 标题＝题目数未知（修前红＝
+  // 「0 pending」冒充确证零题）。
+  snap = { status: 'ready', value: { askTakeover: true, askUiSeat: 'overlay' }, user: {} };
+  scopeListener();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(model.store.getSnapshot().callFailed, 'state', '前置：首读失败档');
+  assert.equal(model.store.getSnapshot().items.length, 0, '前置：无缓存题目');
+  assert.equal(titleText(), `${en['ask.title']} · ${en['ask.countUnknown']}`,
+    '① 首读失败无缓存：标题＝题目数未知（修前红＝title · 0 pending）');
+  // ② 读取失败但有缓存题目（真实形态＝上一次成功读取的残留；装置手工注入，
+  //    失败读取不覆盖缓存）→ 标题＝上次读取 {n} 题待答（{n}＝缓存计数）。
+  model.store.getSnapshot().items = [cachedItem()];
+  assert.equal(model.store.getSnapshot().callFailed, 'state', '前置：失败档保持');
+  assert.equal(titleText(), `${en['ask.title']} · ${en['ask.countStale'].replace('{n}', '1')}`,
+    '② 失败有缓存：标题＝上次读取 1 题待答（修前红＝title · 1 pending 冒充当前读数）');
+  // ③ 恢复对照：读取成功 → callFailed 清、标题回实际计数（三态不误伤正常态）。
+  stateOk = true;
+  await intervals[0].fn();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(model.store.getSnapshot().callFailed, null, '前置：读取恢复');
+  assert.equal(titleText(), `${en['ask.title']} · ${en['ask.count'].replace('{n}', '1')}`,
+    '③ 读取正常：标题＝实际计数');
+  model.dispose();
+});
+
 test('J19：座位渲染门——关/计数 0/座位不匹配三态渲染 null，匹配态出本体', async () => {
   const react = makeMiniReact();
   const product = await loadClientProduct(react, { setInterval: () => 0, clearInterval: () => {} });

@@ -1460,6 +1460,9 @@ var DICTIONARIES = {
     "ask.count": "{n} 题待答",
     // 计数未知态（UI-STATE-04-B）：首读失败且无缓存时徽标不以 0 冒充确证零题。
     "ask.countUnknown": "题目数未知（状态读取失败）",
+    // 计数过期态（§4.3，U2-B）：读取失败但有缓存题目——面板标题按上次读取的
+    // 缓存计数如实标注（真实缓存数不虚增），不冒充当前读数。
+    "ask.countStale": "上次读取 {n} 题待答",
     "ask.announceNew": "待答问题新增 {n} 题",
     "ask.answer": "提交",
     "ask.ignore": "不答",
@@ -1600,6 +1603,9 @@ var DICTIONARIES = {
     "ask.count": "{n} pending",
     // Count-unknown state (UI-STATE-04-B): no verified zero while the first fetch failed with no cache.
     "ask.countUnknown": "count unknown (state fetch failed)",
+    // Stale-count state (§4.3, U2-B): fetch failed but cached questions exist — the
+    // panel title reports the last-read cached count as such, not the current number.
+    "ask.countStale": "last read: {n} pending",
     "ask.announceNew": "Pending questions: {n} new",
     "ask.answer": "Submit",
     "ask.ignore": "Skip",
@@ -2001,11 +2007,29 @@ function createAskModel(ctx, remote) {
   var actions = {
     answer: function (item, selected, custom, onDone) {
       if (remote === undefined) { onDone(false); return; }
+      // busy 恰一次释放（§4.3）：任何出口（含回执处理自身异常的终态兜底）
+      // 都必须释放按钮；重复释放与「异常悬置 busy」都不发生。
+      var settled = false;
+      var release = function (ok) {
+        if (settled) return;
+        settled = true;
+        onDone(ok);
+      };
       remote.answer({ batchId: item.batchId, questionId: item.questionId, selected: selected, custom: custom })
         .then(function (result) {
+          // 空回执（undefined/null/非对象）＝没有确认（§4.3）：不同于宿主明确
+          // 拒绝（ok:false——请求已送达、被拒，可断定未执行）——不冒称被拒，
+          // 也不对非对象回执取 result.error 字段；按「未收到确认」档（与 RPC
+          // 拒绝同档，ask.callFailed）交回，可重试。
+          if (result !== Object(result)) {
+            state.callFailed = 'submit';
+            notify();
+            release(false);
+            return;
+          }
           // 成功只有两种回执；failed（迟到注入没送达）与记录缺席的 gone
           // （undelivered，需求 §4.4）都记可消除报错名单，普通 gone 交轮询收敛。
-          if (result === undefined || result === null || result.ok !== true) {
+          if (result.ok !== true) {
             // 失败三分——ok:false 是宿主**明确拒绝**（请求已送达、被拒）：可断定
             // 未执行；与 RPC 拒绝（'submit'，执行与否未知）分开报，不混说"未送达"。
             // 回执 error 按 gateway 契约携带 {code,message,details}：message
@@ -2019,7 +2043,7 @@ function createAskModel(ctx, remote) {
               && typeof result.error.details.reasonKey === "string"
               ? result.error.details.reasonKey : null;
             notify();
-            onDone(false);
+            release(false);
             return;
           }
           var outcome = result.value !== undefined && result.value !== null ? result.value.outcome : undefined;
@@ -2032,7 +2056,7 @@ function createAskModel(ctx, remote) {
             if (outcome === "failed") recordLost(item);
             if (outcome === "gone" && result.value !== undefined && result.value !== null
               && result.value.undelivered === true) recordUndelivered(item);
-            onDone(false);
+            release(false);
             return;
           }
           // 成功只清**本动作族**的旗标（'submit'/'answerRejected'）——延长族
@@ -2043,21 +2067,46 @@ function createAskModel(ctx, remote) {
             state.answerRejectReason = null;
             state.answerRejectReasonKey = null;
           }
-          onDone(true);
+          release(true);
           poll();
         }, function () {
           // RPC 拒绝＝没有确认（'submit'，可重试）——不确定结果不能断定"未送达"
           // （服务端可能已执行，只是响应丢失）。
           state.callFailed = 'submit';
           notify();
-          onDone(false);
+          release(false);
+        })
+        .catch(function (error) {
+          // 动作链终端兜底（§4.3）：回执处理或其后续（记名单/轮询）自身异常
+          // 不当悬置 busy——记日志、按「未收到确认」档释放按钮。
+          if (typeof console !== "undefined" && console && typeof console.error === "function") {
+            console.error("[dsh-async-tools] ask answer handling failed", error);
+          }
+          state.callFailed = 'submit';
+          notify();
+          release(false);
         });
     },
     ignore: function (item, onDone) {
       if (remote === undefined) { onDone(false); return; }
+      // busy 恰一次释放：与 answer 同构（§4.3）。
+      var settled = false;
+      var release = function (ok) {
+        if (settled) return;
+        settled = true;
+        onDone(ok);
+      };
       remote.ignore({ batchId: item.batchId, questionId: item.questionId })
         .then(function (result) {
-          if (result === undefined || result === null || result.ok !== true) {
+          // 空回执＝没有确认（§4.3）：与 answer 同档（ask.callFailed），不冒称
+          // 被拒、不对非对象回执取 result.error 字段。
+          if (result !== Object(result)) {
+            state.callFailed = 'submit';
+            notify();
+            release(false);
+            return;
+          }
+          if (result.ok !== true) {
             // 与 answer 共用拒绝状态：同时更新原串与原因键，避免沿用上次作答的键。
             // 忽略路径现无自有拒绝生产者；未知或无键的 message 在面板原样显示。
             state.callFailed = 'answerRejected';
@@ -2068,7 +2117,7 @@ function createAskModel(ctx, remote) {
               && typeof result.error.details.reasonKey === "string"
               ? result.error.details.reasonKey : null;
             notify();
-            onDone(false);
+            release(false);
             return;
           }
           var outcome = result.value !== undefined && result.value !== null ? result.value.outcome : undefined;
@@ -2077,7 +2126,7 @@ function createAskModel(ctx, remote) {
             // 与作答同口径（需求 §4.4）：忽略提交命中记录缺席 → 未送达名单。
             if (outcome === "gone" && result.value !== undefined && result.value !== null
               && result.value.undelivered === true) recordUndelivered(item);
-            onDone(false);
+            release(false);
             return;
           }
           // 与 answer 同族：成功清提交族旗标与拒绝原因；名单不随成功清除。
@@ -2086,12 +2135,21 @@ function createAskModel(ctx, remote) {
             state.answerRejectReason = null;
             state.answerRejectReasonKey = null;
           }
-          onDone(true);
+          release(true);
           poll();
         }, function () {
           state.callFailed = 'submit';
           notify();
-          onDone(false);
+          release(false);
+        })
+        .catch(function (error) {
+          // 动作链终端兜底（§4.3）：与 answer 同构。
+          if (typeof console !== "undefined" && console && typeof console.error === "function") {
+            console.error("[dsh-async-tools] ask ignore handling failed", error);
+          }
+          state.callFailed = 'submit';
+          notify();
+          release(false);
         });
     },
     jump: function (sessionId) {
@@ -2664,7 +2722,15 @@ function AskList(props) {
     className: props.panelClass === undefined ? "ats-ask-panel" : "ats-ask-panel " + props.panelClass
   },
     React.createElement("p", { className: "ats-ask-title" },
-      t("ask.title") + " · " + t("ask.count").replace("{n}", String(state.items.length))),
+      // 标题计数三态（§4.3，U2-B）：读取失败且无缓存题目 → 题目数未知（复用
+      // ask.countUnknown，不以 0 冒充确证零题）；读取失败但有缓存题目 → 按上
+      // 次读取的缓存计数如实标注（ask.countStale）；读取正常 → 实际计数
+      //（ask.count）。徽标侧计数逻辑不变（UI-STATE-04-B 两态）。
+      t("ask.title") + " · " + (state.callFailed === 'state'
+        ? (state.items.length === 0
+          ? t("ask.countUnknown")
+          : t("ask.countStale").replace("{n}", String(state.items.length)))
+        : t("ask.count").replace("{n}", String(state.items.length)))),
     state.callFailed ? React.createElement("p", { className: "ats-ask-failed" },
       (state.callFailed === 'answerRejected'
         // 基础句与已知原因键都按 uiLang 显示；agentLang 的 message 仅在
