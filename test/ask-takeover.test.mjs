@@ -4165,38 +4165,62 @@ test('J58：探针守卫静态锚——pack 判空先于首处 stdout.match、�
     '⑥ 删除段带删除后存在性核对（修前：rmSync 返回即当作已清除＝红）');
   assert.ok(source.indexOf('const reportCleanup') !== -1 && source.indexOf('已清除并核实') !== -1,
     '⑥ 「已清除」只在核实后出现（reportCleanup 报告实际结果）');
-  // 运行期错误身份判别（DOC-03-N1）：按「点名补丁文件 × 解析类错误形态 ×
-  // 非读取/凭据/传输成因」三件组合分档，不再用 /patch|yaml|model.?rout/i 词面
-  // 匹配（transport dispatch failed 因含 patch 被误判核心 FAIL＝红；凭据不足
-  // 带 model routing 前缀同）。行为锚：从探针源码提取判别函数直跑样例——
-  // 「仅文件名出现不定身份」的反例（带路径的凭据/读取/传输失败不得 core FAIL）
-  // 与「真实解析错误点名文件」的正例（必须 core FAIL）都有行为断言，静态
-  // 「新装置自证」不再单独成立。
+  // 运行期错误档位判定（DOC-03-N1）：按**阶段位点＋稳定 code**分类（设计 §8.3
+  // 补丁边界条：启动期解析失败→装置 2，运行期暴露的解析失败→核心 FAIL 1 不升
+  // 格；前提条：凭据不足致会话失败→装置 2），不再用 /patch|yaml|model.?rout/i
+  // 词面匹配（transport dispatch failed 因含 patch 被误判核心 FAIL＝红），也
+  // 不做 message 词面合取（词面路线可被「missing API key 不含 credential 词」
+  //「401 响应解码错误带 SyntaxError 形态」穿透——对齐 dsh-llm HarnessError
+  // 契约：route on code, never by parsing message）。行为锚：从探针源码提取
+  // 判别函数注入「带阶段证据与稳定 code 的错误对象」断言档位——五条反例（均
+  // 不得 core FAIL）与正例（启动段→2 由位点结构承担；运行期真实解析失败→1）
+  // 都有行为断言，静态「新装置自证」不再单独成立。
   assert.ok(!/\/patch\|yaml\|model\.\?rout\/i/.test(source),
     '⑥ 运行期分类不再按词面 regex（修前：dispatch 含 patch 被误判＝红）');
+  assert.ok(!source.includes('patchParseCoreFailure'),
+    '⑥ message 词面合取判别（patchParseCoreFailure）已删（修前被 missing API key／401 解码两条反例穿透＝红）');
   const probeSource = readFileSync(resolve(ROOT, 'verify/probe-recovery-identity.mjs'), 'utf8');
-  const fnStart = probeSource.indexOf('function patchParseCoreFailure');
-  assert.notEqual(fnStart, -1, '⑥ 判别函数 patchParseCoreFailure 在场（DOC-03-N1 组合判别）');
+  const fnStart = probeSource.indexOf('function classifySessionFailure');
+  assert.notEqual(fnStart, -1, '⑥ 档位判定函数 classifySessionFailure 在场（DOC-03-N1 阶段＋code 结构判别）');
+  const codesStart = probeSource.indexOf('const DEVICE_PRECONDITION_CODES');
   const fnClose = probeSource.indexOf('\n}', fnStart);
-  const fnSource = probeSource.slice(fnStart, fnClose + 2);
-  const patchParseCoreFailure = new Function(`${fnSource}\nreturn patchParseCoreFailure;`)();
-  const PATCH_PATH = 'C:\\run\\patch\\routing.example.yml';
-  // 反例：只点名文件、不定身份——凭据失败（含 basename）/读取失败/传输失败
-  //（含绝对路径）都按装置故障 2 收束，不判 core FAIL（修前红形态＝点名即 FAIL）。
-  assert.equal(patchParseCoreFailure('model routing: provider credential unavailable (routing.example.yml)', PATCH_PATH), false,
-    '⑥ 带路径的凭据失败不定为解析失败（文件名只证明涉及哪份配置）');
-  assert.equal(patchParseCoreFailure('ENOENT: no such file routing.example.yml', PATCH_PATH), false,
-    '⑥ 补丁文件自身读取失败归装置（ENOENT 点名不定身份）');
-  assert.equal(patchParseCoreFailure('unrelated transport failure in C:/route/routing.example.yml', PATCH_PATH), false,
-    '⑥ 带路径的传输失败不定为解析失败');
-  // 正例：真实解析错误点名文件——点名 × 解析形态 × 无读取/凭据/传输成因。
-  assert.equal(patchParseCoreFailure('YAMLException: bad indentation of a mapping entry (C:\\run\\patch\\routing.example.yml:3:1)', PATCH_PATH), true,
-    '⑥ 真实解析错误点名文件必须定为 core FAIL（被测链路的补丁装载被中断）');
-  assert.equal(patchParseCoreFailure('Error: failed to parse model routing patch routing.example.yml: Unexpected token } at line 5', PATCH_PATH), true,
-    '⑥ parse/token 类解析形态点名文件同判');
-  // 来源不可证：解析形态在场但未点名补丁文件——不定身份。
-  assert.equal(patchParseCoreFailure('YAMLException: bad indentation of some other file', PATCH_PATH), false,
-    '⑥ 未点名补丁文件不定身份（来源不可证，按装置故障收束）');
+  const fnSource = probeSource.slice(codesStart, fnClose + 2);
+  const { classifySessionFailure } = new Function(`${fnSource}\nreturn { classifySessionFailure };`)();
+  // 反例五条（盲审定稿样例，均须装置档——不得 core FAIL）：
+  const deviceCases = [
+    ['⑥ 带路径的凭据失败（公开 code INVALID_CREDENTIAL）→装置 2',
+      Object.assign(new Error('model routing: provider credential unavailable (routing.example.yml)'), { code: 'INVALID_CREDENTIAL' })],
+    ['⑥ 补丁文件读出失败（系统 errno ENOENT）→装置 2',
+      Object.assign(new Error('ENOENT: no such file routing.example.yml'), { code: 'ENOENT' })],
+    ['⑥ 带路径的传输失败（cause 链连接层 errno）→装置 2',
+      (() => { const inner = new Error('connect failed'); inner.code = 'ECONNRESET';
+        const outer = new Error('unrelated transport failure in C:/route/routing.example.yml'); outer.cause = inner; return outer; })()],
+    ['⑥ 缺 API key（HTTP 401 网关凭据层状态，message 无 credential 词）→装置 2',
+      Object.assign(new Error('Invalid configuration in routing.example.yml: missing API key'), { status: 401 })],
+    ['⑥ 401 响应解码错误（HTTP 401 状态＋SyntaxError 形态——非补丁解析）→装置 2',
+      Object.assign(new SyntaxError('Unexpected token < in JSON response; HTTP 401 Unauthorized; model patch routing.example.yml'), { status: 401 })]
+  ];
+  for (const [label, sample] of deviceCases) {
+    assert.equal(classifySessionFailure(sample), 'device', label);
+  }
+  // 正例：运行期真实解析失败（YAML 异常对象无稳定 code/status）与身份未知的
+  // 运行期失败——一律 core FAIL 1（不升格装置、不靠词面归因）。
+  assert.equal(classifySessionFailure(new Error('YAMLException: bad indentation of a mapping entry (C:\\run\\patch\\routing.example.yml:3:1)')), 'core',
+    '⑥ 运行期真实解析失败→核心 FAIL 1（不升格为装置故障）');
+  assert.equal(classifySessionFailure(new Error('something broke mid-session')), 'core',
+    '⑥ 身份未知的运行期失败如实按核心 FAIL 报错');
+  // code 优先于 message 词面（HarnessError 契约）：稳定 code 在场即按 code 分档，
+  // message 写什么（哪怕是纯解析词面）不参与判定。
+  assert.equal(classifySessionFailure(Object.assign(new Error('YAMLException: bad indentation'), { code: 'INVALID_CREDENTIAL' })), 'device',
+    '⑥ 按 code 不按词面：message 是解析形态而 code 是凭据类→装置档');
+  assert.equal(classifySessionFailure(new Error('provider credential unavailable (routing.example.yml)')), 'core',
+    '⑥ 无稳定信号不凭 message 猜凭据（词面含 credential 无 code→如实 core FAIL）');
+  // 启动段（try 外位点）恒装置 2——静态结构锚：起实例与就绪等待都在主 try 之前
+  // 且就绪失败走 die(2)（阶段即结构，不依赖错误文本）。
+  const readyFailPos = source.indexOf('实例 120s 未就绪');
+  const mainTryPos = source.indexOf('} catch (probeError)');
+  assert.ok(readyFailPos !== -1 && mainTryPos !== -1 && readyFailPos < mainTryPos,
+    '⑥ 启动段失败位点在主 try（会话段 catch）之外——启动期解析失败按位点归装置 2');
 });
 
 // ── 依赖撤下承接（设计 §4.3）：connection/reset → 探测 → 按结果分判 ─────────

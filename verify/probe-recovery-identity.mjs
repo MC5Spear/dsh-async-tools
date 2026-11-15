@@ -349,14 +349,11 @@ for (let i = 0; i < 120 && URL === null; i += 1) {
   else await new Promise((res) => setTimeout(res, 1000));
 }
 if (URL === null) {
-  // 实例启动期的补丁问题一律按装置故障 2（§8.3：本阶段补丁文件属装置输入——
-  // 语法/读取失败都归装置前提未满足，不判 core FAIL）。判别复用运行期同款
-  // 三件组合（patchParseCoreFailure）只做**文案**归因：三件同现提示检查
-  // --model-patch 指向的文件；仅点名无解析形态（凭据/传输/读取失败）或无点名
-  // 都保持通用报错、不推断成因——词面匹配会把无关的 dispatch/routing 字样
-  // 误读成因。
-  const patchParseHit = patchParseCoreFailure(stderrTail, PATCH);
-  die(2, `实例 120s 未就绪${patchParseHit ? '（stderr 呈现模型路由 patch 解析失败特征——按补丁前提未满足处理，检查 --model-patch / DSAT_MODEL_PATCH 指向的文件）' : ''}；stderr 尾：${stderrTail}`);
+  // 启动阶段（本位点在主 try 之外）失败一律装置故障 2（§8.3 补丁边界条前半：
+  // 实例启动阶段可观察的解析失败按装置故障退出——补丁文件属装置输入，缺席/
+  // 不可读/内容不可解析都在此档）。不解析 stderr 词面归因——点名与形态只作
+  // 诊断参考，不影响档位；stderr 尾随报错附上，不掩盖真实成因。
+  die(2, `实例 120s 未就绪（启动阶段失败按装置故障收束——检查 --model-patch / DSAT_MODEL_PATCH 指向的文件与宿主日志）；stderr 尾：${stderrTail}`);
 }
 console.log('[launcher] instance ready on', URL.split('?')[0]);
 
@@ -391,16 +388,44 @@ async function rpc(endpoint, args) {
     response = await once();
   } catch (connError) {
     if (!RETRYABLE_METHODS.has(endpoint)) {
-      throw new Error(`${endpoint}：请求未获响应（${String(connError instanceof Error ? connError.message : connError)}）。`
+      // 结构化信号保留（DOC-03-N1）：连接层错误的 cause 链（undici 的 errno
+      // code）原样挂在包装错误上——下游档位判定按稳定 code 分类，不解析
+      // message 词面。
+      const wrapped = new Error(`${endpoint}：请求未获响应（${String(connError instanceof Error ? connError.message : connError)}）。`
         + '响应丢失不等于未执行——本方法不是只读方法，不自动重发（对齐 verify/_rpc.mjs 口径）。');
+      wrapped.cause = connError;
+      throw wrapped;
     }
     response = await once();
   }
   // API 被重定向＝错误：不跟随、不带凭据重发（DOC-07）。
   assertApiNotRedirected(response, endpoint);
   const text = await response.text();
-  const parsed = JSON.parse(text);
-  if (parsed?.result?.ok !== true) throw new Error(`${endpoint}: ${JSON.stringify(parsed?.result?.error ?? text.slice(0, 200))}`);
+  if (!response.ok) {
+    // HTTP 状态挂在错误上（DOC-03-N1）：401/403 等网关凭据层状态是稳定分类
+    // 信号，不能被 body 文本吞掉。
+    const httpError = new Error(`${endpoint}: HTTP ${response.status} ${text.slice(0, 200)}`);
+    httpError.status = response.status;
+    throw httpError;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (jsonError) {
+    const wrapped = new Error(`${endpoint}: HTTP ${response.status} 响应体非 JSON（${String(jsonError instanceof Error ? jsonError.message : jsonError)}）`);
+    wrapped.status = response.status;
+    wrapped.cause = jsonError;
+    throw wrapped;
+  }
+  if (parsed?.result?.ok !== true) {
+    // 宿主 API 错误的公开 code 透传（DOC-03-N1）：会话阶段模型路由失败的
+    // HarnessError code（凭据/配额类等）经 result.error.code 到达，挂在抛错
+    // 上供档位判定；message 只作诊断展示。
+    const apiError = parsed?.result?.error;
+    const wrapped = new Error(`${endpoint}: ${JSON.stringify(apiError ?? text.slice(0, 200))}`);
+    if (apiError !== null && typeof apiError === 'object' && typeof apiError.code === 'string') wrapped.code = apiError.code;
+    throw wrapped;
+  }
   return parsed.result.value;
 }
 
@@ -466,25 +491,38 @@ const evidence = { label: LABEL, host: HOST_ROOT, candidate: tgzName, origin: OR
 let aborted = false;
 
 /**
- * 补丁解析失败能否定为 core FAIL（DOC-03-N1／§8.3 装置契约）：按「明确错误身份
- * ×可证来源」组合判——文件名只证明涉及哪份配置、不证明错误是解析失败（带路径
- * 的凭据/传输失败同样点名文件），仅凭点名不定身份。core FAIL 三件同现才认：
- * ①文本点名补丁文件（绝对路径或文件名＝来源可证）；②呈现解析类错误形态（宿主
- * 报告补丁/配置解析失败的既有类型词：SyntaxError／YAML 异常／parse／token／
- * 缩进等）；③不带读取/凭据/传输类成因词——补丁文件读不出（ENOENT 等）＝装置
- * 输入自身的问题，凭据/网络失败与解析无关，都按装置故障收束。身份不能证实时
- * 不判 core FAIL、以 2 收束——升格不掩盖真实失败：宿主对补丁的解析链路错误
- * 必然同时呈现点名与解析形态。自包含（无外部依赖），test/ask-takeover.test.mjs
- * 的 J58 行为锚从源码提取本函数直跑样例。
+ * 会话段运行期失败的档位判定（DOC-03-N1／§8.3 装置契约·设计「补丁内容不可解析
+ * 的退出码边界」）：按**阶段位点与稳定 code** 分类，不解析 message 词面猜原因
+ *（对齐 dsh-llm HarnessError 契约——route on `code`, never by parsing `message`；
+ * 产品侧同原则见设计 §5 L669 段）。catch 位点即阶段证据：启动/补丁准备段在主
+ * try 之外、恒按装置故障 die(2)（启动期可观察的解析失败＝装置前提未满足）；
+ * 本函数只判**会话驱动段**（主 try 内 catch 到的一切）：
+ * - `device`（装置故障 2，设计前提条：凭据不足导致会话阶段失败按装置故障如实
+ *   报告）：HTTP 401/403（网关凭据层状态）或 cause 链上的稳定 code——凭据类
+ *   （INVALID_CREDENTIAL／MISSING_CREDENTIAL）、配额类（QUOTA／ACCOUNT_QUOTA，
+ *   dsh-llm 公开 code）、连接层 errno（探针到实例的通道属装置）、文件系统
+ *   errno（装置输入文件读不出）；
+ * - `core`（核心判据 FAIL 1，设计补丁边界条后半）：其余一切——含运行期暴露的
+ *   解析失败与身份未知的失败，如实报错、不升格为装置故障、也不靠词面补造
+ *   身份。
+ * 自包含（cause 链遍历）；test/ask-takeover.test.mjs 的 J58 行为锚从源码提取
+ * 本函数与 code 集合直跑样例。
  */
-function patchParseCoreFailure(errText, patchPath) {
-  if (patchPath === null || patchPath === undefined) return false;
-  const text = String(errText);
-  const patchBase = String(patchPath).split(/[\\/]/).pop();
-  const named = text.includes(patchPath) || text.includes(patchBase);
-  if (!named) return false;
-  if (/ENOENT|EACCES|no such file|permission denied|credential|transport|network|ECONN|ETIMEDOUT|fetch failed/i.test(text)) return false;
-  return /SyntaxError|YAMLException|YamlError|failed to parse|parse error|parsing failed|Unexpected token|bad indentation|mapping values|invalid configur/i.test(text);
+const DEVICE_PRECONDITION_CODES = new Set([
+  'INVALID_CREDENTIAL', 'MISSING_CREDENTIAL', 'QUOTA', 'ACCOUNT_QUOTA',
+  'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNABORTED',
+  'ENOENT', 'EACCES', 'EPERM', 'EBUSY'
+]);
+function classifySessionFailure(error) {
+  const statusOf = (node) => (typeof node === 'object' && node !== null)
+    ? (typeof node.status === 'number' ? node.status : (typeof node.statusCode === 'number' ? node.statusCode : null))
+    : null;
+  for (let node = error; node !== null && node !== undefined && typeof node === 'object'; node = node.cause) {
+    const status = statusOf(node);
+    if (status === 401 || status === 403) return 'device';
+    if (typeof node.code === 'string' && DEVICE_PRECONDITION_CODES.has(node.code)) return 'device';
+  }
+  return 'core';
 }
 
 try {
@@ -660,20 +698,21 @@ try {
     note: 'turn-stopping/收尾事件不进转录——不可观测面如实登记；本样本为普通首等取消，悬挂准备窗口形态未取得，可达性以宿主源码契约静态推断为准（设计 §2.6 准备期窗口条）'
   };
 } catch (probeError) {
-  // 运行期错误的身份判别（DOC-03-N1：不靠词面补造产品失败）：core FAIL 只认
-  // 「点名补丁文件 × 解析类错误形态 × 非读取/凭据/传输成因」三件同现
-  //（patchParseCoreFailure——带路径的凭据/传输失败、补丁文件自身读不出都只
-  // 点名、不定身份）；身份不能证实时不判 core FAIL、按装置故障（2）收束，
-  // 与就绪等待处的处理对齐——升格为装置故障不会掩盖判据层的真实失败：宿主
-  // 对补丁的解析错误必然同时呈现两类特征。
+  // 会话驱动段（本 try 位点）运行期失败的档位判定（DOC-03-N1／§8.3）：按阶段
+  // 与稳定 code 分类（classifySessionFailure）——凭据/配额/连接/文件系统类
+  // 稳定信号（HTTP 401/403 或 cause 链公开 code）＝装置前提未满足，按装置
+  // 故障 2 收束（设计前提条：凭据不足导致会话阶段失败按装置故障如实报告）；
+  // 其余一律核心判据 FAIL 如实报错（设计补丁边界条：运行期暴露的解析失败
+  // 不升格为装置故障、身份未知的失败不靠 message 词面补造）。
   const errText = String(probeError instanceof Error ? `${probeError.message}\n${probeError.stack ?? ''}` : probeError);
-  if (patchParseCoreFailure(errText, PATCH)) {
-    judge('运行期模型路由补丁解析失败（核心判据链路被中断）', 'FAIL', errText.slice(0, 400), true);
-    console.error(`FAIL：判级在会话阶段遭遇补丁解析失败（${errText.slice(0, 400)}）——按核心判据 FAIL 以退出码 1 收束`);
-  } else {
-    // 中止≠核心判据全过（README 退出码契约）：已判级照常落证据，收束以 2 报装置故障。
+  if (classifySessionFailure(probeError) === 'device') {
+    // 装置前提未满足≠核心判据失败（README 退出码契约）：已判级照常落证据，
+    // 收束以 2 报装置故障。
     aborted = true;
-    console.error(`FAULT：判级中途中止（${String(probeError instanceof Error ? probeError.stack : probeError)}）——按装置故障以退出码 2 收束（错误未同时呈现补丁点名与解析形态，不推断成因）`);
+    console.error(`FAULT：会话阶段装置前提未满足（${errText.slice(0, 400)}）——按装置故障以退出码 2 收束（稳定 code/HTTP 状态证实凭据/配额/连接/文件系统类失败）`);
+  } else {
+    judge('会话阶段判级中断（核心判据链路被中断）', 'FAIL', errText.slice(0, 400), true);
+    console.error(`FAIL：会话阶段判级中断（${errText.slice(0, 400)}）——按核心判据 FAIL 以退出码 1 收束（无装置前提类稳定信号：身份未知的运行期失败如实报错，不升格装置、不按词面归因）`);
   }
 } finally {
   // 清理结果先取得再落证据（DOC-06-RESULT）：证据 JSON 附三段结构化清理状态，
