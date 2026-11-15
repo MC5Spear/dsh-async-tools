@@ -73,7 +73,9 @@
  * （`.local/npm-cache`）非本次运行私有，不在清理域内。证据写
  * `<repo>/.local/evidence/probe-recovery-identity-<label>.json`（不含
  * token/密钥）。退出码 0＝核心判据全过；1＝核心判据有 FAIL；2＝装置自身
- * 故障；3＝未执行（无凭据 SKIP，落 skipped 标记证据）。
+ * 故障；3＝未执行（无凭据 SKIP，落 skipped 标记证据）。运行目录创建之后的
+ * 全部退出路径统一经唯一收尾出口 `finalizeExit`（见其定义处注释）；参数
+ * 阶段的退出（目录未建、无可清理）保持直接 `process.exit(2)`。
  *
  * ## RPC 纪律（DOC-07，对齐 verify/_rpc.mjs 只读重试口径）
  *
@@ -259,7 +261,32 @@ const reportCleanup = (cleanupResult) => {
   }
   return cleanupResult;
 };
-const die = (code, message) => { console.error(message); reportCleanup(cleanup()); process.exit(code); };
+// 统一收尾出口（L02）：运行目录创建之后的**全部**退出路径——die 位点（FAULT
+// ／SKIP）、主 try 的 finally 判级收尾、进程级异常承接——都汇聚到本函数：清
+// 现场、判级路径落证据、按同一张退出码表收束（verify/README 该探针行的退出
+// 码表与此一致）：1＝核心判据有 FAIL；2＝装置故障（fault 位点给定、判级中断
+// 的稳定信号档置 aborted、或清理未证实）；3＝未执行（SKIP——skipped 证据由
+// 该位点先落）；0＝核心判据全过且清理核实。参数阶段（运行目录尚未创建、无
+// 可清理）的退出不经本函数，保持直接 process.exit(2)。faultCode 位点不触判
+// 级状态（verdicts/evidence/aborted 可能仍在暂时性死区——SKIP die(3) 发生在
+// 判级段初始化之前）；判级路径只由 finally 到达（必然已完成初始化）。
+const finalizeExit = (options = {}) => {
+  const cleanupResult = reportCleanup(cleanup());
+  if (options.faultCode !== undefined) {
+    process.exit(options.faultCode);
+  }
+  // 清理结果先取得再落证据（DOC-06-RESULT）：证据 JSON 附三段结构化清理状态，
+  // 自动化读 cleanup.ok / .stage 即可判定资源结束是否核实——不再只有退出码。
+  writeFileSync(EVIDENCE, JSON.stringify({ ...evidence, verdicts, aborted, cleanup: cleanupResult }, null, 2));
+  console.log(`[launcher] evidence → ${EVIDENCE}`);
+  const failed = verdicts.filter((v) => v.kind === 'FAIL' && CORE.has(v.name)).length;
+  const passed = verdicts.filter((v) => v.kind === 'PASS').length;
+  console.log(`[launcher] verdicts: ${String(passed)} PASS / ${String(failed)} core-FAIL（其余为信息项登记）${aborted ? '；ABORTED（装置故障，退出码 2）' : ''}${cleanupResult.ok ? '' : '；CLEANUP-FAULT（清理未证实，留存现场，退出码 2）'}`);
+  // 退出码：核心 FAIL → 1；aborted 或清理未证实 → 2（装置故障档——核心全
+  // PASS 而清理失败不再退出 0）；全过且清理核实 → 0。
+  process.exit(aborted ? 2 : (failed > 0 ? 1 : (cleanupResult.ok ? 0 : 2)));
+};
+const die = (code, message) => { console.error(message); finalizeExit({ faultCode: code }); };
 // 进程级异常承接（DOC-06）：先于任何目录创建（含证据目录与运行目录）注册——本文件
 // 任何未捕获异常都统一转 die() 清理并以 2 收束，不混入「1＝核心 FAIL」档，也不留
 // 「目录已建、承接未挂」的窗口。
@@ -715,17 +742,7 @@ try {
     console.error(`FAIL：会话阶段判级中断（${errText.slice(0, 400)}）——按核心判据 FAIL 以退出码 1 收束（无装置前提类稳定信号：身份未知的运行期失败如实报错，不升格装置、不按词面归因）`);
   }
 } finally {
-  // 清理结果先取得再落证据（DOC-06-RESULT）：证据 JSON 附三段结构化清理状态，
-  // 自动化读 cleanup.ok / .stage 即可判定资源结束是否核实——不再只有退出码。
-  const cleanupResult = cleanup();
-  reportCleanup(cleanupResult);
-  writeFileSync(EVIDENCE, JSON.stringify({ ...evidence, verdicts, aborted, cleanup: cleanupResult }, null, 2));
-  console.log(`[launcher] evidence → ${EVIDENCE}`);
-  const failed = verdicts.filter((v) => v.kind === 'FAIL' && CORE.has(v.name)).length;
-  const passed = verdicts.filter((v) => v.kind === 'PASS').length;
-  const verdictLine = `[launcher] verdicts: ${String(passed)} PASS / ${String(failed)} core-FAIL（其余为信息项登记）${aborted ? '；ABORTED（装置故障，退出码 2）' : ''}${cleanupResult.ok ? '' : '；CLEANUP-FAULT（清理未证实，留存现场，退出码 2）'}`;
-  console.log(verdictLine);
-  // 退出码：核心 FAIL → 1；aborted 或清理未证实 → 2（装置故障档——核心全
-  // PASS 而清理失败不再退出 0）；全过且清理核实 → 0。
-  process.exit(aborted ? 2 : (failed > 0 ? 1 : (cleanupResult.ok ? 0 : 2)));
+  // 判级收尾统一走唯一收尾出口（L02）：证据落盘＋verdict 行＋退出码表都在
+  // finalizeExit 内，退出码契约只在一处成立。
+  finalizeExit();
 }

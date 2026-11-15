@@ -4376,6 +4376,20 @@ test('J58：探针守卫静态锚——pack 判空先于首处 stdout.match、�
   const mainTryPos = source.indexOf('} catch (probeError)');
   assert.ok(readyFailPos !== -1 && mainTryPos !== -1 && readyFailPos < mainTryPos,
     '⑥ 启动段失败位点在主 try（会话段 catch）之外——启动期解析失败按位点归装置 2');
+  // ⑦ 唯一收尾出口（L02）：运行目录创建之后的全部退出统一经 finalizeExit——
+  // die 是其薄封装、finally 判级收尾只调用它、判级退出码表只在它内部出现恰一
+  // 处；参数阶段（目录未建、无可清理）的退出保持直接 process.exit(2) 不经它。
+  // 修前红：finalizeExit 缺席、判级退出码表散落 die/finally 两处。
+  const finStart = source.indexOf('const finalizeExit');
+  assert.notEqual(finStart, -1, '⑦ finalizeExit 在场（修前：收尾逻辑散落 die／finally 两处＝红）');
+  assert.ok(source.includes('const die = (code, message) => { console.error(message); finalizeExit({ faultCode: code }); };'),
+    '⑦ die 是 finalizeExit 的薄封装（fault 位点不再自带收尾逻辑）');
+  assert.ok(/^[ \t]*finalizeExit\(\);[ \t]*$/m.test(source.slice(finallyPos)),
+    '⑦ finally 判级收尾只调用 finalizeExit（证据落盘与退出码判定不再散落）');
+  assert.equal((source.match(/process\.exit\(aborted \? 2/g) ?? []).length, 1,
+    '⑦ 判级退出码表恰一处（finalizeExit 内——verify/README 退出码表与此同步）');
+  assert.ok((source.slice(0, finStart).match(/process\.exit\(2\)/g) ?? []).length >= 5,
+    '⑦ 参数阶段（目录未建）退出保持直接 process.exit(2)（不经收尾出口）');
 });
 
 // ── 依赖撤下承接（设计 §4.3）：connection/reset → 探测 → 按结果分判 ─────────
