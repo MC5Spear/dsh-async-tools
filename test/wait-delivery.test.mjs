@@ -16,6 +16,7 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { test } from 'node:test';
 import { hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
 import { resolveConfig } from '../lib/config.js';
 import { LATE_ANSWER_EVENT } from '../lib/interrupts.js';
@@ -3282,6 +3283,23 @@ function sRig({ injectFailsAt = 0, followupThrows = false, agentsGet, budget = 4
   // 产品接线里 claimed 监听由装载行 apply 挂（lib/index.js）；假 ctx 环境显式
   // 挂同一入口（RN 系列的关批锚点①），惰性——无人经 listeners 触发即不生效。
   ledger.attachClaimedListener(ctx);
+  // GB/NI 系列：假收件箱排空装置。宿主每步 preStep() 先 inbox.claim() 逐消息发
+  // agent/inbox/claimed（带 message.id）；装置里的「收件箱」＝已记录的
+  // followup/inject 载体消息。claimInbox() 对每条尚未领取的消息发一次 claimed
+  //（带 message.id，宿主逐消息恰一次），无未领消息时发一次裸事件（无消息载荷
+  // 的领取形态）——否则未领取尾部登记（unclaimedSends）在装置上永不清除，
+  // 「投递后关批＋断言后续满额」类锚会假红。
+  const claimedIds = new Set();
+  const claimInbox = () => {
+    let firedAny = false;
+    for (const message of [...calls.followup, ...calls.inject]) {
+      if (claimedIds.has(message.id)) continue;
+      claimedIds.add(message.id);
+      firedAny = true;
+      listeners.get('agent/inbox/claimed')({ agent: { id: OWNER }, message: { id: message.id }, turn: 1 });
+    }
+    if (!firedAny) listeners.get('agent/inbox/claimed')({ agent: { id: OWNER } });
+  };
   /** 登记一个已就绪（终态＋增量已读）的作业；facts 并入注册表行，readExtras 并入读取回执，
    * echo（`{ echoText, echoKind }`）经 noteJobStarted 的注册时参数入账（ECHO-WORKFLOW-01）。 */
   const readyJob = async (jobId, text, facts, readExtras, echo) => {
@@ -3290,7 +3308,7 @@ function sRig({ injectFailsAt = 0, followupThrows = false, agentsGet, budget = 4
     ledger.noteJobStarted(ctx, config, jobId, OWNER, echo);
     await ledger.readSettled(jobId);
   };
-  return { agent, calls, OWNER, config, ctx, reads, listeners, readyJob };
+  return { agent, calls, OWNER, config, ctx, reads, listeners, readyJob, claimInbox };
 }
 
 /** 装置产出的消息正文（inject/followup 的 content 拼接）。 */
@@ -4128,13 +4146,17 @@ hostTest('RN-B：100 条空输出结算——物理消息恰 14（10＋3＋1）�
   // 分隔符＝上限 803 理论值；现行 en 词典（含 §2.6 领取时机句）实得 ~717，
   // 上限 800 钉住「clampNote 入界＋无界增长必红」两个方向。
   assert.ok(notesText.length <= 800, `说明字符合计 ${String(notesText.length)} ≤ 800（数值固定可测）`);
-  // 时机句在场（§2.6 领取时机——DOC-U01 口径＝下一次模型输入）：三键 en 带最短
-  // 时机句——本断言缺席时，en 档被 clampNote(200) 截去时机句的回归（长句形态）
-  // 不会被锚面捕获；回退 turn end 表述即红。
+  // 时机句在场（§2.6 领取时机——WAIT-BUDGET-01 口径＝下一次模型输入＋剩余
+  // 额度限定）：三键 en 带最短时机句——本断言缺席时，en 档被 clampNote(200)
+  // 截去时机句的回归（长句形态）不会被锚面捕获；回退 turn end 或无限定绝对
+  // 时机（available … 即红）表述即红（GB-5 同判，此处锚渲染层）。
   for (const text of individual) {
-    assert.match(text, /[Aa]vailable in the next model input|至迟在下一次模型输入内/, '逐条说明带领取时机句（截断或回退 turn end 即红）');
+    assert.match(text, /in the next model input while budget allows|在下一次模型输入内按剩余额度/, '逐条说明带限定领取时机句（截断、回退 turn end 或回退无限定绝对时机即红）');
   }
-  assert.match(aggregate, /[Aa]vailable in the next model input|至迟在下一次模型输入内/, '聚合说明带领取时机句（截断或回退 turn end 即红）');
+  assert.match(aggregate, /in the next model input while budget allows|collectable in the next model input|在下一次模型输入内按剩余额度/, '聚合说明带限定领取时机句（截断、回退 turn end 或回退无限定绝对时机即红）');
+  // en 聚合文案实测 181 字符（{count:1} 口径；999 计数 183）≤200——收紧后
+  // 不经 clampNote 截尾，尾部限定词「while budget allows」完整存活（三分支
+  // 锚可见段＋末分支完整段同时命中）；弃旧无限定形态仍重复锚定。
   assert.ok(!/[Ll]eftovers follow at turn end/.test(notesText), '弃 turn end 旧表述（DOC-U01）');
   // 未逐一说明的候选不静默丢失：内容在缓冲（空正文零内容）＋下一批 FIFO 补投。
   ledger.closeBatchIfIdle(rig.OWNER);
@@ -4148,9 +4170,10 @@ hostTest('RN-B：100 条空输出结算——物理消息恰 14（10＋3＋1）�
   // 截掉的风险（两处插值在真实编号下超界即截尾）。
   const notice30 = t('en', 'delivery.deferredNotice', { jobId: 'async-command-a61a75aea0a94c0d' });
   assert.ok(notice30.length <= 200, `真实编号（30 字符）形态全文 ${String(notice30.length)} ≤ 200`);
-  assert.ok(notice30.includes('Available in the next model input'),
+  assert.ok(notice30.includes('Collect in the next model input while budget allows'),
     '真实编号形态时机句完整存活（两处插值回归即红）');
   assert.ok(!/[Ll]eftovers follow at turn end/.test(notice30), '真实编号形态弃 turn end 旧表述');
+  assert.ok(!/[Aa]vailable in the next model input/.test(notice30), '真实编号形态弃无限定绝对时机旧句（WAIT-BUDGET-01）');
 });
 
 hostTest('RN-C：非空正文超限两形态——预算 1 只容 1 条（1＋3＋1＝5）；预算充足由条目上限触发（10＋3＋1＝14）；延后正文留缓冲可恢复', async () => {
@@ -7846,6 +7869,220 @@ hostTest('RC-GEN：输入代记账——两次组稿之间合计封顶、关批�
   } finally {
     ledger.disposeRow(ctx);
   }
+});
+
+// ── GB 系列（WAIT-BUDGET-01：代重置保留未领取尾部——领取与步骤事件之间结算
+// 的正文不再因步骤事件清零而漏计；开放批视图随步骤丢弃）──────────────────────
+
+hostTest('GB-1（19/10 反例锚）：领取后组稿间隙注入 A→pre-step 重置为未领取尾部→B 按 full−A 开额；同输入合计 ≤ 上限（修前红＝清零后 B 取满、合计 19）', async () => {
+  // 宿主时序（rc.1 dsh-agent-loop 源码事实）：每步 preStep() 先 inbox.claim()
+  // （逐消息发 agent/inbox/claimed），后 await 组稿间隙，再 agent/pre-step，
+  // 最后模型调用——间隙内结算注入的完成消息（nextStep）要到下一步骤 claim 才
+  // 入输入，但其计费必须压在「下一步骤等待返回所落的那次输入」上：pre-step 把
+  // spent 重置为**未领取尾部**（而非 0），B 的批按 full − A 开额。
+  const rig = sRig({ budget: 10 }); // 忙路径（running）→ 逐条 inject
+  const preStep = () => rig.listeners.get('agent/pre-step')({ agent: { id: rig.OWNER } }, () => {});
+  {
+    // ① 领取点：当前窗口的 claim 已过（假收件箱为空 → 裸事件形态）。
+    rig.claimInbox();
+    // ② 组稿间隙内结算 A（9 字符）→ 完成消息注入，按载体消息 id 登记计费。
+    await rig.readyJob('job-gb1-a', 'A'.repeat(9));
+    assert.equal(rig.calls.inject.length, 1, '前置：A 在组稿间隙经 inject 注入（忙路径）');
+    const subject = ledger.subjects.get(rig.OWNER);
+    assert.equal(subject.unclaimedSends.get(rig.calls.inject[0].id), 9,
+      '前置：A 按载体消息 id 登记计费 9');
+    // ③ pre-step：spent ＝未领取尾部（A 计费），并丢弃开放批视图。
+    await preStep();
+    assert.equal(subject.generation.spent, 9,
+      'pre-step 重置为未领取尾部（A 计费 9，非 0）——修前红＝清零为 0');
+    assert.equal(subject.batch, null, 'pre-step 丢弃开放批视图（修前红＝批对象滞留）');
+    // ④ 真实等待收尾关批（无活等待＋无在途创建）。
+    ledger.closeBatchIfIdle(rig.OWNER);
+    // ⑤ 间隙外结算 B（10 字符）→ 新批按 full − spent ＝ 1 开额。
+    await rig.readyJob('job-gb1-b', 'B'.repeat(10));
+    assert.equal(rig.calls.inject.length, 2, 'B 结算注入');
+    assert.equal(subject.unclaimedSends.get(rig.calls.inject[1].id), 1,
+      'B 按 full − A ＝ 1 开额（修前红＝取满 10）');
+    let total = 0;
+    for (const value of subject.unclaimedSends.values()) total += value;
+    assert.ok(total <= 10, `同一后续输入合计 ≤ 上限 10（实测 ${String(total)}）——修前红＝9＋10＝19`);
+  }
+});
+
+hostTest('GB-2：零额开放批跨步骤滞留——pre-step 丢弃批视图，续取按新代全额装配（修前红＝首次续取仍延后）', async () => {
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  ledger.attachClaimedListener(ctx);
+  try {
+    const owner = `gb2-owner-${rcSuffix()}`;
+    seedTerminalJob(ctx, owner, 'gb2-x', { maxResultChars: 400, agentLang: 'en' }, 'x'.repeat(1000));
+    const first = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' });
+    assert.ok(first.delivered.length === 1 && first.delivered[0].truncated === true,
+      '前置：首装截断 400、开放批剩余 0（批不关）');
+    const subject = ledger.subjects.get(owner);
+    assert.equal(subject.batch.remaining, 0, '前置：开放批 remaining＝0');
+    await ctx.waterfall('agent/pre-step', { agent: { id: owner } }, () => {});
+    assert.equal(subject.batch, null, 'pre-step 丢弃开放批视图（修前红：零额批滞留）');
+    const second = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' });
+    assert.ok(second.delivered.length === 1 && second.delivered[0].chars === 400,
+      '续取按新代全额装配（修前红＝整条延后、delivered 空）');
+    assert.ok(!second.deferred.includes('gb2-x'), '续段不再延后（修前红＝仍在 deferred）');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+hostTest('GB-3：条目满批跨步骤滞留——pre-step 后续取得新条目配额（修前红＝仍延后）', async () => {
+  resetDeliveryLedger();
+  const ctx = new Context();
+  ledger.registerRow(ctx);
+  ledger.attachClaimedListener(ctx);
+  try {
+    const owner = `gb3-owner-${rcSuffix()}`;
+    for (let i = 1; i <= 11; i += 1) {
+      // 空正文条目：按状态行入批、不受字符预算约束，只受条目上限约束。
+      seedTerminalJob(ctx, owner, `gb3-j${String(i).padStart(2, '0')}`,
+        { maxResultChars: 400, agentLang: 'en' }, i === 11 ? 'TAIL' : '');
+    }
+    const first = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' });
+    assert.equal(first.delivered.length, 10, '前置：单批条目上限 10');
+    assert.ok(first.deferred.includes('gb3-j11'), '前置：第 11 条延后（条目满批）');
+    await ctx.waterfall('agent/pre-step', { agent: { id: owner } }, () => {});
+    const second = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en' });
+    assert.ok(second.delivered.some((item) => item.jobId === 'gb3-j11'),
+      '新批条目配额复位、第 11 条交付（修前红＝仍延后）');
+  } finally {
+    ledger.disposeRow(ctx);
+  }
+});
+
+hostTest('GB-4（RC-GEN ③腿更新）：spent 重置值＝未领取尾部——已领取为 0、已注入未领取为其计费、deferFlush 间隙在 pendingSends 计', async () => {
+  // 腿①：消息已领取（claimed 带 message.id → 登记移除）→ 尾部为空 → 0。
+  {
+    const rig = sRig({ budget: 400 });
+    await rig.readyJob('gb4-a', 'A'.repeat(50));
+    rig.claimInbox(); // 排空假收件箱：对该消息发 claimed（带 message.id）
+    const subject = ledger.subjects.get(rig.OWNER);
+    await rig.listeners.get('agent/pre-step')({ agent: { id: rig.OWNER } }, () => {});
+    assert.equal(subject.generation.spent, 0, '已领取：尾部为空 → spent 0（RC-GEN 既有腿不变）');
+  }
+  // 腿②：已注入未领取 → spent ＝其计费。
+  {
+    const rig = sRig({ budget: 400 });
+    await rig.readyJob('gb4-b', 'B'.repeat(50));
+    const subject = ledger.subjects.get(rig.OWNER);
+    await rig.listeners.get('agent/pre-step')({ agent: { id: rig.OWNER } }, () => {});
+    assert.equal(subject.generation.spent, 50, '已注入未领取：spent ＝其计费');
+  }
+  // 腿③：deferFlush 间隙（已计费未冲刷的 pendingSends）→ billed 计入尾部。
+  {
+    const rig = sRig({ budget: 400 });
+    const token = ledger.claimWait(rig.OWNER);
+    const subject = ledger.subjects.get(rig.OWNER);
+    subject.pendingSends.push({
+      kind: 'completion', jobId: 'gb4-c', lang: 'en', items: [], billed: 7, render: () => ''
+    });
+    await rig.listeners.get('agent/pre-step')({ agent: { id: rig.OWNER } }, () => {});
+    assert.equal(subject.generation.spent, 7, 'deferFlush 间隙：pendingSends 的 billed 计入尾部');
+    ledger.releaseWait(token, rig.OWNER);
+  }
+});
+
+test('GB-5（文案一致性）：延后三键的领取时机句带「按剩余额度／while budget allows」限定；未限定的绝对时机形态不回潮', () => {
+  for (const lang of ['en', 'zh']) {
+    const lines = {
+      'delivery.deferred': t(lang, 'delivery.deferred', { count: 2 }),
+      'delivery.deferredNotice': t(lang, 'delivery.deferredNotice', { jobId: 'job-gb5-demo' }),
+      'delivery.deferredAggregate': t(lang, 'delivery.deferredAggregate', { count: 2 })
+    };
+    for (const [key, line] of Object.entries(lines)) {
+      if (lang === 'en') {
+        assert.ok(line.includes('while budget allows'), `${lang} ${key}：时机句带剩余额度限定`);
+        assert.ok(!line.includes('are available in the next model input'), `${lang} ${key}：未限定绝对形态不回潮`);
+        assert.ok(!line.includes('Available in the next model input:'), `${lang} ${key}：旧 deferredNotice 绝对形态不回潮`);
+      } else {
+        assert.ok(line.includes('按剩余额度'), `${lang} ${key}：时机句带剩余额度限定`);
+        assert.ok(!line.includes('至迟在下一次模型输入内可领取'), `${lang} ${key}：未限定绝对形态不回潮`);
+      }
+    }
+  }
+});
+
+// ── NI-1（WAIT-NOTE-ID-01，022 版分档实测）：定向示例渲染点按整行 ≤200 分档
+// ——定向变体→.noTarget→.minimal／聚合形，超长 id 不再截出无效调用串。各档
+// 观测阈值（按 022 文案实测，观测值非判据）：en deferredNotice 定向变体 id ≥36
+// 超限、noTarget id ≥50 超限；en readFailed 定向变体 id ≥47 超限、noTarget
+// id ≥56 超限；en spillOverflow 定向变体 id ≥60 超限（noTarget 不含 id、恒
+// ≤200，.minimal 为不可达的末档）；zh 各键相应阈值更高（deferredNotice 定向
+// id ≥91、readFailed 定向 id ≥103）。───────────────────────────────────────
+
+hostTest('NI-1a：readFailed／spillOverflow 渲染点分档——短 id 定向完整、超限落 .noTarget／.minimal（修前红＝clampNote 截出无效调用串）', async () => {
+  // readFailed：{jobId} 在模板中出现两次（正文点名＋定向示例）。
+  // - 短 id（20）：en 定向 147 ≤200，定向示例完整在场。
+  // - 中长 id（50）：en 定向 207 >200 → .noTarget（195 ≤200），出路「点名该作业
+  //   重试 async_wait(wait_ms=...)」完整、无被截断的 targets=[{…}] 调用串。
+  // - 超长 id（200）：noTarget 345 >200 → .minimal（124，不含 id）。
+  const shortId = 'n1' + 'a'.repeat(18);
+  const midId = 'n1' + 'b'.repeat(48);
+  const longId = 'n1' + 'c'.repeat(198);
+  for (const lang of ['en', 'zh']) {
+    const lineShort = entryNoteLines({ readFailed: true, jobId: shortId }, lang)[0];
+    assert.ok(lineShort.length <= 200, `${lang} 短 id：整行 ≤200`);
+    assert.ok(lineShort.includes(`async_wait(targets=[{kind:"job", id:"${shortId}"}], wait_ms=`),
+      `${lang} 短 id：定向示例完整在场`);
+    // zh 短 id 定向 135 ≤200 同走定向档；中长/超长腿按 en 阈值驱动（zh 阈值更高，
+    // 50 字符 id 在 zh 仍 ≤200——分档规则语言无关，zh 腿用 104/200 字符覆盖）。
+    const idMid = lang === 'en' ? midId : 'n1' + 'd'.repeat(102);
+    const lineMid = entryNoteLines({ readFailed: true, jobId: idMid }, lang)[0];
+    assert.ok(lineMid.length <= 200, `${lang} 中长 id：整行 ≤200`);
+    assert.ok(!lineMid.includes('targets='), `${lang} 中长 id：无被截断的定向调用串（落 .noTarget）`);
+    assert.ok(/async_wait\(wait_ms=\.\.\.\)/.test(lineMid), `${lang} 中长 id：完整可执行出路在场`);
+    assert.ok(lineMid.includes(idMid), `${lang} 中长 id：行内点名该作业（编号可执行）`);
+    const lineLong = entryNoteLines({ readFailed: true, jobId: longId }, lang)[0];
+    assert.ok(lineLong.length <= 200 && !lineLong.includes(longId), `${lang} 超长 id：落 .minimal（不内嵌 id）`);
+    assert.ok(lang === 'en' ? lineLong.includes('zero-wait with no targets') : lineLong.includes('不带 targets'),
+      `${lang} 超长 id：不带 targets 的零等待出路在场`);
+  }
+  // spillOverflow：{jobId} 一次（定向示例）＋{listed}/{total}/{count}。
+  const spillItem = (id) => ({
+    lossy: true, spillPaths: ['p1', 'p2', 'p3'], spillFrom: 0, spillCount: 1, jobId: id
+  });
+  const spillShort = entryNoteLines(spillItem(shortId), 'en');
+  assert.ok(spillShort.some((line) => line.includes(`async_wait(targets=[{kind:"job", id:"${shortId}"}], wait_ms=0)`)),
+    'spillOverflow 短 id：定向示例完整在场');
+  const spillMid = entryNoteLines(spillItem('n1' + 'e'.repeat(63)), 'en');
+  assert.ok(spillMid.some((line) => !line.includes('targets=') && /async_wait\(wait_ms=0\)/.test(line)),
+    'spillOverflow 超限 id：落 .noTarget（出路完整、无截断调用串）');
+});
+
+hostTest('NI-1b：deferredNotice 渲染点分档——短 id 定向、44 字符 id 落 .noTarget、超长 id 落聚合形（修前红＝截断）', async () => {
+  const deferredNoticeLine = async (jobId) => {
+    const rig = sRig({ budget: 10 }); // 忙路径：完成消息逐条 inject
+    // 首作业耗尽批预算（25 字符截为 10）→ 第二作业非空正文整条延后 → 逐条说明。
+    await rig.readyJob(`${jobId}-p`, 'x'.repeat(25));
+    await rig.readyJob(jobId, 'y');
+    assert.ok(rig.calls.inject.length >= 2, '前置：延后说明已投递');
+    // 最后一条说明 send 即该作业的 deferredNotice 渲染。
+    const notice = rig.calls.inject[rig.calls.inject.length - 1];
+    return textOf(notice);
+  };
+  // 短 id（20）：en 定向 184 ≤200——定向示例完整。
+  const shortLine = await deferredNoticeLine('n1b' + 'a'.repeat(17));
+  assert.ok(shortLine.length <= 200, '短 id：整行 ≤200');
+  assert.ok(/async_wait\(targets=\[\{kind:"job", id:"n1b/.test(shortLine), '短 id：定向示例在场');
+  // 中长 id（44）：en 定向 208 >200 → .noTarget（194 ≤200）。
+  const midLine = await deferredNoticeLine('n1b' + 'b'.repeat(41));
+  assert.ok(midLine.length <= 200, '中长 id：整行 ≤200');
+  assert.ok(!midLine.includes('targets='), '中长 id：无被截断的定向调用串（落 .noTarget）');
+  assert.ok(midLine.includes('async_wait(wait_ms=0)'), '中长 id：完整可执行出路在场');
+  assert.ok(midLine.includes('n1b'), '中长 id：行内点名该作业');
+  // 超长 id（200）：noTarget 350 >200 → 聚合形（{count:1} 插值；en 实测 181
+  // ≤200 直接存活；zh 113 同）——不含 id、出路不带 targets。
+  const longLine = await deferredNoticeLine('n1b' + 'c'.repeat(197));
+  assert.ok(longLine.length <= 200 && !longLine.includes('c'.repeat(50)), '超长 id：落聚合形（不内嵌 id）');
+  assert.ok(/1 more settled job\(s\)|另有 1 个已结算作业/.test(longLine), '超长 id：聚合形 {count:1}');
+  assert.ok(!longLine.includes('targets='), '超长 id：无截断调用串');
 });
 
 // ── PRESTEP-CHAIN-01（F01／CORE-B-01：agent/pre-step 步骤准入 waterfall 的
