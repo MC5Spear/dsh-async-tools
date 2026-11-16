@@ -12,20 +12,20 @@ This third-party plugin is unaffiliated with DeepSeek. It is personally maintain
 
 ## Before installing
 
-The planned trial channel is `adapt/dsh-0.2.1-alpha`. It has not been pushed to the remote and is not an installation source yet. Adaptation branches without the plugin’s `-alpha` suffix are the stable channels; their installation instructions remain below. A host RC label does not establish stable acceptance of the plugin. Before installation or trial use, read [known issues and verification gaps (Chinese)](<docs/issues.md>) at the exact installed commit and check its baseline. Alpha does not mean stable acceptance has passed.
+This commit is a local candidate for the `adapt/dsh-0.2.1-alpha` trial channel. **It has not been pushed; the branch addresses below cannot retrieve this candidate yet.** Publication is paused pending historical-content cleanup. Alpha has not passed stable acceptance either. If the maintainer supplies an exact artifact, try it only in an isolated instance after reading its matching [known issues and verification gaps (Chinese)](<docs/issues.md>).
 
-**The current 0.2.9 candidate has not passed release acceptance.** The table is the package’s declared host admission set, not proof that every behavior has been verified. The remote maintenance branch may still contain an earlier source revision with the same version. For this candidate, ask the maintainer for an accessible exact commit or artifact, and retain its source; matching version numbers alone do not establish identical implementation.
+The table is the package’s declared host admission set, not proof that every behavior has been verified. Check that the remote branch is accessible before installing. For repeatable installation, use a full commit ID or matching artifact and retain the actual source. Branches without `-alpha` are stable channels and are not updated by this alpha delivery.
 
 | Component | Current applicable version |
 | --- | --- |
-| Plugin version | `0.2.9+dsh.0.2.1-rc` |
+| Plugin version | `0.2.9-alpha.1+dsh.0.2.1-rc` |
 | Supported dsh host versions | `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4`, `0.2.1-rc.5` |
 
 “Host” means the DSH instance loading the plugin. **Only these four DSH versions can load this package**, not the final `0.2.1` or an unlisted rc. Node.js 24 is recommended; see the [runtime prerequisites](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>) before choosing another runtime.
 
 Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Full real-host rechecking on rc.3/rc.4 is also incomplete. Before relying on those platforms or rc.3/rc.4, check the features needed in a separate test session.
 
-For IME, screen-reader, or touch-based answers, and for result recovery after a canceled tool call, also read [usage limits and saving results](<docs/user-reference.en.md#usage-limits-and-saving-results>). On rc.5, the current `async_agent` does not apply the host's configured delegation-depth limit. Until repaired and verified, do not use it for tasks that must rely on that limit to constrain recursive delegation. See [child-creation limits](<docs/user-reference.en.md#33-async_agent>).
+For IME, screen-reader, or touch-based answers, and recovery after a canceled tool call, read [usage limits and saving results](<docs/user-reference.en.md#usage-limits-and-saving-results>). `async_agent` now reads the host’s delegation-depth setting before creation; real nested-creation and restored-session verification remains incomplete. See [depth limits and refusal handling](<docs/user-reference.en.md#33-async_agent>).
 
 ## Install and confirm loading
 
@@ -39,7 +39,7 @@ Install through the GUI:
 2. Paste this into the package name/address field:
 
    ```text
-   github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
+   github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1-alpha
    ```
 
 3. Select **Install**, then **Enable now** on the success page. If already enabled, confirm its enabled status instead.
@@ -50,7 +50,7 @@ Install through the GUI:
 Alternatively, install from a terminal:
 
 ```powershell
-dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
+dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1-alpha
 ```
 
 `web` is the target profile's name; substitute the appropriate name for another profile. After installation, likewise confirm it is enabled and check loading as above.
@@ -75,7 +75,7 @@ async_wait(targets=[{kind:"job", id:"<returned job_id>"}], wait_ms=30000)
 
 Factory settings give `yield_ms` a default of 20000 ms and bound each request to 20000–600000 ms. `wait_ms` is required every time. Expiry leaves the task running; use `job_kill` explicitly for unwanted jobs, rather than rerunning commands to check progress.
 
-Results are not replayed indefinitely; save anything that must be kept. Long output may arrive in portions. When the allowance is exhausted, do not repeatedly call zero-wait in place. On rc.5, reading can continue in the next model step; on rc.2/rc.3/rc.4, it may require ending the current turn and continuing after later input. In a rare case, a wait return and a later completion message can each use a separate allowance, so `maxResultChars` cannot strictly cap the result content in one model input. See [allowances and continued reading](<docs/user-reference.en.md#shortened-output-or-deferred-entries-continue-reading>) for the conditions and next steps. For failed reads or canceled calls, follow [result handling and recovery](<docs/user-reference.en.md#4-wait-states-and-direct-delivery>) with the original job rather than rerunning the task.
+Results are not replayed indefinitely; save anything that must be kept. Long output may arrive in portions. Deferred content stays buffered; a new job’s completion message does not guarantee inclusion of older content. Use zero-wait to continue once allowance is available, rather than repeatedly calling it while the allowance is exhausted. On rc.5, reading can continue in the next model step; on rc.2/rc.3/rc.4, it may require ending the current turn and continuing after later input. In a rare case, a wait return and a later completion message can each use a separate allowance, so `maxResultChars` cannot strictly cap the result content in one model input. See [allowances and continued reading](<docs/user-reference.en.md#shortened-output-or-deferred-entries-continue-reading>) for the conditions and next steps. For failed reads or canceled calls, follow [result handling and recovery](<docs/user-reference.en.md#4-wait-states-and-direct-delivery>) with the original job rather than rerunning the task.
 
 ## Tools and presets
 
@@ -114,7 +114,7 @@ AI maintainers include:
 
 ## Documentation and licensing
 
-See the [user reference](<docs/user-reference.en.md>) for operating details. Development, requirements, design, verification, and changelog documents are in Chinese and are not shipped with the package. They are available in the [source repository](<https://github.com/MC5Spear/dsh-async-tools/tree/adapt/dsh-0.2.1>). To check an installation, use the commit from its installation address rather than the latest contents of the moving branch.
+See the [user reference](<docs/user-reference.en.md>) for operating details. Development, requirements, design, verification, and changelog documents are in Chinese and are not shipped with the package. They are available in the [source repository](<https://github.com/MC5Spear/dsh-async-tools/tree/adapt/dsh-0.2.1-alpha>). To check an installation, use the commit from its installation address rather than the latest contents of the moving branch.
 
 The project uses the [MIT license](<LICENSE>). Both presets and some subagent-policy helpers adapt DeepSeek Harness material. The packaged [third-party notices](<THIRD_PARTY_NOTICES.md>) contain sources, upstream copyright, and the full MIT text.
 

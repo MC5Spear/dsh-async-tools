@@ -11,13 +11,13 @@ Find the task you need:
 
 ## 1. Installation identity and prerequisites
 
-The planned trial channel is `adapt/dsh-0.2.1-alpha`. It has not been pushed to the remote and is not an installation source yet. Adaptation branches without the plugin’s `-alpha` suffix are the stable channels; their installation instructions remain below. A host RC label does not establish stable acceptance of the plugin. Before installation or trial use, read [known issues and verification gaps (Chinese)](<issues.md>) at the exact installed commit and check its baseline. Alpha does not mean stable acceptance has passed.
+This commit is a local candidate for the `adapt/dsh-0.2.1-alpha` trial channel. **It has not been pushed; the branch addresses below cannot retrieve this candidate yet.** Publication is paused pending historical-content cleanup. Alpha has not passed stable acceptance either. If the maintainer supplies an exact artifact, try it only in an isolated instance after reading its matching [known issues and verification gaps (Chinese)](<issues.md>).
 
-**The current 0.2.9 candidate has not passed release acceptance.** The table is the declared host admission set, not an all-behavior pass list. The remote maintenance branch may still contain an earlier revision with the same version. For this candidate, confirm an accessible exact commit or artifact with the maintainer and retain its source; the version number alone does not establish identical implementation.
+The table is the package’s declared host admission set, not proof that every behavior has been verified. Check that the remote branch is accessible before installing. For repeatable installation, use a full commit ID or matching artifact and retain the actual source. Branches without `-alpha` are stable channels and are not updated by this alpha delivery.
 
 | Component | Current applicable version |
 | --- | --- |
-| Plugin version | `0.2.9+dsh.0.2.1-rc` |
+| Plugin version | `0.2.9-alpha.1+dsh.0.2.1-rc` |
 | Supported dsh host versions | `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4`, `0.2.1-rc.5` |
 
 “Host” means the DSH instance loading the plugin. Only these four versions can load the package, not the final `0.2.1`, `0.2.0`, `0.2.2`, or an unlisted rc.
@@ -54,7 +54,7 @@ The package is not distributed through npm. Use the GUI steps below; dependency 
 2. Paste the following into the package name/address field, then select **Install**:
 
    ```text
-   github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
+   github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1-alpha
    ```
 
 3. Select **Enable now** after installation succeeds. If already enabled, confirm its enabled status instead. If installation requests permission to run scripts, follow [script-approval troubleshooting](<#installation-script-approval-troubleshooting>) first.
@@ -65,7 +65,7 @@ The package is not distributed through npm. Use the GUI steps below; dependency 
 Alternatively, install from a terminal:
 
 ```powershell
-dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1
+dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.1-alpha
 ```
 
 `web` is the target profile's name; substitute the appropriate name for another profile. After installation, likewise confirm it is enabled and complete the loading checks above.
@@ -78,7 +78,7 @@ The address follows a moving maintenance branch. For repeatable installation:
 
 ### Installation troubleshooting
 
-If source retrieval fails, check the repository address and branch or commit, then the network and proxy. If it still fails, ask the maintainer supplying the installation source about available artifacts. Omitting `#adapt/dsh-0.2.1` does not automatically select the correct host adaptation.
+If source retrieval fails, check the repository address and branch or commit, then the network and proxy. If it still fails, ask the maintainer supplying the installation source about available artifacts. Omitting `#adapt/dsh-0.2.1-alpha` does not automatically select the correct host adaptation.
 
 #### Installation script-approval troubleshooting
 
@@ -287,7 +287,9 @@ Queries, retries, and waiting share one budget rather than restarting it at each
 
 Creates a resumable child in the background and immediately returns `agent_id`, without waiting for the final answer. There is no `run_in_background` argument.
 
-**Current limitation:** on DSH rc.5, this candidate does not apply the host's configured child-delegation depth limit. For example, setting the limit to 0 still lets this entry reach creation preparation. Until repaired and verified, do not use it for tasks that must rely on that limit to prohibit or constrain recursive delegation. The same code risk exists on rc.2–rc.4 but has not been tested there. This does not establish actual recursive execution or a command-sandbox or approval bypass.
+Before starting each child, the tool reads DSH’s `subagent.maxDepth` setting and passes it to the execution backend. This is neither a tool argument nor a plugin setting. A limit of 0 rejects creation. The host’s factory limit of 1 permits a root Agent to create a first-level child and rejects further delegation below that level. Saved changes apply to subsequent calls without restarting.
+
+Reaching the limit, failing to read the setting, or using a backend unable to enforce the configured limit produces an error without a successful `agent_id`. Check the depth, setting, or backend support indicated by the error; do not switch entry points to bypass the limit. Real model-driven nested creation and restored sessions still have verification gaps. Check depth-dependent tasks in an isolated instance first; see [known issues and verification gaps (Chinese)](<issues.md>).
 
 | Argument | Type | Required/default | Rules |
 | --- | --- | --- | --- |
@@ -418,7 +420,7 @@ Other plugins may provide jobs accessible to multiple sessions. Each authorized 
 
 ### Shortened output or deferred entries: continue reading
 
-When a result is marked `truncated`, says its middle was omitted, or reports deferred entries, continue with a zero-wait call:
+For a result marked `truncated`, omitted middle sections, or deferred entries, continue with a zero-wait call once allowance is available. Deferred content remains buffered; an allowance reset alone does not resend it, and a new job’s completion message does not guarantee inclusion of older content.
 
 ```text
 async_wait(wait_ms=0)
@@ -431,11 +433,13 @@ Once the allowance is exhausted, immediately repeating zero-wait may return only
 - **rc.5:** Let the Agent process the current return, then make a zero-wait call in the next model step.
 - **rc.2, rc.3, and rc.4:** Later steps in the same turn may still have no new allowance. Keep the job ID, report the unread content, and end the current turn. After later input arrives, name the original job in a zero-wait call to continue. If no later input is arranged, hand over the job ID and the required continuation action rather than repeatedly calling to prompt delivery.
 
-The plugin updates allowances when new input messages are claimed, a turn ends, or a model step starts on rc.5. A long interval between calls, or working with other tools in between, does not grant an extra allowance. On rc.2–rc.4, one allowance can span multiple model steps.
+The plugin updates allowances when messages are claimed, a turn ends, or an applicable step event is received. A long interval between calls, or working with other tools in between, does not grant an extra allowance. Without an effective boundary event, one allowance can span multiple model steps. All four admitted hosts expose a step event, but delivery to this plugin’s listener and totals in real model inputs still need verification.
 
-There is also a rare case: the plugin has ended the previous delivery batch at one of those points, but the next model request has not gone out when a background result arrives as a completion message. That message can use a new batch's allowance and enter the same model input as the previous results, taking their combined content above one `maxResultChars` allowance. This setting therefore cannot strictly cap result content in one model input. Status explanations, conversation history, and other sources are counted separately too; inspect actual requests when checking consumption.
+A rare assembly window can close batches twice: once when messages are claimed and again at the later step event. Results settling between and after those events can each use a separate allowance yet arrive together in the next input. A controlled event-sequence test confirms content exceeding one `maxResultChars` allowance; totals in real model requests still need verification. This setting therefore cannot strictly cap result content in one model input. Status explanations, conversation history, and other sources are counted separately too; inspect actual requests when checking consumption.
 
 An oversized entry keeps its head and tail while its middle remains for later reading. Excess entries are deferred in full. Status, necessary error explanations, and retained-output paths are outside the body allowance. **Shortened display does not mean the content was lost.**
+
+With long job IDs, an English deferral message can cut off its targeted recovery example. Do not copy an incomplete call. Once allowance is available, first use untargeted `async_wait(wait_ms=0)` to collect ready content; obtain the full ID from `job_list` if a targeted retry is needed. The buffered body is retained.
 
 With `fullCommandEcho=true`, background results attach command or script source. Result bodies use the allowance first. Source uses the remainder only when that delivery's body fits in full. Oversized source retains its head and tail in a 6:4 ratio with an omission count; no remaining allowance produces a note that source was not attached.
 
@@ -691,7 +695,7 @@ Use a development link only when editing plugin source; do not link a stable dep
 ```powershell
 git clone https://github.com/MC5Spear/dsh-async-tools.git
 cd dsh-async-tools
-git checkout adapt/dsh-0.2.1
+git checkout adapt/dsh-0.2.1-alpha
 npm install
 dsh plugin --profile web add <absolute-clone-directory>
 ```
