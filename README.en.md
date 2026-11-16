@@ -23,7 +23,7 @@ This third-party plugin is unaffiliated with DeepSeek. It is personally maintain
 
 Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Full real-host rechecking on rc.3/rc.4 is also incomplete. Before relying on those platforms or rc.3/rc.4, check the features needed in a separate test session.
 
-For IME, screen-reader, or touch-based answers, and for result recovery after a canceled tool call, also read [usage limits and saving results](<docs/user-reference.en.md#usage-limits-and-saving-results>).
+For IME, screen-reader, or touch-based answers, and for result recovery after a canceled tool call, also read [usage limits and saving results](<docs/user-reference.en.md#usage-limits-and-saving-results>). On rc.5, the current `async_agent` does not apply the host's configured delegation-depth limit. Until repaired and verified, do not use it for tasks that must rely on that limit to constrain recursive delegation. See [child-creation limits](<docs/user-reference.en.md#33-async_agent>).
 
 ## Install and confirm loading
 
@@ -73,7 +73,7 @@ async_wait(targets=[{kind:"job", id:"<returned job_id>"}], wait_ms=30000)
 
 Factory settings give `yield_ms` a default of 20000 ms and bound each request to 20000–600000 ms. `wait_ms` is required every time. Expiry leaves the task running; use `job_kill` explicitly for unwanted jobs, rather than rerunning commands to check progress.
 
-Results are not replayed indefinitely; save anything that must be kept. Long output may arrive in portions. When the allowance is exhausted, do not repeatedly call zero-wait in place. On rc.5, reading can continue in the next model step; on rc.2/rc.3/rc.4, it may require ending the current turn and continuing after later input. See [allowances and continued reading](<docs/user-reference.en.md#shortened-output-or-deferred-entries-continue-reading>). Batch allowances open and close on input boundaries; completion messages arriving after a batch has closed can start a new batch with a separate allowance, so `maxResultChars` is not a strict total model-input length limit. For failed reads or canceled calls, follow [result handling and recovery](<docs/user-reference.en.md#4-wait-states-and-direct-delivery>) with the original job rather than rerunning the task.
+Results are not replayed indefinitely; save anything that must be kept. Long output may arrive in portions. When the allowance is exhausted, do not repeatedly call zero-wait in place. On rc.5, reading can continue in the next model step; on rc.2/rc.3/rc.4, it may require ending the current turn and continuing after later input. In a rare case, a wait return and a later completion message can each use a separate allowance, so `maxResultChars` cannot strictly cap the result content in one model input. See [allowances and continued reading](<docs/user-reference.en.md#shortened-output-or-deferred-entries-continue-reading>) for the conditions and next steps. For failed reads or canceled calls, follow [result handling and recovery](<docs/user-reference.en.md#4-wait-states-and-direct-delivery>) with the original job rather than rerunning the task.
 
 ## Tools and presets
 

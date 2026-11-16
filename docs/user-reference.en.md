@@ -185,7 +185,7 @@ A minimum is not a mandatory delay. Completion or an eligible message still retu
 | `uiLang` | enum | `auto` | auto / zh / en | — | Package settings and question-panel language; auto follows the host |
 | `agentLang` | enum | `en` | en / zh | — | Package tool descriptions, results, and operating instructions, independently of uiLang |
 | `silentFailureGuard` | boolean | `false` | true / false | — | Silent-command-failure diagnostics and warnings for listed presets; see section 6 |
-| `workflowProgressLog` | boolean | `false` | true / false | — | Whether workflow results shown to the Agent include stage progress lines; original UI records are unaffected |
+| `workflowProgressLog` | boolean | `false` | true / false | — | Whether background job results shown to the Agent include stage progress lines; completion within the initial wait returns only the final result, without these logs. Original UI records are unaffected |
 | `fullCommandEcho` | boolean | `false` | true / false | — | Whether new delivery batches attach command or script source to Agent results, sharing the body allowance; see section 4 |
 
 #### Questions and applicable presets
@@ -275,13 +275,17 @@ Targets can mix jobs and children. Any eligible target event, user steering, or 
 
 All targets are validated together before delivery. An invalid ID rejects the call, so correct it before waiting. For an absent job, check `job_list`; for a failed listing, recheck the same target rather than starting new work. A newly created child temporarily absent from the directory can be retried during a positive wait, for at most three query periods within the total budget. Zero-wait calls do not retry.
 
-Section 4 explains `status`. `waited_ms` is actual checking and waiting time. `targets` gives per-target states; visible text shows at most 8 target lines and counts the rest. Job text appears in `output`, other jobs in the batch in `outputs`, and delivery-batch information in `delivered`.
+Section 4 explains `status`. `waited_ms` is actual checking and waiting time. `targets` gives per-target states; visible text shows at most 8 target lines and counts the rest.
+
+The body location depends on the return branch. A `completed`, `failed`, or `killed` return triggered by a terminal job places that job's body in `output`; other jobs in the batch use `outputs[*].text`. Untargeted returns and zero-wait increments from running jobs provide bodies only through `outputs[*].text`, without necessarily having a top-level `output`. `delivered` contains batch metadata, not a replacement for the body.
 
 Queries, retries, and waiting share one budget rather than restarting it at each step. Even a zero-wait call must check states and can take time: all checks share a 1000 ms window, with unfinished queries marked `unconfirmed`. Positive waits allow 300 ms of scheduling tolerance; do not use them as precision timers.
 
 ### 3.3 async_agent
 
 Creates a resumable child in the background and immediately returns `agent_id`, without waiting for the final answer. There is no `run_in_background` argument.
+
+**Current limitation:** on DSH rc.5, this candidate does not apply the host's configured child-delegation depth limit. For example, setting the limit to 0 still lets this entry reach creation preparation. Until repaired and verified, do not use it for tasks that must rely on that limit to prohibit or constrain recursive delegation. The same code risk exists on rc.2–rc.4 but has not been tested there. This does not establish actual recursive execution or a command-sandbox or approval bypass.
 
 | Argument | Type | Required/default | Rules |
 | --- | --- | --- | --- |
@@ -325,8 +329,8 @@ Scripts coordinate work; children perform actual file and network operations. Th
 | `agent(prompt, opts?)` | Returns a Promise for one child's completion. Normally yields final text; ordinary child failure yields null. opts accepts only label, phase, provider, model, and schema. provider and model can be overridden independently |
 | `pipeline(items, ...stages)` | Each item progresses independently, without waiting for every item to finish the preceding stage. Stages receive (prev, item, index), giving access to the previous result and current item. An ordinary stage exception makes that item null and skips its remaining stages |
 | `parallel(thunks)` | Runs zero-argument functions concurrently and waits for all of them. Ordinary exceptions make the corresponding result null. Use when the next step genuinely needs all results |
-| `phase(title)` | Marks current progress; title must exactly match a title in meta.phases |
-| `log(message)` | Records progress; workflowProgressLog determines whether it is included in Agent results |
+| `phase(title)` | Marks current progress; declared phases in meta.phases are matched by exact title |
+| `log(message)` | Records progress; workflowProgressLog controls inclusion when background job results are read. Completion within the initial wait does not attach these logs |
 
 For a structured child result, provide an object-root JSON Schema as `opts.schema` to `agent`. Supported keywords are `type`, `properties`, `required`, `additionalProperties`, `items`, `enum`, `const`, and `oneOf`; `pattern`, `format`, and numeric bounds are unsupported. The annotations `description`, `title`, `default`, and `examples` are also allowed but do not affect validation. The first two must be strings; the other two must be fully representable as JSON. With a schema, `agent` returns a validated object.
 
@@ -369,7 +373,7 @@ Read these parts of the result:
 
 - `entries` contains this page's items, `mode` identifies the query type, and `total` is the match count.
 - When browsing models or searching, first inspect `target`, `verdict`, and `basis` to check whether the target supports explicit selection. Then inspect each model entry's `selectable`: only `true` confirms that route is selectable for the target; `false` means it is outside the allowed list, and an absent field does not confirm permission.
-- For exact-model details, `verdict` applies to the specific route queried. When selection is allowed, `example` supplies creation arguments accepted by the target tool. Browse and search examples are generated only from selectable entries on the current page.
+- For exact-model details, `verdict` applies to the specific route queried. When selection is allowed, `example` is a template matching the target tool's argument structure. Browse and search examples use only selectable entries on the current page. Before reuse, supply the task and replace any `reasoning_effort` placeholder with one exact effort ID, or remove that field if no explicit effort is needed.
 - `complete=false` means some providers could not be read; `failed_providers` identifies them. total then counts only obtained results, not evidence that other providers have no models.
 - For another page, reuse the returned `next` object in the next query. It already contains the page, size, version, and filters. If the version expires, restart on page 1 instead of merging old and new pages.
 
@@ -425,7 +429,9 @@ Once the allowance is exhausted, immediately repeating zero-wait may return only
 - **rc.5:** Let the Agent process the current return, then make a zero-wait call in the next model step.
 - **rc.2, rc.3, and rc.4:** Later steps in the same turn may still have no new allowance. Keep the job ID, report the unread content, and end the current turn. After later input arrives, name the original job in a zero-wait call to continue. If no later input is arranged, hand over the job ID and the required continuation action rather than repeatedly calling to prompt delivery.
 
-The plugin updates allowances when new input messages are claimed, a turn ends, or rc.5 emits a step event. A long interval between calls, or working with other tools in between, does not grant a fresh allowance. On rc.2–rc.4, one allowance can span multiple model steps. Narrow exception: when a batch has already closed on one of those input boundaries and further background results arrive as completion messages before the next model request goes out, the new batch may draw a separate allowance within the same model input. For this reason `maxResultChars` is not a strict total model-input length limit. Status explanations, conversation history, and other sources are also counted separately; inspect actual requests when checking consumption.
+The plugin updates allowances when new input messages are claimed, a turn ends, or a model step starts on rc.5. A long interval between calls, or working with other tools in between, does not grant an extra allowance. On rc.2–rc.4, one allowance can span multiple model steps.
+
+There is also a rare case: the plugin has ended the previous delivery batch at one of those points, but the next model request has not gone out when a background result arrives as a completion message. That message can use a new batch's allowance and enter the same model input as the previous results, taking their combined content above one `maxResultChars` allowance. This setting therefore cannot strictly cap result content in one model input. Status explanations, conversation history, and other sources are counted separately too; inspect actual requests when checking consumption.
 
 An oversized entry keeps its head and tail while its middle remains for later reading. Excess entries are deferred in full. Status, necessary error explanations, and retained-output paths are outside the body allowance. **Shortened display does not mean the content was lost.**
 
@@ -481,7 +487,7 @@ A model route is an exact provider ID and model ID pair. Usually omit model argu
    ```
 
 2. Read `verdict` and `basis`: `allowed` means the target permits explicit selection, `not-allowed` means it does not, and `unconfirmed` means information is insufficient. In browse or search results, `allowed` does not authorize every listed model: choose an entry with `selectable=true`. An exact-detail verdict applies to the route queried. Use `next` for further pages, restarting on page 1 if its version expires. Permission checks do not validate credentials or remote availability.
-3. After selecting a confirmed selectable route, pass its exact IDs together and provide the complete task. Alternatively, reuse the returned `example` arguments and add the task content:
+3. After selecting a confirmed selectable route, pass its exact IDs together and provide the complete task. Alternatively, reuse the returned `example` template: supply the task, replace any `reasoning_effort` placeholder with one exact effort ID, or remove that field if no explicit effort is needed. A minimal call looks like:
 
    ```text
    async_agent(description="Review one isolated item", prompt="<complete task, materials, and completion criteria>",
