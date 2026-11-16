@@ -71,6 +71,10 @@ async function buildRig(label, childRows = [], options = {}) {
   const base = new Context();
   const followups = [];
   const injections = [];
+  // 假收件箱领取账（fireClaimed 的排空去重）：完成消息对象只领一次——宿主
+  // E1/E2 形态下逐消息 claimed 各发一次；followups／injections 仍是断言面，
+  // 排空只经此集合记已领，不清空数组。
+  const claimedMessages = new Set();
   const parent = {
     id: `at-r57-${label}-${Math.random().toString(36).slice(2, 8)}`,
     ctx: base,
@@ -175,8 +179,21 @@ async function buildRig(label, childRows = [], options = {}) {
     exec,
     followups,
     injections,
-    /** 触发窗口闭合证据①（agent/inbox/claimed——载荷不带消息身份：只关批，零份额确认）。 */
-    fireClaimed: () => { ctx.emit('agent/inbox/claimed', { agent: { id: parent.id } }); },
+    /** 触发窗口闭合证据①（agent/inbox/claimed）：排空假收件箱——逐消息发领取
+     * 事件（载荷含 message.id，宿主 E1/E2 逐消息形态：尾部登记与恢复份额按
+     * 消息身份出册/确认）；无消息时发一次无身份事件（rc.2–rc.4 旧形态兼容：
+     * 只关批、零份额确认）。 */
+    fireClaimed: () => {
+      const pending = [...followups, ...injections].filter((message) => !claimedMessages.has(message));
+      if (pending.length === 0) {
+        ctx.emit('agent/inbox/claimed', { agent: { id: parent.id } });
+        return;
+      }
+      for (const message of pending) {
+        claimedMessages.add(message);
+        ctx.emit('agent/inbox/claimed', { agent: { id: parent.id }, message: { id: message.id } });
+      }
+    },
     /** 触发窗口闭合证据③（agent/pre-step 步边界瀑布——下一模型步组装前）。 */
     firePreStep: () => { ctx.emit('agent/pre-step', { agent: { id: parent.id }, turn: 1, step: 2 }); },
     finisher: (runIndex, value) => runs[runIndex === undefined ? runs.length - 1 : runIndex]
@@ -3278,8 +3295,22 @@ function sRig({ injectFailsAt = 0, followupThrows = false, agentsGet, budget = 4
 /** 装置产出的消息正文（inject/followup 的 content 拼接）。 */
 const textOf = (message) => message.content.map((part) => part.text).join('');
 
-/** sRig 触发窗口闭合证据①（agent/inbox/claimed——载荷无消息身份：只关批，零份额确认）。 */
-const fireClaimed = (rig) => { rig.listeners.get('agent/inbox/claimed')({ agent: { id: rig.OWNER } }); };
+/** sRig 触发窗口闭合证据①（agent/inbox/claimed）：排空假收件箱——逐消息发领取
+ * 事件（载荷含 message.id，宿主 E1/E2 逐消息形态）；无消息时发一次无身份事件
+ * （rc.2–rc.4 旧形态兼容：只关批、零份额确认）。已领消息经装置级集合去重。 */
+const fireClaimed = (rig) => {
+  const seen = rig.claimedMessages ??= new Set();
+  const pending = [...rig.calls.followup, ...rig.calls.inject]
+    .filter((message) => !seen.has(message));
+  if (pending.length === 0) {
+    rig.listeners.get('agent/inbox/claimed')({ agent: { id: rig.OWNER } });
+    return;
+  }
+  for (const message of pending) {
+    seen.add(message);
+    rig.listeners.get('agent/inbox/claimed')({ agent: { id: rig.OWNER }, message: { id: message.id } });
+  }
+};
 /** sRig 触发窗口闭合证据③（agent/pre-step 步边界瀑布——下一模型步组装前）。 */
 const firePreStep = (rig) => rig.listeners.get('agent/pre-step')({ agent: { id: rig.OWNER }, turn: 1, step: 2 });
 
@@ -4271,10 +4302,11 @@ hostTest('RN-B：100 条空输出结算——物理消息恰 14（10＋3＋1）�
   assert.match(aggregate, /wait_ms=0/, '聚合带领取出路');
   assert.ok(!/targets=/.test(aggregate), '聚合示例不带 targets（一并领取全部就绪结果）');
   const notesText = [...individual, aggregate].join('\n');
-  // 上限随 2.6「延后说明的可取得时机语义」事实组文本调升（旧无时机说明的短
-  // 文案 ≤800）：锚定的是说明体量有界（3 逐条＋1 聚合、与候选数无关），
-  // 数值固定可测；条数线性回归由上方恰 14 条物理消息判据承担。
-  assert.ok(notesText.length <= 1500, `说明字符合计 ${String(notesText.length)} ≤ 1500（数值固定可测）`);
+  // 上限随 2.6「延后说明的可取得时机语义」事实组文本调升（COPY-C04b：旧时机
+  // 说明 ≤800 → 时机组 ≤1500 → 额度条件事实组 ≤1600＝4 条 × 400 专用档）：
+  // 锚定的是说明体量有界（3 逐条＋1 聚合、与候选数无关），数值固定可测；条数
+  // 线性回归由上方恰 14 条物理消息判据承担。
+  assert.ok(notesText.length <= 1600, `说明字符合计 ${String(notesText.length)} ≤ 1600（4×400 专用档，数值固定可测）`);
   // 未逐一说明的候选不静默丢失：内容在缓冲（空正文零内容）＋下一批 FIFO 补投。
   ledger.closeBatchIfIdle(rig.OWNER);
   fireClaimed(rig);
@@ -4326,17 +4358,17 @@ hostTest('RN-C：非空正文超限两形态——预算 1 只容 1 条（1＋3�
   }
 });
 
-// ── RN-D（2026-11-15 验收 U1、2026-11-16 WAIT-F01；设计 §2.6「延后说明的可
-// 取得时机语义」）───────────────────────────────────────────────
-// 三键（汇总行／逐条／聚合）如实说明取得条件：不承诺下一批自动送达、不写
-// 「无需专门领取」——交付以下一个投递载体（后续等待返回或新结算作业的完成
-// 消息）为条件，无载体时留在缓冲不自行投递；批额度于下一次模型输入边界后
-// 复位，主动领取写成时点限定动作（边界之后的零等待）。「无需专门领取」组
-// 修前红＝旧文案在场；「立即领取」组在修前实现已缺席，作防回归断言。三键
-// 插值后长度不超过专用 400 档上界（防文案增长把时点限定挤出档位）。恢复
-// 出口的零等待领取行为不变——判据只改说明语义，不改交付行为（上方 RN-A/B/C
-// 行为判据照旧全绿即为行为不变的对照锚）。
-hostTest('RN-D：延后说明时机语义——正文保留／载体条件交付／无载体留缓冲／边界后复位事实组在场，自动送达与无需领取承诺缺席', async () => {
+// ── RN-D（2026-11-15 验收 U1、2026-11-16 WAIT-F01／WAIT-BUDGET-01；设计 §2.6
+// 「延后说明的可取得时机语义」）───────────────────────────────────────
+// 三键（汇总行／逐条／聚合）按「额度条件交付」如实说明取得条件：后续等待返回
+// （含零等待）在额度允许时汇集交付——不承诺任意新完成消息携带旧正文（新作业
+// 的完成消息只携带该作业自身的输出、可能先耗额度），也不承诺自动送达；批额度
+// 于下一次模型输入边界后复位，待领取的完成消息仍会占用部分额度（nextTurn 限定，
+// 汇总行与聚合断言）。旧「随下一个交付载体优先送出」载体承诺与「无需专门领取」
+// 「立即领取」全部缺席（修前红＝旧载体承诺在场）。三键插值后 ≤400（防文案增长
+// 把出路挤出档位）。恢复出口的零等待领取行为不变——判据只改说明语义，不改交付
+// 行为（上方 RN-A/B/C 行为判据照旧全绿即为行为不变的对照锚）。
+hostTest('RN-D：延后说明时机语义——正文保留／额度条件交付／新作业只携自身输出／边界后复位事实组在场，自动送达与无需领取承诺缺席', async () => {
   // 汇总行（delivery.deferred）：批预算 1 容不下第二条 → collectBatch 附延后汇总。
   {
     const rig = sRig({ budget: 1 });
@@ -4348,13 +4380,13 @@ hostTest('RN-D：延后说明时机语义——正文保留／载体条件交付
     assert.ok(deferredNote !== undefined && deferredNote.length > 0, '延后汇总行在场');
     assert.ok(deferredNote.length <= 400, '汇总行入界：插值后 ≤ MAX_DEFERRED_NOTE_CHARS（400）');
     assert.match(deferredNote, /the bodies are kept|正文已保留/, '事实组①：正文保留');
-    assert.match(deferredNote, /go(es)? out first with the next carrier|随下一个交付载体（[^）]*）优先送出/, '事实组②：载体条件交付');
-    assert.match(deferredNote, /a later wait return or a new completion message|后续等待返回或新结算作业的完成消息/, '事实组②：载体列举');
-    assert.match(deferredNote, /without one (it|they) stay(s)? buffered|无此载体时留在缓冲/, '事实组②b：无载体时留在缓冲');
-    assert.match(deferredNote, /resets only at the next model-input boundary|只在下一次模型输入边界后复位/, '事实组③：额度于输入边界后复位');
-    assert.match(deferredNote, /zero-wait retries before it bring no new budget|零等待重试不产生新额度/, '零等待无新额度（汇总行独有）');
-    assert.ok(!/无需专门领取|no retrieve call is needed/.test(deferredNote), '「无需专门领取」缺席（修前红＝在场）');
-    assert.ok(!/下一交付批次优先送达|go(es)? out first with the next delivery batch/.test(deferredNote), '旧「下一批优先送达」无条件承诺缺席');
+    assert.match(deferredNote, /collects them while budget allows|在额度允许时汇集交付/, '事实组②：额度条件交付（等待返回按剩余额度汇集）');
+    assert.match(deferredNote, /carries only its own output( and may spend budget first)?|只携带该作业自身的输出(、可能先耗额度)?/, '事实组②b：新作业完成消息只携自身输出（不承诺携带旧正文）');
+    assert.match(deferredNote, /resets at the next model input boundary|在下一次模型输入边界后复位/, '事实组③：额度于输入边界后复位');
+    assert.match(deferredNote, /a pending completion message may still hold part of it|待领取的完成消息仍会占用部分额度/, '事实组④：待领取完成消息仍占额度（nextTurn 限定，汇总行独有）');
+    assert.match(deferredNote, /wait_ms=0/, '主动领取出路在场（边界之后的零等待）');
+    assert.ok(!/无需专门领取|no retrieve call is needed/.test(deferredNote), '「无需专门领取」缺席');
+    assert.ok(!/go(es)? out first with the next carrier|随下一个交付载体（[^）]*）优先送出/.test(deferredNote), '旧「随下一载体优先送出」承诺缺席（修前红＝在场）');
     assert.ok(!/fetch it now|立即领取/.test(deferredNote), '「立即领取」缺席（防回归）');
     await ledger.releaseWait(token, rig.OWNER);
   }
@@ -4374,24 +4406,24 @@ hostTest('RN-D：延后说明时机语义——正文保留／载体条件交付
     for (const text of notices) {
       assert.ok(text.length <= 400, '逐条入界：插值后 ≤ 400');
       assert.match(text, /is kept|正文已保留/, '逐条·事实组①：正文保留');
-      assert.match(text, /go(es)? out first with the next carrier|随下一个交付载体（[^）]*）优先送出/, '逐条·事实组②：载体条件交付');
-      assert.match(text, /a later wait return or a new completion message|后续等待返回或新结算作业的完成消息/, '逐条·事实组②：载体列举');
-      assert.match(text, /without one it stays buffered|无此载体时留在缓冲/, '逐条·事实组②b：无载体留缓冲');
-      assert.match(text, /resets at the next model-input boundary|在下一次模型输入边界后复位/, '逐条·事实组③：边界后复位');
-      assert.match(text, /wait_ms=0\) only after it|请在此之后再调用/, '逐条·主动领取＝时点限定动作（边界之后）');
-      assert.ok(!/无需专门领取|no retrieve call is needed/.test(text), '逐条·「无需专门领取」缺席（修前红＝在场）');
-      assert.ok(!/下一交付批次优先送达|go(es)? out first with the next delivery batch/.test(text), '逐条·旧无条件承诺缺席');
+      assert.match(text, /while budget allows|在额度允许时汇集交付/, '逐条·事实组②：额度条件交付');
+      assert.match(text, /carries only its own output|只携带该作业自身的输出/, '逐条·事实组②b：新作业只携自身输出');
+      assert.match(text, /resets at the next model input boundary|在下一次模型输入边界后复位/, '逐条·事实组③：边界后复位');
+      assert.match(text, /wait_ms=0\)? after it|边界后可调用/, '逐条·主动领取＝时点限定动作（边界之后）');
+      assert.ok(!/无需专门领取|no retrieve call is needed/.test(text), '逐条·「无需专门领取」缺席');
+      assert.ok(!/go(es)? out first with the next carrier|随下一个交付载体（[^）]*）优先送出/.test(text), '逐条·旧载体承诺缺席');
       assert.ok(!/fetch it now|立即领取/.test(text), '逐条·「立即领取」缺席（防回归）');
     }
     const aggregate = texts.find((text) => /were also deferred|同样延后/.test(text));
     assert.ok(aggregate !== undefined, '前置：聚合摘要在场');
     assert.ok(aggregate.length <= 400, '聚合入界：插值后 ≤ 400');
     assert.match(aggregate, /the bodies are kept|正文均已保留/, '聚合·事实组①：正文保留');
-    assert.match(aggregate, /go(es)? out first with the next carrier|随下一个交付载体（[^）]*）优先送出/, '聚合·事实组②：载体条件交付');
-    assert.match(aggregate, /without one they stay buffered|无此载体时留在缓冲/, '聚合·事实组②b：无载体留缓冲');
-    assert.match(aggregate, /the next model-input boundary|在下一次模型输入边界后/, '聚合·事实组③＋时点限定（边界之后）');
-    assert.ok(!/无需专门领取|no retrieve call is needed/.test(aggregate), '聚合·「无需专门领取」缺席（修前红＝在场）');
-    assert.ok(!/下一交付批次优先送达|go(es)? out first with the next delivery batch/.test(aggregate), '聚合·旧无条件承诺缺席');
+    assert.match(aggregate, /collects them while budget allows|在额度允许时汇集交付/, '聚合·事实组②：额度条件交付');
+    assert.match(aggregate, /carries only its own output|只携带该作业自身的输出/, '聚合·事实组②b：新作业只携自身输出');
+    assert.match(aggregate, /resets at the next model input boundary|在下一次模型输入边界后复位/, '聚合·事实组③：边界后复位');
+    assert.match(aggregate, /a pending completion message may still hold part of it|待领取的完成消息仍会占用部分额度/, '聚合·事实组④：待领取完成消息仍占额度（nextTurn 限定）');
+    assert.ok(!/无需专门领取|no retrieve call is needed/.test(aggregate), '聚合·「无需专门领取」缺席');
+    assert.ok(!/go(es)? out first with the next carrier|随下一个交付载体（[^）]*）优先送出/.test(aggregate), '聚合·旧载体承诺缺席');
     assert.ok(!/fetch it now|立即领取/.test(aggregate), '聚合·「立即领取」缺席（防回归）');
   }
 });
@@ -4808,6 +4840,209 @@ hostTest('RN-G：聚合活计数与关批竞速——deferFlush 先登记后冲�
     for (let i = 1; i <= 10; i += 1) {
       assert.ok(ledger.jobs.get(`job-rn-i${String(i).padStart(2, '0')}`).deliveredFact !== null,
         `第 ${String(i)} 条交付事实保持（不回滚）`);
+    }
+  }
+});
+
+
+// ═══ WAIT-BUDGET-01：组稿间隙的预算记账（设计 §2.6）═══
+//
+// 宿主时序（rc.5 dsh-agent-loop，E1/E2）：preStep 内 inbox.claim()（逐消息发
+// agent/inbox/claimed①）→ await 组稿间隙（systemPrompt.assemble 等）→
+// agent/pre-step 瀑布③ → 模型调用。间隙内及之后注入的完成消息都进**同一次**
+// 未来输入——旧实现在每处关批点把下一批复位为全额，①与③重复关批使同一输入
+// 内的两次开批各取一份（受控反例：上限 10、两次合计 20）。修复＝开批一律按
+// 存活尾部派生（#newBatch：full − Σ未领取完成消息计费字符，unclaimedSends
+// 按载体消息 id 记账），①②③与关批零预算写入；条目随领取/丢弃出册。WB-1
+// 锚定反例（修前红＝合计 20），WB-2 锚 nextTurn 滞留的跨窗压缩（E2：followup
+// 落 nextTurn、claim('next-turn') 每次仅取队首 1 条），WB-3 锚②关批不触碰
+// 预算，WB-4 白盒锚记账口径（含部分失败保留已接受项），WB-5 锚批缺席证据
+// 链无陈旧扣除。
+
+hostTest('WB-1：领取与步边界间的完成消息共享同一份预算——①→A 注入计费→③关批→B 开批 full−10 为 0 整条延后（修前红：合计 20）', async () => {
+  const rig = sRig({ budget: 10 });
+  fireClaimed(rig); // ①（此时无消息：裸事件，只闩/关批）
+  await rig.readyJob('job-wb1-a', 'A'.repeat(10)); // 组稿间隙内结算 → 完成消息注入（批1 开 full−0）
+  assert.equal(rig.calls.inject.length, 1, '前置：A 的完成消息已注入');
+  assert.ok(textOf(rig.calls.inject[0]).includes('A'.repeat(10)), '前置：A 正文整份在场');
+  firePreStep(rig); // ③（同一 preStep 的瀑布段——其后注入仍进同一次未来输入）
+  await rig.readyJob('job-wb1-b', 'B'.repeat(10)); // B 结算 → 新批开 full − 存活尾部(10)
+  const texts = rig.calls.inject.map(textOf);
+  assert.equal(texts.length, 2, 'B 得到延后说明载体（非正文）');
+  assert.ok(!texts[1].includes('B'.repeat(10)), 'B 整条延后：同输入合计恰 ≤ 一份（修前红＝B 再取 10，合计 20）');
+  assert.match(texts[1], /did not fit this batch|未排进当前交付批次/, 'B 得到延后说明（正文保留）');
+  const bodyTens = (texts.join('\n').match(/[AB]{10}/g) ?? []).length;
+  assert.equal(bodyTens, 1, '同窗两次开批的正文合计恰一份 10（额度不按关批次数倍增）');
+  // 领取出册 → 回全额：①排空（A 被领取、尾部清零），零等待领取 B 完整恢复。
+  fireClaimed(rig);
+  const { delivered } = ledger.collectBatch(rig.OWNER, {});
+  assert.equal(delivered.length, 1, '领取后 B 随零等待批交付');
+  assert.equal(delivered[0].text, 'B'.repeat(10), 'B 全额恢复（A 出册后开批回 full）');
+});
+
+hostTest('WB-2：nextTurn 滞留的跨窗压缩——followup 整队按合并消息 id 登记一条，无关①不消费，领取后出册回全额', async () => {
+  const rig = sRig({ status: 'idle', budget: 10 }); // 空闲 → followup（宿主投递落 nextTurn）
+  await rig.readyJob('job-wb2-a', 'A'.repeat(10));
+  assert.equal(rig.calls.followup.length, 1, '前置：A 经合并 followup 投递（落 nextTurn）');
+  const merged = rig.calls.followup[0];
+  const subject = ledger.subjects.get(rig.OWNER);
+  assert.equal(subject.unclaimedSends.get(merged.id), 10, '整队计费字符之和按合并消息 id 登记一条');
+  firePreStep(rig); // 步边界③关批
+  // 中间①领取了**别的**消息：nextTurn 滞留不在本次领取内（E2 事实——
+  // claim('next-step') 不取 nextTurn、claim('next-turn') 每次仅取队首 1 条）。
+  rig.listeners.get('agent/inbox/claimed')({ agent: { id: rig.OWNER }, message: { id: 'wb2-unrelated' } });
+  assert.equal(subject.unclaimedSends.get(merged.id), 10, '无关领取不清滞留条目（份额继续占用）');
+  await rig.readyJob('job-wb2-c', 'C'.repeat(10)); // 空闲 → 合并 followup（延后说明）
+  assert.equal(rig.calls.followup.length, 2, 'C 的载体到达（延后说明，非正文）');
+  assert.ok(!textOf(rig.calls.followup[1]).includes('C'.repeat(10)),
+    'nextTurn 滞留压缩：C 的批开 full−10 为 0，正文延后（方向保守）');
+  fireClaimed(rig); // 排空：滞留 followup 与延后说明一并领取 → 尾部清零
+  const { delivered } = ledger.collectBatch(rig.OWNER, {});
+  assert.equal(delivered[0]?.text, 'C'.repeat(10), '领取出册后开批回全额，C 完整恢复');
+});
+
+hostTest('WB-3：回合收尾②关批不触碰预算——滞留尾部继续压缩开额；无滞留时②后照常全额（回归腿）', async () => {
+  {
+    const rig = sRig({ budget: 10 });
+    await rig.readyJob('job-wb3-a', 'A'.repeat(10)); // 完成消息注入（计费 10 入尾，未领取）
+    rig.listeners.get('agent/turn-stopping')({ agent: { id: rig.OWNER } }); // ②关批
+    assert.equal(ledger.subjects.get(rig.OWNER).batch, null, '前置：②已关批（丢弃批对象）');
+    await rig.readyJob('job-wb3-b', 'B'.repeat(10)); // 回合后新载体
+    const bText = textOf(rig.calls.inject[1] ?? { content: [] });
+    assert.ok(!bText.includes('B'.repeat(10)), '滞留尾部仍压缩：B 延后（②不释放额度）');
+    fireClaimed(rig); // 排空领取（A 出册）
+    const { delivered } = ledger.collectBatch(rig.OWNER, {});
+    assert.equal(delivered[0]?.text, 'B'.repeat(10), '领取后开批回全额，B 完整交付');
+  }
+  {
+    const rig = sRig({ budget: 10 });
+    await rig.readyJob('job-wb3-c', 'C'.repeat(10));
+    fireClaimed(rig); // 领取出册（尾部清零）
+    rig.listeners.get('agent/turn-stopping')({ agent: { id: rig.OWNER } });
+    await rig.readyJob('job-wb3-d', 'D'.repeat(10));
+    assert.ok(textOf(rig.calls.inject[1]).includes('D'.repeat(10)), '回归腿：无滞留时②后照常全额交付');
+  }
+});
+
+hostTest('WB-4：尾部记账口径——领取/丢弃出册、注入失败回滚移除、部分失败保留已接受项', async () => {
+  {
+    const rig = sRig({ budget: 10 });
+    await rig.readyJob('job-wb4-a', 'A'.repeat(10));
+    const subject = ledger.subjects.get(rig.OWNER);
+    const [id] = [...subject.unclaimedSends.keys()];
+    assert.equal(subject.unclaimedSends.get(id), 10, '注入登记：载体消息 id → 计费字符（正文份额）');
+    rig.listeners.get('agent/inbox/discarded')({ agent: { id: rig.OWNER }, message: { id } });
+    assert.equal(subject.unclaimedSends.size, 0, '丢弃出册（份额随派生值自然释放）');
+  }
+  {
+    const rig = sRig({ injectFailsAt: 1, budget: 10 });
+    await rig.readyJob('job-wb4-b', 'B'.repeat(10));
+    const subject = ledger.subjects.get(rig.OWNER);
+    assert.equal(subject.unclaimedSends.size, 0, '注入失败回滚：未入箱的计费不滞留尾部');
+    assert.equal(ledger.jobs.get('job-wb4-b').buffer, 'B'.repeat(10), '正文退回缓冲（既有回滚行为不变）');
+  }
+  {
+    const rig = sRig({ injectFailsAt: 2, budget: 10 }); // 第二次 inject 抛错
+    await rig.readyJob('job-wb4-c1', 'C'.repeat(5));
+    await rig.readyJob('job-wb4-c2', 'D'.repeat(5));
+    const subject = ledger.subjects.get(rig.OWNER);
+    assert.equal(subject.unclaimedSends.size, 1, '部分失败：已接受项登记保留，失败项已移除');
+    assert.ok([...subject.unclaimedSends.values()][0] <= 5, '保留条目＝已接受项的计费份额');
+  }
+});
+
+hostTest('WB-5：批缺席的①不留陈旧扣除——③关批后①到达（批 null），随后开批不残留旧扣（派生值无陈旧）', async () => {
+  const rig = sRig({ budget: 10 });
+  await rig.readyJob('job-wb5-a', 'A'.repeat(10));
+  fireClaimed(rig); // ①排空（A 领取出册）→ 关批
+  assert.equal(ledger.subjects.get(rig.OWNER).batch, null, '前置：已关批');
+  fireClaimed(rig); // 批缺席的①（无新消息：裸事件）
+  firePreStep(rig); // 再来一次③（批仍 null）
+  await rig.readyJob('job-wb5-b', 'B'.repeat(10));
+  assert.ok(textOf(rig.calls.inject[1]).includes('B'.repeat(10)),
+    '批缺席证据链不产生陈旧扣除：B 按全额开批交付（无存储结转＝无陈旧可留）');
+  assert.equal(ledger.subjects.get(rig.OWNER).unclaimedSends.size, 1, '当前在册＝B 自身（旧消息已出册）');
+});
+
+// ── NI-1（WAIT-NOTE-ID-01）：长 ID 自适应说明行（设计 §2.6／adaptiveNote）──
+//
+// 分档按**渲染长度**实测：定向变体整行 ≤ 上限用之；超限降无 targets 变体
+//（裸 id 一次＋零等待出路——任意合法 ID 下可执行）；仍超限降无 id 最小行
+//（点名由同批状态行承担）；末档 clampNote 收尾。说明预算不放大（cap 即该行
+// 既有上限）。观测阈值（en：deferredNotice 定向约 38 字符 id 起、readFailed
+// 定向约 47 字符 id 起溢出）写注释不写判据——判据锚分档行为本身。
+hostTest('NI-1：任意合法作业 ID 下延后/读失败/留存溢出说明仍有完整可执行出路——分档按渲染长度（en/zh）', async () => {
+  const { entryNoteLines } = await import('../lib/delivery.js');
+  for (const lang of ['en', 'zh']) {
+    const shortId = 'j'.repeat(20);
+    const midId = 'm'.repeat(104);
+    const longId = 'L'.repeat(200);
+    // 延后说明三档（完成消息路径，预算 1 触发延后）；按「未排进批次」特征取
+    // 通知消息（超长 id 档降为无 id 聚合形，不能按 id 找）。
+    const settle = async (rig, id) => {
+      const token = ledger.claimWait(rig.OWNER);
+      await rig.readyJob(`job-ni1-${lang}-fill`, 'S');
+      await rig.readyJob(id, 'T');
+      await ledger.releaseWait(token, rig.OWNER);
+      return rig.calls.inject.map(textOf).find((text) => /did not fit this batch|未排进当前交付批次|were also deferred|同样延后/.test(text));
+    };
+    {
+      const rig = sRig({ budget: 1, lang });
+      const notice = await settle(rig, shortId);
+      assert.ok(notice !== undefined && notice.length <= 400, `${lang}：短 id 定向变体整行 ≤400`);
+      assert.ok(notice.includes(`targets=[{kind:"job", id:"${shortId}"}]`), `${lang}：定向示例完整在场（未被截断）`);
+    }
+    {
+      const rig = sRig({ budget: 1, lang });
+      const notice = await settle(rig, midId);
+      assert.ok(notice !== undefined && notice.length <= 400, `${lang}：中长 id（104 字符）整行 ≤400`);
+      if (lang === 'en') {
+        assert.ok(!notice.includes('targets='), 'en：104 字符 id 降 .noTarget（定向示例放不下，398/400 紧界）');
+        assert.ok(notice.includes(midId), 'en：裸 id 一次在场');
+      } else {
+        assert.ok(notice.includes(`targets=[{kind:"job", id:"${midId}"}]`), 'zh：定向变体保持（zh 富余，按语言分别断言）');
+      }
+      assert.match(notice, /async_wait\((targets=\[[^\]]*\], )?wait_ms=0\)/, `${lang}：完整可执行的零等待出路在场（定向形或无 targets 形）`);
+      assert.ok(!notice.includes('...'), `${lang}：未被 clampNote 裁尾（出路不被截成无效调用）`);
+    }
+    {
+      const rig = sRig({ budget: 1, lang });
+      const notice = await settle(rig, longId);
+      assert.ok(notice !== undefined && notice.length <= 400, `${lang}：超长 id（200 字符）整行 ≤400`);
+      assert.ok(!notice.includes('targets='), `${lang}：无内嵌定向示例（降 .noTarget／聚合形）`);
+      assert.match(notice, /async_wait\(wait_ms=0\)/, `${lang}：零等待出路完整（点名由状态行承担）`);
+      assert.ok(!notice.includes('...'), `${lang}：无裁尾`);
+    }
+    // 读失败注记三档（entryNoteLines 单元层；同 adaptiveNote 通道）。观测阈值
+    //（en：定向约 47 字符 id 起溢出、.noTarget 容至约 55、更长降 .minimal）写
+    // 注释不写判据——判据锚分档行为本身，按语言分别断言。
+    {
+      const rfShort = entryNoteLines({ readFailed: true, jobId: 'r'.repeat(20) }, lang).join('\n');
+      assert.ok(rfShort.length <= 200, `${lang}：读失败短 id ≤200`);
+      assert.ok(rfShort.includes(`targets=[{kind:"job", id:"${'r'.repeat(20)}"}]`), `${lang}：读失败定向重试完整`);
+      const rfMid = entryNoteLines({ readFailed: true, jobId: 'q'.repeat(50) }, lang).join('\n');
+      assert.ok(rfMid.length <= 200, `${lang}：读失败中长 id（50 字符）≤200`);
+      if (lang === 'en') {
+        assert.ok(!rfMid.includes('targets='), 'en：定向示例放不下，降 .noTarget（裸 id＋重试出路）');
+        assert.match(rfMid, /async_wait\(wait_ms=\.\.\.\)/, 'en：重试出路完整（wait_ms=... 为文案字面，非裁尾）');
+      } else {
+        assert.ok(rfMid.includes('targets='), 'zh：定向变体保持（zh 富余，按语言分别断言）');
+      }
+      const rfLong = entryNoteLines({ readFailed: true, jobId: 'w'.repeat(200) }, lang).join('\n');
+      assert.ok(rfLong.length <= 200, `${lang}：读失败超长 id ≤200`);
+      assert.ok(!rfLong.includes('targets=') && !rfLong.includes('w'.repeat(50)), `${lang}：降 .minimal（无 id 内嵌）`);
+      assert.match(rfLong, /async_wait\(wait_ms=0\)/, `${lang}：状态先行出路完整`);
+    }
+    // 留存溢出行三档（entryNoteLines 单元层）。
+    {
+      const spill = (jobId) => entryNoteLines(
+        { jobId, spillPaths: ['p1', 'p2', 'p3'], spillFrom: 0, spillCount: 1 }, lang
+      ).find((line) => /Retained-path listing is paged|留存路径分批列出/.test(line)) ?? '';
+      assert.ok(spill('s'.repeat(20)).includes(`targets=[{kind:"job", id:"${'s'.repeat(20)}"}]`),
+        `${lang}：留存溢出短 id 定向`);
+      const spLong = spill('t'.repeat(200));
+      assert.ok(spLong.length <= 200 && !spLong.includes('targets='), `${lang}：留存溢出超长 id 降档入界`);
+      assert.match(spLong, /async_wait\(wait_ms=0\)/, `${lang}：留存溢出降档出路完整`);
     }
   }
 });

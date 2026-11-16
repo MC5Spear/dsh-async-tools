@@ -2445,7 +2445,8 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
       ['不刷新额度', '不会刷新额度'],
       ['保留首尾', '保留开头与结尾', '首尾都保留'],
       ['说明截断', '注明截断', '截断说明'],
-      ['按批次继续交付', '延后内容按批次', '随下一批次继续交付'],
+      // WAIT-BUDGET-01：延后内容按「额度允许时随后续载体汇集」交付（新口径）。
+      ['在额度允许时', '随后续等待返回', '汇集交付'],
       ['另计', '不计入', '单独计量']
     ],
     jobKind: [
@@ -2583,7 +2584,8 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
       ['refreshes the allowance', 'refresh the allowance'],
       ['the head and tail are kept', 'keeps the head and tail', 'head and tail kept'],
       ['a truncation note', 'a note about the truncation', 'the truncation stated'],
-      ['batch by batch', 'deferred content', 'goes on arriving batch by batch'],
+      // WAIT-BUDGET-01: deferred content is collected while budget allows.
+      ['deferred content', 'while budget allows', 'later wait returns'],
       ['counted separately', 'not counted toward the cap', 'separate from the cap']
     ],
     jobKind: [
@@ -2678,7 +2680,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minWaitMs: '作用于等待入口正等待（wait_ms > 0）的 wait_ms；请求低于下限时按下限取值。wait_ms=0 只做即时检查、不会被抬高到下限。等待到时结束，后台继续运行。',
     maxWaitMs: '作用于等待入口的 wait_ms；高于上限时按上限取值。等待到时结束，后台继续运行。',
     pollIntervalMs: 'async_wait 的子代理目标按这个间隔周期性检查目标是否还在跑，作为变化事件没到时的备用检查手段。',
-    maxResultChars: '同一次输入内共同到达的多条结果并成一个批次共享，共用这一份额度，必须是正整数；调用之间隔多久、中间插入其他工具工作都不刷新额度；超限时保留开头与结尾并注明截断；装不下的内容随下一批次继续交付，状态与提示单独计量。',
+    maxResultChars: '同一次输入内先后到达的本包结果共用这一份字符额度（正整数）——同一开放批次里的多次调用并成一个批次共享，间隔多久、插入其他工具工作都不刷新额度；边界后新开的批要先扣除已注入、还没被领进模型输入的完成消息所占的份额（跨输入一直占到被领取为止）；超限时保留首尾并注明截断，装不下的在额度允许时随后续等待返回（零等待也算）汇集送达，状态与提示另计。',
     jobKind: '命令作业注册时用的类型名，出现在作业列表和日志里方便辨认。',
     subagentProvider: 'async_agent 创建子代理的后端。',
     uiLang: '决定界面文案（设置表单、字段帮助、待答界面）显示中文还是英文；自动档跟随宿主语言。',
@@ -2701,7 +2703,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minWaitMs: 'Governs wait_ms of positive waits (wait_ms > 0) on the wait entry; a request below the floor is clamped to the lower bound; wait_ms=0 is an immediate check only and is not raised to the bound; the wait ends on schedule and the background task keeps running.',
     maxWaitMs: 'Governs wait_ms on the wait entry; a request above this ceiling uses the upper bound; the wait ends on schedule and the background task keeps running.',
     pollIntervalMs: 'async_wait\'s subagent targets decide how often to run a backup check of the target\'s running state when the change event has not arrived.',
-    maxResultChars: 'Results from this package landing inside a single model input merge into one batch and draw on one shared character allowance (a positive integer); gaps between calls and other tool work never refresh the allowance; past it, head and tail kept and the truncation stated; what does not fit goes on arriving batch by batch, with status and notices counted separately.',
+    maxResultChars: 'Results of this package landing inside one model input draw on one shared character allowance (a positive integer); calls in the same open delivery batch share it first come first served, and neither gaps between calls nor other tool work refresh the allowance; a batch opened after a boundary first deducts what already-injected, unclaimed completion messages still hold (they hold across inputs until claimed); past it the head and tail are kept with the truncation stated, what does not fit is collected by later wait returns (zero-wait counts too) while budget allows, with status and notices counted separately.',
     jobKind: 'The type name used when registering command jobs so they can be told apart in job lists and logs.',
     subagentProvider: 'The backend async_agent spawns subagents with.',
     uiLang: 'Sets the language (Chinese or English) of the settings form, field help, and pending panel; the auto choice follows the host language.',
@@ -2791,21 +2793,21 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     ],
     maxResultChars: [
       ['正整数', 'String.length'],
-      // P01-N（设计 5.6 展开列）：合批共享示例＋间隔不刷新；窄例外（输入
-      // 边界证据关批后、下一次模型请求前完成消息开新批可另取额度）＝不是
-      // 绝对总量上限；截断标记与延后内容的继续取得（边界后主动领取）。
+      // P01-N（设计 5.6 展开列，WAIT-BUDGET-01 修订）：合批共享示例＋间隔不
+      // 刷新；边界后开新批按存活尾部派生——已注入、尚未领取进模型输入的完成
+      // 消息份额跨输入继续占用，直到其领取事件；截断标记与延后内容的继续
+      // 取得（额度允许时汇集交付／边界后主动领取）。
       ['同一次模型输入', '一次模型输入内', '同一次输入内'],
       ['合批共享', '并入同一开放批次', '并成一个批次共享'],
       ['先到先分配', '先到先得'],
       ['不刷新额度', '不会刷新额度'],
-      ['窄例外', '例外——'],
-      ['完成消息开新批', '按完成消息开新批'],
-      ['另取额度', '可能另取'],
-      ['不是一次输入全部本包结果的绝对总量上限', '并非一次输入的绝对总量上限'],
+      ['边界后开新批', '派生'],
+      ['已注入、尚未领取', '已注入未领取的完成消息'],
+      ['跨输入继续占用', '继续占用份额'],
       ['主动领取', 'wait_ms=0'],
       ['保留首尾', '保首尾'],
       ['说明截断', '注明截断'],
-      ['按批次继续交付', '延后内容按批次', '随下一批次继续交付'],
+      ['在额度允许时', '随后续等待返回'],
       ['另计', '单独计量']
     ],
     jobKind: [
@@ -2938,24 +2940,22 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     ],
     maxResultChars: [
       ['positive integer', 'String.length'],
-      // P01-N (design 5.6 expanded column): merged-batch example + no refresh
-      // on gaps; the narrow exception (after boundary-evidence close, a
-      // completion message before the next model request opens a new batch
-      // with a fresh allowance) = not an absolute total cap; truncation note
-      // and how deferred content keeps arriving (active fetch after the
-      // boundary).
+      // P01-N (design 5.6 expanded column, WAIT-BUDGET-01 revision): merged-
+      // batch example + no refresh on gaps; batches opened after a boundary
+      // draw on the allowance minus unclaimed completion-message shares
+      // (held across inputs until their claim event); truncation note and
+      // how deferred content keeps arriving (collected while budget allows /
+      // active fetch after the boundary).
       ['one model input', 'within one model input', 'a single model input'],
       ['share it as one batch', 'the same open delivery batch', 'merge into one batch'],
       ['first come first served', 'first arrivals take the quota first'],
       ['refreshes the allowance', 'refresh the allowance'],
-      ['Narrow exception', 'narrow exception'],
-      ['opens a new batch', 'completion message opens a new batch'],
-      ['a fresh allowance', 'draw a fresh allowance'],
-      ['not an absolute total cap', 'not an absolute total cap on all'],
+      ['minus the shares of completion messages', 'not yet claimed into a model input'],
+      ['keep holding their share across inputs', 'until their claim event'],
       ['fetch it actively', 'wait_ms=0', 'async_wait'],
       ['the head and tail are kept', 'head and tail kept', 'keeps the head and tail'],
       ['a truncation note', 'states the truncation', 'the truncation stated'],
-      ['batch by batch', 'goes on arriving batch by batch', 'deferred content'],
+      ['deferred content', 'while budget allows', 'later wait returns'],
       ['counted separately', 'not counted toward the cap']
     ],
     jobKind: [
@@ -3059,7 +3059,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minWaitMs: '作用于正值等待（wait_ms > 0）的下限：低于它就取下限；wait_ms=0 只做即时检查、不会被抬高。到时还回控制权、句柄仍有效；消息来了可以提前结束本次等待。',
     maxWaitMs: 'wait_ms 的上界：高于它就取上限。与 minWaitMs 构成 wait_ms > 0 的取值区间；零等待不被抬高。到时还回控制权、句柄仍有效；消息来了可以提前结束本次等待。',
     pollIntervalMs: 'async_wait 的子代理按这个间隔定期查目标还在不在跑——变化事件优先、轮询作为备用通道；间隔受 pollIntervalMs ≤ maxWaitMs 约束。',
-    maxResultChars: '这一项按 String.length 数字符、必须是正整数。同一次输入内到的多条结果并成一个批次共享、先到先得，调用间隔与别的工具工作不会刷新额度。窄例外——批次已在认领、回合停止或步骤边界这类输入边界证据上关掉之后，下一次模型请求前恰有作业以完成消息开新批，同一次输入可能另取额度；所以它并非一次输入的绝对总量上限。超限的保首尾并注明截断，装不下的随下一批次继续交付，可在此边界之后 wait_ms=0 主动领取；状态与提示单独计量。',
+    maxResultChars: '这一项按 String.length 数字符、必须是正整数。同一次输入内到的多条结果并成一个批次共享、先到先得，调用间隔与别的工具工作不会刷新额度。边界后开新批不再另拿全额——先扣除已注入、尚未领取进模型输入的完成消息所占的份额，这些份额跨输入继续占用、直到被领取；因此同一输入里先后到的结果合计仍受这一份约束。超限的保首尾并注明截断，装不下的在额度允许时随之后的等待返回（零等待也算）汇集送达，可在此边界之后 wait_ms=0 主动领取；状态与提示单独计量。',
     jobKind: '给命令作业注册用的类型名，方便在作业清单与日志里认出来；留空会被拒绝。',
     subagentProvider: 'async_agent 创建子代理的后端，缺省用 spawn；输入去空白后为空就回落到默认值；写了不存在的后端，创建时拒绝并说明原因。要指定模型，就用调用的 provider、model 两参数。',
     uiLang: '界面文字与 Agent 文案是互不联动的两个开关：本开关只管界面文案，Agent 文案语言 agentLang 决定；auto 跟宿主语言走。',
@@ -3081,7 +3081,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minWaitMs: 'Floor for waits with wait_ms > 0: below it the request clamps to the bound; wait_ms=0 is the exception — an immediate check only, not lifted. When the budget ends, hands control back; the handle stays valid; an arriving message can end the wait early.',
     maxWaitMs: 'Ceiling for wait_ms: above it the request clamps to the upper bound. With minWaitMs it forms the range for waits with wait_ms > 0; zero waits are not lifted. When the budget ends, hands control back; the handle stays valid; an arriving message can end the wait early.',
     pollIntervalMs: "async_wait's subagent side checks on two channels whether the target still runs — change events first, with polling as the fallback channel; the interval is bound by the pollIntervalMs ≤ maxWaitMs rule.",
-    maxResultChars: 'This one counts characters by String.length and must be a positive integer. Results of this package landing inside a single model input merge into one batch, first arrivals take the quota first, and neither gaps between calls nor other tool work refresh the allowance. Narrow exception — once a batch has closed on input-boundary evidence such as a claim, turn stopping, or a step boundary, a job landing as a completion message before the next model request opens a new batch and the same input may draw a fresh allowance; so this is not an absolute total cap on everything this package returns within one input. Past it, head and tail kept and the truncation stated; what does not fit goes on arriving batch by batch, and can be fetched by calling async_wait with wait_ms=0 after the next model-input boundary; status and notices counted separately.',
+    maxResultChars: 'This one counts characters by String.length and must be a positive integer. Results of this package landing inside a single model input merge into one batch, first arrivals take the quota first, and neither gaps between calls nor other tool work refresh the allowance. A batch opened after a boundary no longer draws a fresh allowance — it first deducts the shares of completion messages already injected but not yet claimed into a model input, and such messages keep holding their share across inputs until their claim event; results arriving one after another within one input therefore stay under this one allowance together. Past it, head and tail kept and the truncation stated; what does not fit is collected by later wait returns (zero-wait included) while budget allows, and can be fetched by calling async_wait with wait_ms=0 after the next model-input boundary; status and notices counted separately.',
     jobKind: 'Registry entries carry the type label given to command jobs when they are registered, so they can be told apart in job listings and log entries; leaving it blank is rejected.',
     subagentProvider: 'The backend that spawns subagents for async_agent, defaulting to spawn; an empty trimmed value reverts to the default; an unknown backend is refused with an understandable reason at subagent creation. To pick a model, specify provider plus model on the call.',
     uiLang: 'Interface text and Agent-facing copy are two separate switches: this one governs just the interface text, and agentLang decides the Agent-facing language; auto tracks the host language.',

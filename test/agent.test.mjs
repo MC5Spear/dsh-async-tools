@@ -883,8 +883,9 @@ hostTest('async_agent：深度计算受控契约模拟——假 startActivation 
   // 矩阵 8.2.1-H 第 6 条后半句的受控半边：假父代理造 header.delegationDepth／
   // options.subagentDepth，假 startActivation 按宿主契约模拟深度判定
   // （max(头,运行时)+1 > maxDepth ⇒ name:'SubagentDepthError' 带 attemptedDepth／
-  // maxDepth 字段——与真实实现同形）。真机档由逐台探针对真实函数执行同一
-  // 契约（.local/runtime/dev-roles/probe-ag01.mjs，五台各 29/29）。
+  // maxDepth 字段）。本用例只覆盖该契约的受控模拟；真实宿主函数上的同一契约
+  // 核验属独立真机装置（不在本套件），其可行性与读数未在本套件内验证——公开
+  // 克隆不应把本用例当作真机证据。
   let spawns = 0;
   const mkExec = (headerDepth, runtimeDepth) => ({
     agent: {
