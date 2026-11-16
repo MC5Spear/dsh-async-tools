@@ -3540,7 +3540,7 @@ hostTest('REC-D：条目上限对空正文条目同样生效——12 条空输�
   assert.ok(batchTexts.every((text) => /0 chars/.test(text)), '前 10 条都是状态行（零字符形态）');
   assert.ok(!batchTexts.some((text) => /job-rec-d1[12]/.test(text)), '第 11/12 条不在本批');
   for (const text of rig.calls.inject.slice(10).map(textOf)) {
-    assert.match(text, /did not fit the current delivery batch|未排进当前交付批次/, '延后说明形态');
+    assert.match(text, /did not fit this batch|未排进当前交付批次/, '延后说明形态');
     assert.match(text, /wait_ms=0/, '延后说明给领取出路');
   }
   // 关批判定＋闭合证据①（§2.6）→ 下一轮窗口补投剩余两条状态行。
@@ -4246,7 +4246,7 @@ hostTest('RN-A：12 条空输出结算——10 状态行＋2 逐条延后说明�
   await ledger.releaseWait(token, rig.OWNER);
   assert.equal(rig.calls.inject.length, 12, '10 状态行＋2 逐条说明（2 ≤ 配额 3，无聚合）');
   for (const text of rig.calls.inject.slice(10).map(textOf)) {
-    assert.match(text, /did not fit the current delivery batch|未排进当前交付批次/, '逐条说明形态');
+    assert.match(text, /did not fit this batch|未排进当前交付批次/, '逐条说明形态');
     assert.match(text, /wait_ms=0/, '领取出路照抄（定向示例）');
     assert.ok(!/also deferred|同样延后/.test(text), '配额内不投聚合');
   }
@@ -4264,7 +4264,7 @@ hostTest('RN-B：100 条空输出结算——物理消息恰 14（10＋3＋1）�
     `10 状态行＋3 逐条＋1 聚合（实得 ${String(rig.calls.inject.length)}，修前 100）`);
   const individual = rig.calls.inject.slice(10, 13).map(textOf);
   for (const text of individual) {
-    assert.match(text, /did not fit the current delivery batch|未排进当前交付批次/, '逐条说明恰 3 条（配额）');
+    assert.match(text, /did not fit this batch|未排进当前交付批次/, '逐条说明恰 3 条（配额）');
   }
   const aggregate = textOf(rig.calls.inject[13]);
   assert.match(aggregate, /were also deferred|同样延后/, '聚合摘要在场');
@@ -4326,14 +4326,17 @@ hostTest('RN-C：非空正文超限两形态——预算 1 只容 1 条（1＋3�
   }
 });
 
-// ── RN-D（2026-11-15 验收 U1；设计 §2.6「延后说明的可取得时机语义」）───────
-// 三键（汇总行／逐条／聚合）不承诺「立即领取／fetch it now」：都携带「正文
-// 保留＋下一批优先送达＋额度于下一次模型输入边界后复位」事实组，主动领取
-// 写成时点限定动作（边界之后的零等待）。修前红＝旧文案在场（「fetch it
-// now」「立即领取」「可调用 async_wait…领取」的无时点承诺）。恢复出口的
-// 零等待领取行为不变——判据只改说明语义，不改交付行为（上方 RN-A/B/C 行为
-// 判据照旧全绿即为行为不变的对照锚）。
-hostTest('RN-D：延后说明时机语义——正文保留／下一批优先／边界后复位事实组在场，立即领取承诺缺席', async () => {
+// ── RN-D（2026-11-15 验收 U1、2026-11-16 WAIT-F01；设计 §2.6「延后说明的可
+// 取得时机语义」）───────────────────────────────────────────────
+// 三键（汇总行／逐条／聚合）如实说明取得条件：不承诺下一批自动送达、不写
+// 「无需专门领取」——交付以下一个投递载体（后续等待返回或新结算作业的完成
+// 消息）为条件，无载体时留在缓冲不自行投递；批额度于下一次模型输入边界后
+// 复位，主动领取写成时点限定动作（边界之后的零等待）。「无需专门领取」组
+// 修前红＝旧文案在场；「立即领取」组在修前实现已缺席，作防回归断言。三键
+// 插值后长度不超过专用 400 档上界（防文案增长把时点限定挤出档位）。恢复
+// 出口的零等待领取行为不变——判据只改说明语义，不改交付行为（上方 RN-A/B/C
+// 行为判据照旧全绿即为行为不变的对照锚）。
+hostTest('RN-D：延后说明时机语义——正文保留／载体条件交付／无载体留缓冲／边界后复位事实组在场，自动送达与无需领取承诺缺席', async () => {
   // 汇总行（delivery.deferred）：批预算 1 容不下第二条 → collectBatch 附延后汇总。
   {
     const rig = sRig({ budget: 1 });
@@ -4343,12 +4346,17 @@ hostTest('RN-D：延后说明时机语义——正文保留／下一批优先／
     const { deferred, deferredNote } = ledger.collectBatch(rig.OWNER, {});
     assert.equal(deferred.length, 1, '前置：预算 1 → 第二条延后（汇总行在场的前提）');
     assert.ok(deferredNote !== undefined && deferredNote.length > 0, '延后汇总行在场');
+    assert.ok(deferredNote.length <= 400, '汇总行入界：插值后 ≤ MAX_DEFERRED_NOTE_CHARS（400）');
     assert.match(deferredNote, /the bodies are kept|正文已保留/, '事实组①：正文保留');
-    assert.match(deferredNote, /go out first with the next delivery batch|下一交付批次优先送达/, '事实组②：下一批优先送达');
+    assert.match(deferredNote, /go(es)? out first with the next carrier|随下一个交付载体（[^）]*）优先送出/, '事实组②：载体条件交付');
+    assert.match(deferredNote, /a later wait return or a new completion message|后续等待返回或新结算作业的完成消息/, '事实组②：载体列举');
+    assert.match(deferredNote, /without one (it|they) stay(s)? buffered|无此载体时留在缓冲/, '事实组②b：无载体时留在缓冲');
     assert.match(deferredNote, /resets only at the next model-input boundary|只在下一次模型输入边界后复位/, '事实组③：额度于输入边界后复位');
+    assert.match(deferredNote, /zero-wait retries before it bring no new budget|零等待重试不产生新额度/, '零等待无新额度（汇总行独有）');
+    assert.ok(!/无需专门领取|no retrieve call is needed/.test(deferredNote), '「无需专门领取」缺席（修前红＝在场）');
+    assert.ok(!/下一交付批次优先送达|go(es)? out first with the next delivery batch/.test(deferredNote), '旧「下一批优先送达」无条件承诺缺席');
+    assert.ok(!/fetch it now|立即领取/.test(deferredNote), '「立即领取」缺席（防回归）');
     await ledger.releaseWait(token, rig.OWNER);
-    assert.ok(!/fetch it now|立即领取|可调用 async_wait|to collect them\./.test(deferredNote),
-      '不承诺无时点领取（修前红＝「可调用 async_wait…领取」在场）');
   }
   // 逐条（delivery.deferredNotice）与聚合（delivery.deferredAggregate）：完成
   // 消息路径的超限说明同判（预算 1 → 1 条目＋3 逐条＋1 聚合）。
@@ -4361,21 +4369,30 @@ hostTest('RN-D：延后说明时机语义——正文保留／下一批优先／
     }
     await ledger.releaseWait(token, rig.OWNER);
     const texts = rig.calls.inject.map(textOf);
-    const notices = texts.filter((text) => /did not fit the current delivery batch|未排进当前交付批次/.test(text));
+    const notices = texts.filter((text) => /did not fit this batch|未排进当前交付批次/.test(text));
     assert.equal(notices.length, 3, '前置：逐条说明恰 3 条（配额）');
     for (const text of notices) {
-      assert.match(text, /is kept in the ledger|正文已保留/, '逐条·事实组①：正文保留');
-      assert.match(text, /go(es)? out first with the next delivery batch|下一交付批次优先送达/, '逐条·事实组②：下一批优先送达');
+      assert.ok(text.length <= 400, '逐条入界：插值后 ≤ 400');
+      assert.match(text, /is kept|正文已保留/, '逐条·事实组①：正文保留');
+      assert.match(text, /go(es)? out first with the next carrier|随下一个交付载体（[^）]*）优先送出/, '逐条·事实组②：载体条件交付');
+      assert.match(text, /a later wait return or a new completion message|后续等待返回或新结算作业的完成消息/, '逐条·事实组②：载体列举');
+      assert.match(text, /without one it stays buffered|无此载体时留在缓冲/, '逐条·事实组②b：无载体留缓冲');
       assert.match(text, /resets at the next model-input boundary|在下一次模型输入边界后复位/, '逐条·事实组③：边界后复位');
-      assert.match(text, /only after that boundary|请在此之后再调用/, '主动领取＝时点限定动作（边界之后）');
-      assert.ok(!/fetch it now|立即领取/.test(text), '逐条旧承诺缺席（修前红＝在场）');
+      assert.match(text, /wait_ms=0\) only after it|请在此之后再调用/, '逐条·主动领取＝时点限定动作（边界之后）');
+      assert.ok(!/无需专门领取|no retrieve call is needed/.test(text), '逐条·「无需专门领取」缺席（修前红＝在场）');
+      assert.ok(!/下一交付批次优先送达|go(es)? out first with the next delivery batch/.test(text), '逐条·旧无条件承诺缺席');
+      assert.ok(!/fetch it now|立即领取/.test(text), '逐条·「立即领取」缺席（防回归）');
     }
     const aggregate = texts.find((text) => /were also deferred|同样延后/.test(text));
     assert.ok(aggregate !== undefined, '前置：聚合摘要在场');
+    assert.ok(aggregate.length <= 400, '聚合入界：插值后 ≤ 400');
     assert.match(aggregate, /the bodies are kept|正文均已保留/, '聚合·事实组①：正文保留');
-    assert.match(aggregate, /go out first with the next delivery batch|下一交付批次优先送达/, '聚合·事实组②：下一批优先送达');
-    assert.match(aggregate, /after the next model-input boundary|在下一次模型输入边界后/, '聚合·事实组③＋时点限定（边界之后）');
-    assert.ok(!/fetch it now|立即领取|可调用 async_wait/.test(aggregate), '聚合不承诺无时点领取');
+    assert.match(aggregate, /go(es)? out first with the next carrier|随下一个交付载体（[^）]*）优先送出/, '聚合·事实组②：载体条件交付');
+    assert.match(aggregate, /without one they stay buffered|无此载体时留在缓冲/, '聚合·事实组②b：无载体留缓冲');
+    assert.match(aggregate, /the next model-input boundary|在下一次模型输入边界后/, '聚合·事实组③＋时点限定（边界之后）');
+    assert.ok(!/无需专门领取|no retrieve call is needed/.test(aggregate), '聚合·「无需专门领取」缺席（修前红＝在场）');
+    assert.ok(!/下一交付批次优先送达|go(es)? out first with the next delivery batch/.test(aggregate), '聚合·旧无条件承诺缺席');
+    assert.ok(!/fetch it now|立即领取/.test(aggregate), '聚合·「立即领取」缺席（防回归）');
   }
 });
 
@@ -5292,7 +5309,7 @@ hostTest('T8 真实注册表：准入上限与领取窗口解耦——触顶拒�
     assert.equal(rig.injections.length, 4,
       `15 个延后候选：恰 3 逐条＋1 聚合（实得 ${String(rig.injections.length)}，修前 15）`);
     for (const text of rig.injections.slice(0, 3).map(textOf)) {
-      assert.match(text, /did not fit the current delivery batch|未排进当前交付批次/, '逐条说明形态');
+      assert.match(text, /did not fit this batch|未排进当前交付批次/, '逐条说明形态');
     }
     const aggregate = textOf(rig.injections[3]);
     assert.match(aggregate, /12 more settled job|另有 12 个/, '聚合计数＝12（集合最终值）');

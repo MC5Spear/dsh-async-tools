@@ -107,7 +107,8 @@ const ALLOWLIST = {
     { needle: '以非完成结局收场', why: 'stderr 通告（emitLifecycleNotice），操作者一侧（result 观察通道）' },
     { needle: '结果通道拒绝（基础设施故障）', why: '同上通道的拒绝分支通告，操作者一侧' },
     { needle: '子代理路由预检拒绝', why: 'stderr 通告（emitLifecycleNotice），操作者一侧（预检拒绝的完整宿主原文）' },
-    { needle: '子代理启动前重读模型选择设置失败', why: '同上通道的启动前重读失败通告，操作者一侧（完整原错走 stderr；模型侧只吃 routeRecheckReadFailed 词典键的单行化截断段）' }
+    { needle: '子代理启动前重读模型选择设置失败', why: '同上通道的启动前重读失败通告，操作者一侧（完整原错走 stderr；模型侧只吃 routeRecheckReadFailed 词典键的单行化截断段）' },
+    { needle: '子代理委派深度上限解析失败', why: '同上通道的深度上限解析失败通告，操作者一侧（完整原错走 stderr；模型侧只吃 maxDepthResolveFailed 词典键的单行化截断段）' }
   ],
   // 注册拒绝完整原文的 stderr 通告：操作者一侧——模型侧只吃单行化＋500 截断
   // 段（t() 词典 error.startRefused*），完整原文不进模型上下文（同 agent.js
