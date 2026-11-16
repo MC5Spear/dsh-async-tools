@@ -11,13 +11,13 @@ Find the task you need:
 
 ## 1. Installation identity and prerequisites
 
-The planned trial channel is `adapt/dsh-0.2.2-alpha`. It has not been pushed to the remote and is not an installation source yet. Adaptation branches without the plugin’s `-alpha` suffix are the stable channels; their installation instructions remain below. A host RC label does not establish stable acceptance of the plugin. Before installation or trial use, read [known issues and verification gaps (Chinese)](<issues.md>) at the exact installed commit and check its baseline. Alpha does not mean stable acceptance has passed.
+This commit is a local candidate for the `adapt/dsh-0.2.2-alpha` trial channel. **It has not been pushed; the branch addresses below cannot retrieve this candidate yet.** Publication is paused pending historical-content cleanup. Alpha has not passed stable acceptance either. If the maintainer supplies an exact artifact, try it only in an isolated instance after reading its matching [known issues and verification gaps (Chinese)](<issues.md>).
 
-**The current 0.2.10 candidate has not passed release acceptance. Do not use it for production tasks.** The table lists the package's declared host versions, not proof that every behavior has been verified. Before testing, confirm an accessible exact commit or artifact with the maintainer, use an isolated instance, and retain matching source; the same version number can identify different implementations. Remote installation steps apply only to a published, accessible branch or commit, not an unuploaded local commit.
+The table is the package’s declared host admission set, not proof that every behavior has been verified. Check that the remote branch is accessible before installing. For repeatable installation, use a full commit ID or matching artifact and retain the actual source. Branches without `-alpha` are stable channels and are not updated by this alpha delivery.
 
 | Component | Current applicable version |
 | --- | --- |
-| Plugin version | `0.2.10+dsh.0.2.2` |
+| Plugin version | `0.2.10-alpha.1+dsh.0.2.2` |
 | Supported dsh host versions | `0.2.2-rc.1` |
 
 “Host” means the DSH instance loading the plugin. Only the version listed above can load the package, not the final `0.2.2`, older `0.2.2` pre-releases (alphas), the `0.2.1`/`0.2.0` lines, or an unlisted rc.
@@ -54,7 +54,7 @@ The package is not distributed through npm. Use the GUI steps below; dependency 
 2. Paste the following into the package name/address field, then select **Install**:
 
    ```text
-   github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.2
+   github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.2-alpha
    ```
 
 3. Select **Enable now** after installation succeeds. If already enabled, confirm its enabled status instead. If installation requests permission to run scripts, follow [script-approval troubleshooting](<#installation-script-approval-troubleshooting>) first.
@@ -65,7 +65,7 @@ The package is not distributed through npm. Use the GUI steps below; dependency 
 Alternatively, install from a terminal:
 
 ```powershell
-dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.2
+dsh plugin --profile web add github:MC5Spear/dsh-async-tools#adapt/dsh-0.2.2-alpha
 ```
 
 `web` is the target profile's name; substitute the appropriate name for another profile. After installation, likewise confirm it is enabled and complete the loading checks above.
@@ -78,11 +78,11 @@ The address follows a moving maintenance branch. For repeatable installation:
 
 ### Installation troubleshooting
 
-If source retrieval fails, check the repository address and branch or commit, then the network and proxy. If it still fails, ask the maintainer supplying the installation source about available artifacts. Omitting `#adapt/dsh-0.2.2` from the address does not automatically select the correct host adaptation.
+If source retrieval fails, check the repository address and branch or commit, then the network and proxy. If it still fails, ask the maintainer supplying the installation source about available artifacts. Omitting `#adapt/dsh-0.2.2-alpha` from the address does not automatically select the correct host adaptation.
 
 #### Installation script-approval troubleshooting
 
-Through 0.2.8, profiles with `autoInstallPeers` enabled could install duplicate host dependencies for this package and fail with `ERR_PNPM_IGNORED_BUILDS` when their scripts were blocked. When moving to DSH `0.2.2-rc.1`, use an available source for this line’s `0.2.10+dsh.0.2.2` candidate, not the 0.2.9 package for DSH 0.2.1. If no matching source is available, defer installation and contact the maintainer. There is no need to approve redundant dependency scripts merely to get past the older failure.
+Through 0.2.8, profiles with `autoInstallPeers` enabled could install duplicate host dependencies for this package and fail with `ERR_PNPM_IGNORED_BUILDS` when their scripts were blocked. When moving to DSH `0.2.2-rc.1`, use an available source for this line’s `0.2.10-alpha.1+dsh.0.2.2` candidate, not the 0.2.9 package for DSH 0.2.1. If no matching source is available, defer installation and contact the maintainer. There is no need to approve redundant dependency scripts merely to get past the older failure.
 
 After installation succeeds, check the actual package version, settings, and both presets. Undecided approval entries from the failed attempt may disappear after successful installation. If an approval prompt remains, follow the steps below to check its cause.
 
@@ -293,7 +293,9 @@ Queries, retries, and waiting share one budget rather than restarting it at each
 
 Creates a resumable child in the background and immediately returns `agent_id`, without waiting for the final answer. There is no `run_in_background` argument.
 
-**Current limitation:** this candidate does not apply the host's configured child-delegation depth limit. For example, setting the limit to 0 still lets this entry reach creation preparation. Until repaired and verified, do not use it for tasks that must rely on that limit to prohibit or constrain recursive delegation. This establishes only that the depth limit was not applied, not actual recursive execution or a command-sandbox or approval bypass.
+Before starting each child, the tool reads DSH’s `subagent.maxDepth` setting and passes it to the execution backend. This is neither a tool argument nor a plugin setting. A limit of 0 rejects creation. The host’s factory limit of 1 permits a root Agent to create a first-level child and rejects further delegation below that level. Saved changes apply to subsequent calls without restarting.
+
+Reaching the limit, failing to read the setting, or using a backend unable to enforce the configured limit produces an error without a successful `agent_id`. Check the depth, setting, or backend support indicated by the error; do not switch entry points to bypass the limit. Real model-driven nested creation and restored sessions still have verification gaps. Check depth-dependent tasks in an isolated instance first; see [known issues and verification gaps (Chinese)](<issues.md>).
 
 | Argument | Type | Required/default | Rules |
 | --- | --- | --- | --- |
@@ -426,7 +428,7 @@ Zero-wait calls can also read unread increments from public running jobs with no
 
 ### Shortened output or deferred entries: continue reading
 
-Use the zero-wait entry below for results marked `truncated`, omitted middle sections, or deferred entries. Deferred leftovers are available in the next model input.
+For a result marked `truncated`, omitted middle sections, or deferred entries, use the zero-wait entry below after allowance becomes available in the next model step. Deferred content remains buffered; an allowance reset alone does not resend it, and a new job’s completion message does not guarantee inclusion of older content.
 
 ```text
 async_wait(wait_ms=0)
@@ -439,6 +441,8 @@ Once this input's allowance is exhausted, further zero-wait calls within the sam
 Status, necessary explanations, and retained paths are separate. Other sources and conversation history are outside this allowance too. Do not use `maxResultChars` to estimate the full model-input length; inspect actual requests when checking consumption.
 
 An oversized entry keeps its head and tail while its middle remains for later reading. Excess entries are deferred in full. Status, necessary error explanations, and retained-output paths are outside the body allowance. **Shortened display does not mean the content was lost.**
+
+With long job IDs, an English deferral message can cut off its targeted recovery example. Do not copy an incomplete call. Once allowance is available, first use untargeted `async_wait(wait_ms=0)` to collect ready content; obtain the full ID from `job_list` if a targeted retry is needed. The buffered body is retained.
 
 With `fullCommandEcho=true`, background results attach command or script source. Result bodies use the allowance first. Source uses the remainder only when that delivery's body fits in full. Oversized source retains its head and tail in a 6:4 ratio with an omission count; no remaining allowance produces a note that source was not attached.
 
@@ -698,7 +702,7 @@ Use a development link only when editing plugin source; do not link a stable dep
 ```powershell
 git clone https://github.com/MC5Spear/dsh-async-tools.git
 cd dsh-async-tools
-git checkout adapt/dsh-0.2.2
+git checkout adapt/dsh-0.2.2-alpha
 npm install
 dsh plugin --profile web add <absolute-clone-directory>
 ```
