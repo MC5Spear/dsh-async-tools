@@ -11,7 +11,7 @@ Find the task you need:
 
 ## 1. Installation identity and prerequisites
 
-This commit is a local candidate for the `adapt/dsh-0.2.1-alpha` trial channel. **It has not been pushed; the branch addresses below cannot retrieve this candidate yet.** Publication is paused pending historical-content cleanup. Alpha has not passed stable acceptance either. If the maintainer supplies an exact artifact, try it only in an isolated instance after reading its matching [known issues and verification gaps (Chinese)](<issues.md>).
+This is an alpha trial version for the `adapt/dsh-0.2.1-alpha` channel used below. **It has not passed stable acceptance.** Try it only in an isolated instance, and read the matching [known issues and verification gaps (Chinese)](<issues.md>) before use.
 
 The table is the package’s declared host admission set, not proof that every behavior has been verified. Check that the remote branch is accessible before installing. For repeatable installation, use a full commit ID or matching artifact and retain the actual source. Branches without `-alpha` are stable channels and are not updated by this alpha delivery.
 
@@ -692,7 +692,7 @@ Only explicit model choices undergo DSH's current allowed-list check. Tool-row d
 
 ### Development links
 
-Use a development link only when editing plugin source; do not link a stable deployment to a tree being edited. The clone/checkout commands below require this branch to be published. Before publication, obtain matching candidate source from the maintainer:
+Use a development link only when editing plugin source; do not link a stable deployment to a tree being edited:
 
 ```powershell
 git clone https://github.com/MC5Spear/dsh-async-tools.git
