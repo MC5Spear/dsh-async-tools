@@ -34,6 +34,8 @@ Existing profiles can retain old dependency copies, lockfiles, or installation s
 
 ### Usage limits and saving results
 
+**Trial verification boundary:** this final alpha artifact has not been installed on a host. The development candidate was installed only on DSH `0.2.2-rc.1`, where API checks covered loading, settings, blank sessions, and disabling/re-enabling. Actual GUI operation and the five tools’ end-to-end behavior remain unverified. Installation with `autoInstallPeers=true`, upgrades from an exact old source, and reinstall/cold recovery after a required restart are also unverified. The dependency declarations are designed to reuse host packages without requiring that option to be disabled; this is not proof that its enabled path passed. Follow any reload/restart request before continuing, and test only in an isolated instance.
+
 Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Before using these environments, check the features needed in a separate test session, particularly command permissions, waiting, and result delivery.
 
 The pending-question panel has not been verified with a real OS input method, screen reader, or touchscreen. When relying on these input methods, first confirm that choices and submissions work. If the panel is unusable, open the original session and reply there.
@@ -172,7 +174,7 @@ Wait durations use milliseconds (ms); 1000 ms is one second. The ranges below de
 | `minWaitMs` | number | `20000` | 1..2147483647; fractions allowed | ms | Lower request bound for the next positive async_wait; zero-wait checks are exempt |
 | `maxWaitMs` | number | `600000` | 1..2147483647; fractions allowed | ms | Upper request bound for the next positive async_wait |
 | `pollIntervalMs` | number | `500` | 1..2147483647; fractions allowed | ms | Interval for fallback child-state checks, work rechecks in untargeted waits, and retries when a child is temporarily absent from the directory; all share the call's total budget |
-| `maxResultChars` | integer | `12000` | 1..1000000 | JS String.length | Results arriving together within one model input share one allowance; the allowance resets with each model input. See section 4 |
+| `maxResultChars` | integer | `12000` | 1..1000000 | JS String.length | Shared result-content accounting follows host step events; real-input limits and allowance recovery have limitations. See section 4 |
 
 All numbers must be finite and satisfy:
 
@@ -428,17 +430,19 @@ Zero-wait calls can also read unread increments from public running jobs with no
 
 ### Shortened output or deferred entries: continue reading
 
-For a result marked `truncated`, omitted middle sections, or deferred entries, use the zero-wait entry below after allowance becomes available in the next model step. Deferred content remains buffered; an allowance reset alone does not resend it, and a new job’s completion message does not guarantee inclusion of older content.
+For a result marked `truncated`, omitted middle sections, or deferred entries, use zero-wait once allowance is available. Deferred content stays buffered; an allowance reset alone does not resend it, and a new job’s completion message need not include older content.
 
 ```text
 async_wait(wait_ms=0)
 ```
 
-`maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes. **The allowance resets with each model input: the host opens a fresh full amount every time it composes a new model input, and the multiple results arriving within one input—first-wait direct returns, wait-return batch entries, and completion messages—draw on it together, first come first served.** Calls queued within the same step naturally belong to one model input and share that single allowance. Each batch has at most 10 entries, prioritizing the triggering target and then readiness order; empty entries also count.
+`maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes. The plugin uses the host’s step events to account for shared content. A batch has at most 10 entries, prioritizing the triggering target and then readiness order; empty entries count.
 
-Once this input's allowance is exhausted, further zero-wait calls within the same input return only status and deferral notices. **The next model input (the Agent's next step) starts with the allowance already reset**, so deferred middle sections and later entries can be collected then without any extra action. Do not retry in place once the allowance is exhausted: do other work or end the current step, let the host compose the next input, then call the zero-wait entry to read.
+**This setting cannot serve as a strict cap on one model input.** The host claims messages before asynchronous prompt assembly and then emits its step event. Controlled tests confirm that interleaved completion and wait cleanup can give content that should share accounting more than one allowance; behavior in real model requests still needs verification. Resetting accounting also does not rebuild an already-open batch’s balance, so the first zero-wait call in the next step can still defer content. That step is not a guaranteed collection deadline; permanent output loss has not been established.
 
-Status, necessary explanations, and retained paths are separate. Other sources and conversation history are outside this allowance too. Do not use `maxResultChars` to estimate the full model-input length; inspect actual requests when checking consumption.
+After processing the current return, try zero-wait in a later model step when content is still needed. If allowance remains unavailable, stop retrying in place, retain the job ID and deferral messages, do independent work or end the current phase, and ask the instance maintainer to investigate. This does not prove output loss; do not rerun a side-effecting task to recreate its result.
+
+Status, necessary explanations, retained paths, conversation history, and other sources are separate from the content allowance. Inspect actual requests when checking consumption.
 
 An oversized entry keeps its head and tail while its middle remains for later reading. Excess entries are deferred in full. Status, necessary error explanations, and retained-output paths are outside the body allowance. **Shortened display does not mean the content was lost.**
 
@@ -450,7 +454,7 @@ In normal delivery, each job's source is attached at most once, not again in lat
 
 ### A tool result may not have arrived: request a recovery copy
 
-If a call was canceled and the Agent did not receive the expected body, find its ID with `job_list` and name it in a zero-wait call. Recovery shares the per-model-input allowance described above; when this input's allowance is exhausted, deferred recovery content is likewise available in the next model input—no repeated retrying needed.
+If a call was canceled and the Agent did not receive the expected body, find its ID with `job_list` and name it in a zero-wait call. Recovery uses the same available content allowance as normal continuation. If it remains deferred, follow the steps above rather than assuming recovery is guaranteed in the next input.
 
 ```text
 async_wait(targets=[{kind:"job", id:"<original job_id>"}], wait_ms=0)
