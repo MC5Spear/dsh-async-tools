@@ -471,7 +471,8 @@ PATH 候选的身份探测结论按候选绝对路径在进程内缓存（路径
 spec = { provider: 后端名, label: description,
          request: { prompt: text 内容块列表, parent: 调用主体,
                     [cwd], [agentPreset],
-                    [agentOptions: { [provider], [model], [reasoningEffort] }] },
+                    [agentOptions: { [provider], [model], [reasoningEffort] }],
+                    [maxDepth] },
          signal: exec.signal, delivery: 'parent' }
 activation = { childId, [messageId], result, dispose }
 ```
@@ -509,7 +510,27 @@ activation = { childId, [messageId], result, dispose }
   读取失败与名单撤销使用不同词典键，中英文只陈述当次已证实的原因。查询结果（3.6）不是创建授权。
 - 已运行子代理不自动换模型、不停止。
 
-后端缺席、不支持 `startActivation`、后端没有 `prepareContinuable`、指定路由或推理强度而后端不支持 `agentOptions`、指定或配置了默认预设而后端不支持独立预设选择（无 `capabilities.agentPreset`，或后端 `inheritsParentContext` 不接受独立预设）、策略拒绝，都在派生前可读失败。保留可续后端要求，不能因宿主也能创建外部单次 activation 而扩大产品支持范围。创建阶段拒绝只报告实际错误，不返回虚构 child id；发布前的局部资源回收由宿主启动事务负责。
+**宿主委派深度上限的逐次解析与传递（AG-01）。** 每次派生在构造 request 前解析宿主生效的委派深度上限并传入创建请求。`maxDepth` 是宿主内部配置（用户级 volatile 设置 `subagent.maxDepth`，出厂默认 1、值域非负整数），不是本包公共参数（需求 2.3.1 参数表无对应项），本包不设行级 `maxDepth` 键、不产生 `'provider-managed'` 输入（那是宿主行级配置的语义）；自定义行配置里出现的 `maxDepth` 键按既有未知键纪律在解析时丢弃、不进入生效配置（5.1 根键清单封闭，schema 外键解析剥离），深度上限只来自宿主用户设置。机制如下：
+
+- **解析紧接启动前**：经 `ctx.subagents.resolveMaxDepth(undefined)` 现读，时点在支持预检、模型选择重读与后端复查之后、构造 request 之前。预检的 `resolveCallConfig` await 是 execute 中唯一的异步让出点，深度解析放在让出点之后，读取值与 request 携带值之间只剩同步代码——与启动前重读名单（上节）同一「紧接启动现读」逻辑；`resolveMaxDepth` 自身同步，不产生新让出点。解析结果不缓存、不跨调用复用，volatile 设置在两次调用之间的变化下次调用即生效。
+- **解析抛错的承接**：`resolveMaxDepth` 抛错（含持久化非法设置经宿主 `assertSubagentMaxDepth` 的 TypeError、宿主读取故障）转可读双语拒绝，零派生、不返回 child id；原错按 RA-ROBUSTNESS 先例单行化截断进模型侧 `{reason}`，完整原文经生命周期诊断出口进操作者日志（6.3）。
+- **逐次后端能力检查**：解析结果非 `undefined` 且 `provider.capabilities?.depthLimit !== true` 时可读双语拒绝，零派生、不返回 child id。检查发生在预检后端复查（确认后端未变的 `getProvider` 复查）之后，对象即 `startActivation` 将使用的同一后端。不沿用原生工具的装载期检查：原生的 `maxDepth` 来自行级静态配置（装载期已知，装载失败提示改用 `'provider-managed'`），本包的上限来自 volatile 用户设置、后端又可热替换（`subagent/provider-added`／`provider-removed`），装载期既拿不到逐次值也接不住后端变化，逐次检查与后端现读（`getProvider`）同点位。无 `depthLimit` 的可续后端在支持形态里不存在——spawn 后端声明全部启动期能力（含 `depthLimit: true`），进程外后端能力全 false 且已被可续前提（`prepareContinuable`）拒绝——本项是热替换与自定义后端形态的承接面。
+- **request 携带**：解析结果非 `undefined` 时以数值写入 `request.maxDepth`，与宿主原生工具同形（原生 execute 同为 `resolveMaxDepth` 解析后条件携带）。深度计算与超限判定完全由宿主承担：`delegationDepthOf` 取 `max(会话头 delegationDepth, 运行时 subagentDepth)` 作单调下限，恢复会话的持久头使深层代理不能按顶层再派生；`resolveChildDepth` 计算子深度，超过上限抛 `SubagentDepthError`。本包不自行计算深度。
+- **深度超限的承接**：`startActivation` 启动事务内抛出、经 `await` 以拒绝到达调用方的错误按 `error.name === 'SubagentDepthError'` 判别，命中时转可读双语拒绝，陈述实际尝试深度与上限，零派生、不返回 child id。识别不导入该类做 instanceof：`name` 是宿主错误构造器写死的契约字段，判别不依赖新增具名导入——peer 由宿主树解析（7.3）的形态下 instanceof 可靠，开发替身与跨树形态的模块双实例会使其静默失效，name 判别在全部装载形态下行为一致。错误的 `attemptedDepth`／`maxDepth` 字段缺席时退通用文案，不编造数字。其余 `startActivation` 抛错保持现状原样冒泡。
+- **不镜像原生 systemPrompt 深度警示**：本包两个预设里原生 subagent 工具被禁用、`async_agent` 是唯一委托入口，模型没有可换的第二入口；双语拒绝已陈述实际深度与上限，收到一次拒绝即完成引导（零值上限在首次调用即拒）。原生警示「到达上限时直接自己做」的出路并入拒绝文案，不为警示注册 systemPrompt 段（免引入新的作用域判定）。查询适用性（3.6.5）不把 `depthLimit` 列为后端前提：深度拒绝源于运行时设置与后端能力的组合，不是公开参数的执行能力，也不属 8.2.1-E「查询允许、创建拒绝」的行配置矛盾判据。
+
+词典键四条（`error.*` 命名空间，两语占位符一致）：
+
+- en `error.maxDepthResolveFailed`: 'resolving the host delegation-depth limit failed: {reason}; no subagent was started — fix the dsh "subagent.maxDepth" setting or retry the call'
+- en `error.noDepthLimit`: 'subagent provider "{provider}" cannot enforce the delegation-depth limit (no depthLimit capability); no subagent was started — check the async-tools setting \'subagentProvider\''
+- en `error.depthExceeded`: 'starting this subagent would reach delegation depth {attempted}, above the host limit {max}; no subagent was started — carry out the work directly, or state in your reply that deeper delegation is needed'
+- en `error.depthExceededGeneric`: 'starting this subagent would exceed the host delegation-depth limit; no subagent was started — carry out the work directly, or state in your reply that deeper delegation is needed'
+- zh `error.maxDepthResolveFailed`: '解析宿主委派深度上限失败：{reason}；未启动任何子代理——请修正 dsh 的 "subagent.maxDepth" 设置或重试调用'
+- zh `error.noDepthLimit`: '子代理后端 "{provider}" 无法执行委派深度上限（缺少 depthLimit 能力）；未启动任何子代理——请检查 async-tools 的设置项 \'subagentProvider\''
+- zh `error.depthExceeded`: '启动该子代理将达到委派深度 {attempted}，超过宿主上限 {max}；未启动任何子代理——请直接完成该工作，或在回复中说明需要更深的委派'
+- zh `error.depthExceededGeneric`: '启动该子代理将超过宿主委派深度上限；未启动任何子代理——请直接完成该工作，或在回复中说明需要更深的委派'
+
+后端缺席、不支持 `startActivation`、后端没有 `prepareContinuable`、指定路由或推理强度而后端不支持 `agentOptions`、指定或配置了默认预设而后端不支持独立预设选择（无 `capabilities.agentPreset`，或后端 `inheritsParentContext` 不接受独立预设）、策略拒绝、深度上限解析失败、后端无 `depthLimit` 能力、委派深度超限，都在派生前可读失败。保留可续后端要求，不能因宿主也能创建外部单次 activation 而扩大产品支持范围。创建阶段拒绝只报告实际错误，不返回虚构 child id；发布前的局部资源回收由宿主启动事务负责。
 
 成功回执立即包含 `started`、`agent_id`（下文 child id 即此字段值）、实际生效路由及有界等待指引（需求 2.3.1）。核验回执时，比较实际子请求与目标宿主 `resolveChildAgentOptions` 的合并结果，不只比较提示字符串。
 
@@ -533,7 +554,7 @@ activation = { childId, [messageId], result, dispose }
 - 返回对象取得后立即为 `result` 注册成功与拒绝处理，不延长启动回执。`result` 在宿主结算清理及通知处理后落定，但 resolve 不证明父主体已收到消息，也不证明清理没有失败；宿主可以保留已捕获结果并另行报告清理错误。`result` 只是观察通道：正常结算不在工具结果里重复交付答案；非正常 `stopReason` 不冒称成功；捕获等基础设施故障导致的拒绝经生命周期诊断出口报告，附准确 child id，不伪装成创建失败、成功结算或已通知父会话。处理回调本身及其派生 Promise 的拒绝也必须承接；诊断不依赖工具行仍在场，不建立无限期结果缓存。
 - `dispose()` 是停止并释放这一次 activation 及所拥有后代的异步操作，不是「放下回执」。自然结算由宿主自动释放，本包不需要为了避免泄漏而立即调用它。显式停止仍走宿主管理入口；若后续正式设计确需直接调用 `dispose`，必须限定确切 activation、明确停止授权并 await 或承接释放失败，不能按 child id 缓存旧句柄去停止同 id 的后续恢复。
 
-静态依据分两档记录：`SubagentActivationSpec`／`SubagentActivation`／`startActivation` 的规格与回执形状已在 `0.2.2-rc.1` 树复核一致（可选 `childId` 预留路径为两树一致的既有机制——rc.5 与 rc.1 的声明、取值回退与 continuable 后端约束同形，本包不传、不受影响；见 3.3 前段与 7.3③）；管理器内部件 `startLocal`／`watchLocalSettlement`／`finishDisposal`／`receipt` 的自然释放路径尚未在 rc.1 重核，仍按 dsh `0.2.1-rc.4` 安装树的在场核对与「待验证」口径记录（两档并存、互不顶替）。立返时序、发布边界取消、拒绝诊断与实际父会话投递在目标宿主上仍待验证。
+静态依据分两档记录：`SubagentActivationSpec`／`SubagentActivation`／`startActivation` 的规格与回执形状已在 `0.2.2-rc.1` 树复核一致（可选 `childId` 预留路径为两树一致的既有机制——rc.5 与 rc.1 的声明、取值回退与 continuable 后端约束同形，本包不传、不受影响；见 3.3 前段与 7.3③）；管理器内部件 `startLocal`／`watchLocalSettlement`／`finishDisposal`／`receipt` 的自然释放路径尚未在 rc.1 重核，仍按 dsh `0.2.1-rc.4` 安装树的在场核对与「待验证」口径记录（两档并存、互不顶替）。深度机制的静态依据为 `resolveMaxDepth`（服务方法；volatile 设置 `subagent.maxDepth` 出厂为非负整数、默认 1）、`assertSubagentMaxDepth`、`resolveChildDepth`、`delegationDepthOf`、`SubagentDepthError`（`name` 固定、`attemptedDepth`／`maxDepth` 字段）与 `assertCapabilities` 的 `depthLimit` 分支：`0.2.1-rc.5` 安装树逐项核读，`0.2.2-rc.1` 侧接口同形，逐项静态核读随实现轮在 rc.1 官方安装件补齐；`SubagentDepthError` 的识别不依赖具名导入（name 判别，3.3 深度小节），rc.1 侧类导出的在场性不构成本包装载前提。立返时序、发布边界取消、拒绝诊断与实际父会话投递在目标宿主上仍待验证。
 
 [策略形状](<../lib/agent-policy.js>)的目标定位：派生路径不注册同键投影、不执行会话采样——不得以不同 fold、stateVersion 或 schema 重定义宿主 `subagentModelSelectionPolicy` 投影，也不得追加采样改变原生工具的会话策略。宿主策略定义的形状副本仅在 3.6 解读原生会话投影确需形状依据时保留为纯形状参考，不承担派生采样职责。现行[策略一致性检查](<../verify/check-agent-policy.mjs>)以固定锚集核对形状副本与宿主定义逐字同形（锚内文本任一侧变动即红，锚外漂移不红），并以回归断言固定「无投影注册、无采样」的现行事实。静态同形不代替实际指定路由验证，路由验证按第 8 章。
 
@@ -1324,6 +1345,18 @@ jobs 注册越过生产者／控制器 fiber，owner ctx 处置或作业服务 t
 - 允许名单派生条目也经过同一 `query`。未列供应商的供应商内搜索无匹配时，返回空页且没有本页示例。
 - 原生身份必须同时有会话投影与调用方作用域 `tool:<名>` 非空组稿段；`systemPrompt` 缺席或组稿抛错时报告读取失败／未确认。
 - 同名遮蔽时未确认且无适用示例；真正原生工具的身份、参数、策略三段证据齐备时保持 allowed。
+
+**8.2.1-H 委派深度上限（AG-01，3.3）**
+
+受控装置在 [test/agent.test.mjs](<../test/agent.test.mjs>)：假 `subagents` 服务补 `resolveMaxDepth` 伪造点（逐次脚本式取值，与假模型选择服务同款），`startActivation` 可按宿主契约模拟抛 `SubagentDepthError`。判据：
+
+- 解析与携带：`resolveMaxDepth` 恰以 `undefined` 实参调用、每次 execute 恰一次；返回数值（含 0）时 `request.maxDepth` 携带同值，返回 `undefined` 时 request 无该键且不做能力检查（与宿主 `assertCapabilities` 的条件同形）。解析发生在预检（如有）与启动前重读之后、`startActivation` 之前（次序断言）。
+- 热变更：两次调用间脚本值 1→0 变化，第二次按新值拒绝或放行，不用首调用的缓存。
+- 后端能力：后端 `capabilities` 无 `depthLimit`（或缺席、为 false）且解析值为数值时按 `error.noDepthLimit` 拒绝、零 `startActivation` 调用；解析值为 `undefined` 时同后端照常派生。
+- 解析抛错：伪造 `resolveMaxDepth` 抛 TypeError，`error.maxDepthResolveFailed` 文案含单行化原因、操作者日志（stderr）含完整原文、零派生。
+- 深度超限承接：假 `startActivation` 抛 `name:'SubagentDepthError'`（带 `attemptedDepth`／`maxDepth`）时按 `error.depthExceeded` 拒绝，文案含实际尝试深度与上限，不返回 child id；字段缺席形态用 `error.depthExceededGeneric` 通用文案且不出现编造数字；`name` 不匹配的其他错误（如 `SubagentError`）原样冒泡不改写。
+- 深度计算（宿主行为，受控模拟与真机两档）：受控以假父代理造 `header.delegationDepth`／`options.subagentDepth`，断言只及本包职责——request 携带解析值；宿主按 `max(头深度, 运行时深度)+1` 判定由受控的假 `startActivation` 按契约模拟（根代理默认上限 1 放行、深层代理抛 `SubagentDepthError`、零值上限首次即拒）。真机按 8.2「子代理和路由」行逐台核对：零值全拒、默认 1 根可派深层拒、恢复会话按持久头深度保持、volatile 设置两次调用间变化现读生效、各精确宿主逐台实测（0.2.2 线当前集合为 `0.2.2-rc.1` 单值）。
+- 文案完整性：四个新键（`error.maxDepthResolveFailed`／`error.noDepthLimit`／`error.depthExceeded`／`error.depthExceededGeneric`）en／zh 键集相同、占位符一致（5.6 语义验证口径）。
 
 #### 8.2.2 实时策略测试清单
 

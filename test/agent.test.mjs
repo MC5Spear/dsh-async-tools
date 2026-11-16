@@ -3,7 +3,7 @@
  * §2.3.1 公共参数兼容、§2.3.2 模型选择实时口径）。
  *
  * 假件纪律：
- * - 假 `subagents` 只实现被测代码真正调用的 `getProvider` / `startActivation`；
+ * - 假 `subagents` 只实现被测代码真正调用的 `getProvider` / `resolveMaxDepth` / `startActivation`；
  * - **前台 `start` 是哨兵**：记录调用并抛可读错误——实现改走前台路径时，
  *   红因一目了然而不是泛型 TypeError；
  * - **回执形状与宿主 `SubagentActivation` 一致**：`{ childId, result, dispose }`；
@@ -24,6 +24,7 @@ import assert from 'node:assert/strict';
 import { hostTestByProbe, hostTestFor, loadOfflineSafe } from './_host-gate.mjs';
 import { resolveConfig } from '../lib/config.js';
 import { makeConfigView } from '../lib/config-view.js';
+import { TEXT } from '../lib/text.js';
 import { validateJsonSchemaValue, checkedTool } from './_helpers.mjs';
 
 // 宿主链动态守卫：`lib/agent.js`（→ dsh-tools / dsh-subagent）与 `lib/index.js`
@@ -52,10 +53,14 @@ const ROUTES = [
  *   （首读／重读逐项消费，耗尽后重复末项——开关中途翻转的可失败判据）。
  * @param {object} [options.rowConfig] 行级委托键（agentOptions/agentPreset/
  *   allowedAgentPresets——自定义行形态，需求 §2.3.1）。
+ * @param {number|Array} [options.maxDepth] 宿主深度上限解析脚本（§3.3 AG-01）：
+ *   数值=恒定返回；数组=逐次脚本（耗尽后重复末项）；缺省=undefined——宿主真实
+ *   缺省是 1，受控缺省走 undefined 以保持既有用例的 request 形状断言不变，数值
+ *   路径（含 0）由显式脚本触发；抛错形态由用例直接覆写 resolveMaxDepth。
  * @param {string} [options.llmMode] 'ok'（默认）｜'absent'｜'reject'。
  * @returns {object} 环境与探针。
  */
-function agentEnv({ providers, selection = { enabled: true, allowedModels: ROUTES }, rowConfig, llmMode = 'ok' } = {}) {
+function agentEnv({ providers, selection = { enabled: true, allowedModels: ROUTES }, rowConfig, llmMode = 'ok', maxDepth } = {}) {
   const registry = providers ?? {
     spawn: {
       name: 'spawn',
@@ -66,6 +71,7 @@ function agentEnv({ providers, selection = { enabled: true, allowedModels: ROUTE
   };
   const getProviderQueries = [];
   const activations = [];
+  const resolveMaxDepthCalls = [];
   /** 每次派生的 result 落定器（resolve/reject），测试按需驱动观察通道两分支。 */
   const settlers = [];
   /** dispose 哨兵记录：本包任何路径不得调用（设计 §3.3）。 */
@@ -79,6 +85,17 @@ function agentEnv({ providers, selection = { enabled: true, allowedModels: ROUTE
     getProvider(name) {
       getProviderQueries.push(name);
       return Object.prototype.hasOwnProperty.call(registry, name) ? registry[name] : undefined;
+    },
+    // 假深度上限解析（§3.3 AG-01）：逐次脚本式，与假模型选择服务同款；记录实参
+    // 供「恰以 undefined 调用、每次一次」判据使用。
+    resolveMaxDepth(configured) {
+      resolveMaxDepthCalls.push(configured);
+      if (Array.isArray(maxDepth)) {
+        const item = maxDepth[Math.min(resolveMaxDepthCalls.length - 1, maxDepth.length - 1)];
+        if (item instanceof Error) throw item;
+        return item;
+      }
+      return maxDepth;
     },
     async startActivation(call) {
       activations.push(call);
@@ -152,6 +169,7 @@ function agentEnv({ providers, selection = { enabled: true, allowedModels: ROUTE
     view,
     getProviderQueries,
     activations,
+    resolveMaxDepthCalls,
     settlers,
     disposeCalls,
     foregroundStarts,
@@ -784,6 +802,280 @@ hostTest('async_agent：getProvider 抛错 → providerQueryFailed 承载原始�
     (error) => error.message.includes('查询子代理后端 "spawn" 失败：boom-zh'),
     'zh 档承接文案'
   );
+});
+
+// ── AG-01 宿主委派深度上限（设计 §3.3、8.2.1-H）───────────────────────────
+/** 声明 depthLimit 的可续后端（矩阵里数值上限路径的注册表形态）。 */
+const DEPTH_PROVIDERS = {
+  spawn: {
+    name: 'spawn',
+    prepareContinuable() {},
+    capabilities: { agentOptions: true, agentPreset: true, depthLimit: true }
+  }
+};
+
+hostTest('async_agent：深度上限逐次解析——恰以 undefined 实参、每次恰一次；数值（含 0）条件携带、undefined 无键且不做能力检查', async () => {
+  {
+    const env = agentEnv({ providers: DEPTH_PROVIDERS, maxDepth: 2 });
+    await createAgentTool(env.ctx, env.view).execute({ description: 'x', prompt: 'y' }, EXEC);
+    assert.deepEqual(env.resolveMaxDepthCalls, [undefined], '实参恰为 undefined、每次 execute 恰一次');
+    assert.equal(env.activations.length, 1, '数值上限照常派生');
+    assert.equal(env.activations[0].request.maxDepth, 2, '解析值写入 request.maxDepth');
+  }
+  {
+    // 零值合法（宿主值域非负整数）：照常携带；宿主侧首调即拒是宿主行为（真机档核对）。
+    const env = agentEnv({ providers: DEPTH_PROVIDERS, maxDepth: 0 });
+    await createAgentTool(env.ctx, env.view).execute({ description: 'x', prompt: 'y' }, EXEC);
+    assert.equal(env.activations[0].request.maxDepth, 0, '零值照常携带');
+  }
+  {
+    // undefined → request 无该键；无 depthLimit 能力的默认后端照常派生——能力检查
+    // 与宿主 assertCapabilities 同为条件式，undefined 不触发。
+    const env = agentEnv();
+    await createAgentTool(env.ctx, env.view).execute({ description: 'x', prompt: 'y' }, EXEC);
+    assert.ok(!('maxDepth' in env.activations[0].request), 'undefined → request 无该键');
+    assert.equal(env.activations.length, 1, '无 depthLimit 能力的默认 spawn 照常派生');
+    assert.deepEqual(env.resolveMaxDepthCalls, [undefined]);
+  }
+});
+
+hostTest('async_agent：深度上限热变更——脚本 1→0，第二次按新值执行，不用首调用缓存', async () => {
+  const env = agentEnv({ providers: DEPTH_PROVIDERS, maxDepth: [1, 0] });
+  const tool = createAgentTool(env.ctx, env.view);
+  await tool.execute({ description: 'a', prompt: 'b' }, EXEC);
+  await tool.execute({ description: 'c', prompt: 'd' }, EXEC);
+  assert.equal(env.activations[0].request.maxDepth, 1, '第一次按脚本首项');
+  assert.equal(env.activations[1].request.maxDepth, 0, '第二次按新值执行（volatile 现读，不缓存）');
+});
+
+hostTest('async_agent：解析时点——预检、启动前重读、后端复查之后，startActivation 之前（次序断言）', async () => {
+  const env = agentEnv({ providers: DEPTH_PROVIDERS, maxDepth: 1 });
+  const order = [];
+  const selection = env.ctx.get('subagentModelSelection');
+  const origCurrent = selection.current.bind(selection);
+  selection.current = () => { order.push('selection'); return origCurrent(); };
+  env.ctx.get('llm').resolveCallConfig = async (config, signal) => { order.push('preflight'); return { config, signal }; };
+  // 后端查询插桩：键集计算／步 6 首查／步 11 尾复查等全部经 getProvider——
+  // 每次都记点（低-2：「后端复查之后」有直接判据：深度解析晚于最后一次查询）。
+  const origGetProvider = env.ctx.subagents.getProvider.bind(env.ctx.subagents);
+  env.ctx.subagents.getProvider = (name) => {
+    order.push('provider');
+    return origGetProvider(name);
+  };
+  env.ctx.subagents.resolveMaxDepth = (configured) => { order.push('depth'); return 1; };
+  const origStart = env.ctx.subagents.startActivation.bind(env.ctx.subagents);
+  env.ctx.subagents.startActivation = async (call) => { order.push('start'); return origStart(call); };
+  // 显式路由触发完整链：步 5 首读 → 步 11 预检（唯一让出点）→ 步 11 尾后端
+  // 复查 → 步 12 重读 → 步 12b 深度 → startActivation。
+  await createAgentTool(env.ctx, env.view).execute(
+    { description: 'x', prompt: 'y', provider: 'zai', model: 'glm-5.3' }, EXEC
+  );
+  const depthAt = order.indexOf('depth');
+  assert.ok(depthAt > order.lastIndexOf('provider'), '深度解析在最后一次后端查询（步 11 尾复查）之后');
+  assert.ok(order.indexOf('preflight') < depthAt, '深度解析在预检让出点之后');
+  assert.equal(order.filter((item) => item === 'selection').length, 2, '策略恰两读（步 5 首读＋步 12 重读）');
+  assert.ok(order.lastIndexOf('selection') < depthAt, '深度解析在启动前重读之后');
+  assert.equal(depthAt, order.length - 2, '深度解析紧邻 startActivation——读取值与携带值之间只剩同步代码');
+  assert.equal(order.at(-1), 'start', 'startActivation 是最后一环');
+});
+
+hostTest('async_agent：深度计算受控契约模拟——假 startActivation 复刻 resolveChildDepth 契约（根放行／深层拒／恢复会话持久头为底／零值首调即拒）', async () => {
+  // 矩阵 8.2.1-H 第 6 条后半句的受控半边：假父代理造 header.delegationDepth／
+  // options.subagentDepth，假 startActivation 按宿主契约模拟深度判定
+  // （max(头,运行时)+1 > maxDepth ⇒ name:'SubagentDepthError' 带 attemptedDepth／
+  // maxDepth 字段——与真实实现同形）。真机档由逐台探针对真实函数执行同一
+  // 契约（.local/runtime/dev-roles/probe-ag01.mjs，五台各 29/29）。
+  let spawns = 0;
+  const mkExec = (headerDepth, runtimeDepth) => ({
+    agent: {
+      id: `parent-${headerDepth}-${runtimeDepth ?? 'x'}`,
+      options: runtimeDepth === undefined ? {} : { subagentDepth: runtimeDepth },
+      session: {
+        header: headerDepth === undefined ? {} : { delegationDepth: headerDepth },
+        requestHeader() { return { config: { provider: 'deepseek-official', model: 'deepseek-flash' } }; }
+      }
+    }
+  });
+  const env = agentEnv({ providers: DEPTH_PROVIDERS, maxDepth: 1 });
+  env.ctx.subagents.startActivation = async (call) => {
+    const parent = call.request.parent;
+    const runtime = parent.options?.subagentDepth;
+    const base = Math.max(parent.session?.header?.delegationDepth ?? 0, runtime ?? 0);
+    const attempted = base + 1;
+    if (call.request.maxDepth !== undefined && attempted > call.request.maxDepth) {
+      throw Object.assign(
+        new Error(`subagent depth ${attempted} exceeds maxDepth ${call.request.maxDepth}`),
+        { name: 'SubagentDepthError', attemptedDepth: attempted, maxDepth: call.request.maxDepth }
+      );
+    }
+    spawns += 1;
+    return { childId: `contract-child-${spawns}`, result: new Promise(() => {}), dispose() {} };
+  };
+  const tool = createAgentTool(env.ctx, env.view);
+
+  // 默认上限 1：根代理（无头无运行时）派生成功。
+  const root = await tool.execute({ description: 'x', prompt: 'y' }, mkExec(undefined, undefined));
+  assert.equal(root.status, 'started', '根代理默认上限 1 放行');
+
+  // 深层代理（头 1＋运行时 1）→ attempted 2 > 1 → depthExceeded(2/1)。
+  await assert.rejects(
+    tool.execute({ description: 'x', prompt: 'y' }, mkExec(1, 1)),
+    (error) => error.message.includes('would reach delegation depth 2') && error.message.includes('above the host limit 1'),
+    '深层代理按 2/1 拒绝'
+  );
+
+  // 恢复会话持久头为底：运行时已回浅（0），头仍 2 → attempted 3 > 1。
+  await assert.rejects(
+    tool.execute({ description: 'x', prompt: 'y' }, mkExec(2, 0)),
+    (error) => error.message.includes('would reach delegation depth 3') && error.message.includes('above the host limit 1'),
+    '持久头深度为底不得按运行时回浅'
+  );
+
+  // 运行时可加深：头 0＋运行时 2 → attempted 3 > 1。
+  await assert.rejects(
+    tool.execute({ description: 'x', prompt: 'y' }, mkExec(0, 2)),
+    (error) => error.message.includes('would reach delegation depth 3'),
+    '运行时深度加深计入'
+  );
+
+  // 零值上限：首次调用即拒（attempted 1 > 0），零派生。
+  const envZero = agentEnv({ providers: DEPTH_PROVIDERS, maxDepth: 0 });
+  let zeroSpawns = 0;
+  envZero.ctx.subagents.startActivation = async (call) => {
+    const parent = call.request.parent;
+    const attempted = Math.max(parent.session?.header?.delegationDepth ?? 0, parent.options?.subagentDepth ?? 0) + 1;
+    if (call.request.maxDepth !== undefined && attempted > call.request.maxDepth) {
+      throw Object.assign(
+        new Error(`subagent depth ${attempted} exceeds maxDepth ${call.request.maxDepth}`),
+        { name: 'SubagentDepthError', attemptedDepth: attempted, maxDepth: call.request.maxDepth }
+      );
+    }
+    zeroSpawns += 1;
+    return { childId: `zero-child-${zeroSpawns}`, result: new Promise(() => {}), dispose() {} };
+  };
+  await assert.rejects(
+    createAgentTool(envZero.ctx, envZero.view).execute({ description: 'x', prompt: 'y' }, mkExec(undefined, undefined)),
+    (error) => error.message.includes('would reach delegation depth 1') && error.message.includes('above the host limit 0'),
+    '零值上限首调即拒（受控模拟承接，非仅携带断言）'
+  );
+  assert.equal(zeroSpawns, 0, '零值首调零派生');
+  assert.equal(spawns, 1, '默认档仅根代理派生一次（四拒绝零派生）');
+});
+
+hostTest('async_agent：无 depthLimit 后端＋数值上限 → noDepthLimit 可读拒绝、零派生；undefined 形态同后端照常派生', async () => {
+  const providers = {
+    spawn: { name: 'spawn', prepareContinuable() {}, capabilities: { agentOptions: true, agentPreset: true } }
+  };
+  const env = agentEnv({ providers, maxDepth: 1 });
+  await assert.rejects(
+    createAgentTool(env.ctx, env.view).execute({ description: 'x', prompt: 'y' }, EXEC),
+    (error) => error.message.includes('subagent provider "spawn" cannot enforce the delegation-depth limit')
+      && error.message.includes('no subagent was started')
+  );
+  assert.deepEqual(env.activations, [], '零 startActivation 调用');
+  const envZh = agentEnv({ providers, maxDepth: 1 });
+  envZh.setConfig({ agentLang: 'zh' });
+  await assert.rejects(
+    createAgentTool(envZh.ctx, envZh.view).execute({ description: 'x', prompt: 'y' }, EXEC),
+    (error) => error.message.includes('子代理后端 "spawn" 无法执行委派深度上限')
+  );
+  // 同一后端在 undefined 形态照常派生——能力检查逐次、只在数值在场时触发。
+  const envPass = agentEnv({ providers });
+  const result = await createAgentTool(envPass.ctx, envPass.view).execute({ description: 'x', prompt: 'y' }, EXEC);
+  assert.equal(result.status, 'started', 'undefined 形态同后端照常派生');
+});
+
+hostTest('async_agent：resolveMaxDepth 抛错 → maxDepthResolveFailed 含单行化原因、stderr 完整原文、零派生', async () => {
+  const env = agentEnv({ providers: DEPTH_PROVIDERS });
+  env.ctx.subagents.resolveMaxDepth = () => {
+    throw new TypeError('subagent.maxDepth must be a non-negative integer\nat assertSubagentMaxDepth');
+  };
+  let caught;
+  const captured = await captureStderr(async () => {
+    try {
+      await createAgentTool(env.ctx, env.view).execute({ description: 'x', prompt: 'y' }, EXEC);
+    } catch (error) {
+      caught = error;
+    }
+  });
+  assert.ok(caught instanceof Error, '可读错误拒绝');
+  assert.ok(caught.message.includes('resolving the host delegation-depth limit failed'), 'maxDepthResolveFailed 口径');
+  assert.ok(caught.message.includes('subagent.maxDepth must be a non-negative integer'), '{reason} 承载原始错误文本');
+  assert.ok(!/[\r\n\t]/.test(caught.message), '模型侧单行化');
+  assert.ok(caught.message.includes('fix the dsh "subagent.maxDepth" setting'), '指路设置修正');
+  assert.deepEqual(env.activations, [], '零派生');
+  const notice = captured.split('\n').find((line) => line.includes('子代理委派深度上限解析失败'));
+  assert.ok(notice !== undefined, '操作者日志有一行承接通告');
+  assert.ok(notice.includes('at assertSubagentMaxDepth'), 'stderr 携带完整原文（转义后仍在同一行）');
+  // zh 档两语齐：
+  const envZh = agentEnv({ providers: DEPTH_PROVIDERS });
+  envZh.setConfig({ agentLang: 'zh' });
+  envZh.ctx.subagents.resolveMaxDepth = () => { throw new TypeError('depth setting unreadable'); };
+  await assert.rejects(
+    createAgentTool(envZh.ctx, envZh.view).execute({ description: 'x', prompt: 'y' }, EXEC),
+    (error) => error.message.includes('解析宿主委派深度上限失败') && error.message.includes('depth setting unreadable'),
+    'zh 档承接文案'
+  );
+});
+
+hostTest('async_agent：SubagentDepthError 承接——字段在场含实际深度与上限；字段缺席退通用文案不编造数字；name 不匹配原样冒泡', async () => {
+  const depthError = () => Object.assign(
+    new Error('subagent depth 2 exceeds maxDepth 1'),
+    { name: 'SubagentDepthError', attemptedDepth: 2, maxDepth: 1 }
+  );
+  const env = agentEnv({ providers: DEPTH_PROVIDERS, maxDepth: 1 });
+  env.ctx.subagents.startActivation = async () => { throw depthError(); };
+  await assert.rejects(
+    createAgentTool(env.ctx, env.view).execute({ description: 'x', prompt: 'y' }, EXEC),
+    (error) => error.message.includes('would reach delegation depth 2')
+      && error.message.includes('above the host limit 1')
+      && error.message.includes('carry out the work directly'),
+    'depthExceeded 含实际深度与上限（en 档）'
+  );
+  const envZh = agentEnv({ providers: DEPTH_PROVIDERS, maxDepth: 1 });
+  envZh.setConfig({ agentLang: 'zh' });
+  envZh.ctx.subagents.startActivation = async () => { throw depthError(); };
+  await assert.rejects(
+    createAgentTool(envZh.ctx, envZh.view).execute({ description: 'x', prompt: 'y' }, EXEC),
+    (error) => error.message.includes('将达到委派深度 2') && error.message.includes('超过宿主上限 1'),
+    'depthExceeded（zh 档）'
+  );
+  // 字段缺席：通用文案、不编造数字。
+  const envGeneric = agentEnv({ providers: DEPTH_PROVIDERS, maxDepth: 1 });
+  envGeneric.ctx.subagents.startActivation = async () => {
+    throw Object.assign(new Error('subagent depth exceeds maxDepth'), { name: 'SubagentDepthError' });
+  };
+  await assert.rejects(
+    createAgentTool(envGeneric.ctx, envGeneric.view).execute({ description: 'x', prompt: 'y' }, EXEC),
+    (error) => error.message.includes('would exceed the host delegation-depth limit') && !/[0-9]/.test(error.message),
+    'depthExceededGeneric：通用文案、无编造数字'
+  );
+  // name 不匹配的启动错误原样冒泡（宿主数据损坏形态不由本包改写）。
+  const envPassthrough = agentEnv({ providers: DEPTH_PROVIDERS, maxDepth: 1 });
+  envPassthrough.ctx.subagents.startActivation = async () => {
+    throw Object.assign(new Error('boom-start'), { name: 'SubagentError' });
+  };
+  await assert.rejects(
+    createAgentTool(envPassthrough.ctx, envPassthrough.view).execute({ description: 'x', prompt: 'y' }, EXEC),
+    (error) => error.message === 'boom-start',
+    'name 不匹配 → 原样冒泡不改写'
+  );
+});
+
+hostTest('async_agent：四个深度词典键 en/zh 键集相同、占位符一致（8.2.1-H 文案完整性）', () => {
+  const placeholders = (text) => [...String(text).matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(',');
+  const KEYS = {
+    'error.maxDepthResolveFailed': 'reason',
+    'error.noDepthLimit': 'provider',
+    'error.depthExceeded': 'attempted,max',
+    'error.depthExceededGeneric': ''
+  };
+  for (const [key, expected] of Object.entries(KEYS)) {
+    assert.ok(typeof TEXT.en[key] === 'string' && TEXT.en[key].length > 0, `en 键在场：${key}`);
+    assert.ok(typeof TEXT.zh[key] === 'string' && TEXT.zh[key].length > 0, `zh 键在场：${key}`);
+    assert.equal(placeholders(TEXT.en[key]), expected, `en 占位符恰为 {${expected}}：${key}`);
+    assert.equal(placeholders(TEXT.zh[key]), expected, `zh 占位符恰为 {${expected}}：${key}`);
+  }
 });
 
 hostTest('async_agent：预检拒绝保留单行化原因＋查询指引（含目标工具条件），完整原因进 stderr（A-F07）', async () => {
