@@ -12,7 +12,7 @@ This third-party plugin is unaffiliated with DeepSeek. It is personally maintain
 
 ## Before installing
 
-**An earlier build of this candidate had an issue that could prevent Agent model steps from continuing normally (a step listener truncating the event chain); it is fixed in this candidate's source. Do not use it for production tasks until it is revalidated.** The table lists versions the package declares admissible, not proof that the candidate is usable. Before testing, confirm an accessible exact commit or artifact with the maintainer, use an isolated instance, and retain the source: the same version number can identify different source revisions. The branch address below works only when that branch has been published and is accessible; an unuploaded local commit cannot serve as a remote source.
+**The current 0.2.10 candidate has not passed release acceptance. Do not use it for production tasks.** The table lists the package's declared host versions, not proof that every behavior has been verified. Before testing, confirm an accessible exact commit or artifact with the maintainer, use an isolated instance, and retain the source: the same version number can identify different source revisions. The branch address below works only when that branch has been published and is accessible; an unuploaded local commit cannot serve as a remote source.
 
 | Component | Current applicable version |
 | --- | --- |
@@ -23,7 +23,9 @@ This third-party plugin is unaffiliated with DeepSeek. It is personally maintain
 
 Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Before relying on these environments, check the features needed in a separate test session.
 
-For IME, screen-reader, or touch-based answers, and recovery after a canceled tool call, read [usage limits and saving results](<docs/user-reference.en.md#usage-limits-and-saving-results>). If another plugin's job settled before this package began observing it, `async_wait` first checks the body's location. Where the native reader is hidden, it attempts to retrieve the original notification component's retained copy. A retrieved body follows normal delivery. If no copy is obtained, keep the job ID and explanation and follow the [result-reading limits](<docs/user-reference.en.md#usage-limits-and-saving-results>) for assistance; do not repeat a side-effecting task to recreate its result.
+For IME, screen-reader, or touch-based answers, and recovery after a canceled tool call, read [usage limits and saving results](<docs/user-reference.en.md#usage-limits-and-saving-results>). The current `async_agent` does not apply the host's configured delegation-depth limit. Until repaired and verified, do not use it for tasks that must rely on that limit to constrain recursive delegation. See [child-creation limits](<docs/user-reference.en.md#33-async_agent>).
+
+If another plugin's job settled before this package began observing it, `async_wait` first checks the body's location. Where the native reader is hidden, it attempts to retrieve the original notification component's retained copy. A retrieved body follows normal delivery. If no copy is obtained, keep the job ID and explanation and follow the [result-reading limits](<docs/user-reference.en.md#usage-limits-and-saving-results>) for assistance; do not repeat a side-effecting task to recreate its result.
 
 ## Install and confirm loading
 

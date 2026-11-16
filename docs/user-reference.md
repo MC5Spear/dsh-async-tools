@@ -11,7 +11,7 @@
 
 ## 1. 安装身份与前提
 
-**当前候选此前存在会使 Agent 模型步骤无法正常继续的问题（步骤监听截断事件链），已在本候选源码中修复；重新验收完成前，不要用于正式任务。** 下表列出包声明允许加载的版本，不代表候选已经可用。测试前先向维护者确认可取得的准确提交或安装件，在隔离实例中验证，并保留相匹配的源码；相同版本号可能对应不同实现。远端安装步骤仅适用于已经公开且可访问的分支或提交，本地未上传的提交不能作为远端来源。
+**当前 0.2.10 候选尚未通过发布验收，不要用于正式任务。** 下表列出包声明允许加载的版本，不代表全部行为已经验证。测试前先向维护者确认可取得的准确提交或安装件，在隔离实例中验证，并保留匹配源码；相同版本号可能对应不同实现。远端安装步骤仅适用于已经公开且可访问的分支或提交，尚未上传的本地提交不能作为远端来源。
 
 | 项目 | 当前适用版本 |
 | --- | --- |
@@ -191,7 +191,7 @@ min 值不是工具必须等满的时间。任务完成或收到适用消息时�
 | `uiLang` | enum | `auto` | auto / zh / en | — | 本包设置页和待答面板语言；auto 跟随宿主 |
 | `agentLang` | enum | `en` | en / zh | — | 本包工具说明、结果和操作要求的语言，与 uiLang 独立 |
 | `silentFailureGuard` | boolean | `false` | true / false | — | 名单内会话的命令静默失败诊断与提示，见第 6 节 |
-| `workflowProgressLog` | boolean | `false` | true / false | — | 编排结果中是否向 Agent 保留阶段进度行，不改变界面原始记录 |
+| `workflowProgressLog` | boolean | `false` | true / false | — | 后台作业结果是否向 Agent 提供阶段进度行；首次等待内直接完成只返回最终结果，不附这些日志，界面原始记录不变 |
 | `fullCommandEcho` | boolean | `false` | true / false | — | 新交付批次是否向 Agent 附命令或脚本原文，与正文共享长度额度，见第 4 节 |
 
 #### 提问与适用预设
@@ -281,13 +281,17 @@ min 值不是工具必须等满的时间。任务完成或收到适用消息时�
 
 所有目标先一起校验。某个 ID 无效会拒绝整次调用，先修正目标再等：作业查无时用 `job_list` 核对编号；清单读取失败则重查原目标，不要新建任务。子代理刚创建、目录暂时查无时，正等待可在总预算内重查，至多三个查询周期；零等待不重试。
 
-返回中的 `status` 解释见第 4 节。`waited_ms` 是实际检查和等待耗时；`targets` 提供各目标状态，可见文本至多展示 8 行，更多目标报告数量。作业正文在 `output` 中，同批其他作业在 `outputs` 中，`delivered` 提供交付批次信息。
+返回中的 `status` 解释见第 4 节。`waited_ms` 是实际检查和等待耗时；`targets` 提供各目标状态，可见文本至多展示 8 行，更多目标报告数量。
+
+作业正文的位置取决于返回分支：由已终态作业触发的 `completed`、`failed` 或 `killed` 返回，把触发作业的正文放在 `output`；同批其他作业在 `outputs[*].text` 中。无目标返回或运行中作业的零等待增量，则只通过 `outputs[*].text` 提供正文，不一定有顶层 `output`。`delivered` 提供交付批次信息，不能代替正文。
 
 查询、重试和等待共用本次预算，不逐段重新计时。零等待也要检查状态，可能耗时，全部检查共用 1000 ms 窗口；没能完成的查询标为 `unconfirmed`。正等待预留 300 ms 的调度容差，不能作为精确定时器使用。
 
 ### 3.3 async_agent
 
 在后台创建可续谈的子代理，启动后立即返回 `agent_id`，不等最终回答。没有 `run_in_background` 参数。
+
+**当前限制：** 本候选未应用宿主配置的子代理委托深度上限。例如上限设为 0 时，这个入口仍能进入创建准备阶段。修复并验证前，不要用于必须靠该上限禁止或限制递归委托的任务。这个结果只证明深度限制没有应用，不代表已发生真实递归执行或绕过命令沙箱、审批。
 
 | 参数 | 类型 | 必填/默认 | 规则 |
 | --- | --- | --- | --- |
@@ -331,8 +335,8 @@ min 值不是工具必须等满的时间。任务完成或收到适用消息时�
 | `agent(prompt, opts?)` | 返回 Promise，等待一个子代理完成。默认结果是最终文本，普通子代理失败返回 null。opts 只接受 label、phase、provider、model、schema；provider 和 model 可独立覆盖，不要求成对 |
 | `pipeline(items, ...stages)` | 每个条目独立流经各阶段，不等全部条目完成前一阶段。阶段收到 (prev, item, index)，可使用上一阶段结果和当前条目。普通阶段异常将该条目置为 null，并跳过其余阶段 |
 | `parallel(thunks)` | 并发执行一组零参数函数，并等待全部完成。普通异常使对应结果为 null；只有确实需要全部结果后才能继续时才使用 |
-| `phase(title)` | 标记当前进度阶段，title 必须与 meta.phases 中标题完全相同 |
-| `log(message)` | 记录进度说明；是否进入 Agent 结果由 workflowProgressLog 控制 |
+| `phase(title)` | 标记当前进度；使用 meta.phases 中已声明的阶段时，按 title 精确匹配标题 |
+| `log(message)` | 记录进度说明；后台作业读取时由 workflowProgressLog 决定是否提供给 Agent。首次等待内直接完成的结果不附这些日志 |
 
 需要结构化子代理结果时，在 `agent` 的 `opts.schema` 中提供对象根 JSON Schema。支持 `type`、`properties`、`required`、`additionalProperties`、`items`、`enum`、`const`、`oneOf`，不支持 `pattern`、`format` 和数值边界。还可用 `description`、`title`、`default`、`examples` 添加注解，它们不参与校验；前两项为字符串，后两项须能用 JSON 完整表示。提供 schema 后，`agent` 返回通过校验的对象。
 
@@ -375,7 +379,7 @@ async_list_subagent_models(provider="<准确ID>", model="<准确ID>", target_too
 
 - `entries` 是本页条目，`mode` 说明查询方式；`total` 是匹配数量。
 - 浏览模型或搜索时，先看 `target`、`verdict` 和 `basis`，确认目标工具在本步骤是否支持显式选择；再看每个模型条目的 `selectable`。只有 `selectable=true` 的条目已确认可供该目标选择；`false` 表示该路由不在允许名单中，字段缺席则不能据此确认许可。
-- 准确模型详情的 `verdict` 针对所查的具体路由。允许选择时，返回中的 `example` 提供目标工具接受的创建参数；浏览或搜索中的示例只从本页可选条目生成。
+- 准确模型详情的 `verdict` 针对所查的具体路由。允许选择时，返回中的 `example` 提供符合目标工具参数结构的模板；浏览或搜索中的示例只从本页可选条目生成。复用前补齐任务说明；若有 `reasoning_effort` 占位串，须替换为一个准确的强度 ID，或在不需要指定强度时删除该字段。
 - `complete=false` 表示部分供应商读取失败，`failed_providers` 列出失败来源；此时 total 只计已取得结果，不能据此断定其他供应商没有模型。
 - 有下一页时直接复用 `next` 对象发起下一次查询，它已包含页码、大小、版本及本次筛选条件。版本失效则从第一页重查，不拼接新旧页。
 
@@ -486,7 +490,7 @@ async_wait(targets=[{kind:"job", id:"<原job_id>"}], wait_ms=0)
    ```
 
 2. 读取 `verdict` 与 `basis`：`allowed` 表示目标在本步骤允许显式选择，`not-allowed` 表示不允许，`unconfirmed` 表示缺少足够信息。浏览或搜索中的 `allowed` 不代表本页全部模型都获准，还须选择 `selectable=true` 的条目；准确详情的结论才针对所查路由。需要续页直接用 `next`；版本失效从第一页重查。许可判断不检查凭据和远端服务可用性。
-3. 选定已确认可选的路由后，把准确 ID 成对传给创建工具，并提供完整任务书。也可复用返回的 `example` 参数，再补齐任务内容：
+3. 选定已确认可选的路由后，把准确 ID 成对传给创建工具，并提供完整任务书。也可复用返回的 `example` 模板：补齐任务内容，把 `reasoning_effort` 占位串换成一个准确的强度 ID；不需要指定强度时删除该字段。最小调用例如：
 
    ```text
    async_agent(description="Review one isolated item", prompt="<完整任务、材料与完成条件>",
