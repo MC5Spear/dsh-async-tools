@@ -7866,6 +7866,8 @@ hostTest('RC-GEN：输入代记账——两次组稿之间合计封顶、关批�
     seedTerminalJob(ctx, owner, 'rc-gen-e', { maxResultChars: 400, agentLang: 'en' }, 'f'.repeat(250));
     const recNext = ledger.collectBatch(owner, { consumeRecovery: true, lang: 'en', triggerJobIds: ['rc-gen-e'] });
     const fItem = recNext.delivered.find((item) => item.jobId === 'rc-gen-e');
+    assert.ok(fItem?.truncated === true && /\[output truncated: 50 chars omitted\]/.test(fItem.text),
+      '⑥ 恢复切片计入后同代下一批按剩余 200 开（250 截 200、省略量 50——缺此断言则 ⑥ 末腿为死变量）');
   } finally {
     ledger.disposeRow(ctx);
   }
