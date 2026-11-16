@@ -34,6 +34,8 @@ Existing profiles can retain old dependency copies, lockfiles, or installation s
 
 ### Usage limits and saving results
 
+**Trial verification boundary:** this final alpha artifact has not been installed on a host. The development candidate was installed only on DSH `0.2.1-rc.5`, where API checks covered loading, settings, blank sessions, and disabling/re-enabling. Actual GUI operation and the five tools’ end-to-end behavior remain unverified. Installation with `autoInstallPeers=true`, upgrades from an exact old source, and reinstall/cold recovery after a required restart are also unverified. The dependency declarations are designed to reuse host packages without requiring that option to be disabled; this is not proof that its enabled path passed. Follow any reload/restart request before continuing, and test only in an isolated instance.
+
 Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Full real-host rechecking on rc.3/rc.4 is also incomplete. Before using those platforms or rc.3/rc.4, check the features needed in a separate test session, particularly command permissions, waiting, and result delivery.
 
 The pending-question panel has not been verified with a real OS input method, screen reader, or touchscreen. When relying on these input methods, first confirm that choices and submissions work. If the panel is unusable, open the original session and reply there.
@@ -690,7 +692,7 @@ Only explicit model choices undergo DSH's current allowed-list check. Tool-row d
 
 ### Development links
 
-Use a development link only when editing plugin source; do not link a stable deployment to a tree being edited:
+Use a development link only when editing plugin source; do not link a stable deployment to a tree being edited. The clone/checkout commands below require this branch to be published. Before publication, obtain matching candidate source from the maintainer:
 
 ```powershell
 git clone https://github.com/MC5Spear/dsh-async-tools.git

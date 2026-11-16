@@ -27,6 +27,8 @@ Linux 的命令执行和单次提权尚未实机验证，macOS、远程执行环
 
 依赖输入法、读屏或触屏作答，以及需要恢复取消调用的结果时，先看[使用限制与结果保存](<docs/user-reference.md#使用限制与结果保存>)。`async_agent` 现会在创建前读取宿主委托深度设置；真实多层派生和恢复会话仍未完成验证，详见[深度限制与拒绝处理](<docs/user-reference.md#33-async_agent>)。
 
+**试用验证范围：** 当前最终 alpha 安装件尚未实装。开发候选仅在 DSH `0.2.1-rc.5` 实装，并通过 API 核对装载、设置、空白会话与停用／重新启用；实际 GUI 操作和五工具端到端行为未验。`autoInstallPeers=true` 新装、准确旧来源升级，以及按要求重启后的重装／冷恢复也未验。依赖声明旨在复用宿主包，无需为本包关闭该选项，但不等于开启路径已经验证。继续操作前须完成宿主要求的重新装载或重启，仅在隔离实例中试用。
+
 ## 安装并确认已加载
 
 本包不从 npm 分发。安装时复用 DSH 已提供的依赖，无需另装一套 DSH。0.2.9 起，无需为安装或升级本包关闭包管理器的 `autoInstallPeers` 自动补齐选项。
@@ -114,7 +116,7 @@ async_wait(targets=[{kind:"job", id:"<返回的job_id>"}], wait_ms=30000)
 
 ## 文档与许可
 
-操作细节见[用户参考](<docs/user-reference.md>)。开发、需求、设计、验证和变更记录使用中文，不随安装包分发；可在[源码仓库](<https://github.com/MC5Spear/dsh-async-tools/tree/adapt/dsh-0.2.1-alpha>)中阅读。需要核对某次安装时，使用与安装地址对应的提交，不使用移动分支的最新内容代替。
+操作细节见[用户参考](<docs/user-reference.md>)。开发、需求、设计、验证和变更记录使用中文，不随安装包分发；本线公开后，可在[源码仓库](<https://github.com/MC5Spear/dsh-async-tools/tree/adapt/dsh-0.2.1-alpha>)中阅读；公开前向维护者取得与候选安装件匹配的源码。需要核对某次安装时，使用与安装地址对应的提交，不使用移动分支的最新内容代替。
 
 本项目采用 MIT 许可，见[许可](<LICENSE>)。两份预设及部分子代理策略助手改编自 DeepSeek Harness；来源、上游版权和 MIT 许可全文见随包分发的[第三方通知](<THIRD_PARTY_NOTICES.md>)。
 
