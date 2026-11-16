@@ -11,6 +11,8 @@ Find the task you need:
 
 ## 1. Installation identity and prerequisites
 
+The planned trial channel is `adapt/dsh-0.2.1-alpha`. It has not been pushed to the remote and is not an installation source yet. Adaptation branches without the plugin’s `-alpha` suffix are the stable channels; their installation instructions remain below. A host RC label does not establish stable acceptance of the plugin. Before installation or trial use, read [known issues and verification gaps (Chinese)](<issues.md>) at the exact installed commit and check its baseline. Alpha does not mean stable acceptance has passed.
+
 **The current 0.2.9 candidate has not passed release acceptance.** The table is the declared host admission set, not an all-behavior pass list. The remote maintenance branch may still contain an earlier revision with the same version. For this candidate, confirm an accessible exact commit or artifact with the maintainer and retain its source; the version number alone does not establish identical implementation.
 
 | Component | Current applicable version |

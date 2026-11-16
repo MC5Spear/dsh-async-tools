@@ -12,6 +12,8 @@ This third-party plugin is unaffiliated with DeepSeek. It is personally maintain
 
 ## Before installing
 
+The planned trial channel is `adapt/dsh-0.2.1-alpha`. It has not been pushed to the remote and is not an installation source yet. Adaptation branches without the plugin’s `-alpha` suffix are the stable channels; their installation instructions remain below. A host RC label does not establish stable acceptance of the plugin. Before installation or trial use, read [known issues and verification gaps (Chinese)](<docs/issues.md>) at the exact installed commit and check its baseline. Alpha does not mean stable acceptance has passed.
+
 **The current 0.2.9 candidate has not passed release acceptance.** The table is the package’s declared host admission set, not proof that every behavior has been verified. The remote maintenance branch may still contain an earlier source revision with the same version. For this candidate, ask the maintainer for an accessible exact commit or artifact, and retain its source; matching version numbers alone do not establish identical implementation.
 
 | Component | Current applicable version |
