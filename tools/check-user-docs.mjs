@@ -3,7 +3,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-export const USER_DOCUMENTS = ['README.md', 'README.en.md', 'docs/user-reference.md', 'docs/user-reference.en.md', 'docs/documentation-principles.md'];
+export const USER_DOCUMENTS = ['README.md', 'README.en.md', 'docs/user-reference.md', 'docs/user-reference.en.md', 'docs/documentation-principles.md', 'docs/issues.md'];
 const clean = value => value.replace(/`/g, '').trim();
 function rows(text) {
   return text.split('\n').filter(line => /^\|/.test(line)).map(line => line.split('|').slice(1, -1).map(clean));
@@ -166,7 +166,7 @@ export function checkUserDocs(root = ROOT, { quiet = false, packageFiles } = {})
       if (!/(?:24\s*(?:小时|h|hours)|24-hour)/i.test(text)) fail(`${file} 缺少迟到答案清扫阈值`);
     }
   }
-  const out = problems.length ? problems.join('\n') : `用户资料事实检查通过：${facts.size} 设置，${tools.length} 工具，五份分发文件。内容完整性仍须独立任务审查。`;
+  const out = problems.length ? problems.join('\n') : `用户资料事实检查通过：${facts.size} 设置，${tools.length} 工具，${USER_DOCUMENTS.length} 份分发文件。内容完整性仍须独立任务审查。`;
   if (!quiet) console.log(out);
   return { ok: problems.length === 0, code: problems.length ? 1 : 0, out, problems };
 }

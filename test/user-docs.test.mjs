@@ -52,10 +52,11 @@ const cases = [
   ['删除英文卸载风险', box => box.edit('docs/user-reference.en.md', text => text.replaceAll('agent-preset/not-found', 'missing-preset'))],
   ['删除语言切换', box => box.edit('README.en.md', text => text.replaceAll('](<README.md>)', '](<missing.md>)').replaceAll('](README.md)', '](missing.md)'))],
   ['首页恢复维护变异表', box => box.edit('README.md', text => `${text}\n| verify/mutate-agent.mjs | test/agent.test.mjs | 维护 |\n`)],
+  ['files遗漏公开问题', box => box.edit('package.json', text => { const p = JSON.parse(text); p.files = p.files.filter(file => file !== 'docs/issues.md'); return JSON.stringify(p); })],
   ['files遗漏原则', box => box.edit('package.json', text => { const p = JSON.parse(text); p.files = p.files.filter(file => file !== 'docs/documentation-principles.md'); return JSON.stringify(p); })],
   ['新坏链接', box => box.edit('docs/user-reference.en.md', text => `${text}\n[missing](<missing.md>)\n`)],
   ['混入不存在工具', box => box.edit('docs/user-reference.en.md', text => `${text}\n### async_nonexistent\n`)],
-  ['参数正文表漏必需预算行', box => box.edit('docs/user-reference.en.md', text => text.replace(/^\|\s*`wait_ms`\s*\|.*\n/gm, ''))],
+  ['参数正文表漏必需预算行', box => box.edit('docs/user-reference.en.md', text => text.replace(/^\|\s*`wait_ms`\s*\|[^\r\n]*\r?\n/gm, ''))],
   ['设置范围错写而其它行保留正确边界', box => box.edit('docs/user-reference.en.md', text => text.replace(/^(\|\s*`defaultYieldMs`\s*\|[^\n]+)$/m, row => row.replace('2147483647', '2147483646')))]
 ];
 for (const [name, mutate] of cases) test(`用户资料有效反例：${name}`, t => {
