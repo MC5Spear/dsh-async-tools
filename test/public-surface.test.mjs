@@ -158,8 +158,13 @@ test('P7 引用：源码里的同形串**不**报（那一族只扫文档）', (
 
 test('P8 结构：`.gitignore` 缺 `.local/` 或多出零散条目都必须报', () => {
   assertCaught({ ignore: 'node_modules/\n' }, '结构', /缺 .*条目/, '缺 `.local/` 会让本机侧漏进版本库');
-  assertCaught({ ignore: `${CLEAN_IGNORE}verify/_scratch/\n` }, '结构', /零散 ignore 条目/,
+  assertCaught({ ignore: `${CLEAN_IGNORE}verify/_scratch/\n` }, '结构', /未登记的 ignore 条目/,
     '零散条目会让"这东西属于哪一层"变成靠记忆回答的事');
+});
+
+test('隔离工作树目录可排除，公开清单入口不受影响', () => {
+  const result = inspect({ ignore: `${CLEAN_IGNORE}.worktrees/\n`, doc: '[已知问题](issues.md)\n', extra: { '.worktrees/sample/private.md': 'D:\\P\\synthetic' } });
+  try { assert.deepEqual(result.findings, [], result.out); } finally { result.cleanup(); }
 });
 
 test('P9 结构：非豁免源码里的 `.local/` 字面量必须报', () => {

@@ -82,6 +82,7 @@ const DOCUMENTS = [
   { file: 'docs/documentation-principles.md', role: 'current' },
   { file: 'docs/requirements.md', role: 'current' },
   { file: 'docs/design.md', role: 'current' },
+  { file: 'docs/issues.md', role: 'current' },
   // 验证目录的唯一脚本清单（`README.md` 明确指向它）。它**不在 `docs/` 下**，所以不受
   // "未分类/幽灵"对账管辖，也就没有任何判据盯着它的漂移（工具计数、清理承诺与目录
   // 现实脱节这类问题不会自动红）。登记为现行文档，与 `README.md` 同规则。

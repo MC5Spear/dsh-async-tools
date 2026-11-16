@@ -57,11 +57,10 @@ const LOCAL_DIR = '.local';
 /**
  * `.gitignore` 允许出现的**非注释条目全集**。
  *
- * 规则 1「单一例外目录」的机械落点：本仓对本机内容只有 `.local/` 一条，外加运行期必需的
- * `node_modules/` 与编辑器产物。多出一条就红——零散 ignore 条目会让"这东西属于哪一层"
- * 变成一件要靠记忆回答的事。
+ * 本机材料位于 `.local/`，隔离的源码工作树位于 `.worktrees/`；两者均不随产品分发。
+ * 其余条目限定为依赖和编辑器产物，避免遗漏新目录的公开范围判断。
  */
-const GITIGNORE_ALLOWED = new Set([`${LOCAL_DIR}/`, 'node_modules/', '.vscode/', 'Thumbs.db', 'Desktop.ini']);
+const GITIGNORE_ALLOWED = new Set([`${LOCAL_DIR}/`, '.worktrees/', 'node_modules/', '.vscode/', 'Thumbs.db', 'Desktop.ini']);
 
 /** 本机指纹表：每条都带"为什么它不该出现在公开范围"。 */
 const FINGERPRINTS = [
@@ -239,7 +238,7 @@ export function checkPublicSurface(root = MODULE_ROOT, { quiet = false, scope } 
     for (const entry of entries) {
       if (!GITIGNORE_ALLOWED.has(entry)) {
         note('.gitignore', '结构', 0, entry,
-          '零散 ignore 条目：本机内容一律归 `.local/`，不再为单个目录开口子（规则 1「单一例外目录」）');
+          '未登记的 ignore 条目：核实它是本机材料、隔离工作树、依赖还是产品文件');
       }
     }
   }

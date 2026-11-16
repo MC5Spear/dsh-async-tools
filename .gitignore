@@ -2,6 +2,7 @@
 # 本公开仓的脚本需要本机事实时，经配置加载器（tools/_local-config.mjs）读取，
 # 本机环境缺席时文档化跳过；本条忽略规则只限定本公开仓的跟踪范围。
 .local/
+.worktrees/
 
 # 依赖：开发机上 node_modules\@deepseek-ai 是指向宿主安装树的目录联接，不含源码，
 # 不该进版本库。复原方式见 README 的安装章节。

@@ -45,7 +45,7 @@ const SCRIPT = 'tools/check-docs.mjs';
  * 才能发现责任表漏项（脚本错了测试仍能红）；动态导入只取函数形态，不触发
  * CLI 分支。重复一份的代价是可能漂移，所以 C5 顺便断言这些文件都存在。
  */
-const CURRENT_DOCS = ['requirements.md', 'design.md', 'user-reference.md', 'user-reference.en.md', 'documentation-principles.md'];
+const CURRENT_DOCS = ['requirements.md', 'design.md', 'user-reference.md', 'user-reference.en.md', 'documentation-principles.md', 'issues.md'];
 
 /**
  * `docs/` **之外**的登记文档，同样必须与脚本的责任表一致（脚本里 CHANGELOG 是
@@ -102,7 +102,7 @@ test('C1 check-docs：干净时退出 0（四态之③：正常文档全绿）',
   t.after(box.cleanup);
   const { code, out } = box.runChecker();
   assert.equal(code, 0, `干净的树必须退出 0，实际输出：${out.slice(-300)}`);
-  assert.match(out, /现行 9 份/);
+  assert.match(out, /现行 10 份/);
   assert.match(out, /档案 1 份/);
 });
 
