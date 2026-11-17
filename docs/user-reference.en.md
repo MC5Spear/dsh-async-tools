@@ -13,7 +13,7 @@ Find the task you need:
 
 This is an alpha trial version for the `adapt/dsh-0.2.2-alpha` channel used below. **It has not passed stable acceptance.** Try it only in an isolated instance, and read the matching [known issues and verification gaps (Chinese)](<issues.md>) before use.
 
-The table is the package’s declared host admission set, not proof that every behavior has been verified. Check that the remote branch is accessible before installing. For repeatable installation, use a full commit ID or matching artifact and retain the actual source. Branches without `-alpha` are stable channels and are not updated by this alpha delivery.
+The table is the package’s declared host admission set, not proof that every behavior has been verified. Check that the remote branch is accessible before installing. For repeatable installation, use a full commit ID or matching artifact and retain the actual source. This compatibility line currently has only the alpha channel above, with no stable branch. Stable promotion also requires real user experience and explicit confirmation.
 
 | Component | Current applicable version |
 | --- | --- |
