@@ -1266,8 +1266,23 @@ test('T15（R38；R44 换钉）：九个 dsh* peer 共用同一支持集合—�
     '不得声明 engines.dsh——宿主在场时它会顶替九条 peer 单独决定，支持集合因此失效');
   assert.equal(pkg.dependencies?.['@deepseek-ai/schemastery'], '~3.19.0',
     'schemastery 叶子依赖形态不变（~ 窗随宿主树）');
-  assert.equal(pkg.version, '0.2.10+dsh.0.2.2',
-    '本包 version 必须按需求 §7.3.1 带构建元数据全标识（核心 0.2.10 + 兼容线 dsh.0.2.2）——漏元数据会让用户失去兼容信息');
+  // 需求 §7.3.1：稳定形态为 `<核心>+dsh.<兼容线>`，alpha 形态为 `<核心>-alpha.N+dsh.<兼容线>`
+  // （构建元数据不算预发布）。判形用锚定正则，不放宽成「任意版本」：核心号与
+  // 兼容线元数据逐字固定，预发布标识只认 alpha.N（N≥1）；漏元数据、错核心、
+  // 错兼容线、beta/rc 标识、alpha.0、多余后缀都必须红。
+  const versionOk = (v) => /^0\.2\.10(?:-alpha\.[1-9]\d*)?\+dsh\.0\.2\.2$/.test(v);
+  assert.ok(versionOk(pkg.version),
+    `本包 version 必须按需求 §7.3.1 带构建元数据全标识（核心 0.2.10 + 兼容线 dsh.0.2.2，稳定或 alpha.N 形态；实际：${pkg.version}）——漏元数据会让用户失去兼容信息`);
+  assert.ok(versionOk('0.2.10+dsh.0.2.2') && versionOk('0.2.10-alpha.3+dsh.0.2.2'),
+    '合法稳定形态与合法 alpha 形态都必须被接受——判形不得只认其中一种');
+  for (const bad of [
+    '0.2.10', '0.2.10-alpha.2', '0.2.10+dsh.0.2.2-rc.1', '0.2.10+dsh.0.2.1-rc',
+    '0.2.9-alpha.2+dsh.0.2.2', '0.2.10-beta.1+dsh.0.2.2', '0.2.10-rc.1+dsh.0.2.2',
+    '0.2.10-alpha+dsh.0.2.2', '0.2.10-alpha.0+dsh.0.2.2', '0.2.11-alpha.2+dsh.0.2.2',
+    'x0.2.10-alpha.2+dsh.0.2.2'
+  ]) {
+    assert.ok(!versionOk(bad), `错误版本形态必须被拒绝：${bad}`);
+  }
 });
 
 test('T21：refreshToolDescriptions 递归同步嵌套参数说明——en→zh→en 各层同步、结构／枚举／对象身份不变', async (t) => {
