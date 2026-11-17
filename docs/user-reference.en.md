@@ -17,7 +17,7 @@ The table is the package’s declared host admission set, not proof that every b
 
 | Component | Current applicable version |
 | --- | --- |
-| Plugin version | `0.2.10-alpha.3+dsh.0.2.2` |
+| Plugin version | `0.2.10-alpha.4+dsh.0.2.2` |
 | Supported dsh host versions | `0.2.2-rc.1` |
 
 “Host” means the DSH instance loading the plugin. Only the version listed above can load the package, not the final `0.2.2`, older `0.2.2` pre-releases (alphas), the `0.2.1`/`0.2.0` lines, or an unlisted rc.
@@ -34,7 +34,7 @@ Existing profiles can retain old dependency copies, lockfiles, or installation s
 
 ### Usage limits and saving results
 
-**Trial verification boundary:** an earlier alpha.2 test artifact was installed in an isolated DSH `0.2.2-rc.1` instance. Authenticated API checks covered version, loading, the settings namespace, both presets, and blank sessions. This alpha.3 changes tests, maintenance checks, and documentation without changing plugin runtime code; its exact artifact has not been installed. Installation used `--ignore-scripts` with `autoInstallPeers=false`. Fresh installation with automatic peer installation enabled, upgrades from an exact old source, full disable/uninstall behavior, and reinstall/cold recovery after a required restart remain unverified. API checks do not establish GUI usability, end-to-end operation of the five tools, or allowance totals in real model inputs. Follow required reload/restart instructions before continuing, and test only in an isolated instance.
+**Trial verification boundary:** an earlier alpha.2 test artifact was installed in an isolated DSH `0.2.2-rc.1` instance. Authenticated API checks covered version, loading, the settings namespace, both presets, and blank sessions. This alpha.4 changes entry-allowance accounting, ID-recovery notices, and result-length settings help. Earlier records do not verify these changes on a real host; the final artifact has not been installed. Installation used `--ignore-scripts` with `autoInstallPeers=false`. Fresh installation with automatic peer installation enabled, upgrades from an exact old source, full disable/uninstall behavior, and reinstall/cold recovery after a required restart remain unverified. API checks do not establish GUI usability, end-to-end operation of the five tools, or allowance totals in real model inputs. Follow required reload/restart instructions before continuing, and test only in an isolated instance.
 
 Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Before using these environments, check the features needed in a separate test session, particularly command permissions, waiting, and result delivery.
 
@@ -84,7 +84,7 @@ If source retrieval fails, check the repository address and branch or commit, th
 
 #### Installation script-approval troubleshooting
 
-Through 0.2.8, profiles with `autoInstallPeers` enabled could install duplicate host dependencies for this package and fail with `ERR_PNPM_IGNORED_BUILDS` when their scripts were blocked. When moving to DSH `0.2.2-rc.1`, use an available source for this line’s `0.2.10-alpha.3+dsh.0.2.2` candidate, not the 0.2.9 package for DSH 0.2.1. If no matching source is available, defer installation and contact the maintainer. There is no need to approve redundant dependency scripts merely to get past the older failure.
+Through 0.2.8, profiles with `autoInstallPeers` enabled could install duplicate host dependencies for this package and fail with `ERR_PNPM_IGNORED_BUILDS` when their scripts were blocked. When moving to DSH `0.2.2-rc.1`, use an available source for this line’s `0.2.10-alpha.4+dsh.0.2.2` candidate, not the 0.2.9 package for DSH 0.2.1. If no matching source is available, defer installation and contact the maintainer. There is no need to approve redundant dependency scripts merely to get past the older failure.
 
 After installation succeeds, check the actual package version, settings, and both presets. Undecided approval entries from the failed attempt may disappear after successful installation. If an approval prompt remains, follow the steps below to check its cause.
 
@@ -436,7 +436,7 @@ For a result marked `truncated`, omitted middle sections, or deferred entries, u
 async_wait(wait_ms=0)
 ```
 
-`maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes. The plugin uses the host’s step events to account for shared content. The triggering target has priority, followed by readiness order; empty entries count. The design limits a common input to 10 entries, but the current candidate does not carry entry and notice usage across batches split around prompt assembly: a controlled sequence can deliver 20 empty-job statuses in one claim. This is not duplicate output and does not establish excess nonempty body content. Do not estimate total status-text overhead from the character setting alone.
+`maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes. The plugin uses host step events to account for shared content. The triggering target has priority, followed by readiness order. Unclaimed completion-message entries now count alongside character shares, including empty results and read-failure notices. When the next step event recalculates allowance, those messages keep using the 10-entry share for a common input. Commands or workflows finishing inside their initial waits can still return additional terminal entries after it is full; long IDs can add text outside the body budget, and repeated waits within one input can inject duplicate deferral notices. Do not estimate total status and diagnostic overhead from the character setting alone, retry zero-wait in place, or rerun a task to recreate missing output.
 
 At each host `agent/pre-step` event, this line recalculates the input allowance and rebuilds the batch balance. Completion messages already injected but not yet claimed continue to count against it; changing steps does not grant those shares again. A turn ending or an internal batch closing does not itself add allowance.
 
@@ -448,7 +448,7 @@ Totals within real model requests remain unverified, so the setting alone cannot
 
 An oversized entry keeps its head and tail while its middle remains for later reading. Excess entries are deferred in full. Status, necessary error explanations, and retained-output paths are outside the body allowance. **Shortened display does not mean the content was lost.**
 
-Very long job IDs cause notices to use shorter instructions. A read-failure notice can still shorten the ID in its status line, and the untargeted zero-wait suggested by the shortest notice may not return the promised status. First obtain the full ID from `job_list`, then retry the original job explicitly. For IDs containing quotes or backslashes, do not copy an unescaped call from the notice; encode the complete ID correctly as a string tool argument. These notice problems do not prove the body was lost. Do not rerun the original job.
+Very long job IDs cause notices to use shorter instructions. The shortest form directs the Agent to obtain the full ID from `job_list`, then retry the original job explicitly; do not reconstruct it from a shortened status line. Targeted call examples escape quotes, backslashes, and other characters as string content. When filling a tool argument manually, use the original complete ID rather than treating its escaped display as a different ID. These calls read the original job; they do not rerun it.
 
 With `fullCommandEcho=true`, background results attach command or script source. Result bodies use the allowance first. Source uses the remainder only when that delivery's body fits in full. Oversized source retains its head and tail in a 6:4 ratio with an omission count; no remaining allowance produces a note that source was not attached.
 
