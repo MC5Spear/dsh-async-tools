@@ -405,3 +405,45 @@ test('P20 引用回归：伪上下文不得因前一个字符豁免（foo-F07、
     mixedDelivery.cleanup();
   }
 });
+
+test('P21 引用回归：路径/链接目标里的同形词元不得借公开 ID 豁免', () => {
+  // 两个已亲证的漏报形态：① `[交付索引](ARCHIVE-DELIVERY-INDEX.md)`——全大写
+  // 多段词元形似公开 ID，但它在链接目标里且被 `.md` 截断；公开 ID 例外只用于
+  // 正文的问题编号提及。② `[交付索引](MYDELIVERY.md)`——DELIVERY 嵌在全大写
+  // 文件名中间，该规则不做 F 编号的段边界过滤。每个非法串**独占**一棵合成树。
+  assertCaught(
+    { doc: '# 文档\n\n[交付索引](ARCHIVE-DELIVERY-INDEX.md)\n' },
+    '引用', /交付索引/, '链接目标里的归档索引路径必须报（`.md` 截断不当公开 ID）'
+  );
+  assertCaught(
+    { doc: '# 文档\n\n[交付索引](MYDELIVERY.md)\n' },
+    '引用', /交付索引/, '全大写嵌词文件名里的 DELIVERY 必须报'
+  );
+  // 路径段前缀同样不豁免：`docs/` 下同形词元是路径，不是编号提及。
+  assertCaught(
+    { doc: '# 文档\n\n归档在 docs/DOC-DELIVERY-COMMENTS.md。\n' },
+    '引用', /交付索引/, '路径段里的同形词元不得当公开 ID 提及'
+  );
+  // 混行：合法公开 ID 与路径索引同在一行——恰一处命中（抓路径、不误报编号）。
+  const mixedPath = inspect({ doc: '# 文档\n\n| WAIT-F02 | 归档见 [索引](ARCHIVE-DELIVERY-INDEX.md)。 |\n' });
+  try {
+    assert.equal(mixedPath.findings.length, 1, `公开 ID 不豁免同行的路径索引、也不连带误报：\n${mixedPath.out}`);
+    assert.match(mixedPath.findings[0].why, /交付索引/);
+  } finally {
+    mixedPath.cleanup();
+  }
+  // 反向守卫：正文里的公开 ID 提及仍豁免；UTF8 里的 F8 不是事实编号
+  // （段边界过滤只属于 F 规则，不被本次 DELIVERY 独立化波及）。
+  const legit = inspect({ doc: '# 文档\n\n| DOC-DELIVERY-COMMENTS | 正文提及。 |\n' });
+  try {
+    assert.deepEqual(legit.findings, [], `正文公开 ID 提及仍豁免：\n${legit.out}`);
+  } finally {
+    legit.cleanup();
+  }
+  const utf = inspect({ doc: '# 文档\n\n编码为 UTF8 与 UTF16。\n' });
+  try {
+    assert.deepEqual(utf.findings, [], `UTF8 里的 F8 不是事实编号：\n${utf.out}`);
+  } finally {
+    utf.cleanup();
+  }
+});
