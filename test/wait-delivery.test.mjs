@@ -3914,13 +3914,13 @@ hostTest('REC-F：无活等待的读取失败——注记三要素（真实结�
 
 hostTest('READF-01：读取失败注记的完整重试调用在长作业标识下不被截断（READF-NOTE-LEN-01）', async () => {
   const rig = sRig({});
-  // 44 字符作业 id（真实形态为 kind 前缀＋16 位十六进制随机后缀，本包所见前缀
-  // 最长 async-workflow-＝15 字符 → 最长约 31；取 44 为自定安全线，余 13 字符）：
-  // 修前英文档模板固定部分 188 字符，44 字符 id 下 raw 约 276 超 clampNote(200)，
-  // 截断点落在重试调用内标识之前、该标识整体缺失——完整重试调用对模型不可执行；
-  // 压缩词条后固定部分 107 字符，44 字符 id 下 raw 195 在界内完整。
-  const longId = `job-readf-${'x'.repeat(34)}`;
-  assert.equal(longId.length, 44, '前置：作业 id 恰 44 字符（安全线）');
+  // 真实形态为 kind 前缀＋16 位十六进制随机后缀，本包所见前缀最长
+  // async-workflow-＝15 字符 → 最长约 31；31 字符 id 下 en 定向变体（「不代表
+  // 结果为空」加长后固定约 147 字符）约 178 ≤200 完整在场。44 字符安全线腿：
+  // 定向放不下时降 .noTarget——裸 id＋点名重试＋job_list 出路仍完整可执行
+  //（修前英文档模板固定 188 字符、44 字符 id 超界截断，重试调用整体缺失）。
+  const longId = `job-readf-${'x'.repeat(21)}`;
+  assert.equal(longId.length, 31, '前置：作业 id 恰 31 字符（真实形态上限）');
   ledger.noteJobStarted(rig.ctx, rig.config, longId, rig.OWNER);
   const entry = ledger.jobs.get(longId);
   entry.terminal = { status: 'completed' };
@@ -3929,10 +3929,27 @@ hostTest('READF-01：读取失败注记的完整重试调用在长作业标识�
   assert.equal(rig.calls.inject.length, 1, '注记恰一条（完成消息通道）');
   const notice = textOf(rig.calls.inject[0]);
   assert.ok(notice.includes(longId), '完整作业 id 在场（不截半）');
-  assert.ok(notice.includes(`id:"${longId}"`), '重试调用内的作业标识完整在场（修前该标识整体缺失）');
+  assert.ok(notice.includes(`id:"${longId}"`), '重试调用内的作业标识完整在场（31 字符真实上限内定向档保持）');
   assert.match(notice, /\[read failed\]|\[读取失败\]/, '读取失败标记在场');
   assert.match(notice, /wait_ms=\.\.\.\)/, '重试调用的闭合尾部完整（修前截断必红）');
   assert.match(notice, /Retry async_wait|请重试 async_wait/, '重试出路在场');
+});
+
+hostTest('READF-02：44 字符安全线——定向与 .noTarget 均放不下时 .minimal 出路完整可执行（job_list＋按编号点名重试）', async () => {
+  const rig = sRig({});
+  const longId = `job-readf2-${'x'.repeat(33)}`;
+  assert.equal(longId.length, 44, '前置：作业 id 恰 44 字符（安全线）');
+  ledger.noteJobStarted(rig.ctx, rig.config, longId, rig.OWNER);
+  const entry = ledger.jobs.get(longId);
+  entry.terminal = { status: 'completed' };
+  rig.ctx.jobs.read = async () => { throw new Error('registry read exploded'); };
+  await ledger.readSettled(longId);
+  assert.equal(rig.calls.inject.length, 1, '注记恰一条（完成消息通道）');
+  const notice = textOf(rig.calls.inject[0]);
+  assert.ok(!notice.includes('...'), '注记行未被 clampNote 裁尾（200 档只约束注记行；状态行含长 id 不入该档）');
+  assert.ok(notice.includes(longId), '状态行的作业 id 完整在场（不截半、可复制）');
+  assert.match(notice, /job_list shows the full id/, 'job_list 取完整编号出路在场（统一可靠出路）');
+  assert.match(notice, /retry async_wait naming that id/, '按编号点名重试出路完整可执行');
 });
 
 hostTest('REC-G：读取失败再失败——新失败定论清占位恢复通知（每次失败至多一条，不跨载体堆积）', async () => {
@@ -4428,6 +4445,42 @@ hostTest('RN-D：延后说明时机语义——正文保留／额度条件交付
   }
 });
 
+// ── RN-E（2026-11-17 WAIT-NOTE-ID-01 残余／WAIT-NOTE-ESCAPE-01）：说明键死路
+// 承诺缺席、job_list 出路在场 ──────────────────────────────────────────
+// 两类死路：①「编号见（其）状态行／id in its status line」（clampNote 200 档可
+// 裁短编号，恰是该档触发场景）；②「不带 targets 零等待（先）取回状态／
+// zero-wait with no targets returns (its) status」（readFailedNoted 按次一次性、
+// 已装配条目在无目标收集中被跳过；已交付条目不随无目标零等待重现）。统一可靠
+// 出路＝job_list 取完整编号→定向 async_wait；延后键的「无 targets 一并领取」
+// 是真实承诺、保留在场。修前红＝死路字样在场。旧「（非空）／(not empty)」措辞
+// 同步缺席（zh 语义修正：不代表结果为空）。
+hostTest('RN-E：说明键不指认状态行为编号来源、不承诺无目标零等待取回状态；job_list 出路在场（修前红＝死路字样在场）', async () => {
+  const { t } = await import('../lib/text.js');
+  const keys = [
+    'delivery.readFailed', 'delivery.readFailed.noTarget', 'delivery.readFailed.minimal',
+    'delivery.spillOverflow', 'delivery.spillOverflow.noTarget', 'delivery.spillOverflow.minimal',
+    'delivery.deferredNotice', 'delivery.deferredNotice.noTarget'
+  ];
+  for (const lang of ['en', 'zh']) {
+    for (const key of keys) {
+      const text = t(lang, key, { jobId: 'job-rn-e', listed: 1, total: 2, count: 1 });
+      assert.ok(!/编号见其状态行|编号见状态行|id in its status line|点名由同批状态行承担/.test(text),
+        `${lang} ${key}：状态行编号指认缺席（修前红＝在场）`);
+      assert.ok(!/（不带 targets）先取回状态|零等待先取回状态|zero-wait with no targets returns (its )?status|with no targets returns status/.test(text),
+        `${lang} ${key}：无目标零等待取回状态承诺缺席（修前红＝在场）`);
+      assert.ok(!/（非空）|\(not empty\)/.test(text), `${lang} ${key}：旧「非空／not empty」措辞缺席（修前红＝在场）`);
+    }
+    for (const key of ['delivery.readFailed.minimal', 'delivery.spillOverflow.minimal']) {
+      assert.ok(t(lang, key, { jobId: 'job-rn-e', listed: 1, total: 2, count: 1 }).includes('job_list'),
+        `${lang} ${key}：job_list 出路在场（统一可靠出路）`);
+    }
+    // 延后 noTarget 的「无 targets 一并领取」＝真实承诺（延后条目未交付、无目标
+    // 零等待汇集领取），保留在场——与死路②区分。
+    assert.match(t(lang, 'delivery.deferredNotice.noTarget', { jobId: 'job-rn-e' }), /async_wait\(wait_ms=0\)|不带 targets|no targets/,
+      `${lang} 延后 noTarget：一并领取真实出路保留`);
+  }
+});
+
 hostTest('TEXT-NOTE-01：截断条目头注 chars＝正文字符数（计入额度的份额），不含裁剪说明行', async () => {
   // 双作业批预算 40、正文各 30：第 1 条整装（头注 30＝全文）；第 2 条份额 10、
   // 截断——chars 若按渲染文本长度计会把说明行＋衔接换行算进去（10 正文＋
@@ -4776,11 +4829,14 @@ hostTest('RN-F：两处关批点后配额复位——单独触发得新批条目
   }
   await ledger.releaseWait(token, rig.OWNER);
   assert.equal(rig.calls.inject.length, 14, '前置：10＋3＋1');
-  // 关批点①：claimed 监听（领取事件）——批对象丢弃，配额随批复位。
+  // 关批点①：claimed 监听（领取事件）——逐消息形态（生产形态：每条领取事件
+  // 携带 message.id，尾部条目随领取出册，配额随批复位）。裸事件（无 message.id
+  // 的 rc.2–rc.4 兼容形态）只关批、零份额确认——已注入消息留在尾部、条目照
+  // WAIT-ITEMS-01 结转（保守方向，WI-1 ③腿同判），配额不因裸事件复位。
   const claimed = rig.listeners.get('agent/inbox/claimed');
   assert.ok(typeof claimed === 'function', '前置：claimed 监听已挂（attachClaimedListener）');
-  claimed({ agent: { id: rig.OWNER } });
-  // 关批后单独再触发一个延后就绪条目：新批 items=0 → 条目交付，不产生说明。
+  fireClaimed(rig); // 排空领取：14 条消息（10 条目＋4 说明）出册，尾部清零
+  // 关批后单独再触发一个延后就绪条目：新批 items＝0（尾部已清）→ 条目交付。
   await rig.readyJob('job-rn-g15', '');
   assert.equal(rig.calls.inject.length, 15, '新批条目交付（一条状态行）');
   assert.match(textOf(rig.calls.inject[14]), /job-rn-g15/, '第 15 条以状态行交付');
@@ -4886,12 +4942,12 @@ hostTest('WB-2：nextTurn 滞留的跨窗压缩——followup 整队按合并消
   assert.equal(rig.calls.followup.length, 1, '前置：A 经合并 followup 投递（落 nextTurn）');
   const merged = rig.calls.followup[0];
   const subject = ledger.subjects.get(rig.OWNER);
-  assert.equal(subject.unclaimedSends.get(merged.id), 10, '整队计费字符之和按合并消息 id 登记一条');
+  assert.deepEqual(subject.unclaimedSends.get(merged.id), { chars: 10, items: 1 }, '整队计费字符与条目数之和按合并消息 id 登记一条（WAIT-ITEMS-01 同址双计）');
   firePreStep(rig); // 步边界③关批
   // 中间①领取了**别的**消息：nextTurn 滞留不在本次领取内（E2 事实——
   // claim('next-step') 不取 nextTurn、claim('next-turn') 每次仅取队首 1 条）。
   rig.listeners.get('agent/inbox/claimed')({ agent: { id: rig.OWNER }, message: { id: 'wb2-unrelated' } });
-  assert.equal(subject.unclaimedSends.get(merged.id), 10, '无关领取不清滞留条目（份额继续占用）');
+  assert.deepEqual(subject.unclaimedSends.get(merged.id), { chars: 10, items: 1 }, '无关领取不清滞留条目（份额继续占用）');
   await rig.readyJob('job-wb2-c', 'C'.repeat(10)); // 空闲 → 合并 followup（延后说明）
   assert.equal(rig.calls.followup.length, 2, 'C 的载体到达（延后说明，非正文）');
   assert.ok(!textOf(rig.calls.followup[1]).includes('C'.repeat(10)),
@@ -4930,7 +4986,7 @@ hostTest('WB-4：尾部记账口径——领取/丢弃出册、注入失败回�
     await rig.readyJob('job-wb4-a', 'A'.repeat(10));
     const subject = ledger.subjects.get(rig.OWNER);
     const [id] = [...subject.unclaimedSends.keys()];
-    assert.equal(subject.unclaimedSends.get(id), 10, '注入登记：载体消息 id → 计费字符（正文份额）');
+    assert.deepEqual(subject.unclaimedSends.get(id), { chars: 10, items: 1 }, '注入登记：载体消息 id → {chars, items}（正文份额＝1 条目，WAIT-ITEMS-01）');
     rig.listeners.get('agent/inbox/discarded')({ agent: { id: rig.OWNER }, message: { id } });
     assert.equal(subject.unclaimedSends.size, 0, '丢弃出册（份额随派生值自然释放）');
   }
@@ -4947,7 +5003,7 @@ hostTest('WB-4：尾部记账口径——领取/丢弃出册、注入失败回�
     await rig.readyJob('job-wb4-c2', 'D'.repeat(5));
     const subject = ledger.subjects.get(rig.OWNER);
     assert.equal(subject.unclaimedSends.size, 1, '部分失败：已接受项登记保留，失败项已移除');
-    assert.ok([...subject.unclaimedSends.values()][0] <= 5, '保留条目＝已接受项的计费份额');
+    assert.ok([...subject.unclaimedSends.values()][0].chars <= 5, '保留条目＝已接受项的计费份额');
   }
 });
 
@@ -4964,11 +5020,122 @@ hostTest('WB-5：批缺席的①不留陈旧扣除——③关批后①到达（
   assert.equal(ledger.subjects.get(rig.OWNER).unclaimedSends.size, 1, '当前在册＝B 自身（旧消息已出册）');
 });
 
+// ── WI 系列（WAIT-ITEMS-01，2026-11-17 验收返修）：条目占用的尾部记账 ────
+// 计量单位＝完成消息载体内的作业条目数（正文条目、空正文合成条目与读取失败
+// 注记各计 1；纯说明型 send 计 0——说明预算仍由批级 3＋1 配额独立有界，结转
+// 不放大）。unclaimedSends 字符与条目同址双计、按载体消息 id 记账，#newBatch
+// 条目起点＝存活尾部条目数、满批判定不变。WI-1 锚定修前红反例（领取点后
+// 10 空正文结算、③关批后再 10——修前同次后续领取可收 20 条真实终态状态行，
+// 超过共同输入 10 条配额），WI-2 锚读取失败注记腿，WI-3 锚 deferFlush 组稿
+// 间隙腿，WI-4 锚 nextTurn 跨回合滞留腿，WI-5 白盒锚记账口径。
+
+hostTest('WI-1：空正文条目按共同领取窗口结转——①后 10 空正文结算→③关批→再 10 个：后到 10 条整条延后（修前红：同窗 20 条状态行）', async () => {
+  const rig = sRig({ budget: 4000 });
+  fireClaimed(rig); // ①（无消息：裸事件，闩/关批）
+  for (let i = 1; i <= 10; i += 1) await rig.readyJob(`job-wi1-a${String(i)}`, '');
+  assert.equal(rig.calls.inject.length, 10, '前置：A 波 10 条空正文状态行已注入（未领取）');
+  firePreStep(rig); // ③关批（批对象丢弃；条目占用保持在尾部登记，不随关批清除）
+  for (let i = 1; i <= 10; i += 1) await rig.readyJob(`job-wi1-b${String(i)}`, '');
+  const texts = rig.calls.inject.map(textOf);
+  // 状态行条目（0 chars 形态）只应来自 A 波：B 波条目起点＝尾部 10 → 整条延后。
+  const statusLineItems = texts.filter((text) => /\(0 chars\)/.test(text));
+  assert.equal(statusLineItems.length, 10, `同窗真实条目合计恰 10（实得 ${String(statusLineItems.length)}；修前红＝20）`);
+  const notices = texts.filter((text) => /did not fit this batch|未排进当前交付批次|were also deferred|同样延后/.test(text));
+  assert.equal(notices.length, 4, 'B 波按批级配额附 3 逐条＋1 聚合延后说明（结转不放大说明预算）');
+  // 领取出册 → 条目配额恢复：B 波随零等待批交付（10 条状态行进批）。
+  fireClaimed(rig);
+  const { delivered } = ledger.collectBatch(rig.OWNER, {});
+  assert.equal(delivered.filter((item) => item.jobId.startsWith('job-wi1-b')).length, 10, '领取后 B 波 10 条全部进批（条目出册恢复配额）');
+});
+
+hostTest('WI-2：读取失败注记同样结转——③前 10 条注记在册，③后再结算的读取失败条目整条延后', async () => {
+  const rig = sRig({ budget: 4000 });
+  fireClaimed(rig);
+  const failSettle = async (jobId) => {
+    ledger.noteJobStarted(rig.ctx, rig.config, jobId, rig.OWNER);
+    const entry = ledger.jobs.get(jobId);
+    entry.terminal = { status: 'completed' };
+    const realRead = rig.ctx.jobs.read;
+    rig.ctx.jobs.read = async () => { throw new Error('registry read exploded'); };
+    await ledger.readSettled(jobId);
+    rig.ctx.jobs.read = realRead;
+  };
+  for (let i = 1; i <= 10; i += 1) await failSettle(`job-wi2-a${String(i)}`);
+  assert.equal(rig.calls.inject.length, 10, '前置：10 条读取失败注记已注入（各计 1 条目）');
+  firePreStep(rig);
+  await failSettle('job-wi2-b1');
+  const texts = rig.calls.inject.map(textOf);
+  const bStatus = texts.filter((text) => /job-wi2-b1/.test(text) && /\(0 chars\)/.test(text));
+  assert.equal(bStatus.length, 0, '满批判定对读取失败注记生效：后到注记不进批（修前红＝第 11 条状态行入批）');
+  assert.ok(texts.some((text) => /job-wi2-b1/.test(text) && /did not fit this batch|未排进当前交付批次/.test(text)), '后到注记按延后说明可见（出路完整）');
+});
+
+hostTest('WI-3：deferFlush 组稿间隙的待投递项按条目数并入——pendingSends 在册时新批条目起点承接', async () => {
+  const rig = sRig({ budget: 4000 });
+  fireClaimed(rig);
+  // 白盒构造 #yieldFinalReview 的间隙形态（逐条构造〔deferFlush〕与单次冲刷
+  // 之间的窗口，L2048/L2051）：pendingSends 持有已计费 send、尚未登记消息 id。
+  ledger.claimWait(rig.OWNER); // 经 #subject 建主体账目（活等待在册，不冲刷 pendingSends）
+  const subject = ledger.subjects.get(rig.OWNER);
+  for (let i = 1; i <= 10; i += 1) {
+    subject.pendingSends.push({
+      kind: 'completion', jobId: `job-wi3-g${String(i)}`, lang: 'en',
+      billed: 0, items: [{ jobId: `job-wi3-g${String(i)}`, text: '' }],
+      render: () => `gap item ${String(i)}`
+    });
+  }
+  // 公开开批入口（首等份额）：条目起点须＝间隙在册条目数 → 满批、份额 0
+  //（修前红＝条目从 0 起、照常开正份额）。
+  const share = ledger.openFirstWaitShare(rig.OWNER, rig.config);
+  assert.equal(share, 0, '间隙条目计入开批：满批 → 首等份额 0（修前红＝正份额）');
+  assert.equal(subject.batch.items, 10, '批条目起点＝间隙在册条目数（WAIT-ITEMS-01）');
+});
+
+hostTest('WI-4：nextTurn 跨回合滞留的条目占用——合并 followup 在册（未领取），新批条目起点承接', async () => {
+  const rig = sRig({ status: 'idle', budget: 4000 }); // 空闲 → followup（落 nextTurn）
+  for (let i = 1; i <= 10; i += 1) await rig.readyJob(`job-wi4-a${String(i)}`, '');
+  assert.equal(rig.calls.followup.length, 10, '前置：A 波 10 条 followup 已投（各滞留 nextTurn，未领取）');
+  firePreStep(rig); // 步边界关批（滞留 followup 不被消费）
+  rig.listeners.get('agent/inbox/claimed')({ agent: { id: rig.OWNER }, message: { id: 'wi4-unrelated' } }); // 无关领取不清滞留
+  await rig.readyJob('job-wi4-b1', '');
+  assert.equal(rig.calls.followup.length, 11, 'B1 经 followup 到达（延后说明，非状态行）');
+  assert.ok(!/\(0 chars\)/.test(textOf(rig.calls.followup[10])),
+    'nextTurn 滞留的 10 条目跨窗占用：B1 整条延后（修前红＝状态行进 followup）');
+  fireClaimed(rig); // 排空领取（滞留 followup 与延后说明一并领取 → 条目出册）
+  const { delivered } = ledger.collectBatch(rig.OWNER, {});
+  assert.ok(delivered.some((item) => item.jobId === 'job-wi4-b1'), '领取出册后条目配额恢复，B1 进批交付');
+});
+
+hostTest('WI-5：条目记账白盒——unclaimedSends 同址双计，claim/discard 出册，批条目起点派生', async () => {
+  const rig = sRig({ budget: 4000 });
+  fireClaimed(rig);
+  await rig.readyJob('job-wi5-a', 'AAAA');
+  await rig.readyJob('job-wi5-b', '');
+  const subject = ledger.subjects.get(rig.OWNER);
+  const entries = [...subject.unclaimedSends.entries()];
+  assert.equal(entries.length, 2, '两条载体消息在册');
+  const chars = entries.reduce((sum, [, value]) => sum + value.chars, 0);
+  const items = entries.reduce((sum, [, value]) => sum + value.items, 0);
+  assert.equal(chars, 4, '字符合计＝正文份额（空正文计 0）');
+  assert.equal(items, 2, '条目合计＝2（正文条目＋空正文合成条目各 1）');
+  const [bodyId] = entries.find(([, value]) => value.items === 1 && value.chars === 4);
+  rig.listeners.get('agent/inbox/discarded')({ agent: { id: rig.OWNER }, message: { id: bodyId } });
+  const rest = [...subject.unclaimedSends.values()];
+  assert.equal(rest.length, 1, '丢弃出册：仅剩空正文条目载体');
+  assert.equal(rest[0].items, 1, '条目随消息出册（存活尾部条目数＝1）');
+  firePreStep(rig);
+  await rig.readyJob('job-wi5-c', '');
+  const texts = rig.calls.inject.map(textOf);
+  assert.equal(texts.filter((text) => /\(0 chars\)/.test(text)).length, 2,
+    '丢弃后条目占用＝1：新批可再装（C 状态行进批——起点派生＝存活尾部条目数）');
+});
+
 // ── NI-1（WAIT-NOTE-ID-01）：长 ID 自适应说明行（设计 §2.6／adaptiveNote）──
 //
 // 分档按**渲染长度**实测：定向变体整行 ≤ 上限用之；超限降无 targets 变体
 //（裸 id 一次＋零等待出路——任意合法 ID 下可执行）；仍超限降无 id 最小行
-//（点名由同批状态行承担）；末档 clampNote 收尾。说明预算不放大（cap 即该行
+//（点名出路＝job_list 取完整编号后定向调用——状态行经 clampNote 可裁短编号，
+// 不指认它为编号来源）；末档 clampNote 收尾。说明预算不放大（cap 即该行
 // 既有上限）。观测阈值（en：deferredNotice 定向约 38 字符 id 起、readFailed
 // 定向约 47 字符 id 起溢出）写注释不写判据——判据锚分档行为本身。
 hostTest('NI-1：任意合法作业 ID 下延后/读失败/留存溢出说明仍有完整可执行出路——分档按渲染长度（en/zh）', async () => {
@@ -5010,7 +5177,7 @@ hostTest('NI-1：任意合法作业 ID 下延后/读失败/留存溢出说明仍
       const notice = await settle(rig, longId);
       assert.ok(notice !== undefined && notice.length <= 400, `${lang}：超长 id（200 字符）整行 ≤400`);
       assert.ok(!notice.includes('targets='), `${lang}：无内嵌定向示例（降 .noTarget／聚合形）`);
-      assert.match(notice, /async_wait\(wait_ms=0\)/, `${lang}：零等待出路完整（点名由状态行承担）`);
+      assert.match(notice, /async_wait\(wait_ms=0\)/, `${lang}：聚合形一并领取出路完整（真实承诺）`);
       assert.ok(!notice.includes('...'), `${lang}：无裁尾`);
     }
     // 读失败注记三档（entryNoteLines 单元层；同 adaptiveNote 通道）。观测阈值
@@ -5023,15 +5190,17 @@ hostTest('NI-1：任意合法作业 ID 下延后/读失败/留存溢出说明仍
       const rfMid = entryNoteLines({ readFailed: true, jobId: 'q'.repeat(50) }, lang).join('\n');
       assert.ok(rfMid.length <= 200, `${lang}：读失败中长 id（50 字符）≤200`);
       if (lang === 'en') {
-        assert.ok(!rfMid.includes('targets='), 'en：定向示例放不下，降 .noTarget（裸 id＋重试出路）');
-        assert.match(rfMid, /async_wait\(wait_ms=\.\.\.\)/, 'en：重试出路完整（wait_ms=... 为文案字面，非裁尾）');
+        assert.ok(!rfMid.includes('targets='), 'en：定向示例放不下，降档（.noTarget 亦超界时直达 .minimal——「不代表结果为空」加长后）');
+        assert.match(rfMid, /job_list/, 'en：.minimal 的 job_list 出路在场（取完整编号后定向重试）');
       } else {
         assert.ok(rfMid.includes('targets='), 'zh：定向变体保持（zh 富余，按语言分别断言）');
       }
       const rfLong = entryNoteLines({ readFailed: true, jobId: 'w'.repeat(200) }, lang).join('\n');
       assert.ok(rfLong.length <= 200, `${lang}：读失败超长 id ≤200`);
       assert.ok(!rfLong.includes('targets=') && !rfLong.includes('w'.repeat(50)), `${lang}：降 .minimal（无 id 内嵌）`);
-      assert.match(rfLong, /async_wait\(wait_ms=0\)/, `${lang}：状态先行出路完整`);
+      assert.match(rfLong, /job_list/, `${lang}：.minimal 出路＝job_list 取完整编号（WAIT-NOTE-ID-01 残余——不指认状态行）`);
+      assert.match(rfLong, /async_wait/, `${lang}：定向 async_wait 重试出路在场`);
+      assert.ok(!/编号见其状态行|id in its status line/.test(rfLong), `${lang}：状态行编号指认缺席（修前红＝在场）`);
     }
     // 留存溢出行三档（entryNoteLines 单元层）。
     {
@@ -5043,6 +5212,24 @@ hostTest('NI-1：任意合法作业 ID 下延后/读失败/留存溢出说明仍
       const spLong = spill('t'.repeat(200));
       assert.ok(spLong.length <= 200 && !spLong.includes('targets='), `${lang}：留存溢出超长 id 降档入界`);
       assert.match(spLong, /async_wait\(wait_ms=0\)/, `${lang}：留存溢出降档出路完整`);
+      assert.match(spLong, /job_list/, `${lang}：留存溢出 .minimal 出路＝job_list（不指认状态行）`);
+    }
+    // 转义扩展（WAIT-NOTE-ESCAPE-01，2026-11-17）：含双引号／反斜杠的合法 ID
+    // 内嵌调用示例仍为有效调用串（id 位为 JSON 编码形态）；点名续取类键与
+    // 子代理标识同规则；自然语言位置按宿主原文转述（不转义）。
+    {
+      const { t } = await import('../lib/text.js');
+      const escId = 'a"b\\c'; // 双引号＋反斜杠（宿主允许非空 jobKind 含两者）
+      const rfEsc = entryNoteLines({ readFailed: true, jobId: escId }, lang).join('\n');
+      assert.ok(rfEsc.includes('id:"a\\"b\\\\c"'), `${lang}：读失败定向示例 id 位为 JSON 编码（引号／反斜杠转义在场）`);
+      assert.ok(!rfEsc.includes('id:"a"b\\c"'), `${lang}：未转义形态缺席（修前红＝无效调用串）`);
+      const waitAgain = t(lang, 'note.waitAgain', { jobId: escId, waitedMs: 5, maxWaitMs: 600000 });
+      assert.ok(waitAgain.includes('id:"a\\"b\\\\c"'), `${lang}：点名续取类键（note.waitAgain）同规则转义`);
+      const agentStarted = t(lang, 'note.agentStarted', { agentId: 'x"y', defaultWaitMs: 60000 });
+      assert.ok(agentStarted.includes('id:"x\\"y"'), `${lang}：子代理标识同规则（{agentIdEsc}）`);
+      const partialPending = t(lang, 'wait.partialPending', { jobId: escId, chars: 30 });
+      assert.ok(partialPending.includes('id:"a\\"b\\\\c"'), `${lang}：外来续段键——示例位转义`);
+      assert.ok(partialPending.includes(escId), `${lang}：自然语言位按宿主原文（不转义）`);
     }
   }
 });
