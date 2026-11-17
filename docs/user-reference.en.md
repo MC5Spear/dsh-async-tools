@@ -449,13 +449,13 @@ In normal delivery, each job's source is attached at most once, not again in lat
 
 ### A tool result may not have arrived: request a recovery copy
 
-If a call was canceled and the Agent did not receive the expected body, find the original job ID with `job_list` and name it in a zero-wait call:
+If a call was canceled and the Agent did not receive the expected body, find the original job ID with `job_list` and name it in a zero-wait call. Recovery and normal continuation share the remaining body allowance. If content stays deferred, follow the steps above; the next call need not recover it immediately:
 
 ```text
 async_wait(targets=[{kind:"job", id:"<original job_id>"}], wait_ms=0)
 ```
 
-Unread middle sections and deferred content arrive first. If none remains, the plugin can resend a copy whose delivery the host has not confirmed, marked “recovery copy / may duplicate.” Large content continues across batches. Already-confirmed content returns only status and an explanation, not the body. The host handles delivery confirmation without an extra user action.
+When allowance is available, unread middle sections and deferred content arrive first. If none remains, the plugin can resend an unconfirmed copy marked “recovery copy / may duplicate”; its body uses the same allowance. Large content continues across batches, subject to the exhaustion handling above. Already-confirmed content returns only status and an explanation, not the body. The host handles delivery confirmation without an extra user action.
 
 Copies are retained for at most 30 minutes by default, subject to per-session caps of 10 records and 2×maxResultChars characters in total. Oldest entries are removed first, and unloading a plugin row clears its records, so copies can expire earlier. If a copy is unavailable, inspect original UI records and known retained-output paths. Without a body source, recovery cannot be guaranteed.
 
