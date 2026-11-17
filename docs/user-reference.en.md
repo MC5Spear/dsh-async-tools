@@ -17,7 +17,7 @@ The table is the package’s declared host admission set, not proof that every b
 
 | Component | Current applicable version |
 | --- | --- |
-| Plugin version | `0.2.9-alpha.1+dsh.0.2.1-rc` |
+| Plugin version | `0.2.9-alpha.2+dsh.0.2.1-rc` |
 | Supported dsh host versions | `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4`, `0.2.1-rc.5` |
 
 “Host” means the DSH instance loading the plugin. Only these four versions can load the package, not the final `0.2.1`, `0.2.0`, `0.2.2`, or an unlisted rc.
@@ -34,7 +34,7 @@ Existing profiles can retain old dependency copies, lockfiles, or installation s
 
 ### Usage limits and saving results
 
-**Trial verification boundary:** this final alpha artifact has not been installed on a host. The development candidate was installed only on DSH `0.2.1-rc.5`, where API checks covered loading, settings, blank sessions, and disabling/re-enabling. Actual GUI operation and the five tools’ end-to-end behavior remain unverified. Installation with `autoInstallPeers=true`, upgrades from an exact old source, and reinstall/cold recovery after a required restart are also unverified. The dependency declarations are designed to reuse host packages without requiring that option to be disabled; this is not proof that its enabled path passed. Follow any reload/restart request before continuing, and test only in an isolated instance.
+**Trial verification boundary:** neither this round’s code candidate nor the final alpha artifact has been installed on a host. An earlier candidate was installed on DSH `0.2.1-rc.5`, where API checks covered loading, settings, blank sessions, and disabling/re-enabling. Those records do not verify this round’s delivery-allowance repair in a running instance. Actual GUI operation and the five tools’ end-to-end behavior still have gaps. Installation with `autoInstallPeers=true`, upgrades from an exact old source, and reinstall/cold recovery after a required restart are also unverified. The dependency declarations are designed to reuse host packages without requiring that option to be disabled; this is not proof that its enabled path passed. Follow any reload/restart request before continuing, and test only in an isolated instance.
 
 Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Full real-host rechecking on rc.3/rc.4 is also incomplete. Before using those platforms or rc.3/rc.4, check the features needed in a separate test session, particularly command permissions, waiting, and result delivery.
 
@@ -428,20 +428,20 @@ For a result marked `truncated`, omitted middle sections, or deferred entries, c
 async_wait(wait_ms=0)
 ```
 
-`maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes. Results share the allowance within a delivery batch. The target triggering delivery has priority, followed by readiness order. A batch contains at most 10 entries, including empty ones.
+`maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes. Results share the allowance within a delivery batch. The target triggering delivery has priority, followed by readiness order. The design limits a common input to 10 entries, including empty ones. The current candidate does not carry entry and notice usage across batches split around prompt assembly: a controlled sequence can deliver 20 empty-job statuses in one claim. This is not duplicate output and does not establish excess nonempty body content. Do not estimate total status-text overhead from the character setting alone.
 
-Once the allowance is exhausted, immediately repeating zero-wait may return only another deferral notice. How to continue depends on the DSH version:
+Once the allowance is exhausted, immediately repeating zero-wait may return only another deferral notice. Within one window, an earlier creation call or other result can spend the allowance before a later wait, leaving that wait with only status and deferral information. This does not mean the body is empty or lost.
 
-- **rc.5:** Let the Agent process the current return, then make a zero-wait call in the next model step.
-- **rc.2, rc.3, and rc.4:** Later steps in the same turn may still have no new allowance. Keep the job ID, report the unread content, and end the current turn. After later input arrives, name the original job in a zero-wait call to continue. If no later input is arranged, hand over the job ID and the required continuation action rather than repeatedly calling to prompt delivery.
+This line closes the old batch on input-boundary evidence supplied by the host. A new batch deducts completion messages already injected but not yet claimed into a model input. Those messages keep using allowance across steps until claimed or discarded. A long interval, work with other tools, and repeated zero-wait calls do not grant extra allowance.
 
-The plugin updates allowances when messages are claimed, a turn ends, or an applicable step event is received. A long interval between calls, or working with other tools in between, does not grant an extra allowance. Without an effective boundary event, one allowance can span multiple model steps. All four admitted hosts expose a step event, but delivery to this plugin’s listener and totals in real model inputs still need verification.
+- **rc.5:** After processing the current return, use zero-wait in a later model step when unread content is still needed. Messages not yet claimed can keep the content deferred.
+- **rc.2, rc.3, and rc.4:** Their exact host sources expose the same step event, but runtime wiring for this candidate remains unverified. If later steps keep deferring content, retain the job ID, report unread content, end the current turn, and continue after later input.
 
-A rare assembly window can close batches twice: once when messages are claimed and again at the later step event. Results settling between and after those events can each use a separate allowance yet arrive together in the next input. A controlled event-sequence test confirms content exceeding one `maxResultChars` allowance; totals in real model requests still need verification. This setting therefore cannot strictly cap result content in one model input. Status explanations, conversation history, and other sources are counted separately too; inspect actual requests when checking consumption.
+If deferral persists, do independent work or end the current phase, retain the ID and explanation, and ask the instance maintainer to investigate. Totals within real model requests remain unverified, so the setting alone cannot predict request length. Status explanations, conversation history, and other sources are counted separately.
 
 An oversized entry keeps its head and tail while its middle remains for later reading. Excess entries are deferred in full. Status, necessary error explanations, and retained-output paths are outside the body allowance. **Shortened display does not mean the content was lost.**
 
-With long job IDs, an English deferral message can cut off its targeted recovery example. Do not copy an incomplete call. Once allowance is available, first use untargeted `async_wait(wait_ms=0)` to collect ready content; obtain the full ID from `job_list` if a targeted retry is needed. The buffered body is retained.
+Very long job IDs cause notices to use shorter instructions. A read-failure notice can still shorten the ID in its status line, and the untargeted zero-wait suggested by the shortest notice may not return the promised status. First obtain the full ID from `job_list`, then retry the original job explicitly. For IDs containing quotes or backslashes, do not copy an unescaped call from the notice; encode the complete ID correctly as a string tool argument. These notice problems do not prove the body was lost. Do not rerun the original job.
 
 With `fullCommandEcho=true`, background results attach command or script source. Result bodies use the allowance first. Source uses the remainder only when that delivery's body fits in full. Oversized source retains its head and tail in a 6:4 ratio with an omission count; no remaining allowance produces a note that source was not attached.
 

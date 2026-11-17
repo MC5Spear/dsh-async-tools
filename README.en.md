@@ -18,7 +18,7 @@ The table is the package’s declared host admission set, not proof that every b
 
 | Component | Current applicable version |
 | --- | --- |
-| Plugin version | `0.2.9-alpha.1+dsh.0.2.1-rc` |
+| Plugin version | `0.2.9-alpha.2+dsh.0.2.1-rc` |
 | Supported dsh host versions | `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4`, `0.2.1-rc.5` |
 
 “Host” means the DSH instance loading the plugin. **Only these four DSH versions can load this package**, not the final `0.2.1` or an unlisted rc. Node.js 24 is recommended; see the [runtime prerequisites](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>) before choosing another runtime.
@@ -27,7 +27,7 @@ Linux command execution and one-shot permission escalation have not been verifie
 
 For IME, screen-reader, or touch-based answers, and recovery after a canceled tool call, read [usage limits and saving results](<docs/user-reference.en.md#usage-limits-and-saving-results>). `async_agent` now reads the host’s delegation-depth setting before creation; real nested-creation and restored-session verification remains incomplete. See [depth limits and refusal handling](<docs/user-reference.en.md#33-async_agent>).
 
-**Trial verification boundary:** this final alpha artifact has not been installed on a host. The development candidate was installed only on DSH `0.2.1-rc.5`, where API checks covered loading, settings, blank sessions, and disabling/re-enabling. Actual GUI operation and the five tools’ end-to-end behavior remain unverified. Installation with `autoInstallPeers=true`, upgrades from an exact old source, and reinstall/cold recovery after a required restart are also unverified. The dependency declarations are designed to reuse host packages without requiring that option to be disabled; this is not proof that its enabled path passed. Follow any reload/restart request before continuing, and test only in an isolated instance.
+**Trial verification boundary:** neither this round’s code candidate nor the final alpha artifact has been installed on a host. An earlier candidate was installed on DSH `0.2.1-rc.5`, where API checks covered loading, settings, blank sessions, and disabling/re-enabling. Those records do not verify this round’s delivery-allowance repair in a running instance. Actual GUI operation and the five tools’ end-to-end behavior still have gaps. Installation with `autoInstallPeers=true`, upgrades from an exact old source, and reinstall/cold recovery after a required restart are also unverified. The dependency declarations are designed to reuse host packages without requiring that option to be disabled; this is not proof that its enabled path passed. Follow any reload/restart request before continuing, and test only in an isolated instance.
 
 ## Install and confirm loading
 
@@ -77,7 +77,7 @@ async_wait(targets=[{kind:"job", id:"<returned job_id>"}], wait_ms=30000)
 
 Factory settings give `yield_ms` a default of 20000 ms and bound each request to 20000–600000 ms. `wait_ms` is required every time. Expiry leaves the task running; use `job_kill` explicitly for unwanted jobs, rather than rerunning commands to check progress.
 
-Results are not replayed indefinitely; save anything that must be kept. Long output may arrive in portions. Deferred content stays buffered; a new job’s completion message does not guarantee inclusion of older content. Use zero-wait to continue once allowance is available, rather than repeatedly calling it while the allowance is exhausted. On rc.5, reading can continue in the next model step; on rc.2/rc.3/rc.4, it may require ending the current turn and continuing after later input. In a rare case, a wait return and a later completion message can each use a separate allowance, so `maxResultChars` cannot strictly cap the result content in one model input. See [allowances and continued reading](<docs/user-reference.en.md#shortened-output-or-deferred-entries-continue-reading>) for the conditions and next steps. For failed reads or canceled calls, follow [result handling and recovery](<docs/user-reference.en.md#4-wait-states-and-direct-delivery>) with the original job rather than rerunning the task.
+Results are not replayed indefinitely; save anything that must be kept. Long output may arrive in portions. Deferred bodies stay buffered and are collected by later `async_wait` returns while allowance permits; a new job’s completion message carries only that job’s output. New allowance after an input boundary still deducts completion messages not yet claimed, so the next step need not collect everything. Use `async_wait(wait_ms=0)` when unread content is needed. If it remains deferred, stop retrying in place, retain the job ID and explanation, and do independent work or end the current phase. Totals in real model inputs remain unverified; `maxResultChars` is not a guarantee about the full request length. See [allowances and continued reading](<docs/user-reference.en.md#shortened-output-or-deferred-entries-continue-reading>) for details. For failed reads or canceled calls, follow [result handling and recovery](<docs/user-reference.en.md#4-wait-states-and-direct-delivery>) with the original job rather than rerunning the task.
 
 ## Tools and presets
 
