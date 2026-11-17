@@ -62,8 +62,11 @@ const createWaitTool = (ctx, config) => checkedTool(buildWaitTool(ctx, config));
  * `cancelCalls`/`lastCancelReason`/`disposeCalls`。
  * 保真点：`cancel(reason)` 让 `result` 以 `stopReason:'cancelled'` 结算
  * （宿主引擎契约——否则 done 链永远悬置，kill 路径测不出来）。
+ * `onStart` 在每次 `start(spec)` 入口同步调用——确定性时钟用它在**引擎启动
+ * 阶段**推进可控耗时（见 `controllableClock`）。
+ * @param {{ onStart?: () => void }} [options]
  */
-function fakeEngine() {
+function fakeEngine({ onStart } = {}) {
   const calls = [];
   const runs = [];
   const engine = {
@@ -71,6 +74,7 @@ function fakeEngine() {
     runs,
     start(spec) {
       calls.push(spec);
+      onStart?.();
       const run = {
         id: `wf-run-${calls.length}`,
         meta: spec.meta,
@@ -92,10 +96,18 @@ function fakeEngine() {
   return { engine, calls, runs };
 }
 
-/** 组装一次被测环境：假 ctx + 引擎替身 + 会话 append 探针。 */
-function rig(configOverrides = {}) {
+/**
+ * 组装一次被测环境：假 ctx + 引擎替身 + 会话 append 探针。
+ * @param {object} [configOverrides]
+ * @param {{ clock?: { advance: (ms: number) => void, restore: () => void } }} [options]
+ *   `clock` 给定时，引擎启动阶段按 `STARTUP_COST_MS` 推进可控时钟——让出窗口
+ *   用例以此获得**确定性的启动前后差**（见 `controllableClock`）。
+ */
+function rig(configOverrides = {}, { clock } = {}) {
   const f = fakeCtx();
-  const { engine, calls, runs } = fakeEngine();
+  const { engine, calls, runs } = fakeEngine({
+    onStart: clock === undefined ? undefined : () => clock.advance(STARTUP_COST_MS)
+  });
   f.ctx.get = (key) => (key === 'workflowEngine' ? engine : undefined);
   const agent = fakeAgent();
   const appends = [];
@@ -110,6 +122,39 @@ const BASE_ARGS = {
   meta: { name: 'wf-demo', description: 'demo workflow for tests' },
   yield_ms: 600000
 };
+
+/**
+ * 确定性时钟下引擎启动/注册阶段的可控耗时（毫秒）。让出窗口用例断言
+ * `elapsed_ms` 恰等于它：t0 在 execute 入口的实现读到这个差值，而把 t0 挪到
+ * 竞速入口/结束处或让 elapsed 恒为 0 的变异都读不到（详见 `controllableClock`）。
+ */
+const STARTUP_COST_MS = 7;
+
+/**
+ * 可控时钟：只替换 `Date.now` 的读数，测试全程不等待真实时间。
+ *
+ * 用途是给 `elapsed_ms` 一个**确定性的启动前后差**：产品在 execute 入口取
+ * t0、在竞速定局后取终值。时钟只在引擎 `start` 的入口推进一次
+ * （`STARTUP_COST_MS`），竞速内零推进——于是 `elapsed_ms` 的读数完全由
+ * t0 的取点决定，不依赖真实调度。以前用「实测墙钟 − 2ms 容差」当下界的写法
+ * 抓不住「t0 挪到竞速入口」的变异（测试自己的 sleep 同样计入竞速，两种取点
+ * 都过界），也不保证下界为正；本装置两个缺口都补上。
+ *
+ * 只影响 `Date.now`；产品的等待与超时语义（`ctx.timer`、`jobs.wait`）不经过它，
+ * 本装置不改产品时长语义。
+ *
+ * @param {number} [startAt] - 起始读数。
+ * @returns {{ advance: (ms: number) => void, restore: () => void }} 时钟句柄。
+ */
+function controllableClock(startAt = 1000) {
+  const realDateNow = Date.now;
+  let now = startAt;
+  Date.now = () => now;
+  return {
+    advance(ms) { now += ms; },
+    restore() { Date.now = realDateNow; }
+  };
+}
 
 hostTest('async_workflow（R34-a/b/g）：预算内完成 → 宿主同形结算文本；注册字段与呈现层齐全', async () => {
   const { f, runs, agent, appends, tool } = rig();
@@ -381,34 +426,42 @@ hostTest('async_workflow（R34-c·killed）：job_kill → run.cancel 一次；�
 });
 
 hostTest('async_workflow（R34-c·插话）：让出窗口内用户消息 → 句柄 + 提前让出注记；run 存活', async () => {
-  const { f, runs, agent, tool } = rig();
+  // 确定性装置：可控时钟 + 竞速入口注入，全程零真实等待。插话监听在
+  // `raceFirstWait` 里先于 `ctx.jobs.wait` 武装——在 `jobs.wait` 的包装里发事件，
+  // 事件必然落在让出窗口内。
+  const clock = controllableClock();
+  const { f, runs, agent, tool } = rig({}, { clock });
   freezeTimers(f.ctx);
+  const realWait = f.ctx.jobs.wait.bind(f.ctx.jobs);
+  f.ctx.jobs.wait = (id, timeoutMs, caller, signal) => {
+    const wait = realWait(id, timeoutMs, caller, signal);
+    f.emit('agent/inbox/inserted', inboxPayload({ agent, sourceKind: 'user', text: 'hold on', target: 'next-step' }));
+    return wait;
+  };
   const exec = { agent, signal: new AbortController().signal };
-  const pending = tool.execute(BASE_ARGS, exec);
-  // TEST-TIMING-01：下界改按实测等待时长推导（performance.now 单调、亚毫秒），
-  // 留 2ms 容差吸收 elapsed 侧的时钟域差异与取整——固定 `>= 5` 在整数毫秒
-  // 取整下会把 4.9ms 真实等待判成 4ms 而脆断。判据仍能检出真实取点错误：
-  // t0 若取在等待结束处，实得 ~0ms，恒低于下界。
-  const sleepStartedAt = performance.now();
-  await new Promise((r) => { setTimeout(r, 5); });
-  const wallWaited = performance.now() - sleepStartedAt;
-  f.emit('agent/inbox/inserted', inboxPayload({ agent, sourceKind: 'user', text: 'hold on', target: 'next-step' }));
+  try {
+    const pending = tool.execute(BASE_ARGS, exec);
 
-  const result = await pending;
-  assert.equal(result.status, 'running', '插话 → 转后台句柄（恢复通道 = 完成通知）');
-  assert.match(result.note, /ended early: a user message arrived/);
-  assert.match(result.note, /async_wait\(targets=\[\{kind:"job", id:"/, '恢复示例照带');
-  // elapsed 双向域：下界 = 触发前的实测等待（t0 必须在引擎启动之前的 execute
-  // 入口），上界 = 首次等待预算（这条路不是预算到期退出的）。
-  const lowerBound = Math.max(0, wallWaited - 2);
-  assert.ok(result.elapsed_ms >= lowerBound, `t0 取点在 execute 入口（实得 ${String(result.elapsed_ms)}，下界 ${String(lowerBound)}）`);
-  assert.ok(result.elapsed_ms < 600000, '插话先于预算到期返回');
-  assert.equal(runs[0].cancelCalls, 0, '插话只结束等待，绝不取消 run（同款）');
-  assert.equal(f.jobsFake.views()[0].status, 'running', '作业存活');
-  assert.equal(f.jobsFake.waitersOf(result.job_id), 0, '竞速定局即撤销 waiter');
-  runs[0]._resolve({ stopReason: 'completed', agentsStarted: 1, value: 1 });
-  f.jobsFake.settleJob(result.job_id, { status: 'completed', detail: '1 agent' });
-  assert.equal(f.jobsFake.wasAwaited(result.job_id), false, '撤销后的结算 → 完成通知照发');
+    const result = await pending;
+    assert.equal(result.status, 'running', '插话 → 转后台句柄（恢复通道 = 完成通知）');
+    assert.match(result.note, /ended early: a user message arrived/);
+    assert.match(result.note, /async_wait\(targets=\[\{kind:"job", id:"/, '恢复示例照带');
+    // elapsed 确定性读数：恰等于引擎启动阶段的可控耗时。时钟只在引擎 start
+    // 入口推进——t0 取在 execute 入口才读得到这个差值；t0 挪到竞速入口或
+    // 结束处、以及 elapsed 恒 0 的变异都得 0，在此必红。下界恒为正
+    // （STARTUP_COST_MS > 0），不存在 `max(0, …)` 掩盖的零下界。
+    assert.equal(result.elapsed_ms, STARTUP_COST_MS,
+      `t0 取点在 execute 入口（实得 ${String(result.elapsed_ms)}，期望恰为启动阶段耗时 ${String(STARTUP_COST_MS)}）`);
+    assert.ok(result.elapsed_ms < 600000, '插话先于预算到期返回');
+    assert.equal(runs[0].cancelCalls, 0, '插话只结束等待，绝不取消 run（同款）');
+    assert.equal(f.jobsFake.views()[0].status, 'running', '作业存活');
+    assert.equal(f.jobsFake.waitersOf(result.job_id), 0, '竞速定局即撤销 waiter');
+    runs[0]._resolve({ stopReason: 'completed', agentsStarted: 1, value: 1 });
+    f.jobsFake.settleJob(result.job_id, { status: 'completed', detail: '1 agent' });
+    assert.equal(f.jobsFake.wasAwaited(result.job_id), false, '撤销后的结算 → 完成通知照发');
+  } finally {
+    clock.restore();
+  }
 });
 
 hostTest('async_workflow（R34-c·迟到作答）：迟到作答不提前结束首次等待（9.3.1 收紧）——正文留收件箱，结算才交回', async () => {
@@ -434,28 +487,36 @@ hostTest('async_workflow（R34-c·迟到作答）：迟到作答不提前结束�
 });
 
 hostTest('async_workflow（R34-c·abort）：GUI 停止 → 句柄形状、run 存活、cancel 零调用', async () => {
-  const { f, runs, agent, tool } = rig();
+  // 确定性装置（与 R34-c·插话用例同款）：可控时钟 + 竞速入口注入。exec.signal
+  // 的 abort 转发监听同样在 `ctx.jobs.wait` 之前武装——在 wait 包装里触发 abort，
+  // 事件必然落在让出窗口内。
+  const clock = controllableClock();
+  const { f, runs, agent, tool } = rig({}, { clock });
   freezeTimers(f.ctx);
   const controller = new AbortController();
+  const realWait = f.ctx.jobs.wait.bind(f.ctx.jobs);
+  f.ctx.jobs.wait = (id, timeoutMs, caller, signal) => {
+    const wait = realWait(id, timeoutMs, caller, signal);
+    controller.abort(new Error('tool call aborted'));
+    return wait;
+  };
   const exec = { agent, signal: controller.signal };
-  // t0 下界锚**实测墙钟**（与 R34-c·插话用例同款）：`setTimeout(r, 5)` 在
-  // Windows 计时器粒度下可能提前落盘（CI rc.4 实测 elapsed=4），硬编码 ≥5 会
-  // 把计时器粒度噪声误判成 t0 回归。实测墙钟下界仍然抓得住旧 t0 位置的变异：
-  // t0 挪到 abort 处理或等待开始之后，elapsed 会掉到 0–1ms，远低于下界。
-  const wall0 = Date.now();
-  const pending = tool.execute(BASE_ARGS, exec);
-  await new Promise((r) => { setTimeout(r, 5); });
-  controller.abort(new Error('tool call aborted'));
-  const wallWaited = Date.now() - wall0;
+  try {
+    const pending = tool.execute(BASE_ARGS, exec);
 
-  const result = await pending;
-  assert.equal(result.status, 'running', 'abort 分支按句柄口径（宿主整体改写，形状合法即可）');
-  const lowerBound = Math.max(0, wallWaited - 2);
-  assert.ok(result.elapsed_ms >= lowerBound, `t0 取点在 execute 入口（实得 ${String(result.elapsed_ms)}，下界 ${String(lowerBound)}）`);
-  assert.ok(result.elapsed_ms < 600000, 'abort 先于预算到期返回');
-  assert.equal(runs[0].cancelCalls, 0, 'abort 不接 run.cancel（R34-e：真取消走 job_kill）');
-  assert.equal(f.jobsFake.views()[0].status, 'running', '作业必须存活');
-  assert.equal(f.jobsFake.waitersOf(result.job_id), 0, 'wait 已被 abort 摘除');
+    const result = await pending;
+    assert.equal(result.status, 'running', 'abort 分支按句柄口径（宿主整体改写，形状合法即可）');
+    // elapsed 确定性读数：同 R34-c·插话用例——恰等于引擎启动阶段的可控耗时，
+    // t0 挪到竞速入口/结束或 elapsed 恒 0 的变异在此必红。
+    assert.equal(result.elapsed_ms, STARTUP_COST_MS,
+      `t0 取点在 execute 入口（实得 ${String(result.elapsed_ms)}，期望恰为启动阶段耗时 ${String(STARTUP_COST_MS)}）`);
+    assert.ok(result.elapsed_ms < 600000, 'abort 先于预算到期返回');
+    assert.equal(runs[0].cancelCalls, 0, 'abort 不接 run.cancel（R34-e：真取消走 job_kill）');
+    assert.equal(f.jobsFake.views()[0].status, 'running', '作业必须存活');
+    assert.equal(f.jobsFake.waitersOf(result.job_id), 0, 'wait 已被 abort 摘除');
+  } finally {
+    clock.restore();
+  }
 });
 
 hostTest('async_workflow（R34-c·预算）：yield 到期 → 句柄 + 预算口径 note；引擎零扰动', async () => {

@@ -93,17 +93,103 @@ const FINGERPRINTS = [
   { pattern: /DESKTOP-[A-Z0-9]{4,}/i, why: '本机机器名前缀' }
 ];
 
-/** 内部引用表：只扫公开文档（`.md`）。 */
+/**
+ * 连字符词元的字符集（ASCII 字母/数字/连字符）。CJK 等其他字符截断词元，
+ * 所以 `见-F07` 的词元是 `-F07`，天然不是公开稳定 ID 形状。
+ */
+const TOKEN_CHAR = /[A-Za-z0-9-]/;
+
+/** 公开稳定 ID 的词元形状：每段 ≥2 位大写字母数字（`WAIT-F02`、`DOC-DELIVERY-COMMENTS`）。 */
+const PUBLIC_ID_TOKEN = /^(?:[A-Z0-9]{2,})(?:-[A-Z0-9]{2,})*$/;
+
+/**
+ * 取 `index` 所在的完整连字符词元（向左右扩张到非词元字符为止）。
+ *
+ * @param {string} line - 所在行。
+ * @param {number} index - 关键词起始下标。
+ * @returns {{ token: string, start: number, end: number, offsetInToken: number }}
+ *   词元全文、起止下标与关键词在词元内的偏移。
+ */
+function tokenAround(line, index) {
+  let start = index;
+  while (start > 0 && TOKEN_CHAR.test(line[start - 1])) start -= 1;
+  let end = index;
+  while (end < line.length && TOKEN_CHAR.test(line[end])) end += 1;
+  return { token: line.slice(start, end), start, end, offsetInToken: index - start };
+}
+
+/**
+ * 该命中是否处于文档/链接目标的**路径上下文**：词元后紧跟「.字母」（文件扩展名，
+ * 如 `ARCHIVE-DELIVERY-INDEX.md` 里被点截断的词元），或词元前紧邻 `/`（路径段）。
+ *
+ * 公开稳定 ID 例外只用于正文里的问题编号提及；出现在文件名/路径里的同形词元
+ * 按内部引用报红——不能因 `.md` 截断或形似编号就当成公开 ID。
+ *
+ * @param {string} line - 所在行。
+ * @param {number} index - 关键词起始下标。
+ * @returns {boolean} 在路径上下文里才 `true`。
+ */
+function inPathContext(line, index) {
+  const { start, end } = tokenAround(line, index);
+  if (end + 1 < line.length && line[end] === '.' && /[A-Za-z]/.test(line[end + 1])) return true;
+  return start > 0 && line[start - 1] === '/';
+}
+
+/**
+ * 一次关键词命中是否落在公开稳定 ID 的**非首段**（`WAIT-F02` 的 `F02`、
+ * `DOC-DELIVERY-COMMENTS` 的 `DELIVERY`）：不在路径上下文，词元整体符合公开 ID
+ * 形状，且关键词之前在同一词元内已有完整前段。满足才豁免。
+ *
+ * @param {string} line - 所在行。
+ * @param {number} index - 关键词起始下标。
+ * @returns {boolean} 豁免才 `true`。
+ */
+function insidePublicId(line, index) {
+  if (inPathContext(line, index)) return false;
+  const { token, offsetInToken } = tokenAround(line, index);
+  if (!PUBLIC_ID_TOKEN.test(token)) return false;
+  const prefix = token.slice(0, offsetInToken);
+  return prefix.endsWith('-') && PUBLIC_ID_TOKEN.test(prefix.slice(0, -1));
+}
+
+/**
+ * 数一行里的内部引用命中次数：`keywordRe` 逐次匹配，再豁免落在公开稳定 ID
+ * 词元非首段的那次。
+ *
+ * `boundaryOnly` 只给事实编号规则用：`UTF8` 里的 `F8` 不是事实编号形态，按段
+ * 边界过滤。DELIVERY 规则**不走**这一过滤——`MYDELIVERY` 这类全大写嵌词同样是
+ * 交付索引引用，须照报；两条规则各自独立判定。
+ *
+ * @param {string} line - 所在行。
+ * @param {RegExp} keywordRe - 带 `g` 旗标的关键词正则。
+ * @param {{ boundaryOnly?: boolean }} [options] - `boundaryOnly` 默认 `true`。
+ * @returns {number} 该行应报红的命中数。
+ */
+function countRefHits(line, keywordRe, { boundaryOnly = true } = {}) {
+  let count = 0;
+  for (const match of line.matchAll(keywordRe)) {
+    const i = match.index;
+    const prev = i > 0 ? line[i - 1] : '';
+    if (boundaryOnly && i !== 0 && prev !== '-' && /[A-Z0-9]/.test(prev)) continue;
+    if (insidePublicId(line, i)) continue;
+    count += 1;
+  }
+  return count;
+}
+
+/** 内部引用表：只扫公开文档（`.md`）。`pattern` 行级正则与 `count` 词元级判定二选一。 */
 const INTERNAL_REFS = [
   { pattern: /facts\.md/, why: '事实登记簿（已下沉 .local/docs/）' },
-  // 事实编号只认**独立形态**：连字符稳定 ID（`WAIT-F02`、`SF-01` 这类问题清单
-  // 公开编号）内部同样出现 `F`＋数字，按整词匹配会把公开问题清单整表误报成
-  // 登记簿引用。负向后顾挡掉「大写字母-连字符」前缀，独立的 `F07` 照旧红。
-  { pattern: /(?<![A-Z-])F\d{1,3}\b/, why: '事实编号引用（登记簿不下沉则读者解不开）' },
-  // 同理：`DOC-DELIVERY-COMMENTS` 是公开问题清单的稳定编号，不是已下沉的交付
-  // 索引名。只豁免「全大写-连字符」复合词内部的那一次，行首或普通上下文里的
-  // `DELIVERY` / `DELIVERY-INDEX` 照旧红。
-  { pattern: /(?<![A-Z-])DELIVERY/, why: '交付索引（已下沉）' },
+  // 事实编号按**完整词元**判：`WAIT-F02` 这类公开稳定 ID（全大写段、编号不在
+  // 首段、不在路径里）的 `F02` 豁免；`foo-F02`、`见-F07`、裸 `F65`、
+  // `docs/WAIT-F02.md` 这类路径里的同形词元都不是公开 ID 提及，照旧红。
+  // 混行里公开 ID 与真引用各自独立判定，前者不豁免后者。
+  { count: (line) => countRefHits(line, /F\d{1,3}(?!\d)/g), why: '事实编号引用（登记簿不下沉则读者解不开）' },
+  // DELIVERY 独立规则（不做 F 编号的段边界过滤）：`DOC-DELIVERY-COMMENTS` 是公开
+  // 问题清单的稳定编号、正文提及才豁免；`DELIVERY-INDEX`、`x-DELIVERY`、
+  // `archive-DELIVERY-INDEX.md`、`MYDELIVERY.md`、链接目标里的
+  // `ARCHIVE-DELIVERY-INDEX.md` 都照旧红。
+  { count: (line) => countRefHits(line, /DELIVERY/g, { boundaryOnly: false }), why: '交付索引（已下沉）' },
   {
     pattern: /(impl-review|design-review|impl-corrections|doc-audit|requirements-review|research-r\d)/,
     why: '过程稿文件名（审查/修正/审计/调研稿，已下沉）'
@@ -312,8 +398,9 @@ export function checkPublicSurface(root = MODULE_ROOT, { quiet = false, scope } 
       }
       if (isDoc) {
         for (const rule of INTERNAL_REFS) {
-          if (!rule.pattern.test(line)) continue;
-          if (exempt) shadowHits += 1;
+          const hits = rule.count === undefined ? (rule.pattern.test(line) ? 1 : 0) : rule.count(line);
+          if (hits === 0) continue;
+          if (exempt) shadowHits += hits;
           else note(file, '引用', i + 1, line, rule.why);
         }
       }
