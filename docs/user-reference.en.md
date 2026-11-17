@@ -564,7 +564,7 @@ Questions from one call share a deadline, default 60 seconds. At expiry, answere
 
 For more time, use the session group's extension action. It adds askExtendMs, default 60 seconds, to each batch still active at click time. New questions are unaffected, and expired calls are not reopened. If confirmation is missing, refresh and check the actual deadline before clicking again.
 
-After expiry, questions can still be answered or ignored in the panel. A notification returns to the original session with the full question, options and descriptions, actual answer or ignore state, and time. If the session is idle with no package delivery waiting to start, the late answer starts a turn; otherwise it arrives at a later message-processing point. Untargeted async_wait calls wake only after the host accepts the notification; waits targeting jobs or children are not interrupted by unrelated answers.
+After expiry, questions can still be answered or ignored in the panel. A notification returns to the original session with the full question, options and descriptions, actual answer or ignore state, and time. If the session is idle with no pending late-answer notice, this answer starts a turn. If the session is running or already has such a notice waiting to start, the answer arrives at a later message-claim point. Untargeted async_wait calls wake only after the host accepts the notification; waits targeting jobs or children are not interrupted by unrelated answers.
 
 ### Missing acknowledgement or failed submission
 
