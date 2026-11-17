@@ -107,26 +107,45 @@ const PUBLIC_ID_TOKEN = /^(?:[A-Z0-9]{2,})(?:-[A-Z0-9]{2,})*$/;
  *
  * @param {string} line - 所在行。
  * @param {number} index - 关键词起始下标。
- * @returns {{ token: string, offsetInToken: number }} 词元全文与关键词在词元内的偏移。
+ * @returns {{ token: string, start: number, end: number, offsetInToken: number }}
+ *   词元全文、起止下标与关键词在词元内的偏移。
  */
 function tokenAround(line, index) {
   let start = index;
   while (start > 0 && TOKEN_CHAR.test(line[start - 1])) start -= 1;
   let end = index;
   while (end < line.length && TOKEN_CHAR.test(line[end])) end += 1;
-  return { token: line.slice(start, end), offsetInToken: index - start };
+  return { token: line.slice(start, end), start, end, offsetInToken: index - start };
+}
+
+/**
+ * 该命中是否处于文档/链接目标的**路径上下文**：词元后紧跟「.字母」（文件扩展名，
+ * 如 `ARCHIVE-DELIVERY-INDEX.md` 里被点截断的词元），或词元前紧邻 `/`（路径段）。
+ *
+ * 公开稳定 ID 例外只用于正文里的问题编号提及；出现在文件名/路径里的同形词元
+ * 按内部引用报红——不能因 `.md` 截断或形似编号就当成公开 ID。
+ *
+ * @param {string} line - 所在行。
+ * @param {number} index - 关键词起始下标。
+ * @returns {boolean} 在路径上下文里才 `true`。
+ */
+function inPathContext(line, index) {
+  const { start, end } = tokenAround(line, index);
+  if (end + 1 < line.length && line[end] === '.' && /[A-Za-z]/.test(line[end + 1])) return true;
+  return start > 0 && line[start - 1] === '/';
 }
 
 /**
  * 一次关键词命中是否落在公开稳定 ID 的**非首段**（`WAIT-F02` 的 `F02`、
- * `DOC-DELIVERY-COMMENTS` 的 `DELIVERY`）：词元整体符合公开 ID 形状，且关键词
- * 之前在同一词元内已有完整前段。满足才豁免。
+ * `DOC-DELIVERY-COMMENTS` 的 `DELIVERY`）：不在路径上下文，词元整体符合公开 ID
+ * 形状，且关键词之前在同一词元内已有完整前段。满足才豁免。
  *
  * @param {string} line - 所在行。
  * @param {number} index - 关键词起始下标。
  * @returns {boolean} 豁免才 `true`。
  */
 function insidePublicId(line, index) {
+  if (inPathContext(line, index)) return false;
   const { token, offsetInToken } = tokenAround(line, index);
   if (!PUBLIC_ID_TOKEN.test(token)) return false;
   const prefix = token.slice(0, offsetInToken);
@@ -134,21 +153,24 @@ function insidePublicId(line, index) {
 }
 
 /**
- * 数一行里的内部引用命中次数：`keywordRe` 逐次匹配，只统计**词元段边界**上的
- * 命中（段首，或前一个字符不是大写字母/数字——`UTF8` 里的 `F8` 不是事实编号
- * 形态），再豁免落在公开稳定 ID 词元非首段的那次。
+ * 数一行里的内部引用命中次数：`keywordRe` 逐次匹配，再豁免落在公开稳定 ID
+ * 词元非首段的那次。
+ *
+ * `boundaryOnly` 只给事实编号规则用：`UTF8` 里的 `F8` 不是事实编号形态，按段
+ * 边界过滤。DELIVERY 规则**不走**这一过滤——`MYDELIVERY` 这类全大写嵌词同样是
+ * 交付索引引用，须照报；两条规则各自独立判定。
  *
  * @param {string} line - 所在行。
  * @param {RegExp} keywordRe - 带 `g` 旗标的关键词正则。
+ * @param {{ boundaryOnly?: boolean }} [options] - `boundaryOnly` 默认 `true`。
  * @returns {number} 该行应报红的命中数。
  */
-function countRefHits(line, keywordRe) {
+function countRefHits(line, keywordRe, { boundaryOnly = true } = {}) {
   let count = 0;
   for (const match of line.matchAll(keywordRe)) {
     const i = match.index;
     const prev = i > 0 ? line[i - 1] : '';
-    // 只统计词元段边界上的命中：段首（含词元首字符）或前字符不是大写字母/数字。
-    if (i !== 0 && prev !== '-' && /[A-Z0-9]/.test(prev)) continue;
+    if (boundaryOnly && i !== 0 && prev !== '-' && /[A-Z0-9]/.test(prev)) continue;
     if (insidePublicId(line, i)) continue;
     count += 1;
   }
@@ -159,13 +181,15 @@ function countRefHits(line, keywordRe) {
 const INTERNAL_REFS = [
   { pattern: /facts\.md/, why: '事实登记簿（已下沉 .local/docs/）' },
   // 事实编号按**完整词元**判：`WAIT-F02` 这类公开稳定 ID（全大写段、编号不在
-  // 首段）里的 `F02` 豁免；`foo-F02`、`见-F07`、裸 `F65` 都不是公开 ID 形状，
-  // 照旧红。混行里公开 ID 与真引用各自独立判定，前者不豁免后者。
+  // 首段、不在路径里）的 `F02` 豁免；`foo-F02`、`见-F07`、裸 `F65`、
+  // `docs/WAIT-F02.md` 这类路径里的同形词元都不是公开 ID 提及，照旧红。
+  // 混行里公开 ID 与真引用各自独立判定，前者不豁免后者。
   { count: (line) => countRefHits(line, /F\d{1,3}(?!\d)/g), why: '事实编号引用（登记簿不下沉则读者解不开）' },
-  // 同理：`DOC-DELIVERY-COMMENTS` 是公开问题清单的稳定编号，不是已下沉的交付
-  // 索引名。`DELIVERY-INDEX`、`x-DELIVERY`、`archive-DELIVERY-INDEX.md` 都不是
-  // 公开 ID 形状，照旧红。
-  { count: (line) => countRefHits(line, /DELIVERY/g), why: '交付索引（已下沉）' },
+  // DELIVERY 独立规则（不做 F 编号的段边界过滤）：`DOC-DELIVERY-COMMENTS` 是公开
+  // 问题清单的稳定编号、正文提及才豁免；`DELIVERY-INDEX`、`x-DELIVERY`、
+  // `archive-DELIVERY-INDEX.md`、`MYDELIVERY.md`、链接目标里的
+  // `ARCHIVE-DELIVERY-INDEX.md` 都照旧红。
+  { count: (line) => countRefHits(line, /DELIVERY/g, { boundaryOnly: false }), why: '交付索引（已下沉）' },
   {
     pattern: /(impl-review|design-review|impl-corrections|doc-audit|requirements-review|research-r\d)/,
     why: '过程稿文件名（审查/修正/审计/调研稿，已下沉）'
