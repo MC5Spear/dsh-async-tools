@@ -17,7 +17,7 @@ The table is the package’s declared host admission set, not proof that every b
 
 | Component | Current applicable version |
 | --- | --- |
-| Plugin version | `0.2.9-alpha.3+dsh.0.2.1-rc` |
+| Plugin version | `0.2.9-alpha.4+dsh.0.2.1-rc` |
 | Supported dsh host versions | `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4`, `0.2.1-rc.5` |
 
 “Host” means the DSH instance loading the plugin. Only these four versions can load the package, not the final `0.2.1`, `0.2.0`, `0.2.2`, or an unlisted rc.
@@ -34,7 +34,7 @@ Existing profiles can retain old dependency copies, lockfiles, or installation s
 
 ### Usage limits and saving results
 
-**Trial verification boundary:** an earlier alpha.2 test artifact was installed in an isolated DSH `0.2.1-rc.5` instance. Authenticated API checks covered version, loading, the settings namespace, both presets, and blank sessions; disabling/re-enabling was also checked. This alpha.3 changes tests, maintenance checks, and documentation without changing plugin runtime code; its exact artifact has not been installed. Installation used `--ignore-scripts` with `autoInstallPeers=false`. Fresh installation with automatic peer installation enabled, upgrades from an exact old source, and reinstall/cold recovery after a required restart remain unverified. API checks do not establish GUI usability, end-to-end operation of the five tools, or allowance totals in real model inputs. Follow required reload/restart instructions before continuing, and test only in an isolated instance.
+**Trial verification boundary:** an earlier alpha.2 test artifact was installed in an isolated DSH `0.2.1-rc.5` instance. Authenticated API checks covered version, loading, the settings namespace, both presets, and blank sessions; disabling/re-enabling was also checked. This alpha.4 changes entry-allowance accounting and ID-recovery notices. Earlier records do not verify these changes on a real host; the final artifact has not been installed. Installation used `--ignore-scripts` with `autoInstallPeers=false`. Fresh installation with automatic peer installation enabled, upgrades from an exact old source, and reinstall/cold recovery after a required restart remain unverified. API checks do not establish GUI usability, end-to-end operation of the five tools, or allowance totals in real model inputs. Follow required reload/restart instructions before continuing, and test only in an isolated instance.
 
 Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Full real-host rechecking on rc.3/rc.4 is also incomplete. Before using those platforms or rc.3/rc.4, check the features needed in a separate test session, particularly command permissions, waiting, and result delivery.
 
@@ -428,7 +428,7 @@ For a result marked `truncated`, omitted middle sections, or deferred entries, c
 async_wait(wait_ms=0)
 ```
 
-`maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes. Results share the allowance within a delivery batch. The target triggering delivery has priority, followed by readiness order. The design limits a common input to 10 entries, including empty ones. The current candidate does not carry entry and notice usage across batches split around prompt assembly: a controlled sequence can deliver 20 empty-job statuses in one claim. This is not duplicate output and does not establish excess nonempty body content. Do not estimate total status-text overhead from the character setting alone.
+`maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes. Results share the allowance within a delivery batch. The triggering target has priority, followed by readiness order. Completion messages now carry entry usage forward along with character shares, including empty results and read-failure notices; unclaimed messages keep using the 10-entry allowance for a common input. Commands or workflows finishing inside their initial waits can still return additional terminal entries after that allowance is full, and long IDs can add text outside the body budget. Do not estimate total status and diagnostic overhead from the character setting alone. Handle the terminal facts received; do not rerun a task to recreate missing output.
 
 Once the allowance is exhausted, immediately repeating zero-wait may return only another deferral notice. Within one window, an earlier creation call or other result can spend the allowance before a later wait, leaving that wait with only status and deferral information. This does not mean the body is empty or lost.
 
@@ -441,7 +441,7 @@ If deferral persists, do independent work or end the current phase, retain the I
 
 An oversized entry keeps its head and tail while its middle remains for later reading. Excess entries are deferred in full. Status, necessary error explanations, and retained-output paths are outside the body allowance. **Shortened display does not mean the content was lost.**
 
-Very long job IDs cause notices to use shorter instructions. A read-failure notice can still shorten the ID in its status line, and the untargeted zero-wait suggested by the shortest notice may not return the promised status. First obtain the full ID from `job_list`, then retry the original job explicitly. For IDs containing quotes or backslashes, do not copy an unescaped call from the notice; encode the complete ID correctly as a string tool argument. These notice problems do not prove the body was lost. Do not rerun the original job.
+Very long job IDs cause notices to use shorter instructions. The shortest form directs the Agent to obtain the full ID from `job_list`, then retry the original job explicitly; do not reconstruct it from a shortened status line. Targeted call examples escape quotes, backslashes, and other characters as string content. When filling a tool argument manually, use the original complete ID rather than treating its escaped display as a different ID. These calls read the original job; they do not rerun it.
 
 With `fullCommandEcho=true`, background results attach command or script source. Result bodies use the allowance first. Source uses the remainder only when that delivery's body fits in full. Oversized source retains its head and tail in a 6:4 ratio with an omission count; no remaining allowance produces a note that source was not attached.
 
