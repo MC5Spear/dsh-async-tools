@@ -77,6 +77,19 @@ test('yieldNote：示例里的 `wait_ms` 必须取**生效配置的默认值**�
     '不得残留写死的 30000——示例与设置打架时，模型会照抄示例');
 });
 
+test('yieldNote（WAIT-NOTE-ESCAPE-01）：示例调用串里的作业 id 一律转义——含引号/反斜杠的合法 id 仍是可照抄的有效调用串', () => {
+  // 宿主注册表只要求 jobKind 非空：`a"b\c` 是合法 kind，作业 id 形如
+  // `a"b\c-1a2b3c4d5e6f7a8b`。原始内插会让示例变成 id:"a"b\c-…" 的自伤串
+  //（模型照抄即语法错误）；`escapeJobId` 按 JSON 字符串转义（引号→\"、
+  // 反斜杠→\\）后仍是合法调用串。
+  const jobId = 'a"b\\c-1a2b3c4d5e6f7a8b';
+  const note = yieldNote({ jobId, yieldMs: 20000, maxWaitMs: 600000, defaultWaitMs: 7000, elapsedMs: 20012 });
+  assert.match(note, /async_wait\(targets=\[\{kind:"job", id:"a\\"b\\\\c-1a2b3c4d5e6f7a8b"\}\], wait_ms=7000\)/,
+    '示例中的 id 按 JSON 字符串转义（引号→\\"、反斜杠→\\\\）');
+  assert.doesNotMatch(note, /id:"a"b\\c/,
+    '不得出现未转义的原始 id（自伤调用串形态）');
+});
+
 test('yieldNote（R32-c-b）：插话提前让出 → 注明用户到达且命令不受影响，不再说"超出预算"', () => {
   const base = { jobId: 'async-command-7', yieldMs: 20000, maxWaitMs: 600000, defaultWaitMs: 7000, elapsedMs: 4321 };
   const note = yieldNote({ ...base, mode: 'user' });

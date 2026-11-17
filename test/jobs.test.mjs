@@ -39,10 +39,14 @@ const hostTestForJobs = await hostTestFor('../lib/jobs.js');
 //（代边界＝agent/turn-stopping 重置内容预算）；本文件多数锚共用同一主体 id
 //（fakeAgent 缺省 session-1）且不发该事件——不归零则前面锚的扣减结转到后面
 // 锚的首直付批（让出条目/注记被延后＝假红）。每个锚开始时把全部主体的代
-// 额度归零＝「锚＝新输入代」；锚内的串行调用仍按同代合计（受控合计判据由
-// test/wait-delivery.test.mjs 的 RC-GEN 专证，这里不重复）。
+// 额度归零＝「锚＝新输入代」（WAIT-ITEMS-01 起条目额度 spentItems 同归零）；
+// 锚内的串行调用仍按同代合计（受控合计判据由 test/wait-delivery.test.mjs 的
+// RC-GEN 专证，这里不重复）。
 const hostTest = (name, fn) => hostTestForJobs(name, async (...args) => {
-  for (const subject of ledger?.subjects.values() ?? []) subject.generation.spent = 0;
+  for (const subject of ledger?.subjects.values() ?? []) {
+    subject.generation.spent = 0;
+    subject.generation.spentItems = 0;
+  }
   return fn(...args);
 });
 

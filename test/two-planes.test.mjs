@@ -2376,9 +2376,13 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
       //（不再按交付批次共享表述）。
       ['共享', '共用', '共同占用'],
       ['模型输入', '一次模型输入', '同一次模型输入'],
-      // WAIT-BUDGET-01 口径细化：重置点＝消息领取边界；已注入未领取的完成
-      // 消息份额跨输入继续占用额度。
-      ['消息领取边界', '领取边界'],
+      // WAIT-BUDGET-01 口径细化：重置点＝消息领取之后的宿主步骤事件
+      //（agent/pre-step——DOC-DELIVERY-COMMENTS：领取与重置之间有异步组稿，
+      // 期间到达的完成消息计入上一次输入）；已注入未领取的完成消息份额
+      // 跨输入继续占用额度。
+      ['宿主步骤事件', '步骤事件处重置'],
+      ['消息领取之后', '领取与重置之间'],
+      ['计入上一次输入', '算入上一次输入'],
       ['跨输入继续占用额度', '继续占用额度'],
       ['保留首尾', '保留开头与结尾', '首尾都保留'],
       ['说明截断', '注明截断', '截断说明'],
@@ -2513,9 +2517,12 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
       // DOC-U01 per-model-input quota.
       ['draw on it', 'draw on the same quota', 'one shared quota'],
       ['model input', 'one model input', 'within one input'],
-      // WAIT-BUDGET-01 phrasing: reset lands at message-claim boundaries;
+      // WAIT-BUDGET-01 phrasing: the reset lands at the host step event of
+      // each model input, after message claims (DOC-DELIVERY-COMMENTS);
       // injected-but-unclaimed shares keep counting across inputs.
-      ['message-claim boundaries', 'message-claim boundary'],
+      ['host step event', 'step event of each model input'],
+      ['after message claims', 'after the claim'],
+      ['count against the previous input', 'counted against the previous input'],
       ['keep counting across inputs', 'keep counting against the quota across inputs'],
       ['the head and tail are kept', 'head and tail kept', 'keeps its head and tail', 'keeps the head and tail'],
       ['truncation note', 'a note about the truncation', 'states the truncation'],
@@ -2613,7 +2620,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minWaitMs: '作用于等待入口正等待（wait_ms > 0）的 wait_ms；请求低于下限时按下限取值。wait_ms=0 只做即时检查、不会被抬高到下限。等待到时结束，后台继续运行。',
     maxWaitMs: '作用于等待入口的 wait_ms；高于上限时按上限取值。等待到时结束，后台继续运行。',
     pollIntervalMs: 'async_wait 的子代理目标按这个间隔周期性检查目标是否还在跑，作为变化事件没到时的备用检查手段。',
-    maxResultChars: '同一次模型输入内共同到达的全部结果内容合计的字符上限（正整数）——首次返回、等待返回与完成消息里的多条结果共同占用；额度随每次模型输入重置（消息领取边界），已注入未领取的完成消息份额跨输入继续占用额度。单条超出时保留首尾并说明截断，状态与提示另计。',
+    maxResultChars: '同一次模型输入内共同到达的全部结果内容合计的字符上限（正整数）——首次返回、等待返回与完成消息里的多条结果共同占用；额度在每次模型输入的宿主步骤事件处重置（消息领取之后；领取与重置之间到达的完成消息计入上一次输入），已注入未领取的完成消息份额跨输入继续占用额度。单条超出时保留首尾并说明截断，状态与提示另计。',
     jobKind: '命令作业注册时用的类型名，出现在作业列表和日志里方便辨认。',
     subagentProvider: 'async_agent 创建子代理的后端。',
     uiLang: '决定界面文案（设置表单、字段帮助、待答界面）显示中文还是英文；自动档跟随宿主语言。',
@@ -2636,7 +2643,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minWaitMs: 'Governs wait_ms of positive waits (wait_ms > 0) on the wait entry; a request below the floor is clamped to the lower bound; wait_ms=0 is an immediate check only and is not raised to the bound; the wait ends on schedule and the background task keeps running.',
     maxWaitMs: 'Governs wait_ms on the wait entry; a request above this ceiling uses the upper bound; the wait ends on schedule and the background task keeps running.',
     pollIntervalMs: 'async_wait\'s subagent targets decide how often to run a backup check of the target\'s running state when the change event has not arrived.',
-    maxResultChars: 'Cap on the total result content arriving together within one model input (a positive integer) — first-wait direct returns, wait-return entries, and completion messages all draw on it; the quota resets with each model input (at message-claim boundaries), and shares of injected-but-unclaimed completion messages keep counting across inputs. A single entry past the cap keeps its head and tail with the truncation noted; status lines and notices are counted separately.',
+    maxResultChars: 'Cap on the total result content arriving together within one model input (a positive integer) — first-wait direct returns, wait-return entries, and completion messages all draw on it; the quota resets at the host step event of each model input (after message claims; completion messages arriving between a claim and the reset count against the previous input), and shares of injected-but-unclaimed completion messages keep counting across inputs. A single entry past the cap keeps its head and tail with the truncation noted; status lines and notices are counted separately.',
     jobKind: 'The type name used when registering command jobs so they can be told apart in job lists and logs.',
     subagentProvider: 'The backend async_agent spawns subagents with.',
     uiLang: 'Sets the language (Chinese or English) of the settings form, field help, and pending panel; the auto choice follows the host language.',
@@ -2726,10 +2733,15 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     ],
     maxResultChars: [
       ['正整数', 'String.length'],
-      // DOC-U01：额度随每次模型输入重置、同一次输入内合计一份。
-      ['额度随每次模型输入重置', '随每次模型输入重置'],
-      // WAIT-BUDGET-01 口径细化：重置点＝消息领取边界；跨输入继续占用额度。
-      ['消息领取边界', '领取边界'],
+      // DOC-U01：额度随每次模型输入重置、同一次输入内合计一份（022 现行文案
+      // 表述为「在每次模型输入的宿主步骤事件（agent/pre-step）处重置」；短语
+      // 只取「每次模型输入」——不内嵌组 3 的「宿主步骤事件」命中词）。
+      ['每次模型输入'],
+      // WAIT-BUDGET-01 口径细化：重置点＝消息领取之后的宿主步骤事件
+      //（agent/pre-step）；跨输入继续占用额度。
+      ['宿主步骤事件', '步骤事件'],
+      ['消息领取发生在该事件之前', '领取发生在该事件之前'],
+      ['计入上一次输入的额度', '算入上一次输入的额度'],
       ['跨输入继续占用额度', '继续占用额度'],
       ['先到先分配', '先到先得'],
       ['保首尾并说明省略量与截断', '保首尾', '保留首尾、注明省略与截断'],
@@ -2861,10 +2873,16 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     ],
     maxResultChars: [
       ['positive integer', 'String.length'],
-      // DOC-U01: quota resets with each model input.
-      ['resets with each model input', 'the quota resets'],
-      // WAIT-BUDGET-01 phrasing: message-claim boundaries; cross-input occupation.
-      ['message-claim boundaries', 'message-claim boundary'],
+      // DOC-U01: quota resets with each model input (current wording: "The
+      // quota resets at the host step event of each model input"; the phrase
+      // picks just "each model input" so it does not embed the next group's
+      // "host step event" hit).
+      ['each model input'],
+      // WAIT-BUDGET-01 phrasing: the reset lands at the host step event
+      // (agent/pre-step), after message claims; cross-input occupation.
+      ['host step event', 'step event of each model input'],
+      ['message claims happen before', 'claims happen before that event'],
+      ['count against the previous input', 'counted against the previous input'],
       ['keep counting against the quota across inputs', 'keep counting across inputs'],
       ['first come first served', 'first arrivals take the quota first'],
       ['head and tail kept', 'omission and truncation stated', 'keeping the head and tail'],
@@ -2966,7 +2984,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minWaitMs: '作用于正值等待（wait_ms > 0）的下限：低于它就取下限；wait_ms=0 只做即时检查、不会被抬高。到时还回控制权、句柄仍有效；消息来了可以提前结束本次等待。',
     maxWaitMs: 'wait_ms 的上界：高于它就取上限。与 minWaitMs 构成 wait_ms > 0 的取值区间；零等待不被抬高。到时还回控制权、句柄仍有效；消息来了可以提前结束本次等待。',
     pollIntervalMs: 'async_wait 的子代理按这个间隔定期查目标还在不在跑——变化事件优先、轮询作为备用通道；间隔受 pollIntervalMs ≤ maxWaitMs 约束。',
-    maxResultChars: '配置键：maxResultChars（数值，字符）。\n\n按 String.length 计量，必须是正整数，小数草稿在保存时被拒。额度随每次模型输入重置（消息领取边界）；同一次输入内共同到达的多条结果合计一份：首次等待直接返回、等待返回的批次条目、完成消息——这些内容在同一份上限内先到先分配，额度用尽后到达的内容延后或裁剪（保首尾并说明省略量与截断），延后内容在下一次模型输入内按剩余额度交付；已注入未领取的完成消息继续占用额度，可能再顺延一次；状态行与提示另计。例如两个并行命令都在首次等待内完成时，两条直接返回合计不超过一份上限；同一次输入内未能全部送达的剩余部分，经 async_wait 领取。',
+    maxResultChars: '配置键：maxResultChars（数值，字符）。\n\n按 String.length 计量，必须是正整数，小数草稿在保存时被拒。额度在每次模型输入的宿主步骤事件（agent/pre-step）处重置——消息领取发生在该事件之前，领取与重置之间到达的完成消息计入上一次输入的额度；同一次输入内共同到达的多条结果合计一份：首次等待直接返回、等待返回的批次条目、完成消息——这些内容在同一份上限内先到先分配，额度用尽后到达的内容延后或裁剪（保首尾并说明省略量与截断），延后内容在下一次模型输入内按剩余额度交付；已注入未领取的完成消息继续占用额度，可能再顺延一次；状态行与提示另计。例如两个并行命令都在首次等待内完成时，两条直接返回合计不超过一份上限；同一次输入内未能全部送达的剩余部分，经 async_wait 领取。',
     jobKind: '给命令作业注册用的类型名，方便在作业清单与日志里认出来；留空会被拒绝。',
     subagentProvider: 'async_agent 创建子代理的后端，缺省用 spawn；输入去空白后为空就回落到默认值；写了不存在的后端，创建时拒绝并说明原因。要指定模型，就用调用的 provider、model 两参数。',
     uiLang: '界面文字与 Agent 文案是互不联动的两个开关：本开关只管界面文案，Agent 文案语言 agentLang 决定；auto 跟宿主语言走。',
@@ -2988,7 +3006,7 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     minWaitMs: 'Floor for waits with wait_ms > 0: below it the request clamps to the bound; wait_ms=0 is the exception — an immediate check only, not lifted. When the budget ends, hands control back; the handle stays valid; an arriving message can end the wait early.',
     maxWaitMs: 'Ceiling for wait_ms: above it the request clamps to the upper bound. With minWaitMs it forms the range for waits with wait_ms > 0; zero waits are not lifted. When the budget ends, hands control back; the handle stays valid; an arriving message can end the wait early.',
     pollIntervalMs: "async_wait's subagent side checks on two channels whether the target still runs — change events first, with polling as the fallback channel; the interval is bound by the pollIntervalMs ≤ maxWaitMs rule.",
-    maxResultChars: 'Config key: maxResultChars (number, characters).\n\nMeasured by String.length; it must be a positive integer, and non-integer drafts are rejected at save. The quota resets with each model input (at message-claim boundaries); the multiple results arriving within one input share a single cap: first-wait direct returns, wait-return batch entries, and completion messages draw on it first come first served; content arriving after the quota is exhausted is deferred or truncated (head and tail kept, omission and truncation stated), and deferred leftovers are delivered in the next model input as the remaining quota allows; completion messages already injected but not yet claimed keep counting against the quota across inputs and may slip once more; status lines and notices are counted separately. For example, when two parallel commands both finish inside their first waits, the two direct returns together stay within one cap.',
+    maxResultChars: 'Config key: maxResultChars (number, characters).\n\nMeasured by String.length; it must be a positive integer, and non-integer drafts are rejected at save. The quota resets at the host step event of each model input (agent/pre-step) — message claims happen before that event, and completion messages arriving between a claim and the reset count against the previous input; the multiple results arriving within one input share a single cap: first-wait direct returns, wait-return batch entries, and completion messages draw on it first come first served; content arriving after the quota is exhausted is deferred or truncated (head and tail kept, omission and truncation stated), and deferred leftovers are delivered in the next model input as the remaining quota allows; completion messages already injected but not yet claimed keep counting against the quota across inputs and may slip once more; status lines and notices are counted separately. For example, when two parallel commands both finish inside their first waits, the two direct returns together stay within one cap.',
     jobKind: 'Registry entries carry the type label given to command jobs when they are registered, so they can be told apart in job listings and log entries; leaving it blank is rejected.',
     subagentProvider: 'The backend that spawns subagents for async_agent, defaulting to spawn; an empty trimmed value reverts to the default; an unknown backend is refused with an understandable reason at subagent creation. To pick a model, specify provider plus model on the call.',
     uiLang: 'Interface text and Agent-facing copy are two separate switches: this one governs just the interface text, and agentLang decides the Agent-facing language; auto tracks the host language.',
