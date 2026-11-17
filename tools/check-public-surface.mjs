@@ -96,8 +96,14 @@ const FINGERPRINTS = [
 /** 内部引用表：只扫公开文档（`.md`）。 */
 const INTERNAL_REFS = [
   { pattern: /facts\.md/, why: '事实登记簿（已下沉 .local/docs/）' },
-  { pattern: /\bF\d{1,3}\b/, why: '事实编号引用（登记簿不下沉则读者解不开）' },
-  { pattern: /DELIVERY/, why: '交付索引（已下沉）' },
+  // 事实编号只认**独立形态**：连字符稳定 ID（`WAIT-F02`、`SF-01` 这类问题清单
+  // 公开编号）内部同样出现 `F`＋数字，按整词匹配会把公开问题清单整表误报成
+  // 登记簿引用。负向后顾挡掉「大写字母-连字符」前缀，独立的 `F07` 照旧红。
+  { pattern: /(?<![A-Z-])F\d{1,3}\b/, why: '事实编号引用（登记簿不下沉则读者解不开）' },
+  // 同理：`DOC-DELIVERY-COMMENTS` 是公开问题清单的稳定编号，不是已下沉的交付
+  // 索引名。只豁免「全大写-连字符」复合词内部的那一次，行首或普通上下文里的
+  // `DELIVERY` / `DELIVERY-INDEX` 照旧红。
+  { pattern: /(?<![A-Z-])DELIVERY/, why: '交付索引（已下沉）' },
   {
     pattern: /(impl-review|design-review|impl-corrections|doc-audit|requirements-review|research-r\d)/,
     why: '过程稿文件名（审查/修正/审计/调研稿，已下沉）'

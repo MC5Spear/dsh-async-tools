@@ -371,17 +371,23 @@ hostTest('async_workflow（R34-c·插话）：让出窗口内用户消息 → �
   const { f, runs, agent, tool } = rig();
   freezeTimers(f.ctx);
   const exec = { agent, signal: new AbortController().signal };
+  // t0 下界锚**实测墙钟**：`setTimeout(r, 5)` 在 Windows 计时器粒度下可能提前
+  // 落盘（CI 实测 elapsed=4），硬编码 ≥5 会把计时器噪声误判成 t0 回归；实测
+  // 墙钟下界仍然抓得住旧 t0 位置的变异（t0 挪后 elapsed 掉到 0–1ms）。
+  const wall0 = Date.now();
   const pending = tool.execute(BASE_ARGS, exec);
   await new Promise((r) => { setTimeout(r, 5); });
   f.emit('agent/inbox/inserted', inboxPayload({ agent, sourceKind: 'user', text: 'hold on', target: 'next-step' }));
+  const wallWaited = Date.now() - wall0;
 
   const result = await pending;
   assert.equal(result.status, 'running', '插话 → 转后台句柄（恢复通道 = 完成通知）');
   assert.match(result.note, /ended early: a user message arrived/);
   assert.match(result.note, /async_wait\(targets=\[\{kind:"job", id:"/, '恢复示例照带');
-  // elapsed 双向域：下界 = 触发前的 5 ms 等待（t0 必须在引擎启动
-  // 之前的 execute 入口），上界 = 首次等待预算（这条路不是预算到期退出的）。
-  assert.ok(result.elapsed_ms >= 5, `t0 取点在 execute 入口（实得 ${String(result.elapsed_ms)}）`);
+  // elapsed 双向域：下界 = 触发前的实测等待（t0 必须在引擎启动之前的 execute
+  // 入口），上界 = 首次等待预算（这条路不是预算到期退出的）。
+  const lowerBound = Math.max(0, wallWaited - 2);
+  assert.ok(result.elapsed_ms >= lowerBound, `t0 取点在 execute 入口（实得 ${String(result.elapsed_ms)}，下界 ${String(lowerBound)}）`);
   assert.ok(result.elapsed_ms < 600000, '插话先于预算到期返回');
   assert.equal(runs[0].cancelCalls, 0, '插话只结束等待，绝不取消 run（同款）');
   assert.equal(f.jobsFake.views()[0].status, 'running', '作业存活');
@@ -418,13 +424,19 @@ hostTest('async_workflow（R34-c·abort）：GUI 停止 → 句柄形状、run �
   freezeTimers(f.ctx);
   const controller = new AbortController();
   const exec = { agent, signal: controller.signal };
+  // t0 下界锚**实测墙钟**（与 R34-c·插话用例同款）：硬编码 ≥5 会被 Windows
+  // 计时器粒度击穿（CI 实测 elapsed=4）；实测墙钟下界仍然抓得住旧 t0 位置
+  // 的变异（t0 挪到 abort 处理或等待开始之后，elapsed 掉到 0–1ms）。
+  const wall0 = Date.now();
   const pending = tool.execute(BASE_ARGS, exec);
   await new Promise((r) => { setTimeout(r, 5); });
   controller.abort(new Error('tool call aborted'));
+  const wallWaited = Date.now() - wall0;
 
   const result = await pending;
   assert.equal(result.status, 'running', 'abort 分支按句柄口径（宿主整体改写，形状合法即可）');
-  assert.ok(result.elapsed_ms >= 5, `t0 取点在 execute 入口（实得 ${String(result.elapsed_ms)}）`);
+  const lowerBound = Math.max(0, wallWaited - 2);
+  assert.ok(result.elapsed_ms >= lowerBound, `t0 取点在 execute 入口（实得 ${String(result.elapsed_ms)}，下界 ${String(lowerBound)}）`);
   assert.ok(result.elapsed_ms < 600000, 'abort 先于预算到期返回');
   assert.equal(runs[0].cancelCalls, 0, 'abort 不接 run.cancel（R34-e：真取消走 job_kill）');
   assert.equal(f.jobsFake.views()[0].status, 'running', '作业必须存活');
