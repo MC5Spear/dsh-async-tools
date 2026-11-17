@@ -1266,8 +1266,13 @@ test('T15（R38；R44 换钉）：九个 dsh* peer 共用同一支持集合—�
     '不得声明 engines.dsh——宿主在场时它会顶替九条 peer 单独决定，支持集合因此失效');
   assert.equal(pkg.dependencies?.['@deepseek-ai/schemastery'], '~3.19.0',
     'schemastery 叶子依赖形态不变（~ 窗随宿主树）');
-  assert.equal(pkg.version, '0.2.10+dsh.0.2.2',
-    '本包 version 必须按需求 §7.3.1 带构建元数据全标识（核心 0.2.10 + 兼容线 dsh.0.2.2）——漏元数据会让用户失去兼容信息');
+  // TEST-ALPHA-VERSION-01：完整版本按需求 §7.3.1 双格式校验——稳定为
+  // <核心版本>+dsh.<兼容线>，alpha 为 <核心版本>-alpha.N+dsh.<兼容线>。需求侧
+  // 固定的是核心版本与兼容线（错位才是漏改），预发布序号由发布流程递增、测试
+  // 不固定具体 N——alpha 候选同样合法，不因预发布标识变红（修前红＝对
+  // 0.2.10-alpha.2+dsh.0.2.2 的稳定标识断言失败）。
+  assert.ok(/^(0\.2\.10)(?:-alpha\.\d+)?\+dsh\.0\.2\.2$/.test(pkg.version),
+    `本包 version 须为 0.2.10 或 0.2.10-alpha.N＋构建元数据 +dsh.0.2.2（需求 §7.3.1；实际：${pkg.version}）——核心版本或兼容线错位说明版本漏改，漏元数据会让用户失去兼容信息`);
 });
 
 test('T21：refreshToolDescriptions 递归同步嵌套参数说明——en→zh→en 各层同步、结构／枚举／对象身份不变', async (t) => {
