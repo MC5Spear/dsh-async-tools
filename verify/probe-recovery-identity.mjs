@@ -88,6 +88,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join, resolve, basename } from 'node:path';
 import { authCookieFromFirstHop, assertApiNotRedirected } from './_auth.mjs';
+import { LOCAL_DIR } from '../tools/_local-config.mjs';
 
 // ── 参数（机器坐标一律外部传入——判据 12：交付代码不内置开发机路径） ─────────
 const args = process.argv.slice(2);
@@ -112,7 +113,7 @@ const R = opt('r');
 // 其部署树找 patch、.env 读 ZAI 凭据，两者都需要它）。
 const MODEL_PATCH = opt('model-patch') ?? process.env.DSAT_MODEL_PATCH ?? null;
 if (R === undefined && MODEL_PATCH === null) {
-  console.error('需要 --r <dsh-service 部署根>（读其 .env 的 ZAI_API_KEY；模型路由 patch 亦默认在其中找）——或用 --model-patch / DSAT_MODEL_PATCH 显式自备补丁（此时凭据经子进程环境提供，--r 与 .env 前提免除）');
+  console.error('需要 --r <DSH 部署根>（读其 .env 的 ZAI_API_KEY；模型路由 patch 亦默认在其中找）——或用 --model-patch / DSAT_MODEL_PATCH 显式自备补丁（此时凭据经子进程环境提供，--r 与 .env 前提免除）');
   process.exit(2);
 }
 // 宿主树归一（DOC-03）：--host-root 显式优先，环境 DSAT_HOST_MODULES 回退——
@@ -161,11 +162,11 @@ if (MODEL_PATCH !== null) {
     process.exit(2);
   }
 }
-const OUT_DIR = join(REPO, '.local/evidence');
+const OUT_DIR = join(REPO, LOCAL_DIR, 'evidence');
 // 唯一运行目录＋所有权标记（DOC-06）：起跑不删任何既有目录；全部退出路径
 // 统一清整个运行目录（见 cleanup）。
 const RUN_STAMP = `${new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)}-${String(process.pid)}`;
-const RUN_DIR = join(REPO, '.local/tmp', `reid-${LABEL}-${RUN_STAMP}`);
+const RUN_DIR = join(REPO, LOCAL_DIR, 'tmp', `reid-${LABEL}-${RUN_STAMP}`);
 const HOME = join(RUN_DIR, 'home');
 const PLAYGROUND = join(RUN_DIR, 'playground');
 const EVIDENCE = join(OUT_DIR, `probe-recovery-identity-${LABEL}.json`);
@@ -297,7 +298,7 @@ process.on('unhandledRejection', (err) => { die(2, `FAULT：未处理的 Promise
 // 按装置故障退出 2，不接受复用。目录名含时间戳＋pid，正常形态不重名；EEXIST
 // 即异常形态（手工预建/外部占用）。
 mkdirSync(OUT_DIR, { recursive: true });
-mkdirSync(join(REPO, '.local/tmp'), { recursive: true });
+mkdirSync(join(REPO, LOCAL_DIR, 'tmp'), { recursive: true });
 try {
   mkdirSync(RUN_DIR);
 } catch (mkdirError) {
@@ -339,7 +340,7 @@ console.log(`[launcher] host bin = ${BIN}`);
 console.log(`[launcher] model patch = ${PATCH}`);
 
 // ── 1) 打包候选 tgz ─────────────────────────────────────────────────────────
-const packRun = spawnSync('npm', ['pack', '--ignore-scripts', '--pack-destination', RUN_DIR, '--cache', join(REPO, '.local/npm-cache')],
+const packRun = spawnSync('npm', ['pack', '--ignore-scripts', '--pack-destination', RUN_DIR, '--cache', join(REPO, LOCAL_DIR, 'npm-cache')],
   { cwd: REPO, encoding: 'utf8', shell: true, timeout: 300000 });
 // spawn 层失败（如受限沙箱 EPERM 击杀）时 stdout 缺失，下面直接 match 会 TypeError
 // 绕过一切收尾——先判空走 die()（DOC-06：全退出路径统一清理运行目录）。

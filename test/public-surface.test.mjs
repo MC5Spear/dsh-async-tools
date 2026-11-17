@@ -339,3 +339,30 @@ test('P18 worktree 指针豁免：仅仓根单行 `gitdir:` 指针文件跳过�
     '指纹', /开发盘路径/, '子目录同名文件不在豁免面（指针只长在仓根）——内容里的盘路径必须被扫到'
   );
 });
+
+test('P19 引用假阳性守卫：连字符稳定编号不是事实编号或交付索引引用', () => {
+  // 公开问题清单用 `WAIT-F02`／`DOC-DELIVERY-COMMENTS` 这类**连字符稳定编号**做
+  // 当前问题 ID——它们内部同样出现 `F`＋数字与 `DELIVERY` 字样，按整词/裸子串
+  // 匹配会把问题清单整表误报成登记簿引用。判据只认**独立形态**：
+  // 独立的 `F07`、行首或普通上下文里的 `DELIVERY` 照旧红。
+  const result = inspect({
+    doc: '# 文档\n\n'
+      + '| WAIT-F02 | 零等待的子代理目录查询悬置时未及时结束检查。 |\n'
+      + '| DOC-DELIVERY-COMMENTS | 注释与实际载体不符。 |\n'
+      + '| CORE-LEG-B-01 | 受控锚。 |\n'
+      + 'WAIT-NOTE-ID-01 同为稳定编号。\n'
+  });
+  try {
+    assert.deepEqual(result.findings, [], `连字符稳定编号不该被当成内部引用：\n${result.out}`);
+  } finally {
+    result.cleanup();
+  }
+  assertCaught(
+    { doc: '# 文档\n\n修前红形态见 SF-01／F07／D1 行。独立 F07 仍是登记簿引用。\n' },
+    '引用', /事实编号/, '独立形态的事实编号照旧必须报（精度修复不得吞掉真引用）'
+  );
+  assertCaught(
+    { doc: '# 文档\n\n交付索引见 DELIVERY-INDEX。\n' },
+    '引用', /交付索引/, '普通上下文里的交付索引名照旧必须报'
+  );
+});
