@@ -34,9 +34,13 @@ const hostTestForWorkflow = await hostTestFor('../lib/workflow.js', '../lib/wait
 // §2.6 输入代记账的装置近似（同 test/jobs.test.mjs 的口径）：真实宿主里模型
 // 的每次工具调用之间隔着新输入（代边界重置内容预算）；锚共用主体 id 且装置
 // 不发 agent/turn-stopping——每个锚开始时把全部主体的代额度归零＝「锚＝新
-// 输入代」，锚内串行调用仍按同代合计（受控合计判据由 RC-GEN 专证）。
+// 输入代」（WAIT-ITEMS-01 起条目额度 spentItems 同归零），锚内串行调用仍按
+// 同代合计（受控合计判据由 RC-GEN 专证）。
 const hostTest = (name, fn) => hostTestForWorkflow(name, async (...args) => {
-  for (const subject of ledger?.subjects.values() ?? []) subject.generation.spent = 0;
+  for (const subject of ledger?.subjects.values() ?? []) {
+    subject.generation.spent = 0;
+    subject.generation.spentItems = 0;
+  }
   return fn(...args);
 });
 
