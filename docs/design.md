@@ -1678,7 +1678,7 @@ WAIT-01 的设计落点：2.1（单一总截止与挂起条件检查）、2.2（
 
 - 条目结转（WAIT-ITEMS-01）——已实现（2.6「条目占用的尾部记账」，`lib/delivery.js`）：`unclaimedSends` 值形扩为 `{chars, items}`（字符与条目同址、按载体消息 id 记账），`#aliveTail` 双返回，`#newBatch` 条目起点＝存活尾部条目数、满批判定不变；组稿间隙（`deferFlush` 待投递项）与 nextTurn 滞留消息的条目同被覆盖。受控锚：WI 系列（修前红 20>10 四腿＋白盒记账腿，8.2 交付批次行）。
 - 说明出路真实性（WAIT-NOTE-ID-01 残余）——已实现（2.6 分档段，`lib/text.js`）：八键两语移除两类死路承诺（状态行编号指认、无目标零等待取回状态），统一可靠出路＝job_list 取完整编号→定向 async_wait（延后键的「无 targets 一并领取」真实承诺保留）；zh「（非空）」改「不代表结果为空」、en 同步。受控锚：RN 死路字样缺席＋job_list 出路在场。
-- ID 转义（WAIT-NOTE-ESCAPE-01）——已实现（2.6 分档段，`lib/text.js` 的 `escapeJobId`／t() 自动派生 `{jobIdEsc}`／`{agentIdEsc}`）：全部把标识置入双引号调用串的模型侧键统一转义——延后／读取失败／留存溢出／留存领取组行（`lib/wait.js`）与点名续取类键（`note.waitAgain`／`note.recheckFailed`／`wait.partialPending`／`note.agentWaitAgain`／`note.agentRecheckFailed`／`note.agentStarted`）；转义后长度计入分档、状态行不转义。受控锚：NI-1 转义扩展（含引号／反斜杠 jobKind 合法 id 下示例仍为有效调用串）。
+- ID 转义（WAIT-NOTE-ESCAPE-01）——已实现（2.6 分档段，`lib/text.js` 的 `escapeJobId`／t() 自动派生 `{jobIdEsc}`／`{agentIdEsc}`）：全部把标识置入双引号调用串的模型侧键统一转义——延后／读取失败／留存溢出／留存领取组行（`lib/wait.js`）、点名续取类键（`note.waitAgain`／`note.recheckFailed`／`wait.partialPending`／`note.agentWaitAgain`／`note.agentRecheckFailed`／`note.agentStarted`）与让出句柄注记的调用示例（`lib/output.js` 的 `yieldNote`，实现盲审补点）；转义后长度计入分档、状态行不转义。受控锚：NI-1 转义扩展与 yieldNote 转义腿（含引号／反斜杠 jobKind 合法 id 下示例仍为有效调用串，后者修前红已复核）。
 - 步边界事实更正——已实施（2.6 证据 3／边界段、8.4、9.4）：四宿主（rc.2–rc.5）静态核实同款 `agent/pre-step`（四树 L909 同一调用点；rc.2 README／README.zh 公开记载），「无步边界事件宿主」分支与待决定项⑤撤销（⑥⑦顺次前移），库注释（`lib/delivery.js` 头注与 `attachClaimedListener`）同口径更正。
 - 版本断言双格式（TEST-ALPHA-VERSION-01）——已实现（`test/index.test.mjs`）：版本断言改双格式正则（稳定 `0.2.9+dsh.0.2.1-rc`／alpha `0.2.9-alpha.N+dsh.0.2.1-rc`，需求 7.3 单 alpha 通道）；提交 `95586b4a`，修前红已复核。
 
