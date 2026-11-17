@@ -17,7 +17,7 @@ The table is the package’s declared host admission set, not proof that every b
 
 | Component | Current applicable version |
 | --- | --- |
-| Plugin version | `0.2.10-alpha.1+dsh.0.2.2` |
+| Plugin version | `0.2.10-alpha.2+dsh.0.2.2` |
 | Supported dsh host versions | `0.2.2-rc.1` |
 
 “Host” means the DSH instance loading the plugin. Only the version listed above can load the package, not the final `0.2.2`, older `0.2.2` pre-releases (alphas), the `0.2.1`/`0.2.0` lines, or an unlisted rc.
@@ -34,7 +34,7 @@ Existing profiles can retain old dependency copies, lockfiles, or installation s
 
 ### Usage limits and saving results
 
-**Trial verification boundary:** this final alpha artifact has not been installed on a host. The development candidate was installed only on DSH `0.2.2-rc.1`, where API checks covered loading, settings, blank sessions, and disabling/re-enabling. Actual GUI operation and the five tools’ end-to-end behavior remain unverified. Installation with `autoInstallPeers=true`, upgrades from an exact old source, and reinstall/cold recovery after a required restart are also unverified. The dependency declarations are designed to reuse host packages without requiring that option to be disabled; this is not proof that its enabled path passed. Follow any reload/restart request before continuing, and test only in an isolated instance.
+**Trial verification boundary:** neither this round’s code candidate nor the final alpha artifact has been installed on a host. An earlier candidate was installed on DSH `0.2.2-rc.1`, where API checks covered loading, settings, blank sessions, and disabling/re-enabling. Those records do not verify this round’s delivery-allowance repair in a running instance. Actual GUI operation and the five tools’ end-to-end behavior still have gaps. Installation with `autoInstallPeers=true`, upgrades from an exact old source, and reinstall/cold recovery after a required restart are also unverified. The dependency declarations are designed to reuse host packages without requiring that option to be disabled; this is not proof that its enabled path passed. Follow any reload/restart request before continuing, and test only in an isolated instance.
 
 Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Before using these environments, check the features needed in a separate test session, particularly command permissions, waiting, and result delivery.
 
@@ -84,7 +84,7 @@ If source retrieval fails, check the repository address and branch or commit, th
 
 #### Installation script-approval troubleshooting
 
-Through 0.2.8, profiles with `autoInstallPeers` enabled could install duplicate host dependencies for this package and fail with `ERR_PNPM_IGNORED_BUILDS` when their scripts were blocked. When moving to DSH `0.2.2-rc.1`, use an available source for this line’s `0.2.10-alpha.1+dsh.0.2.2` candidate, not the 0.2.9 package for DSH 0.2.1. If no matching source is available, defer installation and contact the maintainer. There is no need to approve redundant dependency scripts merely to get past the older failure.
+Through 0.2.8, profiles with `autoInstallPeers` enabled could install duplicate host dependencies for this package and fail with `ERR_PNPM_IGNORED_BUILDS` when their scripts were blocked. When moving to DSH `0.2.2-rc.1`, use an available source for this line’s `0.2.10-alpha.2+dsh.0.2.2` candidate, not the 0.2.9 package for DSH 0.2.1. If no matching source is available, defer installation and contact the maintainer. There is no need to approve redundant dependency scripts merely to get past the older failure.
 
 After installation succeeds, check the actual package version, settings, and both presets. Undecided approval entries from the failed attempt may disappear after successful installation. If an approval prompt remains, follow the steps below to check its cause.
 
@@ -436,17 +436,19 @@ For a result marked `truncated`, omitted middle sections, or deferred entries, u
 async_wait(wait_ms=0)
 ```
 
-`maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes. The plugin uses the host’s step events to account for shared content. A batch has at most 10 entries, prioritizing the triggering target and then readiness order; empty entries count.
+`maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes. The plugin uses the host’s step events to account for shared content. The triggering target has priority, followed by readiness order; empty entries count. The design limits a common input to 10 entries, but the current candidate does not carry entry and notice usage across batches split around prompt assembly: a controlled sequence can deliver 20 empty-job statuses in one claim. This is not duplicate output and does not establish excess nonempty body content. Do not estimate total status-text overhead from the character setting alone.
 
-**This setting cannot serve as a strict cap on one model input.** The host claims messages before asynchronous prompt assembly and then emits its step event. Controlled tests confirm that interleaved completion and wait cleanup can give content that should share accounting more than one allowance; behavior in real model requests still needs verification. Resetting accounting also does not rebuild an already-open batch’s balance, so the first zero-wait call in the next step can still defer content. That step is not a guaranteed collection deadline; permanent output loss has not been established.
+At each host `agent/pre-step` event, this line recalculates the input allowance and rebuilds the batch balance. Completion messages already injected but not yet claimed continue to count against it; changing steps does not grant those shares again. A turn ending or an internal batch closing does not itself add allowance.
 
-After processing the current return, try zero-wait in a later model step when content is still needed. If allowance remains unavailable, stop retrying in place, retain the job ID and deferral messages, do independent work or end the current phase, and ask the instance maintainer to investigate. This does not prove output loss; do not rerun a side-effecting task to recreate its result.
+Within one window, an earlier creation call or other result can spend the allowance before a later wait, leaving that wait with only status and deferral information. Pending completion messages can keep using allowance across steps, so the next step need not collect everything. Resetting allowance does not automatically resend older bodies. After processing the current return, use zero-wait in a later model step when unread content is still needed.
 
-Status, necessary explanations, retained paths, conversation history, and other sources are separate from the content allowance. Inspect actual requests when checking consumption.
+If allowance remains unavailable, stop retrying in place, retain the job ID and deferral messages, do independent work or end the current phase, and ask the instance maintainer to investigate. This does not prove output loss; do not rerun a side-effecting task to recreate its result.
+
+Totals within real model requests remain unverified, so the setting alone cannot predict request length. Status, necessary explanations, retained paths, conversation history, and other sources are separate from the content allowance. Inspect actual requests when checking consumption.
 
 An oversized entry keeps its head and tail while its middle remains for later reading. Excess entries are deferred in full. Status, necessary error explanations, and retained-output paths are outside the body allowance. **Shortened display does not mean the content was lost.**
 
-With long job IDs, an English deferral message can cut off its targeted recovery example. Do not copy an incomplete call. Once allowance is available, first use untargeted `async_wait(wait_ms=0)` to collect ready content; obtain the full ID from `job_list` if a targeted retry is needed. The buffered body is retained.
+Very long job IDs cause notices to use shorter instructions. A read-failure notice can still shorten the ID in its status line, and the untargeted zero-wait suggested by the shortest notice may not return the promised status. First obtain the full ID from `job_list`, then retry the original job explicitly. For IDs containing quotes or backslashes, do not copy an unescaped call from the notice; encode the complete ID correctly as a string tool argument. These notice problems do not prove the body was lost. Do not rerun the original job.
 
 With `fullCommandEcho=true`, background results attach command or script source. Result bodies use the allowance first. Source uses the remainder only when that delivery's body fits in full. Oversized source retains its head and tail in a 6:4 ratio with an omission count; no remaining allowance produces a note that source was not attached.
 

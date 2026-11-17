@@ -18,7 +18,7 @@ The table is the package’s declared host admission set, not proof that every b
 
 | Component | Current applicable version |
 | --- | --- |
-| Plugin version | `0.2.10-alpha.1+dsh.0.2.2` |
+| Plugin version | `0.2.10-alpha.2+dsh.0.2.2` |
 | Supported dsh host versions | `0.2.2-rc.1` |
 
 “Host” means the DSH instance loading the plugin. **Only the DSH version listed above can load this package**, not the final `0.2.2`, older `0.2.2` pre-releases (alphas), the `0.2.1` line, or an unlisted rc. Node.js 24.9 or newer is required; see the [runtime prerequisites](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>) before choosing another runtime.
@@ -29,7 +29,7 @@ For IME, screen-reader, or touch-based answers, and recovery after a canceled to
 
 If another plugin's job settled before this package began observing it, `async_wait` first checks the body's location. Where the native reader is hidden, it attempts to retrieve the original notification component's retained copy. A retrieved body follows normal delivery. If no copy is obtained, keep the job ID and explanation and follow the [result-reading limits](<docs/user-reference.en.md#usage-limits-and-saving-results>) for assistance; do not repeat a side-effecting task to recreate its result.
 
-**Trial verification boundary:** this final alpha artifact has not been installed on a host. The development candidate was installed only on DSH `0.2.2-rc.1`, where API checks covered loading, settings, blank sessions, and disabling/re-enabling. Actual GUI operation and the five tools’ end-to-end behavior remain unverified. Installation with `autoInstallPeers=true`, upgrades from an exact old source, and reinstall/cold recovery after a required restart are also unverified. The dependency declarations are designed to reuse host packages without requiring that option to be disabled; this is not proof that its enabled path passed. Follow any reload/restart request before continuing, and test only in an isolated instance.
+**Trial verification boundary:** neither this round’s code candidate nor the final alpha artifact has been installed on a host. An earlier candidate was installed on DSH `0.2.2-rc.1`, where API checks covered loading, settings, blank sessions, and disabling/re-enabling. Those records do not verify this round’s delivery-allowance repair in a running instance. Actual GUI operation and the five tools’ end-to-end behavior still have gaps. Installation with `autoInstallPeers=true`, upgrades from an exact old source, and reinstall/cold recovery after a required restart are also unverified. The dependency declarations are designed to reuse host packages without requiring that option to be disabled; this is not proof that its enabled path passed. Follow any reload/restart request before continuing, and test only in an isolated instance.
 
 ## Install and confirm loading
 
@@ -79,7 +79,7 @@ async_wait(targets=[{kind:"job", id:"<returned job_id>"}], wait_ms=30000)
 
 Factory settings give `yield_ms` a default of 20000 ms and bound each request to 20000–600000 ms. `wait_ms` is required every time. Expiry leaves the task running; use `job_kill` explicitly for unwanted jobs, rather than rerunning commands to check progress.
 
-Results are not replayed indefinitely; save anything that must be kept. Deferred content stays buffered, and a new completion message need not include older content. The plugin accounts for shared result content using host step events, but `maxResultChars` is not a verified strict limit for a real model input, and the next step is not a guaranteed delivery deadline. Once allowance is available, continue with `async_wait(wait_ms=0)` rather than rerunning the task. If content remains deferred, stop retrying in place, keep the job ID and messages, and follow [continued reading](<docs/user-reference.en.md#shortened-output-or-deferred-entries-continue-reading>) or [recovery](<docs/user-reference.en.md#a-tool-result-may-not-have-arrived-request-a-recovery-copy>).
+Results are not replayed indefinitely; save anything that must be kept. Deferred bodies stay buffered and are collected by later `async_wait` returns while allowance permits; a new completion message need not include older content. The plugin updates shared accounting at each host step event. Completion messages not yet claimed keep using allowance, so the next step need not collect everything; totals in real model inputs remain unverified. Once allowance is available, continue with `async_wait(wait_ms=0)` rather than rerunning the task. If content remains deferred, stop retrying in place, keep the job ID and explanation, and follow [continued reading](<docs/user-reference.en.md#shortened-output-or-deferred-entries-continue-reading>) or [recovery](<docs/user-reference.en.md#a-tool-result-may-not-have-arrived-request-a-recovery-copy>).
 
 ## Tools and presets
 
