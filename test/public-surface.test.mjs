@@ -342,9 +342,9 @@ test('P18 worktree 指针豁免：仅仓根单行 `gitdir:` 指针文件跳过�
 
 test('P19 引用假阳性守卫：连字符稳定编号不是事实编号或交付索引引用', () => {
   // 公开问题清单用 `WAIT-F02`／`DOC-DELIVERY-COMMENTS` 这类**连字符稳定编号**做
-  // 当前问题 ID——它们内部同样出现 `F`＋数字与 `DELIVERY` 字样，按整词/裸子串
-  // 匹配会把问题清单整表误报成登记簿引用。判据只认**独立形态**：
-  // 独立的 `F07`、行首或普通上下文里的 `DELIVERY` 照旧红。
+  // 当前问题 ID——它们内部同样出现 `F`＋数字与 `DELIVERY` 字样。判据按完整词元
+  // 豁免：全大写段、关键词不在首段的公开 ID 形状不报；独立形态照旧红
+  // （正负样本细节见 P20）。
   const result = inspect({
     doc: '# 文档\n\n'
       + '| WAIT-F02 | 零等待的子代理目录查询悬置时未及时结束检查。 |\n'
@@ -365,4 +365,43 @@ test('P19 引用假阳性守卫：连字符稳定编号不是事实编号或交�
     { doc: '# 文档\n\n交付索引见 DELIVERY-INDEX。\n' },
     '引用', /交付索引/, '普通上下文里的交付索引名照旧必须报'
   );
+});
+
+test('P20 引用回归：伪上下文不得因前一个字符豁免（foo-F07、x-DELIVERY 一类）', () => {
+  // 旧判据只看关键词的前一个字符（负向后顾 `[A-Z-]`），`foo-F07`、`见-F07`、
+  // `archive-DELIVERY-INDEX.md`、`x-DELIVERY` 都会整类漏放。现在按完整词元判：
+  // 只有全大写段、关键词不在首段的公开稳定 ID 豁免。每个非法串**独占**一棵
+  // 合成树——不与别的裸引用混栽，红必须归因到它自己。
+  assertCaught(
+    { doc: '# 文档\n\n下见 foo-F07 的说明。\n' },
+    '引用', /事实编号/, '小写前缀词元不是公开稳定 ID，事实编号照报'
+  );
+  assertCaught(
+    { doc: '# 文档\n\n见-F07 是漏放形态。\n' },
+    '引用', /事实编号/, 'CJK 截断出的 `-F07` 词元不是公开稳定 ID'
+  );
+  assertCaught(
+    { doc: '# 文档\n\n归档见 archive-DELIVERY-INDEX.md。\n' },
+    '引用', /交付索引/, '小写前缀的归档索引链接不是公开稳定 ID'
+  );
+  assertCaught(
+    { doc: '# 文档\n\n下见 x-DELIVERY 的说明。\n' },
+    '引用', /交付索引/, '单字符小写前缀不构成公开稳定 ID'
+  );
+  // 混行：同一行既有公开稳定 ID，也有真实内部引用——后者必须抓到，且前者
+  // 不得连带误报（恰一处命中即两个方向都钉住）。
+  const mixedFact = inspect({ doc: '# 文档\n\n| WAIT-F02 | 修复后仍见 F07 的引用。 |\n' });
+  try {
+    assert.equal(mixedFact.findings.length, 1, `公开 ID 不豁免同行的裸引用、也不连带误报：\n${mixedFact.out}`);
+    assert.match(mixedFact.findings[0].why, /事实编号/);
+  } finally {
+    mixedFact.cleanup();
+  }
+  const mixedDelivery = inspect({ doc: '# 文档\n\n| DOC-DELIVERY-COMMENTS | 仍引用 DELIVERY-INDEX。 |\n' });
+  try {
+    assert.equal(mixedDelivery.findings.length, 1, `公开 ID 不豁免同行的裸索引名、也不连带误报：\n${mixedDelivery.out}`);
+    assert.match(mixedDelivery.findings[0].why, /交付索引/);
+  } finally {
+    mixedDelivery.cleanup();
+  }
 });
