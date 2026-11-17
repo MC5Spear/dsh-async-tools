@@ -90,6 +90,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { authCookieFromFirstHop, assertApiNotRedirected } from './_auth.mjs';
+import { LOCAL_DIR } from '../tools/_local-config.mjs';
 
 // ── 参数（机器坐标一律外部传入——判据 12：交付代码不内置开发机路径） ─────────
 const args = process.argv.slice(2);
@@ -112,7 +113,7 @@ const R = opt('r');
 //（如其他供应商路由）时部署根与 ZAI 凭据前提一律解除。
 const MODEL_PATCH_EXPLICIT = opt('model-patch') ?? process.env.DSAT_MODEL_PATCH ?? null;
 if (R === undefined && MODEL_PATCH_EXPLICIT === null) {
-  console.error('需要 --r <dsh-service 部署根>（读其 .env 的 ZAI_API_KEY；模型路由 patch 亦默认在其中找）——或用 --model-patch 自备路由（自备形态无部署根与 ZAI 凭据前提）');
+  console.error('需要 --r <DSH 部署根>（读其 .env 的 ZAI_API_KEY；模型路由 patch 亦默认在其中找）——或用 --model-patch 自备路由（自备形态无部署根与 ZAI 凭据前提）');
   process.exit(2);
 }
 // 宿主树归一（DOC-03）：--host-root 显式优先，环境 DSAT_HOST_MODULES 回退——
@@ -162,13 +163,13 @@ if (MODEL_PATCH_EXPLICIT !== null) {
     process.exit(2);
   }
 }
-const OUT_DIR = join(REPO, '.local/evidence');
+const OUT_DIR = join(REPO, LOCAL_DIR, 'evidence');
 // 唯一运行目录＋所有权标记（DOC-06／§9.4 探针契约）：**原子独占创建**——目录
 // 已存在即装置故障退出 2，不起跑、不删除既有目录（预建目录可能是他人现场，
 // 经 PROBE-OWNED 归属核验的删除只对本次运行创建的目录发生）；全部退出路径
 // 统一清整个运行目录（见 cleanup）。
 const RUN_STAMP = `${new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)}-${String(process.pid)}`;
-const RUN_DIR = join(REPO, '.local/tmp', `reid-${LABEL}-${RUN_STAMP}`);
+const RUN_DIR = join(REPO, LOCAL_DIR, 'tmp', `reid-${LABEL}-${RUN_STAMP}`);
 const HOME = join(RUN_DIR, 'home');
 const PLAYGROUND = join(RUN_DIR, 'playground');
 const EVIDENCE = join(OUT_DIR, `probe-recovery-identity-${LABEL}.json`);
@@ -285,7 +286,7 @@ mkdirSync(OUT_DIR, { recursive: true });
 // 原子独占创建：父目录（.local/tmp）确保在场后一次性创建运行目录——已存在
 // （EEXIST）＝装置故障退出 2，不起跑、不删除既有目录、不经 cleanup（其对非
 // 本次创建的目录按归属核验跳过删除，但此刻尚未创建任何东西，直接退出）。
-mkdirSync(join(REPO, '.local/tmp'), { recursive: true });
+mkdirSync(join(REPO, LOCAL_DIR, 'tmp'), { recursive: true });
 try {
   mkdirSync(RUN_DIR);
 } catch (mkdirError) {
@@ -328,7 +329,7 @@ console.log(`[launcher] host bin = ${BIN}`);
 console.log(`[launcher] model patch = ${PATCH}`);
 
 // ── 1) 打包候选 tgz ─────────────────────────────────────────────────────────
-const packRun = spawnSync('npm', ['pack', '--ignore-scripts', '--pack-destination', RUN_DIR, '--cache', join(REPO, '.local/npm-cache')],
+const packRun = spawnSync('npm', ['pack', '--ignore-scripts', '--pack-destination', RUN_DIR, '--cache', join(REPO, LOCAL_DIR, 'npm-cache')],
   { cwd: REPO, encoding: 'utf8', shell: true, timeout: 300000 });
 // spawn 层失败（如受限沙箱 EPERM 击杀）时 stdout 缺失，下面直接 match 会 TypeError
 // 绕过一切收尾——先判空走 die()（DOC-06：全退出路径统一清理运行目录）。

@@ -438,13 +438,20 @@ hostTest('async_workflow（R34-c·abort）：GUI 停止 → 句柄形状、run �
   freezeTimers(f.ctx);
   const controller = new AbortController();
   const exec = { agent, signal: controller.signal };
+  // t0 下界锚**实测墙钟**（与 R34-c·插话用例同款）：`setTimeout(r, 5)` 在
+  // Windows 计时器粒度下可能提前落盘（CI rc.4 实测 elapsed=4），硬编码 ≥5 会
+  // 把计时器粒度噪声误判成 t0 回归。实测墙钟下界仍然抓得住旧 t0 位置的变异：
+  // t0 挪到 abort 处理或等待开始之后，elapsed 会掉到 0–1ms，远低于下界。
+  const wall0 = Date.now();
   const pending = tool.execute(BASE_ARGS, exec);
   await new Promise((r) => { setTimeout(r, 5); });
   controller.abort(new Error('tool call aborted'));
+  const wallWaited = Date.now() - wall0;
 
   const result = await pending;
   assert.equal(result.status, 'running', 'abort 分支按句柄口径（宿主整体改写，形状合法即可）');
-  assert.ok(result.elapsed_ms >= 5, `t0 取点在 execute 入口（实得 ${String(result.elapsed_ms)}）`);
+  const lowerBound = Math.max(0, wallWaited - 2);
+  assert.ok(result.elapsed_ms >= lowerBound, `t0 取点在 execute 入口（实得 ${String(result.elapsed_ms)}，下界 ${String(lowerBound)}）`);
   assert.ok(result.elapsed_ms < 600000, 'abort 先于预算到期返回');
   assert.equal(runs[0].cancelCalls, 0, 'abort 不接 run.cancel（R34-e：真取消走 job_kill）');
   assert.equal(f.jobsFake.views()[0].status, 'running', '作业必须存活');
