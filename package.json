@@ -1,6 +1,6 @@
 {
   "name": "dsh-async-tools",
-  "version": "0.2.10-alpha.3+dsh.0.2.2",
+  "version": "0.2.10-alpha.4+dsh.0.2.2",
   "description": "Async execution plugin for DSH: long commands run as background jobs instead of blocking the conversation, and one bounded wait collects results when they are ready. Also delegates tasks to background subagents and runs script-based multi-agent orchestration.",
   "license": "MIT",
   "author": "MC5Spear (https://github.com/MC5Spear)",
