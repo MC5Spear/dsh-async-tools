@@ -17,10 +17,10 @@ The table is the package’s declared host admission set, not proof that every b
 
 | Component | Current applicable version |
 | --- | --- |
-| Plugin version | `0.2.10-alpha.4+dsh.0.2.2` |
-| Supported dsh host versions | `0.2.2-rc.1` |
+| Plugin version | `0.2.11-alpha.1+dsh.0.2.2` |
+| Supported dsh host versions | `0.2.2-rc.1`, `0.2.2-rc.2`, `0.2.2-rc.3` |
 
-“Host” means the DSH instance loading the plugin. Only the version listed above can load the package, not the final `0.2.2`, older `0.2.2` pre-releases (alphas), the `0.2.1`/`0.2.0` lines, or an unlisted rc.
+The host is the DSH instance that loads the plugin. One artifact can load on the three listed versions. It does not load on final `0.2.2`, other prereleases (including `rc.4`), or the `0.2.1` and `0.2.0` lines.
 
 Node.js `24.9.0` or newer is required, matching this package and the target DSH runtime requirements.
 
@@ -34,7 +34,7 @@ Existing profiles can retain old dependency copies, lockfiles, or installation s
 
 ### Usage limits and saving results
 
-**Trial verification boundary:** an earlier alpha.2 test artifact was installed in an isolated DSH `0.2.2-rc.1` instance. Authenticated API checks covered version, loading, the settings namespace, both presets, and blank sessions. This alpha.4 changes entry-allowance accounting, ID-recovery notices, and result-length settings help. Earlier records do not verify these changes on a real host; the final artifact has not been installed. Installation used `--ignore-scripts` with `autoInstallPeers=false`. Fresh installation with automatic peer installation enabled, upgrades from an exact old source, full disable/uninstall behavior, and reinstall/cold recovery after a required restart remain unverified. API checks do not establish GUI usability, end-to-end operation of the five tools, or allowance totals in real model inputs. Follow required reload/restart instructions before continuing, and test only in an isolated instance.
+**Trial coverage:** Existing isolated runs cover installation and loading of the same candidate artifact on all three hosts, and actual child creation on `rc.1` and `rc.3`. The live creation checks on `rc.2` used an earlier build; an in-process check of name rejection in the current build is not a full live rerun. The `rc.1` upgrade from the preceding alpha.4 retained settings in an earlier build. Fresh installation with automatic peer installation enabled, full disable and uninstall of the current artifact, and reinstall and recovery after restarting the same instance remain unverified. Follow the host’s reload or restart prompt. If you depend on any of these operations, try it on an isolated instance first.
 
 Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Before using these environments, check the features needed in a separate test session, particularly command permissions, waiting, and result delivery.
 
@@ -84,7 +84,7 @@ If source retrieval fails, check the repository address and branch or commit, th
 
 #### Installation script-approval troubleshooting
 
-Through 0.2.8, profiles with `autoInstallPeers` enabled could install duplicate host dependencies for this package and fail with `ERR_PNPM_IGNORED_BUILDS` when their scripts were blocked. When moving to DSH `0.2.2-rc.1`, use an available source for this line’s `0.2.10-alpha.4+dsh.0.2.2` candidate, not the 0.2.9 package for DSH 0.2.1. If no matching source is available, defer installation and contact the maintainer. There is no need to approve redundant dependency scripts merely to get past the older failure.
+Through 0.2.8, profiles with `autoInstallPeers` enabled could install duplicate host dependencies for this package and fail with `ERR_PNPM_IGNORED_BUILDS` when their scripts were blocked. When moving to one of the listed DSH 0.2.2 prereleases, use an available source for `0.2.11-alpha.1+dsh.0.2.2`, not the 0.2.9 package for DSH 0.2.1. If no matching source is available, defer installation and contact the maintainer. There is no need to approve redundant dependency scripts merely to get past the older failure.
 
 After installation succeeds, check the actual package version, settings, and both presets. Undecided approval entries from the failed attempt may disappear after successful installation. If an approval prompt remains, follow the steps below to check its cause.
 
@@ -256,10 +256,10 @@ A failed workdir resolution or preparation returns an error instead of silently 
 Continue according to the return:
 
 - `status=running`: keep `job_id`. `elapsed_ms` is elapsed time and `note` explains why the initial wait ended. Wait on that job when its result is needed; do not rerun the command. Jobs are registered from startup and can be found with `job_list`.
-- `status=completed`: read `output` and inspect `exit_code`, `signal`, and the explanation. Completion does not imply exit zero; `signal` identifies process termination by signal.
+- `status=completed`: inspect `exit_code`, `signal`, and the explanation. Read the body if `output` is present. Completion does not imply exit zero; `signal` identifies process termination by signal.
 - `status=killed`: retain `detail` and any `output`, then decide how to handle unfinished work.
 
-`truncated` marks shortened display content; see section 4 for continued reading.
+If the initial return gives an outcome and `deferred`, the job has finished, but the entire entry was held back and no body is included. Keep `job_id` and follow [continued reading](<#shortened-output-or-deferred-entries-continue-reading>). `truncated` instead means part of the body has arrived and the omitted portion can be read later.
 
 ### 3.2 async_wait
 
@@ -289,7 +289,7 @@ Section 4 explains `status`. `waited_ms` is actual checking and waiting time. `t
 
 The body location depends on the return branch. A `completed`, `failed`, or `killed` return triggered by a terminal job places that job's body in `output`; other jobs in the batch use `outputs[*].text`. Untargeted returns and zero-wait increments from running jobs provide bodies only through `outputs[*].text`, without necessarily having a top-level `output`. `delivered` contains batch metadata, not a replacement for the body.
 
-Queries, retries, and waiting share one budget rather than restarting it at each step. Even a zero-wait call must check states and can take time: all checks share a 1000 ms window, with unfinished queries marked `unconfirmed`. Positive waits allow 300 ms of scheduling tolerance; do not use them as precision timers.
+Queries, retries, and waiting share one budget. A zero-wait call does not wait for future messages; its status-check window is 1000 ms, with unfinished queries marked `unconfirmed`. Positive waits allow 300 ms of scheduling tolerance. A slow read while retrieving an earlier job result can make the call return later; see [known issues (Chinese)](<issues.md>). Do not use this tool as a precision timer.
 
 ### 3.3 async_agent
 
@@ -306,12 +306,13 @@ Reaching the limit, failing to read the setting, or using a backend unable to en
 | `cwd` | string | Parent's current directory | Initial child directory; relative paths resolve against the parent's current directory, and later changes are independent |
 | `provider` | string | Conditionally available; paired with model | Exact LLM provider ID |
 | `model` | string | Conditionally available; paired with provider | Exact model ID; query before use |
-| `reasoning_effort` | string | Conditionally available | May be supplied alone; nonempty effort ID supported by the effective model |
+| `reasoning_effort` | string | Conditionally available | A nonempty effort ID supported by the effective model. May be supplied alone on `rc.1`; on `rc.2` and `rc.3`, supply both `provider` and `model` with it |
+| `name` | string | Optional on `rc.2` and `rc.3` only | A host name for the child: 1–32 lowercase letters, digits, or hyphens, starting with a letter. `lead` is reserved for the root Agent. Choose another name if the host reports a conflict, or omit it to let the host assign one |
 | `agent_preset` | string | Conditionally available | Selects a child preset from the allowed list; see section 7 for configuration |
 
 The execution backend must support resumable children. A registered backend supporting only one-off external execution cannot be used by `async_agent`. Model arguments appear only if that backend also supports them; passing unsupported arguments is an error. The `subagentProvider` setting selects the execution backend, default `spawn`; the call's `provider` selects the model provider. These are different. With a context-inheriting backend, the child's access to the parent conversation follows that backend.
 
-A label and complete task are usually sufficient, with a default or inherited model. Success returns `status=started`, `agent_id`, and an explanation including the model's source. A rejected creation does not return a successful ID. Keep the ID and do independent work, then use `async_wait` for target changes when needed. Continue the conversation with `send_message`, or stop the child with `interrupt_agent`.
+A label and complete task are usually enough to use a default or inherited model. Success returns `status=started`, `agent_id`, and the source of the model choice; a rejected creation returns no successful ID. On `rc.2` and `rc.3`, the receipt also shows the host address. Pass it as `agent` to `send_message` or `interrupt_agent`. It is usually a full name path; if an older chain contains an unnamed node, use the session ID the host returns instead. `async_wait` accepts direct children only: always pass `agent_id`, not the host address. On `rc.2` and `rc.3`, the two shipped presets omit native `wait_agent`; other presets are unchanged.
 
 The shipped presets configure no selectable child presets, so they do not expose `agent_preset`. Section 5 explains explicit model choices, querying permission, and inheritance.
 
@@ -358,7 +359,7 @@ This example keeps only successful results. If failures must be reported, retain
 
 Invalid arguments, unknown options such as `effort`, `isolation`, or `agentType`, unsupported schemas, and total/composition limits terminate the whole script rather than becoming local null values. The host defines concurrency and total limits; full concurrency slots queue work.
 
-Completion in the same call returns `status=completed` and `result` as a rendered string, not the original JSON object. A background run returns `status=running` and `job_id`, with results arriving through wait returns or completion messages. `status=killed` means the run was terminated and may include `detail`. Ending a wait does not cancel orchestration; `job_kill` requests cancellation. A missing engine fails before startup without creating a job. Section 7 explains engine configuration for custom presets.
+When a workflow finishes in the initial wait and there is room for its entry, `status=completed` includes `result` as a rendered string, not the original JSON object. If the return instead includes `deferred`, keep `job_id` and follow [continued reading](<#shortened-output-or-deferred-entries-continue-reading>) for the result. A background run returns `status=running` and `job_id`, with results arriving through wait returns or completion messages. `status=killed` means the run was terminated and may include `detail`. Ending a wait does not cancel orchestration; `job_kill` requests cancellation. A missing engine fails before startup without creating a job. Section 7 explains engine configuration for custom presets.
 
 ### 3.5 async_list_subagent_models
 
@@ -407,8 +408,8 @@ A wait ending does not mean a task ended. Check `status` before deciding whether
 | `cancelled` or a host cancellation error | This call was canceled, not the task. Find a missing identifier with job_list or a completion message |
 | `no-work` | Checks confirmed there is no work to wait for, either at entry or after all work ended during the wait |
 | `unconfirmed` | Failed or timed-out queries prevented confirmation. Recheck the original target as instructed, rather than creating new work |
-| Job `completed` | Read the body and check the exit code |
-| Job `failed` / `killed` | Preserve the error, signal, and existing output before deciding how to handle unfinished work |
+| Job `completed` | Check the exit code and delivered output. If marked `deferred`, keep `job_id` and read the result later |
+| Job `failed` / `killed` | Preserve the error, signal, and output already received. If marked `deferred`, read it later by job ID before deciding how to handle unfinished work |
 | Child `changed` / `settled` | The target changed, or is not currently observed running. The final answer arrives separately; this state alone is not success |
 | Query or read failure | Retry reading the original target, not running the task; a failed read does not mark unread content as read |
 
@@ -436,7 +437,7 @@ For a result marked `truncated`, omitted middle sections, or deferred entries, u
 async_wait(wait_ms=0)
 ```
 
-`maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes. The plugin uses host step events to account for shared content. The triggering target has priority, followed by readiness order. Unclaimed completion-message entries now count alongside character shares, including empty results and read-failure notices. When the next step event recalculates allowance, those messages keep using the 10-entry share for a common input. Commands or workflows finishing inside their initial waits can still return additional terminal entries after it is full; long IDs can add text outside the body budget, and repeated waits within one input can inject duplicate deferral notices. Do not estimate total status and diagnostic overhead from the character setting alone, retry zero-wait in place, or rerun a task to recreate missing output.
+`maxResultChars` defaults to 12000, counted with JavaScript `String.length`, not bytes. The plugin tracks body length and entry count separately. One input has room for 10 entries, including empty results, read-failure notices, and completion messages not yet claimed. When those slots are full, a command or workflow that finishes during its initial wait returns the outcome and retrieval instructions, with the full entry held for later reading. Use the returned job ID to collect it; do not rely on an automatic resend or rerun the task.
 
 At each host `agent/pre-step` event, this line recalculates the input allowance and rebuilds the batch balance. Completion messages already injected but not yet claimed continue to count against it; changing steps does not grant those shares again. A turn ending or an internal batch closing does not itself add allowance.
 
@@ -464,7 +465,7 @@ async_wait(targets=[{kind:"job", id:"<original job_id>"}], wait_ms=0)
 
 When allowance is available, unread middle sections and deferred content arrive first. If none remains, the plugin can resend an unconfirmed copy marked “recovery copy / may duplicate”; its body also consumes the allowance. Large content continues across batches, subject to the exhaustion handling above. Already-confirmed content returns only status and an explanation, not the body. The host handles delivery confirmation without an extra user action.
 
-Copies are retained for at most 30 minutes by default, subject to per-session caps of 10 records and 2×maxResultChars characters in total. Oldest entries are removed first, and unloading a plugin row clears its records, so copies can expire earlier. If a copy is unavailable, inspect original UI records and known retained-output paths. Without a body source, recovery cannot be guaranteed.
+Copies are kept for up to 30 minutes by default, with at most 10 per session. When their total exceeds `2 × maxResultChars` characters, the plugin removes older copies first. A newly recorded copy can exceed that threshold if it is the only one. Unloading the corresponding plugin row also clears its copies. If a copy is unavailable, inspect original UI records and known retained-output paths. Without a body source, recovery cannot be guaranteed.
 
 Different output copies from the same job are handled separately. Confirmation of one portion does not make known expired content count as fully delivered. For a terminal job with some content confirmed and other copies unavailable, recovery reports partial confirmation and the missing portions.
 
@@ -509,7 +510,7 @@ A model route is an exact provider ID and model ID pair. Usually omit model argu
                provider="<provider ID>", model="<model ID>")
    ```
 
-   Add reasoning_effort when needed, using an effort supported by that model. It can also be supplied alone for a default or inherited model.
+   To select an effort, add a `reasoning_effort` value supported by that model. Only `rc.1` accepts this argument alone for a default or inherited model. On `rc.2` and `rc.3`, pass `provider` and `model` in the call even if a model is already configured for the tool.
 4. Keep the returned agent_id and do independent work first. For progress, call:
 
    ```text
@@ -616,7 +617,7 @@ To supply defaults for settings in section 2, edit the target profile's overlay 
 
 3. Save the file, arrange for active tasks to finish safely, then reload as required by the host. Check effective values in the settings page and a new session. User overrides saved through the form still take priority over file defaults.
 
-The 0.2.5 flat form, such as `config: { agentLang: zh }`, does not take effect on 0.2.9 or this 0.2.10 candidate. Before upgrading, change it to `config: { settings: { agentLang: zh } }` and move other settings likewise. Otherwise the row can load while language, wait durations, and switches fall back to defaults. Removing user overrides cannot fix misplaced values. Load logs may list ignored flat keys; still read values back after migration.
+Since 0.2.9, the plugin no longer reads the flat configuration used in 0.2.5, such as `config: { agentLang: zh }`. Before upgrading, change it to `config: { settings: { agentLang: zh } }` and move other settings likewise. Otherwise the row can load while language, wait durations, and switches fall back to defaults. Removing user overrides cannot fix misplaced values. Load logs may list ignored flat keys; still read values back after migration.
 
 Tools normally use the host row's shared settings. Only when that row is not connected do tools use valid tool-row settings as fallback and report a warning. If the form saved but tools report disconnected settings, repair the host row rather than duplicating settings across tool rows.
 
@@ -699,7 +700,7 @@ Before supplying model defaults, query exact IDs and put them in agentOptions.pr
 2. An explicit model/effort request, or provider, model, or reasoningEffort in the tool row, triggers an effective-model support check. The execution backend's agentRouteDefaults then contributes lower-priority defaults, with missing parts filled from the parent model.
 3. With only non-model options such as maxTokens, or no defaults at all, backend model defaults are not additionally applied; the host inherits the parent model. When no options contribute, the creation request omits agentOptions as well.
 
-Only explicit model choices undergo DSH's current allowed-list check. Tool-row defaults triggering a support check do not make the call explicit. On a changed model without a requested effort, the check does not copy an incompatible effort from the old model. Compatible values used temporarily for checking are not written back into the creation request. To require a particular effort, explicitly choose a supported reasoning_effort. Use the creation receipt for the final model and inheritance source.
+Only explicit model choices undergo DSH's current allowed-list check. Tool-row defaults triggering a support check do not make the call explicit. On `rc.2` and `rc.3`, choosing a model explicitly without an effort uses that model’s default effort, even when the selected route is the same as the parent’s. On `rc.1`, temporary values used for support checks are not written into the creation request. To select an effort, follow the [creation arguments](<#33-async_agent>).
 
 ### Development links
 

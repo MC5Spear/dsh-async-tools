@@ -18,10 +18,10 @@ The table is the package’s declared host admission set, not proof that every b
 
 | Component | Current applicable version |
 | --- | --- |
-| Plugin version | `0.2.10-alpha.4+dsh.0.2.2` |
-| Supported dsh host versions | `0.2.2-rc.1` |
+| Plugin version | `0.2.11-alpha.1+dsh.0.2.2` |
+| Supported dsh host versions | `0.2.2-rc.1`, `0.2.2-rc.2`, `0.2.2-rc.3` |
 
-“Host” means the DSH instance loading the plugin. **Only the DSH version listed above can load this package**, not the final `0.2.2`, older `0.2.2` pre-releases (alphas), the `0.2.1` line, or an unlisted rc. Node.js 24.9 or newer is required; see the [runtime prerequisites](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>) before choosing another runtime.
+The host is the DSH instance that loads the plugin. The same artifact can load on all three listed versions. It does not load on final `0.2.2`, other prereleases (including `rc.4`), or the `0.2.1` line. Node.js 24.9 or newer is required.
 
 Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Before relying on these environments, check the features needed in a separate test session.
 
@@ -29,7 +29,7 @@ For IME, screen-reader, or touch-based answers, and recovery after a canceled to
 
 If another plugin's job settled before this package began observing it, `async_wait` first checks the body's location. Where the native reader is hidden, it attempts to retrieve the original notification component's retained copy. A retrieved body follows normal delivery. If no copy is obtained, keep the job ID and explanation and follow the [result-reading limits](<docs/user-reference.en.md#usage-limits-and-saving-results>) for assistance; do not repeat a side-effecting task to recreate its result.
 
-**Trial verification boundary:** an earlier alpha.2 test artifact was installed in an isolated DSH `0.2.2-rc.1` instance. Authenticated API checks covered version, loading, the settings namespace, both presets, and blank sessions. This alpha.4 changes entry-allowance accounting, ID-recovery notices, and result-length settings help. Earlier records do not verify these changes on a real host; the final artifact has not been installed. Installation used `--ignore-scripts` with `autoInstallPeers=false`. Fresh installation with automatic peer installation enabled, upgrades from an exact old source, full disable/uninstall behavior, and reinstall/cold recovery after a required restart remain unverified. API checks do not establish GUI usability, end-to-end operation of the five tools, or allowance totals in real model inputs. Follow required reload/restart instructions before continuing, and test only in an isolated instance.
+**Trial coverage:** Prior isolated tests installed the same candidate artifact on all three hosts and tested actual child creation on `rc.1` and `rc.3`. Those checks do not cover every tool, live-page interaction, or result allowance in actual model inputs. See the [user reference](<docs/user-reference.en.md#usage-limits-and-saving-results>) for upgrade and recovery coverage.
 
 ## Install and confirm loading
 
@@ -93,7 +93,7 @@ Both presets directly provide five tools without modifying existing presets:
 | `async_workflow` | Coordinates large multi-agent tasks with JavaScript; manages the whole run as a background job |
 | `async_list_subagent_models` | Browses or searches models and checks whether a chosen creation tool can use them |
 
-Inspection, messaging, and stopping remain DSH management operations. Children usually need no explicit model choice. When one is needed, follow [discovery, creation, and waiting](<docs/user-reference.en.md#5-model-catalogs-authorization-and-inheritance>). Each explicit model or effort choice through `async_agent` reads the current DSH model-selection policy. Saved changes affect later creation, not running children.
+Inspection, messaging, and stopping remain DSH management operations. On `rc.2` and `rc.3`, the two shipped presets use `async_wait` in place of native `wait_agent`. For waits, use the `agent_id` returned at creation, not the child’s name. Children usually need no explicit model choice. When one is needed, follow [discovery, creation, and waiting](<docs/user-reference.en.md#5-model-catalogs-authorization-and-inheritance>). Each explicit model or effort choice through `async_agent` reads the current DSH model-selection policy. Saved changes affect later creation, not running children.
 
 Custom presets can use all features too, but tools must be mounted manually and workflows need an engine. The `boundPresets` setting scopes operating instructions and auxiliary features; it does not install tools. See [custom composition](<docs/user-reference.en.md#7-advanced-composition>).
 
