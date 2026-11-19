@@ -17,7 +17,7 @@ The table is the package’s declared host admission set, not proof that every b
 
 | Component | Current applicable version |
 | --- | --- |
-| Plugin version | `0.2.9-alpha.4+dsh.0.2.1-rc` |
+| Plugin version | `0.2.9-alpha.5+dsh.0.2.1-rc` |
 | Supported dsh host versions | `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4`, `0.2.1-rc.5` |
 
 “Host” means the DSH instance loading the plugin. Only these four versions can load the package, not the final `0.2.1`, `0.2.0`, `0.2.2`, or an unlisted rc.
@@ -34,7 +34,7 @@ Existing profiles can retain old dependency copies, lockfiles, or installation s
 
 ### Usage limits and saving results
 
-**Trial verification boundary:** an earlier alpha.2 test artifact was installed in an isolated DSH `0.2.1-rc.5` instance. Authenticated API checks covered version, loading, the settings namespace, both presets, and blank sessions; disabling/re-enabling was also checked. This alpha.4 changes entry-allowance accounting and ID-recovery notices. Earlier records do not verify these changes on a real host; the final artifact has not been installed. Installation used `--ignore-scripts` with `autoInstallPeers=false`. Fresh installation with automatic peer installation enabled, upgrades from an exact old source, and reinstall/cold recovery after a required restart remain unverified. API checks do not establish GUI usability, end-to-end operation of the five tools, or allowance totals in real model inputs. Follow required reload/restart instructions before continuing, and test only in an isolated instance.
+**Trial coverage:** Alpha.4, which contains the same runtime code as this version, was installed and started in a fresh, isolated DSH `0.2.1-rc.5` instance. Disabling and re-enabling were tested on this host with an earlier alpha.2, not across this version’s full install lifecycle. A fresh install with automatic peer installation enabled, an upgrade from an exact older source, and a reinstall and recovery after restarting the same instance remain unverified. Follow the host’s reload or restart prompts, and check the features you need in an isolated instance first.
 
 Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Full real-host rechecking on rc.3/rc.4 is also incomplete. Before using those platforms or rc.3/rc.4, check the features needed in a separate test session, particularly command permissions, waiting, and result delivery.
 
@@ -283,7 +283,7 @@ Section 4 explains `status`. `waited_ms` is actual checking and waiting time. `t
 
 The body location depends on the return branch. A `completed`, `failed`, or `killed` return triggered by a terminal job places that job's body in `output`; other jobs in the batch use `outputs[*].text`. Untargeted returns and zero-wait increments from running jobs provide bodies only through `outputs[*].text`, without necessarily having a top-level `output`. `delivered` contains batch metadata, not a replacement for the body.
 
-Queries, retries, and waiting share one budget rather than restarting it at each step. Even a zero-wait call must check states and can take time: all checks share a 1000 ms window, with unfinished queries marked `unconfirmed`. Positive waits allow 300 ms of scheduling tolerance; do not use them as precision timers.
+Queries, retries, and waiting share one budget. A zero-wait call does not wait for future messages; its status-check window is 1000 ms, with unfinished queries marked `unconfirmed`. Positive waits allow 300 ms of scheduling tolerance. A slow read while retrieving an earlier job result can make the call return later; see [known issues (Chinese)](<issues.md>). Do not use this tool as a precision timer.
 
 ### 3.3 async_agent
 
@@ -457,7 +457,7 @@ async_wait(targets=[{kind:"job", id:"<original job_id>"}], wait_ms=0)
 
 When allowance is available, unread middle sections and deferred content arrive first. If none remains, the plugin can resend an unconfirmed copy marked “recovery copy / may duplicate”; its body uses the same allowance. Large content continues across batches, subject to the exhaustion handling above. Already-confirmed content returns only status and an explanation, not the body. The host handles delivery confirmation without an extra user action.
 
-Copies are retained for at most 30 minutes by default, subject to per-session caps of 10 records and 2×maxResultChars characters in total. Oldest entries are removed first, and unloading a plugin row clears its records, so copies can expire earlier. If a copy is unavailable, inspect original UI records and known retained-output paths. Without a body source, recovery cannot be guaranteed.
+Copies are kept for up to 30 minutes by default, with at most 10 per session. When their total exceeds `2 × maxResultChars` characters, the plugin removes older copies first. A newly recorded copy can exceed that threshold if it is the only one. Unloading the corresponding plugin row also clears its copies. If a copy is unavailable, inspect original UI records and known retained-output paths. Without a body source, recovery cannot be guaranteed.
 
 Different output copies from the same job are handled separately. Confirmation of one portion does not make known expired content count as fully delivered. For a terminal job with some content confirmed and other copies unavailable, recovery reports partial confirmation and the missing portions.
 

@@ -18,7 +18,7 @@ The table is the package’s declared host admission set, not proof that every b
 
 | Component | Current applicable version |
 | --- | --- |
-| Plugin version | `0.2.9-alpha.4+dsh.0.2.1-rc` |
+| Plugin version | `0.2.9-alpha.5+dsh.0.2.1-rc` |
 | Supported dsh host versions | `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4`, `0.2.1-rc.5` |
 
 “Host” means the DSH instance loading the plugin. **Only these four DSH versions can load this package**, not the final `0.2.1` or an unlisted rc. Node.js 24 is recommended; see the [runtime prerequisites](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>) before choosing another runtime.
@@ -27,7 +27,7 @@ Linux command execution and one-shot permission escalation have not been verifie
 
 For IME, screen-reader, or touch-based answers, and recovery after a canceled tool call, read [usage limits and saving results](<docs/user-reference.en.md#usage-limits-and-saving-results>). `async_agent` now reads the host’s delegation-depth setting before creation; real nested-creation and restored-session verification remains incomplete. See [depth limits and refusal handling](<docs/user-reference.en.md#33-async_agent>).
 
-**Trial verification boundary:** an earlier alpha.2 test artifact was installed in an isolated DSH `0.2.1-rc.5` instance. Authenticated API checks covered version, loading, the settings namespace, both presets, and blank sessions; disabling/re-enabling was also checked. This alpha.4 changes entry-allowance accounting and ID-recovery notices. Earlier records do not verify these changes on a real host; the final artifact has not been installed. Installation used `--ignore-scripts` with `autoInstallPeers=false`. Fresh installation with automatic peer installation enabled, upgrades from an exact old source, and reinstall/cold recovery after a required restart remain unverified. API checks do not establish GUI usability, end-to-end operation of the five tools, or allowance totals in real model inputs. Follow required reload/restart instructions before continuing, and test only in an isolated instance.
+**Trial coverage:** Alpha.4, which contains the same runtime code as this version, was installed and started in a fresh, isolated DSH `0.2.1-rc.5` instance. That check does not cover full operation on the other three hosts or establish the entry allowance in actual model inputs. See the [user reference](<docs/user-reference.en.md#usage-limits-and-saving-results>) for upgrade, recovery, and known limitations.
 
 ## Install and confirm loading
 
