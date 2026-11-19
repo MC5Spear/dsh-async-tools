@@ -817,8 +817,11 @@ test('internal/config 原料层：本包候选的显式空允许集合抛错拒�
   assert.ok(typeof listener === 'function', '接线注册 internal/config 监听');
   // rc.1 监听形态：监听器收到 `(fiber, next)`，原料候选经 next() 的内层返回值
   // 流转（链尾 fallback 携带 resolveConfig 的入参）；装置以 next 返回值模拟
-  // fallback raw，透传断言用对象身份锚定。
-  const call = (candidate) => listener({}, () => candidate);
+  // fallback raw，透传断言用对象身份锚定。fiber 首参按本包行形态传
+  // （runtime.name＝本包名——N-CFG-01 行归属甄别后，本包判据只对本包 Fiber
+  // 自检；外来行腿见 N-CFG-01 用例）。
+  const ownFiber = { runtime: { name: 'dsh-async-tools' } };
+  const call = (candidate) => listener(ownFiber, () => candidate);
 
   // 本包候选＋显式空数组 → 抛错（可读文案＝词典英文档）。
   assert.throws(
@@ -840,6 +843,47 @@ test('internal/config 原料层：本包候选的显式空允许集合抛错拒�
   assert.equal(call(foreign), foreign, '外来候选直接续链（不是我们的行）');
 
   wiring.dispose();
+  setConfigValidationArmed(false);
+});
+
+test('internal/config 行归属甄别（N-CFG-01）：设置子树判据只对本包 Fiber 自检，外来行带 settings 形状不登记降级（修前红＝仅凭形状甄别）', async () => {
+  setConfigValidationArmed(false);
+  const { readDegraded, clearDegraded } = await import('../lib/settings.js');
+  // 修前形态锚定必红：归属甄别只有 `isOwnConfigCandidate`（形状判据——候选带
+  // settings 子树即认作本包）。真实实例上外来插件（如 dsh-config-editor 的
+  // 嵌套行）同样会携带 `{ settings: {...} }` 形状的候选流经全树级 waterfall：
+  // 修前这类行的跨字段违例会被登记成本包降级事实，污染模型可见的描述警示段。
+  // 修复＝形状判据之外加**行归属判据**（fiber.runtime.name＝本包名），两个条件
+  // 都成立才自检——本锚在未修复代码上必红（外来 fiber 腿登记了降级）。
+  const listeners = new Map();
+  const ctx = {
+    on(event, fn) { listeners.set(event, fn); return () => {}; },
+    logger: { warn() {} }
+  };
+  const wiring = attachSnapshotSource(ctx, resolveConfig({}));
+  const listener = listeners.get('internal/config');
+  assert.ok(typeof listener === 'function', '接线注册 internal/config 监听');
+  // 跨字段违例候选（defaultWaitMs=1 < 下限）：本包 Schema 必拒的形状——自检
+  // 判据在 resolve 侧（snapshotFromConfig）。
+  const violating = { settings: { defaultWaitMs: 1 } };
+  const ownFiber = { runtime: { name: 'dsh-async-tools' } };
+  const foreignFiber = { runtime: { name: 'dsh-config-editor' } };
+
+  clearDegraded();
+  // 外来行（运行别家模块的 Fiber）携带 settings 子树形状：不属于本包的降级
+  // 事实——放行续链且不登记（修前：isOwnConfigCandidate 命中 ⇒ 登记 ⇒ 红）。
+  const passedThrough = listener(foreignFiber, () => violating);
+  assert.equal(passedThrough, violating, '外来行候选原样续链（不改写别家候选）');
+  assert.equal(readDegraded(), undefined,
+    '外来行的跨字段违例不登记本包降级（行归属甄别先于形状判据）');
+
+  // 对照腿：本包 Fiber 携带同形状候选——仍照旧自检登记（修复不得误伤自检）。
+  listener(ownFiber, () => violating);
+  assert.match(String(readDegraded() ?? ''), /cross-field violation|must lie within/,
+    '本包行的非法提交照旧登记降级');
+
+  wiring.dispose();
+  clearDegraded();
   setConfigValidationArmed(false);
 });
 
@@ -1233,6 +1277,22 @@ test('进程内（真实链）：三形启动、降级基线与运行中非法�
     assert.equal(foreignEntry?.fiber?.state, 2, '外来行照常激活（甄别不改写别家候选）');
     assert.equal(readDegraded(), degradeBeforeForeign,
       '外来行流经 waterfall 不得触发本包降级登记（否则启动即污染模型可见的描述警示段——真实实例启动日志实证过该污染形态）');
+
+    // ⑦ 行归属甄别（N-CFG-01，真实装载链）：外来行的候选**整体落在本包设置
+    //    键集内**（`{settings: {...}}` 形状、值还带跨字段违例）——形状判据
+    //    （isOwnConfigCandidate）对这类行失明（键集碰撞），必须由 fiber 首参的
+    //    模块身份（runtime.name）挡住：不得登记本包降级、行照常激活。修前红＝
+    //    仅凭形状甄别 ⇒ 该行被登记假降级。
+    const degradeBeforeSettings = readDegraded();
+    await loader.create({
+      id: 'f04-foreign-settings', name: foreignSpec,
+      config: { toolName: 'subagent', models: ['m1'], settings: { ...BASE_SETTINGS, defaultWaitMs: 1 } }
+    }, 'include');
+    await loader.await();
+    const foreignSettingsEntry = loader.resolve('include:f04-foreign-settings');
+    assert.equal(foreignSettingsEntry?.fiber?.state, 2, '携带 settings 形状的外来行照常激活（别家候选不自检也不改写）');
+    assert.equal(readDegraded(), degradeBeforeSettings,
+      '外来行的 settings 形状候选（键集碰撞＋跨字段违例）不登记本包降级（行归属甄别先于形状判据）');
   } finally {
     setConfigValidationArmed(false);
     chain.clearSnapshot();
@@ -1261,7 +1321,7 @@ test('进程内（真实链）：布尔开关新输入三路径拒绝、三处�
     // 其 wiring 处置器清空模块快照，污染本用例的快照断言。先用宿主 API 显式
     // 移除（EntryGroup.remove），让本用例的每次成功写入都不触发拆除。
     for (const row of loader.entries()) {
-      if (['f04-host-t1', 'f04-host-t2', 'f04-foreign'].includes(row.options.id)) {
+      if (['f04-host-t1', 'f04-host-t2', 'f04-foreign', 'f04-foreign-settings'].includes(row.options.id)) {
         row.parent.remove(row.options.id);
       }
     }

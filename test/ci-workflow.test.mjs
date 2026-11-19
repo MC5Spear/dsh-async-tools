@@ -100,3 +100,31 @@ test('CI：预期非零的段必须自己归一化退出码（否则作业红在
   assert.match(block, /throw/, '实际退出码不是 2 时必须让整段失败');
   assert.match(block, /^\s*exit 0\s*$/m, '核对完预期非零后必须在段内显式 exit 0');
 });
+
+test('CI：with-host 矩阵 dsh 档恰为 0.2.2 三成员，断言步骤按 OR 原文核对成员（HC-7 CI 腿）', () => {
+  // 设计 §7.4.6：集合内一个宿主绿不等于集合绿——矩阵按成员逐个展开。矩阵数组
+  // 恰三成员：少一项＝该宿主没有 CI 作业；多一项＝矩阵越出 peer 集合（断言步骤
+  // 会拒，但作业本身就是白跑）。
+  const matrix = /dsh:\s*\[([^\]]+)\]/.exec(CI);
+  assert.ok(matrix !== null, 'ci.yml 未找到 dsh 矩阵档——提取规则或 ci.yml 形态变了，先确认没漏扫');
+  const members = matrix[1].split(',').map((item) => item.trim().replace(/^'|'$/g, ''));
+  assert.deepEqual(members, ['0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3'], '矩阵 dsh 档恰为支持集合三成员');
+  // 断言步骤的 OR 判据文本在场：按 || 切分 peer 原文（单值比较会把合法 OR 原文
+  // 误判为被安装改写）＋矩阵版本必须属于成员集合（-notcontains 反例必红）。
+  assert.ok(
+    CI.includes("-split '\\s*\\|\\|\\s*'"),
+    'OR 成员切分判据在场（断言步骤按 OR 形态核对，不退回单值比较）'
+  );
+  assert.ok(
+    CI.includes('$members -notcontains $dsh'),
+    '矩阵版本 ∈ peer 集合成员的断言在场（矩阵越界时该步骤必红）'
+  );
+  // 矩阵成员与包清单 peer OR 原文一致（准入本体判据在 host-compat 测试——
+  // 「支持集合：九条 dsh peer 同串」等已覆盖，此处只锁 CI 文本腿与清单的交集）。
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  const declared = pkg.peerDependencies['@deepseek-ai/dsh'];
+  const declaredMembers = declared.split('||').map((item) => item.trim());
+  for (const member of members) {
+    assert.ok(declaredMembers.includes(member), `矩阵成员 ${member} 必须在 peer OR 原文 ${declared} 内`);
+  }
+});

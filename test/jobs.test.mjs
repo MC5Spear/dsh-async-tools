@@ -33,7 +33,7 @@ import { resolveConfig } from '../lib/config.js';
 const jobsModule = await loadOfflineSafe('../lib/jobs.js');
 const { createRunTool: buildRunTool } = jobsModule ?? {};
 const deliveryModule = await loadOfflineSafe('../lib/delivery.js');
-const { ledger } = deliveryModule ?? {};
+const { ledger, resetDeliveryLedger } = deliveryModule ?? {};
 const hostTestForJobs = await hostTestFor('../lib/jobs.js');
 // §2.6 输入代记账的装置近似：真实宿主里模型的每次工具调用之间隔着新输入
 //（代边界＝agent/turn-stopping 重置内容预算）；本文件多数锚共用同一主体 id
@@ -41,11 +41,14 @@ const hostTestForJobs = await hostTestFor('../lib/jobs.js');
 // 锚的首直付批（让出条目/注记被延后＝假红）。每个锚开始时把全部主体的代
 // 额度归零＝「锚＝新输入代」（WAIT-ITEMS-01 起条目额度 spentItems 同归零）；
 // 锚内的串行调用仍按同代合计（受控合计判据由 test/wait-delivery.test.mjs 的
-// RC-GEN 专证，这里不重复）。
+// RC-GEN 专证，这里不重复）。批视图与延后说明配额随代边界一并丢弃
+//（agent/pre-step 语义，WAIT-NOTES-BATCH-01 起配额随代承载）。
 const hostTest = (name, fn) => hostTestForJobs(name, async (...args) => {
   for (const subject of ledger?.subjects.values() ?? []) {
     subject.generation.spent = 0;
     subject.generation.spentItems = 0;
+    subject.batch = null;
+    subject.deferredNotes = null;
   }
   return fn(...args);
 });
@@ -774,6 +777,37 @@ hostTest('async_run（R8·R32-a）：准入拒绝必须可读可行动——进�
   assert.equal(killed, false, '没有进程，也就没有 kill 可言');
 });
 
+hostTest('async_run（WAIT-F04）：准入拒绝的 logger.warn 完整原文同样单行化——多行原文不得伪造日志行', async () => {
+  const f = fakeCtx();
+  const { proc, settle } = fakeProc({ text: '', status: 'running', autoResolve: false });
+  f.installShellExecute(() => Promise.resolve(proc));
+  // 复刻宿主容量报错携带多行堆栈的形态（CR/LF/TAB 混排）——stderr 出口已按
+  // §6.3 单行化（escapeLogValue），修前 logger.warn 出口原样插值 rawDetail，
+  // 一条多行原文即产生多条伪造日志行（换行拆行、TAB 错位）。
+  f.ctx.jobs.start = () => {
+    throw new Error('background job limit reached for this owner (limit: 7)\r\n    at register (registry.js:1:1)\n\tat deeper frame');
+  };
+
+  const tool = createRunTool(f.ctx, resolveConfig({ toolName: 'async_run', defaultYieldMs: 1, minYieldMs: 1 }));
+
+  let raised;
+  try {
+    await tool.execute({ command: 'Start-Sleep 600', description: 'long build' }, exec);
+  } catch (error) {
+    raised = error;
+  }
+  settle();
+
+  assert.ok(raised !== undefined, '前置：准入拒绝照常可读上抛');
+  const warnLine = f.logs
+    .filter(([kind]) => kind === 'warn')
+    .map(([, text]) => String(text))
+    .find((text) => text.includes('start refused before launch'));
+  assert.ok(warnLine !== undefined, '前置：完整原文进 logger.warn（双出口之二）');
+  assert.ok(!/[\r\n\t]/.test(warnLine),
+    'WAIT-F04：logger.warn 的完整原文经单行化转义（修前红＝rawDetail 原样插值，多行堆栈拆成伪造日志行）');
+});
+
 hostTest('async_run（R8/#13a）：上限报错必须列出**存活的**作业 id 与状态', async () => {
   const f = fakeCtx();
   const { proc, settle } = fakeProc({ text: '', status: 'running', autoResolve: false });
@@ -1155,8 +1189,14 @@ hostTest('R29-f（判据 11·注册失败单行化）：宿主原文多行超长
     .filter(([level]) => level === 'warn')
     .map(([, message]) => message)
     .find((message) => message.includes('full detail'));
-  assert.ok(full !== undefined && full.includes(rawDetail),
-    '完整原文（含换行）必须留在操作者日志——单行化只作用于模型侧，不丢线索');
+  // WAIT-F04：logger.warn 与 stderr 出口统一单行化——完整原文不截断、不丢
+  // 线索，换行/制表以字面转义序列在场（不再以原始 CR/LF 拆行伪造日志行；
+  // 修前本锚断言原文逐字含换行在场，按问题单 WAIT-F04 更新口径）。
+  const escapedDetail = rawDetail.replace(/\r/g, '\\r').replace(/\n/g, '\\n').replace(/\t/g, '\\t');
+  assert.ok(full !== undefined, '操作者日志留完整原文（warn 双出口之二）');
+  assert.doesNotMatch(full, /[\r\n\t]/, 'WAIT-F04：操作者日志单行——原始 CR/LF/TAB 不拆行');
+  assert.ok(full.includes(escapedDetail),
+    '完整原文以转义形态在场——单行化不截断、不丢线索');
 });
 
 // ---------------------------------------------------------------------------
@@ -1742,4 +1782,59 @@ hostTest('async_run（prep 诊断·未上报结局·不是目录）：killed 形
   } finally {
     await rm(base, { recursive: true, force: true });
   }
+});
+
+// ── WAIT-ITEMS-01 残余／WAIT-ID-BOUND-01（022 缺陷轮 B 组；锚 ID 与修前红
+// 判据见各用例注释。）─────────────────────────────────────────────────────────
+
+hostTest('async_run（WAIT-ITEMS-01 残余）：代内条目已满时命令在首等内完成——真实返回不携带额外完成条目、整条延后并保留领取出口（修前红＝零字符份额仍直付完成条目且记已交付）', async () => {
+  // 修前形态锚定必红：满批时 openFirstWaitShare 返回 0 份额，但调用方不区分
+  // 「条目满」与「字符预算 0」——0 份额仍构造并返回完成条目（第 11 条进同
+  // 一次模型输入），且 noteFirstWaitEnded('delivered') 把结果记成已交付。
+  // 修复＝条目满时真实返回改为「真实结局＋延后句柄」：不交付正文与状态行、
+  // 不置已交付事实，账面按 settled 读取入缓冲（零字符份额不再是状态行照常
+  // 交付的档位；maxResultChars 不作为状态与诊断的总量保证——条目上限才是）。
+  const f = fakeCtx();
+  const { proc } = fakeProc({ text: 'fast body', exitCode: 0, autoResolve: true });
+  f.installShellExecute(() => Promise.resolve(proc));
+  // 账本是模块单例，而 fakeCtx 注册表按实例顺序发号（async-command-1…）——
+  // 前面锚的同号条目在 noteJobStarted 去重下静默串账（旧条目带着既成交付事实，
+  // 本锚的「未记已交付」断言会被前锚污染成假红）。锚前整体复位账本＝
+  // wait-delivery 装置（buildRig/sRig）同一先例；本锚起仅余渲染锚，无后续
+  // 锚依赖累积账面。
+  resetDeliveryLedger();
+  const cfg = resolveConfig({ toolName: 'async_run' });
+  const owner = exec.agent.id;
+  for (let i = 0; i < 10; i += 1) {
+    const share = ledger.openFirstWaitShare(owner, cfg);
+    ledger.settleFirstWaitShare(owner, cfg, share, 0);
+  }
+  const tool = createRunTool(f.ctx, cfg);
+  const result = await tool.execute({ command: 'echo fast', description: 'fast cmd' }, exec);
+  assert.ok(result.job_id !== undefined,
+    '真实返回＝延后句柄（携带 job_id；修前红＝直付完成条目、无 job_id）');
+  assert.equal(result.output, undefined, '不携带直付正文（修前红＝0 份额仍构造完成条目）');
+  assert.match(String(result.note ?? ''), /deferred/i, 'note 说明整条延后与领取出口');
+  const entry = ledger.jobs.get(result.job_id);
+  assert.ok(entry !== undefined && entry.deliveredFact === null,
+    '未记已交付（修前红＝deliveredFact 置位——结果被记已交付而不是整条延后）');
+  assert.ok(String(entry?.buffer ?? '') !== '' || entry?.readyAt !== null,
+    '正文已按 settled 读取入账本缓冲（超额项保留可续取路径，不重跑原作业）');
+});
+
+hostTest('async_run（WAIT-ID-BOUND-01）：让出渲染的分隔标题按行预算约束长编号——结构化 job_id 原样保留（修前红＝`── <job_id> ──` 完整原始编号直插）', async () => {
+  const f = fakeCtx();
+  const tool = createRunTool(f.ctx, config);
+  const longJobId = `foreign-kind-${'x'.repeat(280)}`;
+  const value = {
+    status: 'running', job_id: 'at-idb3-handle', elapsed_ms: 1, note: 'note-line',
+    outputs: [{ job_id: longJobId, status_line: 'job settled (0 chars)', text: 'BODY' }]
+  };
+  const text = tool.output.render(undefined, value).map((p) => p.text).join('\n');
+  const sep = text.split('\n').find((line) => line.includes('foreign-kind-'));
+  assert.ok(sep !== undefined, '前置：分隔标题行在场');
+  assert.ok(sep.length <= 200,
+    `分隔标题行 ≤200（实测 ${String(sep.length)}）——修前红＝完整 293 字符编号直插`);
+  assert.ok(/x{6}/.test(sep), '裁短后的编号保留首段（可辨识）');
+  assert.equal(value.outputs[0].job_id, longJobId, '结构化 job_id 原样（准确编号恢复入口）');
 });

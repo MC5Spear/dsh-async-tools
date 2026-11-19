@@ -21,7 +21,9 @@ function ctxWith(statusById, { throws = false } = {}) {
         return status === undefined ? undefined : { id, status };
       }
     },
-    subagents: { listChildren: async () => [] }
+    // 双键最小替身（设计 §7.4.7）：本文件的用例只走 entryCheck／登记面，列举键
+    // 仅作分派层在场的底线（缺键在扁平形态会把关系屏障打成查询失败）。
+    subagents: { listChildren: async () => [], listDescendants: async () => [] }
   };
 }
 

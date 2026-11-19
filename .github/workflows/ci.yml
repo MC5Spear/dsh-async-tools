@@ -2,10 +2,11 @@
 #
 # 为什么是**两个形态**：
 #
-# - `with-host`：按支持集合展开**宿主矩阵**（0.2.2 适配线首轮为单值
-#   `0.2.2-rc.1`，随支持集合扩展逐宿主追加作业），每个作业显式安装该精确宿主
+# - `with-host`：按支持集合展开**宿主矩阵**（0.2.2 适配线三成员：rc.1／rc.2／
+#   rc.3；新增成员时先扩 peer 集合再在矩阵加项），每个作业显式安装该精确宿主
 #   版本，跑**全量**测试套件与全部检查器。集合里的一个宿主通过不等于集合
-#   通过，所以矩阵按成员逐个展开，不能用一个宿主的绿代替集合其余成员。
+#   通过，所以矩阵按成员逐个展开，不能用一个宿主的绿代替集合其余成员（rc.2
+#   与 rc.3 消费面逐文件一致的事实属证据复用判断，CI 不据此减作业）。
 # - `offline`：**故意不装**宿主，跑离线形态——需要宿主锚的用例必须**自跳过并打印理由**，
 #   而不是整片崩掉。守卫的唯一来源是 `test/_host-gate.mjs`（动态 import 只吞
 #   `@deepseek-ai/` 的 `ERR_MODULE_NOT_FOUND`，其余错误原样红，防假跳过）；
@@ -14,14 +15,13 @@
 #   pass + skip = 在线形态总用例数、每条 skip 都带统一理由。
 #
 # **九条 dsh peer 必须逐个钉到 `matrix.dsh`，别删这项。**
-# 本包九个 `@deepseek-ai/dsh*` 的 peer 声明是**支持集合**（当前为单值
-# `0.2.2-rc.1`）。单值时代没有 npm 自选歧义，但保持逐包显式钉版形态：集合
-# 一旦扩展（OR 原文），交给 npm 从集合里自选时它会取最高的一个——装出
-# 「低成员的 dsh + 最高成员的其余八个」这种混代树，用例照样跑，读数却不属于
-# 任何单个宿主版本。所以这里把九个包全部写成 `@<版本>` 显式安装（并带
-# `--no-save`，否则 npm 会把精确版本写回包清单、把支持集合改成作业版本），
-# 装完后逐个核对版本，再用 `tools/check-host-compat.mjs` 断言九个 peer 与
-# 配套 peer 在宿主树上同代同树。
+# 本包九个 `@deepseek-ai/dsh*` 的 peer 声明是**支持集合**（当前＝
+# `0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3` 的 OR 原文，九条逐字符相同）。交给
+# npm 从集合里自选时它会取最高的一个——装出「低成员的 dsh + 最高成员的其余
+# 八个」这种混代树，用例照样跑，读数却不属于任何单个宿主版本。所以这里把九
+# 个包全部写成 `@<版本>` 显式安装（并带 `--no-save`，否则 npm 会把精确版本写
+# 回包清单、把支持集合改成作业版本），装完后逐个核对版本，再用
+# `tools/check-host-compat.mjs` 断言九个 peer 与配套 peer 在宿主树上同代同树。
 #
 # **`--legacy-peer-deps` 是离线作业的防护，别删。**
 # 十一条 peer（九个 `@deepseek-ai/dsh*`＋cordis＋timer）在 `peerDependenciesMeta`
@@ -63,9 +63,10 @@ jobs:
         # 开发与本机基线即 24。engines >=24.9.0（0.2.2 线）是插件运行时口径，
         # 不约束 CI 测试工具链。
         node: ['24']
-        # 支持集合的精确宿主（需求 7.3；0.2.2 适配线首轮单值）。新增成员时先扩
-        # peer 集合，再在这里加一项。
-        dsh: ['0.2.2-rc.1']
+        # 支持集合的精确宿主（需求 7.3；0.2.2 适配线三成员：rc.1／rc.2／rc.3）。
+        # 矩阵成员必须属于包清单九条 peer 的 OR 原文；新增成员时先扩 peer 集合，
+        # 再在这里加一项（由「断言包清单未被安装改写」步骤核对 OR 原文含矩阵成员）。
+        dsh: ['0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -88,21 +89,28 @@ jobs:
           npm install --no-save --ignore-scripts @packages
           if ($LASTEXITCODE -ne 0) { throw "安装 $dsh 依赖失败（exit $LASTEXITCODE）" }
 
-      - name: 断言包清单未被安装改写（九条 peer 同值且等于 ${{ matrix.dsh }}）
+      - name: 断言包清单未被安装改写（九条 peer 同值＝OR 原文且含 ${{ matrix.dsh }}）
         shell: pwsh
         run: |
           $dsh = '${{ matrix.dsh }}'
           $manifest = Get-Content 'package.json' -Raw | ConvertFrom-Json
           $declared = $manifest.peerDependencies.'@deepseek-ai/dsh'
+          $members = @($declared -split '\s*\|\|\s*')
           $bad = @()
-          if ($declared -ne $dsh) { $bad += "dsh peer 不等于矩阵值 $dsh：$declared" }
+          # OR 时代不再要求原文等于单值；改为核对：①九条逐字符相同（下述循环）；
+          # ②OR 原文的成员都是精确版本串（无范围/通配）；③本作业的矩阵版本属于
+          # 该精确集合（不在集合内的宿主不得因本作业通过冒充准入）。
+          foreach ($member in $members) {
+            if ($member -notmatch '^0\.2\.2(-rc\.\d+)?$') { $bad += "OR 成员不是精确版本串：$member" }
+          }
+          if ($members -notcontains $dsh) { $bad += "矩阵版本 $dsh 不在 peer 集合原文内：$declared" }
           foreach ($name in @('dsh', 'dsh-jobs', 'dsh-llm', 'dsh-sandbox', 'dsh-shell',
             'dsh-shell-env', 'dsh-subagent', 'dsh-typert-protocol', 'dsh-tools')) {
             $range = $manifest.peerDependencies."@deepseek-ai/$name"
             if ($range -ne $declared) { $bad += "peer @deepseek-ai/$name 与 dsh 不一致：$range" }
           }
-          if ($bad.Count -gt 0) { throw "作业改写了包清单：$($bad -join '；')" }
-          Write-Host "包清单未被改写 ✔ 九条 peer 同值且等于本作业版本 $dsh"
+          if ($bad.Count -gt 0) { throw "作业改写了包清单或矩阵越界：$($bad -join '；')" }
+          Write-Host "包清单未被改写 ✔ 九条 peer 同值＝OR 原文，且矩阵版本 $dsh 属于该集合"
 
       - name: 断言宿主锚在场且九个 dsh 包版本全等 ${{ matrix.dsh }}
         shell: pwsh

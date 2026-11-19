@@ -108,7 +108,9 @@ const ALLOWLIST = {
     { needle: '结果通道拒绝（基础设施故障）', why: '同上通道的拒绝分支通告，操作者一侧' },
     { needle: '子代理路由预检拒绝', why: 'stderr 通告（emitLifecycleNotice），操作者一侧（预检拒绝的完整宿主原文）' },
     { needle: '子代理启动前重读模型选择设置失败', why: '同上通道的启动前重读失败通告，操作者一侧（完整原错走 stderr；模型侧只吃 routeRecheckReadFailed 词典键的单行化截断段）' },
-    { needle: '子代理委派深度上限解析失败', why: '同上通道的深度上限解析失败通告，操作者一侧（完整原错走 stderr；模型侧只吃 maxDepthResolveFailed 词典键的单行化截断段）' }
+    { needle: '子代理委派深度上限解析失败', why: '同上通道的深度上限解析失败通告，操作者一侧（完整原错走 stderr；模型侧只吃 maxDepthResolveFailed 词典键的单行化截断段）' },
+    { needle: '宿主子代理契约形态未知', why: 'stderr 通告（emitLifecycleNotice），操作者一侧（形态判定失败的完整原因；模型侧只吃 hostContractUnknown 词典键，完整原文不进模型上下文）' },
+    { needle: '子代理名称被宿主拒绝', why: '同上通道的名称拒绝通告，操作者一侧（宿主拒绝的完整原文走 stderr；模型侧只吃 nameRejected 词典键的单行化截断段）' }
   ],
   // 注册拒绝完整原文的 stderr 通告：操作者一侧——模型侧只吃单行化＋500 截断
   // 段（t() 词典 error.startRefused*），完整原文不进模型上下文（同 agent.js
@@ -268,6 +270,12 @@ const PROSE_ALLOWLIST = {
   'config-view.js': [
     { needle: 'the config view is read-only', why: '只读视图的防御性异常（正常路径不会到达模型；英文是它唯一形态）' }
   ],
+  // 宿主子代理契约分派层的防御断言：形态值经 memoize 只会是 nested/flat/
+  // undefined，两处 throw 在调用方先行判档的正常路径不可达——与 config-view
+  // 只读防御同类（英文是它唯一形态，不进模型上下文）。
+  'host-contract.js': [
+    { needle: 'host subagent contract form unknown', why: '不变量破坏时的 fail-loud 断言（形态记忆值越界的防御分支，正常路径不可达；模型侧文案在 text.js 的 error.hostContractUnknown）' }
+  ],
   'config.js': [
     { needle: 'must be a positive finite number', why: '配置校验错误（操作者一侧：降级 stderr 说明；同层 schemastery 文案也是英文）' },
     { needle: 'must lie within', why: '同上（跨字段顺序）' },
@@ -315,6 +323,7 @@ const PROSE_ALLOWLIST = {
     { needle: 'agent.ctx.tools.register unavailable', why: '操作者一侧诊断（会话遮蔽注册降级的 warn 前缀——PRESET-ISOLATION-02 防御路径，不进模型上下文）' },
     { needle: 'shared description stays session-neutral', why: '同上（遮蔽注册失败降级行的说明尾段——共享定义回落基础文本的操作者侧交代）' },
     { needle: 'async-tools: job_output hide', why: 'cordis effect 卸载标签（行卸载时摘限制句柄的登记名，宿主日志一侧，不进模型上下文）' },
+    { needle: 'async-tools: wait_agent hide', why: 'cordis effect 卸载标签（同上三元另一支——仅 wait_agent 被隐藏时摘限制句柄的登记名，与 job_output hide 同一 effect 调用，不进模型上下文）' },
     { needle: 'async-tools: tool:jobs prompt shadow', why: 'cordis effect 卸载标签（提示遮蔽段处置句柄的登记名，进 Fiber 树与宿主日志，不进模型上下文——与 async-tools: job_output hide、host.js 的 host snapshot source 同类）' },
     { needle: 'async-tools: foreign job events', why: 'cordis effect 卸载标签（外来作业事件订阅的处置句柄登记名，进 Fiber 树与宿主日志，不进模型上下文——与 async-tools: job_output hide 同类）' }
   ],

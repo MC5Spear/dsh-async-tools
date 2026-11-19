@@ -6,8 +6,11 @@
 # loader 拥有：本包从 bundles 移除即预设消失，无清理代码（设计 §7.1）。
 #
 # 基线 = 随支持集合内宿主发布的 shipped 创造模式（cordis）预设补丁（需求 §7.3；
-# 基线位置由 tools/validate-preset.mjs 按需求读取）。当前受支持宿主为 0.2.2-rc.1，
-# 基线按其随包补丁核读。0.2.2 基线自身相对旧线的四处漂移按基线逐字随迁、不算本包
+# 基线位置由 tools/validate-preset.mjs 按需求读取）。当前受支持宿主为
+# 0.2.2-rc.1／rc.2／rc.3 三版同包（设计 §7.4.5）：rc.2 与 rc.3 基线逐字节相同，
+# 相对 rc.1 的基线漂移两处（persona 第二句、control 行 interrupt:false），按
+# 条件适配分歧 D2／D3 处理（见下方改动项 5 与 control 行注释）。0.2.2 基线自身
+# 相对旧线的四处漂移按基线逐字随迁、不算本包
 # 改动：tool-fs 行新增 config.applyPatch: false（补丁写路径默认关闭）；delegation
 # 组不再挂 tool-subagent-list-agents 行；tool-subagent 行 config 的
 # modelSelectionSettings 键改为 modelSelection＋modelDiscovery；standard 基线的
@@ -29,8 +32,11 @@
 #      组外行取不到（需求 §3.2 末条、设计 §3.4）；workflow-ptc（引擎服务，提供编排引擎）
 #      保留。失去宿主 workflow 工具的脚本编排参数集合——出路 = async_workflow（同引擎、
 #      异步语义），或按宿主规则换预设开新会话（需求 §3.1 末条）；
-#   5. persona 与基线逐字一致：prefix 保留基线身份句、不增不改（宿主原生身份句
-#      不承载本包内容）；异步纪律、后台委托强制规则与提问角色纪律（ASK-01）由
+#   5. persona 与基线逐字一致（D2 例外见下）：prefix 保留基线身份句（宿主原生身份句
+#      不承载本包内容）；rc.2+ cordis 基线 persona 增第二句用途陈述（You help the
+#      user customize DeepSeek Harness itself.），统一两句携带——该句对 rc.1 的本
+#      预设用途同样为真、无行为差异面，rc.1 上较其基线多一句，登记为条件适配分歧
+#      D2（设计 §7.4.5、§7.4.9）；异步纪律、后台委托强制规则与提问角色纪律（ASK-01）由
 #      宿主半边注册的 systemPrompt section 运行时注入——语言档随设置 agentLang
 #      （需求 §5.3），变体按本预设选择（委托纪律差异句：宿主创建入口已禁用、
 #      不要调用），锚句同样被 tools/validate-preset.mjs 锁死在两语表（en＋zh）×
@@ -55,12 +61,17 @@
         description: 在创造模式基础上改用异步命令执行与后台委托的插件/预设创作 Agent：async_run 的命令超出首次等待时转入后台并返回作业编号（job_id）；子代理经 async_agent 后台派生并支持按 dsh 模型选择设置指定路由，async_list_subagent_models 只读查询可用路由，用 async_wait 统一等待后台作业与子代理，作业结算时结果正文直接附在返回里；多代理编排经 async_workflow 写成脚本后台执行，进度与结算同样在 async_wait 统一等待之列。用户插话时等待立即结束，后台工作继续运行。
         order: 6
         plugins:
-          # ── 身份（改动项 5：persona prefix 与基线身份句逐字一致，纪律走运行时
-          #    section——见本文件头改动项 5）──
+          # ── Identity (change item 5: persona prefix and baseline identity sentence verbatim identical,
+          #    discipline goes through runtime-time
+          #    section——see header change item 5. D2 (design §7.4.5): rc.2+ cordis baseline persona
+          #    adds a second usage sentence, carried over verbatim as a whole——the second sentence is
+          #    equally true for rc.1 (this preset is originally for plugin/preset creation), a unified two-sentence
+          #    form has no behavioral difference surface; rc.1 has one extra sentence compared to its baseline,
+          #    registered as a conditional adaptation divergence)──
           - id: persona
             name: '@deepseek-ai/dsh-persona'
             config:
-              prefix: You are a coding agent powered by the {{model}} model.
+              prefix: You are a coding agent powered by the {{model}} model. You help the user customize DeepSeek Harness itself.
           - id: agent-instructions
             name: '@deepseek-ai/dsh-agent-instructions'
             config:
@@ -160,6 +171,9 @@
             isolate:
               workflowEngine: true
             config:
+              # D3 (design §7.4.5): rc.2+ baseline adds config.interrupt:false to this row—**not carried over**,
+              # retain interrupt_agent registration (requirement §3.1 non-blocking stop management); same registration divergence as the dsh-async patch. wait_agent
+              # (new in rc.2+) is hidden via code by preset identity (D5, lib/index.js).
               - id: tool-subagent-control
                 name: '@deepseek-ai/dsh-tool-subagent-control'
               # 宿主单发／派生委托入口禁用（需求 §3.1：派生入口唯一 = async_agent，

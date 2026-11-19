@@ -12,7 +12,10 @@ import { attachSnapshotSource } from '../lib/settings.js';
 
 export { Config } from '../lib/config.js';
 
-export const name = 'dsh-async-tools-f04-standin';
+// 模块名与产品包一致（N-CFG-01 行归属甄别：fiber.runtime.name＝模块 `name`
+// 导出——替身行要在 internal/config waterfall 里被认作本包行，须用本包名；
+// 原替身后缀名在甄别修复后会被当外来行跳过自检，进程内链断言全部失明）。
+export const name = 'dsh-async-tools';
 
 export const STATE = { applies: 0, wirings: [] };
 

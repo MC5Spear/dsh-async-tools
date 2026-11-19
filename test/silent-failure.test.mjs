@@ -14,7 +14,7 @@
  * | 判据 | 挡的缺陷形态 |
  * |---|---|
  * | 1 捕获形四模式 + 管道一票否决 | 把管道也当捕获形 ⇒ cmdlet 管道大量误触发（可失败 ①） |
- * | 2 签名 1 条件逐一缺一即无 + 探针对照；退出码 0＝合法空输出 | 半截条件 ⇒ 不产出；出路（独立探针）自己拿到输出不触发提醒 |
+ * | 2 签名 1 条件逐一缺一即无 + 探针对照；退出码档位不参与判定（SF-01） | 半截条件 ⇒ 不产出；出路（独立探针）自己拿到输出不触发提醒 |
  * | 3 空白算空 | `  \n  ` 被当成"有输出" ⇒ 签名 1 失明 |
  * | 4 cmdlet 误发接受 + 条件式措辞 | 文案直陈失败 ⇒ 裁定接受的误发情形变成谎报（可失败 ②） |
  * | 5 提权跑不产出 | 提权重试完还提醒 ⇒ 提示变成噪声 |
@@ -48,7 +48,24 @@ const hostIndex = await loadOfflineSafe('../lib/index.js');
 const { createRunTool: buildRunTool } = jobsModule ?? {};
 const { applyHostHalf } = hostHalf ?? {};
 const { refreshToolDescriptions, installRunDescriptionShadow: mountShadowInstaller } = hostIndex ?? {};
-const hostTest = await hostTestFor('../lib/jobs.js', '../lib/host.js', '../lib/index.js');
+const hostTestForBase = await hostTestFor('../lib/jobs.js', '../lib/host.js', '../lib/index.js');
+const deliveryModule = await loadOfflineSafe('../lib/delivery.js');
+const { ledger } = deliveryModule ?? {};
+// §2.6 输入代记账的装置近似（同 test/jobs.test.mjs 的口径）：真实宿主里模型
+// 的每次工具调用之间隔着新输入（代边界重置内容预算并丢弃批视图）；单进程
+// 全量套件（test:inproc）里前文件的 session-1 账面会漏进本文件——每个锚开始
+// 时按 agent/pre-step 语义复位全部主体＝「锚＝新输入代」（代额度归零、批视图
+// 与延后说明配额丢弃；WAIT-ITEMS-01 残余起条目满额会触发整条延后，F 系的
+// 前台诊断形状锚会被前文件漏入的满额账面污染成假红）。
+const hostTest = (name, fn) => hostTestForBase(name, async (...args) => {
+  for (const subject of ledger?.subjects.values() ?? []) {
+    subject.generation.spent = 0;
+    subject.generation.spentItems = 0;
+    subject.batch = null;
+    subject.deferredNotes = null;
+  }
+  return fn(...args);
+});
 
 const createRunTool = (ctx, config) => checkedTool(buildRunTool(ctx, config));
 const exec = { agent: fakeAgent(), callId: 'call_R28_1', signal: new AbortController().signal };
@@ -132,7 +149,28 @@ test('R28 判据1：捕获形四模式任一命中，管道一票否决，多语
   assert.equal(hasCaptureForm('npm run x -- --flag=1'), false, '参数内等号不误中');
 });
 
-test('R28 判据2：签名 1 条件逐一缺失即无产出；退出码 0＝合法空输出不出 note（ACCEPT-SILENT-01 第一步机器侧核对）', () => {
+test('SF-01：签名 1 无退出码例外——退出码 0 的捕获形空输出同样出条件式提示（修前红＝exitCode=0 被自主收窄吞掉）', () => {
+  // 修前形态锚定必红：现行判据含 `p.exitCode !== 0` 的自主收窄（SAFE-01／D1），
+  // 退出码 0 的捕获形空输出不出任何提示；需求 §6.3 的触发条件（受限执行、
+  // 未提权、存在约束执行器、捕获形＋空白输出）无此例外。本轮按问题清单 SF-01
+  // 恢复无条件条件提示（删除 exitCode=0 例外，不改需求）。
+  const hit = {
+    proc: { sandbox: { mode: 'workspace-write' } },
+    collector: collector(''),
+    command: 'node x.mjs 2>&1',
+    exitCode: 0,
+    escalated: false,
+    escalationModes: ['workspace-write', 'danger-full-access'],
+    guard: true,
+    lang: 'en'
+  };
+  assert.equal(silentFailureNotes(hit).length, 1,
+    '退出码 0 ⇒ 仍出条件式提示（需求 §6.3 无退出码例外；空输出不证明已执行）');
+  const zh = silentFailureNotes({ ...hit, lang: 'zh' });
+  assert.equal(zh.length, 1, 'zh 档同断（两语成对）');
+});
+
+test('R28 判据2：签名 1 条件逐一缺失即无产出；退出码档位不参与判定（SF-01 修复后的判据面）', () => {
   const hit = {
     proc: { sandbox: { mode: 'workspace-write' } },
     collector: collector(''),
@@ -144,9 +182,10 @@ test('R28 判据2：签名 1 条件逐一缺失即无产出；退出码 0＝合�
     lang: 'en'
   };
   assert.equal(silentFailureNotes(hit).length, 1, '全条件齐（退出码非 0）⇒ 命中');
-  // 第一步核对的机器侧形态：exitCode===0＝合法空输出——直接不出 note。
-  assert.deepEqual(silentFailureNotes({ ...hit, exitCode: 0 }), [],
-    '退出码 0 ⇒ 合法空输出，不出 note、不诱导任何核实');
+  // SF-01：exitCode===0 不再豁免——退出码 0 与「已执行」互不证明，条件提示
+  // 无退出码例外（详锚见 SF-01 用例；此处保留档位对照）。
+  assert.equal(silentFailureNotes({ ...hit, exitCode: 0 }).length, 1,
+    '退出码 0 ⇒ 仍出条件式提示（期望输出是否在场交由核实次序判断）');
   // 退出码未知（缺省 undefined/null）保持提示——保守方向。
   assert.equal(silentFailureNotes({ ...hit, exitCode: undefined }).length, 1,
     '退出码未知 ⇒ 仍提示（note 内含 $LASTEXITCODE 核实指引）');
@@ -667,7 +706,8 @@ hostTest('R28 判据12：c 段经 ctx.inject 注册 systemPrompt（预设过滤�
   const en = entry.text(assembly);
   assert.equal(en, t('en', 'discipline.block'), 'en 段文本 = 词典键逐字（真机验收锚句同源）');
   assert.match(en, /Empty output alone proves neither reading/);
-  assert.match(en, /exit code 0 means a legitimately empty output/, '第一步核实：退出码 0＝合法空输出');
+  assert.match(en, /exit code 0 is one possible reading/,
+    '第一步核实：退出码 0＝合法空输出的可能形态之一（SF-01——不再说「无需处置」）');
   assert.match(en, /probe the execution channel with a separate, harmless command/, '第二步：独立探针查通道');
   assert.match(en, /killed at process creation/);
   assert.match(en, /4294967295/, '杀软击杀隐藏 PowerShell 的判别特征在场（退出码 4294967295）');
@@ -677,7 +717,7 @@ hostTest('R28 判据12：c 段经 ctx.inject 注册 systemPrompt（预设过滤�
   const zh = entry.text(assembly);
   assert.equal(zh, t('zh', 'discipline.block'), 'zh 段文本 = 词典键逐字');
   assert.match(zh, /空输出本身不证明任何一种解释/);
-  assert.match(zh, /退出码 0＝合法空输出/, 'zh 第一步核实锚');
+  assert.match(zh, /退出码 0＝合法空输出的可能形态之一/, 'zh 第一步核实锚（SF-01 软化口径）');
   assert.match(zh, /不带捕获形的探针命令/, 'zh 第二步探针锚');
   assert.match(zh, /进程创建层被杀/);
   assert.match(zh, /4294967295/);
@@ -1031,7 +1071,7 @@ realLayerTest('A-F12 回归：c 段注册落在宿主组稿会收集的 global �
     'contexts 线的快照头（宿主 joinContextSections 的固定标题）');
   assert.match(snapshotText, /Execution discipline for this deployment/,
     '模型可见位置：快照线含纪律段（开 + 本包预设）');
-  assert.match(snapshotText, /exit code 0 means a legitimately empty output/, '快照线含 en 锚');
+  assert.match(snapshotText, /exit code 0 is one possible reading/, '快照线含 en 锚（SF-01 软化口径）');
   const promptText = renderPrompt(onAgain);
   assert.doesNotMatch(promptText, /Execution discipline for this deployment/,
     'sections 线（system prompt 采样位置）**不含**纪律段——它是 context，双线各归其位');

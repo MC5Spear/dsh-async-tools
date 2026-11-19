@@ -1,5 +1,6 @@
 /**
- * 测试替身：不启动真实进程、不依赖 dsh 宿主的假件（0.2.1-rc.2 契约）。
+ * 测试替身：不启动真实进程、不依赖 dsh 宿主的假件（子代理列举面按 0.2.2 两
+ * 契约形态双键提供，设计 §7.4.7——listChildren／listDescendants 同一行集模型）。
  *
  * 每个假件只实现被测代码**真正调用到**的成员；任何契约漂移都会立刻变成测试失败，
  * 而不是被宽容的 mock 掩盖。
@@ -19,6 +20,7 @@
  * ——把"返回值符合工具自己声明的 `output.schema`"变成每条用例的固定动作。
  */
 import assert from 'node:assert/strict';
+import { resetSubagentContractMemo, subagentContract } from '../lib/host-contract.js';
 import { loadOfflineSafe } from './_host-gate.mjs';
 
 // 宿主校验器动态探测（守卫式）：离线形态下 dsh-tools 缺席时本模块仍可加载
@@ -332,7 +334,11 @@ export function fakeCtx() {
       bind(listener) { return listener; }
     },
     subagents: {
-      listChildren() { throw new Error('listChildren not stubbed'); }
+      // 双键守卫（设计 §7.4.7）：rc.1 listChildren 与 rc.2+ listDescendants 都是
+      // 被测分派层会消费的公共列举键——两键都装抛错哨兵，未 stub 的意外调用
+      // 当场红而不是静默 undefined。
+      listChildren() { throw new Error('listChildren not stubbed'); },
+      listDescendants() { throw new Error('listDescendants not stubbed'); }
     },
     // 模型选择：挂载层默认"无记录"（stateOf 返回 null——fold 未 record 的初值
     // 形态；list-models 的原生目标口径消费它）。行为测试在各自文件里覆盖带
@@ -462,7 +468,7 @@ export function fakeAgent(id = 'session-1') {
  * | `ctx.on` | 公共事件订阅（`lib/interrupts.js` 用它收插话与结算通知） |
  * | `ctx.timer` | 有界等待的截止与回退轮询 |
  * | `ctx.logger` | 日志出口（不影响语义） |
- * | `ctx.subagents.listChildren` | 公共查询——本需求允许的"读"通道之一 |
+ * | `ctx.subagents.listChildren`／`listDescendants` | 公共查询直接子列举（两键经分派层 `listDirectChildren` 同一面消费，设计 §7.4.2）——本需求允许的"读"通道之一 |
  * | `ctx.agents.get` | 公共 Agent 注册表（三态判定；目录在列的行驻留读 running） |
  * | `ctx.get` | cordis 取服务的标准入口（可选服务用） |
  *
@@ -475,10 +481,17 @@ export function guardedWaitAgentCtx() {
   /** 子代理列表：默认空，用例自己替换 `list`。 */
   const state = { children: [] };
 
+  // 双键白名单替身（设计 §7.4.7）：listChildren 与 listDescendants 同一行集
+  // （listDescendants 按 rc.2+ 行结构加 parentId/depth，诊断行同样 depth:1），
+  // 形态由被测分派层按记忆化形态自取——替身不自行猜形态。两键都算公共读通道。
   const subagents = new Proxy({
     listChildren() {
       touched.push('subagents.listChildren');
       return state.children;
+    },
+    listDescendants(owner) {
+      touched.push('subagents.listDescendants');
+      return descendantRows(owner, state.children);
     }
   }, {
     get(target, key) {
@@ -486,7 +499,7 @@ export function guardedWaitAgentCtx() {
       denied.push(`subagents.${String(key)}`);
       throw new Error(
         `越界读取违规（需求 §2.3.3）：async_wait（子代理目标）读了 ctx.subagents.${String(key)}——`
-        + '只允许公共查询 listChildren()'
+        + '只允许公共查询直接子列举（listChildren/listDescendants 经分派层）'
       );
     }
   });
@@ -528,7 +541,7 @@ export function guardedWaitAgentCtx() {
       denied.push(String(key));
       throw new Error(
         `越界读取违规（需求 §2.3.3）：async_wait（子代理目标）读了 ctx.${String(key)}——`
-        + '只允许公共事件 ctx.on 与公共查询 ctx.subagents.listChildren / ctx.agents.get'
+        + '只允许公共事件 ctx.on 与公共查询 ctx.subagents.listChildren/listDescendants（直接子列举经分派层）与 ctx.agents.get'
       );
     },
     has(_target, key) { return typeof key === 'string' && allowed.has(key); }
@@ -693,4 +706,67 @@ export function freezeTimers(ctx) {
   // 回退轮询也一并冻结：在 listChildren 恒返回同一份数据的替身里它永不触发，
   // 但它的短间隔会让竞速结果难以预测。
   ctx.timer.interval = () => () => {};
+}
+
+// ── 宿主契约形态注入（设计 §7.4.1／§7.4.7）────────────────────────────────
+//
+// 形态记忆是 lib/host-contract.js 的**进程级单例**：`node --test
+// --test-isolation=none` 下全部测试文件同进程共享。凡 rig／用例依赖特定形态
+// （agent 参数表、declaredArguments、startActivation spec 形状、targets id 文案），
+// 必须显式 pin；新增形态分档用例在用例内 pin 后**复原**（finally 里 pin 回基线
+// 或 unpin），避免串扰后续文件。既有用例的基线一律 'nested'（rc.1 形态——绿读数
+// 不依赖锚树版本）。
+//
+// 注入走 fixture 目录而不是虚构路径：subagentContract 的注入参数是**已解析的
+// 条目路径**，实现会真实上溯读 package.json——虚构路径只会走到错误的清单（或
+// 解析失败）。test/_contract-forms/ 下 rc1/rc2 两个静态 fixture 各带真实清单；
+// 'unknown' 档传空串（解析失败形态）。
+
+/** fixture 根（pin 注入的解析落点）。 */
+const CONTRACT_FIXTURE_ROOT = new URL('./_contract-forms/', import.meta.url);
+
+/**
+ * 固定模块级宿主契约形态（测试隔离）：`'nested'`｜`'flat'`｜`'unknown'`。
+ * reset 后注入 fixture 解析——形态记忆钉在给定档，直至下次 reset。
+ *
+ * 注入传**已解析的条目路径**（lib 实际参数语义：`subagentContract(entry?)`
+ * 缺席走生产解析、非空字符串按注入条目上溯读清单——其 JSDoc 写的
+ * `(specifier) => string` 函数签名与实现不符，勿据此传函数）；'unknown' 档
+ * 传空串＝解析失败形态（记忆失败，不猜形态）。
+ * @param {'nested'|'flat'|'unknown'} form
+ */
+export function pinSubagentForm(form) {
+  if (form !== 'nested' && form !== 'flat' && form !== 'unknown') {
+    throw new Error(`pinSubagentForm：form 只接受 'nested' | 'flat' | 'unknown'（实得 ${JSON.stringify(form)}）`);
+  }
+  resetSubagentContractMemo();
+  if (form === 'unknown') {
+    subagentContract('');
+    return;
+  }
+  const fixture = form === 'nested' ? 'rc1' : 'rc2';
+  subagentContract(new URL(`./${fixture}/index.js`, CONTRACT_FIXTURE_ROOT).href);
+}
+
+/**
+ * 解除形态注入：reset 后不再注入——恢复生产解析（按 DSAT_HOST_MODULES 锚树
+ * 实读 @deepseek-ai/dsh-subagent 版本）。
+ */
+export function unpinSubagentForm() {
+  resetSubagentContractMemo();
+}
+
+/**
+ * 双键替身的行集派生（设计 §7.4.7）：同一 childRows 模型派生 rc.2+ 的
+ * listDescendants 行——每行加 `parentId: owner, depth: 1`（诊断行同样 depth:1，
+ * 第一层诊断行按分派层裁定保留）。非数组原样返回（挂起／失败由实现自身表达）。
+ * @param {unknown} owner - 主体（宿主会话标识）。
+ * @param {unknown[]} rows - 直接子行集（rc.1 listChildren 形状）。
+ * @returns {unknown[]} 派生行集。
+ */
+export function descendantRows(owner, rows) {
+  if (!Array.isArray(rows)) return rows;
+  return rows.map((row) => (row !== null && typeof row === 'object'
+    ? { ...row, parentId: owner, depth: 1 }
+    : row));
 }

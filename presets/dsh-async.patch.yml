@@ -6,11 +6,21 @@
 #
 # 基线 = 随支持集合内宿主发布的 shipped standard 预设补丁（需求 §7.3；基线位置由
 # tools/validate-preset.mjs 按需求读取，不硬编码本机路径）。当前受支持宿主为
-# 0.2.2-rc.1，基线按其随包补丁核读。0.2.2 基线自身相对旧线的四处漂移按基线逐字
-# 随迁、不算本包改动：tool-fs 行新增 config.applyPatch: false（补丁写路径默认
-# 关闭）；delegation 组不再挂 tool-subagent-list-agents 行；tool-subagent 行
-# config 的 modelSelectionSettings 键改为 modelSelection＋modelDiscovery；插件
-# 管理 manager 行表达式化（profileContext 条件）。相对基线的改动（设计 §3.5
+# 0.2.2-rc.1／rc.2／rc.3 三版同包（设计 §7.4.5）：rc.2 与 rc.3 基线逐字节相同，
+# 相对 rc.1 的基线漂移共五处，本补丁按「条件适配分歧 D1–D5」处理——skill-
+# filesystem 的 customSkillDirs 统一携带（D1：cordis rc.1 基线先例证明键三版
+# 可用，rc.1 上多此键无失败面）、tool-office 行在场但 disabled 为在场性探测
+# 表达式（D4：rc.1 树无该包，不能无条件引用；rc.2+ 按基线形态启用）、create
+# 预设 persona 两句化（D2，另文件）、tool-subagent-control 的 interrupt:false
+# **不随迁**（D3：该配置会撤下 interrupt_agent——需求 §3.1 要求保留宿主非阻塞
+# 停止管理，不能机械复制会隐藏所需入口的配置）、rc.2+ 本包两预设内经代码
+# 隐藏原生 wait_agent（D5：统一等待入口是 async_wait，需求 §3.1；隐藏挂
+# agent/created 的 restrict、按预设身份判定，见 lib/index.js）。0.2.2 基线自身
+# 相对旧线的四处漂移按基线逐字随迁、不算本包改动：tool-fs 行新增 config.
+# applyPatch: false（补丁写路径默认关闭）；delegation 组不再挂
+# tool-subagent-list-agents 行；tool-subagent 行 config 的
+# modelSelectionSettings 键改为 modelSelection＋modelDiscovery；插件管理
+# manager 行表达式化（profileContext 条件）。相对基线的改动（设计 §3.5
 # "两者相对基线的共同差异"，逐条给依据）：
 #   1. tool-bash 无条件 disabled: true——禁同步 shell（需求 §3.1），两平台工具清单
 #      一致（需求 §3.3）；
@@ -115,6 +125,12 @@
             name: '@deepseek-ai/dsh-tool-schedule'
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
+            config:
+              # D1（设计 §7.4.5）：rc.2+ standard 基线新增，表达式逐字随迁；
+              # cordis 基线 rc.1 起即同式携带——键与包三版在场，rc.1 上多此键
+              # 无失败面，统一携带避免按形态分裂单文件。
+              customSkillDirs:
+                - !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')), 'skills')
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
           - id: command-goal
@@ -168,6 +184,12 @@
             isolate:
               workflowEngine: true
             config:
+              # D3（设计 §7.4.5）：rc.2+ 基线此行新增 config.interrupt:false（不注册
+              # interrupt_agent 工具）——**不随迁**。需求 §3.1 要求保留宿主非阻塞的
+              # 检查、消息和停止管理；rc.1 形态本就注册 interrupt_agent，rc.2+ 随迁
+              # 该配置会静默撤下所需入口。本行无 config＝三版一致保留 interrupt_agent
+              # 注册（rc.2+ 与基线的登记分歧）；wait_agent（rc.2+ 新增）经代码按预设
+              # 身份隐藏（D5，lib/index.js），不在此行配置。
               - id: tool-subagent-control
                 name: '@deepseek-ai/dsh-tool-subagent-control'
               # 宿主单发／派生委托入口禁用（需求 §3.1：委托入口收归本包——派生
@@ -222,6 +244,16 @@
               searchTimeoutMs: 60000
           - id: present
             name: '@deepseek-ai/dsh-tool-present'
+          # D4（设计 §7.4.5）：rc.2+ standard 基线在 present 之后新增 tool-office
+          # 行；rc.1 树无 @deepseek-ai/dsh-tool-office 包、不能无条件引用。行
+          # 在场＋disabled 为在场性探测表达式：先经本补丁 baseUrl 解析 peer 锚
+          # @deepseek-ai/dsh（三版准入必在），再从 dsh 包位置解析 office 包清单
+          # ——包缺席（rc.1）上行禁用跳过，包在场（rc.2+）按基线形态启用（基线
+          # 行无 config，本行仅多 disabled 探测键）。探测失败形态＝禁用（失效
+          # 安全），运行装载由 §7.4.8 预设基线装载条目实证。
+          - id: tool-office
+            name: '@deepseek-ai/dsh-tool-office'
+            disabled: !!js "(() => { try { const cr = process.getBuiltinModule('node:module').createRequire; const dshRoot = cr(baseUrl).resolve('@deepseek-ai/dsh/package.json'); cr(dshRoot).resolve('@deepseek-ai/dsh-tool-office/package.json'); return false } catch { return true } })()"
           # ── 插件管理两行：0.2.2 基线形态——manager 行 profileContext 条件表达式
           #    （profileContext 在场＝创造上下文即启用，会话上下文禁用）、market 行
           #    布尔禁用（需求 §7.3）──

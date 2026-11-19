@@ -25,6 +25,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { HOST_SKIP_REASON, loadOfflineSafe } from './_host-gate.mjs';
+import { pinSubagentForm } from './_helpers.mjs';
 
 /** `lib/` 目录的绝对路径。 */
 const LIB_DIR = fileURLToPath(new URL('../lib/', import.meta.url));
@@ -305,7 +306,14 @@ function makeContext(Context, options = {}) {
     start: () => { throw new Error('接线测试不该启动进程'); }
   });
   ctx.provide('shellEnv', { collect: () => Object.freeze({ DSH_HOME: 'x' }) });
-  ctx.provide('subagents', { listChildren: async () => [], interrupt: () => {}, getProvider: () => undefined });
+  // 双键最小替身（设计 §7.4.7）：缺 listDescendants 在扁平形态（rc.2+ 锚）会把
+  // 等待路径的关系屏障打成查询失败、污染无关用例。
+  ctx.provide('subagents', {
+    listChildren: async () => [],
+    listDescendants: async () => [],
+    interrupt: () => {},
+    getProvider: () => undefined
+  });
   ctx.provide('timer', { timeout: () => () => {}, interval: () => () => {} });
   // 模型选择的第七服务：挂载级假件只需"无记录"初值形态（list-models 的原生
   // 目标口径读取它；async_agent 行不再注册投影——实时口径，设计 §3.3）。
@@ -313,8 +321,14 @@ function makeContext(Context, options = {}) {
   ctx.provide('sessionProjections', { stateOf: () => null });
   // 第十服务（rc.1 新增）：会话预设目录——预设读取三消费点（提问接管、
   // 宿主页 ask 接线、guardPresetFor）的域读入口；挂载级假件只需
-  // "无预设"形态（presetForSession 返回 null）。
-  ctx.provide('agentPresets', { presetForSession: () => null });
+  // "无预设"形态（presetForSession 返回 null）。HC-8 的 wait_agent 隐藏腿
+  // 经 options.presetForSession／options.sessions 注入受控预设判定。
+  ctx.provide('agentPresets', {
+    presetForSession: options.presetForSession !== undefined ? options.presetForSession : () => null
+  });
+  // sessions（HC-8）：installJobOutputHide 的 wait_agent 判定经
+  // ctx.get('sessions')?.get?.(agent.id) 域读——缺省不提供（服务缺席形态）。
+  if (options.sessions !== undefined) ctx.provide('sessions', options.sessions);
   // 第八服务：公开 Agent 注册表（wait-agent 三态判定消费；挂载级假件
   // 只需"查无驻留"形态）。
   ctx.provide('agents', { get: () => undefined });
@@ -570,6 +584,115 @@ test('T19：job_output 隐藏——agent/created 挂 agent 作用域 restrict，
       agent: { id: 'agent-late', ctx: { tools: { restrict(p) { lateCalls.push(p); return () => {}; } } } }
     });
     assert.equal(lateCalls.length, 0, '行卸载后不再对新 Agent 挂隐藏（可逆性）');
+  }
+});
+
+test('HC-8：wait_agent 隐藏——扁平＋内置预设 deny 含 wait_agent；自建预设不追加；嵌套恒不追加；presetForSession 失败不隐藏不报错；仅 wait_agent 档不置 jobOutputHidden（设计 §7.4.5 D5）', async (t) => {
+  const host = await loadHost();
+  if (host === undefined || Context === undefined) {
+    t.skip(HOST_SKIP_REASON);
+    return;
+  }
+  const deliveryModule = await loadOfflineSafe('../lib/delivery.js');
+  const ledger = deliveryModule?.ledger;
+  assert.ok(ledger !== undefined, 'delivery 账本可装载（同进程同实例——jobOutputHiddenFor 判读槽）');
+
+  // 形态记忆是进程级单例（设计 §7.4.1）：HC-8 的判定按形态分档，用例内 pin、
+  // finally 复位回 'nested' 基线（与 agent.test.mjs 的文件级 pin 同一基线）。
+  const FORM_BASELINE = 'nested';
+  /**
+   * 单形态单 Agent 的受控装置（T19 同款：真 cordis 装载＋agent/created 假事件
+   * ＋restrict 计数替身）。rosterVisible=false 模拟「名册无 async_wait」
+   *（job_output 条件不成立），rosterThrows 模拟名册读取抛错。
+   */
+  const runHideCase = async (form, { presetForSession, withSessions = true, rosterVisible = true, rosterThrows = false } = {}) => {
+    pinSubagentForm(form);
+    let out;
+    try {
+      const restrictCalls = [];
+      const effects = [];
+      const { ctx } = makeContext(Context, {
+        ...(presetForSession !== undefined ? { presetForSession } : {}),
+        ...(withSessions ? { sessions: { get: (id) => ({ id }) } } : {})
+      });
+      const fork = ctx.plugin(
+        { name: host.name, inject: host.inject, Config: host.Config, apply: host.apply },
+        { toolName: 'async_wait' }
+      );
+      await activate(fork);
+      const agent = {
+        id: `agent-hc8-${form}-${Math.random().toString(36).slice(2, 8)}`,
+        ctx: {
+          tools: {
+            view() {
+              if (rosterThrows) throw new Error('roster boom');
+              return { visible: new Map(rosterVisible ? [['async_wait', {}]] : [['async_run', {}]]) };
+            },
+            restrict(policy) { restrictCalls.push(policy); return () => {}; }
+          },
+          effect(fn, label) { effects.push(label ?? '<unlabeled>'); }
+        }
+      };
+      // presetForSession 抛错形态的「不报错」断言面：emit 本身不得外抛
+      //（dsh-agent 对 created 监听器失败按 reject 处理会阻断 Agent 创建）。
+      ctx.emit('agent/created', { agent });
+      await fork.dispose();
+      out = { restrictCalls, effects, agent };
+    } finally {
+      pinSubagentForm(FORM_BASELINE);
+    }
+    return out;
+  };
+
+  // ① 扁平＋内置预设（dsh-async）＋job_output 条件成立 → 单次 restrict、deny
+  // 两键合并（顺序固定：job_output 在前、wait_agent 在后）。
+  {
+    const { restrictCalls, effects } = await runHideCase('flat', { presetForSession: () => 'dsh-async' });
+    assert.deepEqual(
+      restrictCalls,
+      [{ deny: ['job_output', 'wait_agent'] }],
+      '扁平＋内置预设：两条件合并为单次 restrict 调用，deny 含 wait_agent'
+    );
+    assert.deepEqual(effects, ['async-tools: job_output hide'], 'effect 名仍按 job_output 档（登记与回收语义不变）');
+  }
+  // ② 扁平＋另一内置预设（dsh-async-create）同追加；自建预设（身份外）不追加。
+  {
+    const { restrictCalls } = await runHideCase('flat', { presetForSession: () => 'dsh-async-create' });
+    assert.deepEqual(restrictCalls, [{ deny: ['job_output', 'wait_agent'] }], 'dsh-async-create 同属本包两内置预设');
+  }
+  {
+    const { restrictCalls } = await runHideCase('flat', { presetForSession: () => 'my-preset' });
+    assert.deepEqual(restrictCalls, [{ deny: ['job_output'] }], '自建预设（身份外）不追加 wait_agent——不越界改他册');
+  }
+  // ③ 嵌套形态：deny 列表与现状一致，恒不含 wait_agent（rc.1 宿主无该工具）。
+  {
+    const { restrictCalls } = await runHideCase('nested', { presetForSession: () => 'dsh-async' });
+    assert.deepEqual(restrictCalls, [{ deny: ['job_output'] }], '嵌套形态 deny 恒不含 wait_agent');
+  }
+  // ④ presetForSession 抛错 → 不隐藏 wait_agent（失效安全＝入口保持可见）、
+  // 监听器不外抛；job_output 条件独立成立照常挂。
+  {
+    const { restrictCalls } = await runHideCase('flat', {
+      presetForSession() { throw new Error('preset domain read boom'); }
+    });
+    assert.deepEqual(restrictCalls, [{ deny: ['job_output'] }], '预设读取失败不隐藏 wait_agent、不连坐 job_output');
+  }
+  // ⑤ hideJobOutput 假而 waitAgentDeny 真 → 仍单次 restrict、deny=['wait_agent']、
+  // effect 名 'async-tools: wait_agent hide'；jobOutputHidden 登记**不**置位
+  //（HELD-RECOVER 判读不受影响——仅 wait_agent 被隐藏的形态 job_output 仍可见）。
+  {
+    const { restrictCalls, effects, agent } = await runHideCase('flat', {
+      presetForSession: () => 'dsh-async',
+      rosterVisible: false
+    });
+    assert.deepEqual(restrictCalls, [{ deny: ['wait_agent'] }], '仅 wait_agent 档：单次 restrict、deny 只含 wait_agent');
+    assert.deepEqual(effects, ['async-tools: wait_agent hide'], 'effect 名按 wait_agent 档');
+    assert.equal(ledger.jobOutputHiddenFor(agent), false, 'jobOutputHidden 不置位——held 判读不变档');
+  }
+  // ⑥ 服务缺席（sessions 未提供）＋名册条件也不成立 → 两条件都不成立，零调用。
+  {
+    const { restrictCalls } = await runHideCase('flat', { withSessions: false, rosterVisible: false });
+    assert.deepEqual(restrictCalls, [], 'sessions 缺席＋名册无 async_wait：不隐藏任何入口');
   }
 });
 
@@ -1242,8 +1365,9 @@ test('T15（R38；R44 换钉）：九个 dsh* peer 共用同一支持集合—�
   // 这里的期望串是**测试侧的需求固定副本**：按需求 §7.3 固定预期支持集合，用来发现
   // 包清单被悄悄改写（声明漂移）。测试期望作为需求副本，与包清单的 peer 原文并存是合理的；
   // 运行期判据（准入、junction、安装说明）一律从包清单取集合。集合变化时本用例变红，
-  // 提示同步需求、版本与文档。
-  const SUPPORT = '0.2.2-rc.1';
+  // 提示同步需求、版本与文档。0.2.2 适配线三成员（rc.1／rc.2／rc.3 同包，设计 §7.4.6）：
+  // rc.2 与 rc.3 的消费面逐文件一致属证据复用判断，peer 原文仍三成员逐字同串。
+  const SUPPORT = '0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3';
   const expected = {
     '@deepseek-ai/cordis': '~4.1.0',
     '@deepseek-ai/cordis-plugin-timer': '~1.2.0',
@@ -1269,17 +1393,18 @@ test('T15（R38；R44 换钉）：九个 dsh* peer 共用同一支持集合—�
   // 需求 §7.3.1：稳定形态为 `<核心>+dsh.<兼容线>`，alpha 形态为 `<核心>-alpha.N+dsh.<兼容线>`
   // （构建元数据不算预发布）。判形用锚定正则，不放宽成「任意版本」：核心号与
   // 兼容线元数据逐字固定，预发布标识只认 alpha.N（N≥1）；漏元数据、错核心、
-  // 错兼容线、beta/rc 标识、alpha.0、多余后缀都必须红。
-  const versionOk = (v) => /^0\.2\.10(?:-alpha\.[1-9]\d*)?\+dsh\.0\.2\.2$/.test(v);
+  // 错兼容线、beta/rc 标识、alpha.0、多余后缀都必须红。本轮核心号随宿主适配
+  // 递增至 0.2.11（需求 §7.3.1 修订）。
+  const versionOk = (v) => /^0\.2\.11(?:-alpha\.[1-9]\d*)?\+dsh\.0\.2\.2$/.test(v);
   assert.ok(versionOk(pkg.version),
-    `本包 version 必须按需求 §7.3.1 带构建元数据全标识（核心 0.2.10 + 兼容线 dsh.0.2.2，稳定或 alpha.N 形态；实际：${pkg.version}）——漏元数据会让用户失去兼容信息`);
-  assert.ok(versionOk('0.2.10+dsh.0.2.2') && versionOk('0.2.10-alpha.3+dsh.0.2.2'),
+    `本包 version 必须按需求 §7.3.1 带构建元数据全标识（核心 0.2.11 + 兼容线 dsh.0.2.2，稳定或 alpha.N 形态；实际：${pkg.version}）——漏元数据会让用户失去兼容信息`);
+  assert.ok(versionOk('0.2.11+dsh.0.2.2') && versionOk('0.2.11-alpha.3+dsh.0.2.2'),
     '合法稳定形态与合法 alpha 形态都必须被接受——判形不得只认其中一种');
   for (const bad of [
-    '0.2.10', '0.2.10-alpha.2', '0.2.10+dsh.0.2.2-rc.1', '0.2.10+dsh.0.2.1-rc',
-    '0.2.9-alpha.2+dsh.0.2.2', '0.2.10-beta.1+dsh.0.2.2', '0.2.10-rc.1+dsh.0.2.2',
-    '0.2.10-alpha+dsh.0.2.2', '0.2.10-alpha.0+dsh.0.2.2', '0.2.11-alpha.2+dsh.0.2.2',
-    'x0.2.10-alpha.2+dsh.0.2.2'
+    '0.2.11', '0.2.11-alpha.2', '0.2.11+dsh.0.2.2-rc.1', '0.2.11+dsh.0.2.1-rc',
+    '0.2.10-alpha.2+dsh.0.2.2', '0.2.11-beta.1+dsh.0.2.2', '0.2.11-rc.1+dsh.0.2.2',
+    '0.2.11-alpha+dsh.0.2.2', '0.2.11-alpha.0+dsh.0.2.2', '0.2.12-alpha.2+dsh.0.2.2',
+    'x0.2.11-alpha.2+dsh.0.2.2'
   ]) {
     assert.ok(!versionOk(bad), `错误版本形态必须被拒绝：${bad}`);
   }

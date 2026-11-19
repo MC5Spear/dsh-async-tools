@@ -74,8 +74,10 @@
  * `<repo>/.local/evidence/probe-recovery-identity-<label>.json`（不含
  * token/密钥）。退出码 0＝核心判据全过；1＝核心判据有 FAIL；2＝装置自身
  * 故障；3＝未执行（无凭据 SKIP，落 skipped 标记证据）。运行目录创建之后的
- * 全部退出路径统一经唯一收尾出口 `finalizeExit`（见其定义处注释）；参数
- * 阶段的退出（目录未建、无可清理）保持直接 `process.exit(2)`。
+ * 全部退出路径统一经唯一收尾出口 `finalizeExit`（见其定义处注释）：判级路径
+ * 落全量证据，FAULT／SKIP 位点在退出前也持久保存最小证据（fault 收条＋当次
+ * 三段清理结果，SKIP 位点并入先行落盘的 skipped 标记——L02）；参数阶段的
+ * 退出（目录未建、无可清理）保持直接 `process.exit(2)`。
  *
  * ## RPC 纪律（DOC-07，对齐 verify/_rpc.mjs 只读重试口径）
  *
@@ -264,7 +266,9 @@ const reportCleanup = (cleanupResult) => {
 };
 // 统一收尾出口（L02）：运行目录创建之后的**全部**退出路径——die 位点（FAULT
 // ／SKIP）、主 try 的 finally 判级收尾、进程级异常承接——都汇聚到本函数：清
-// 现场、判级路径落证据、按同一张退出码表收束（verify/README 该探针行的退出
+// 现场、各路径落证据（判级路径全量；fault 位点最小收条，见 faultCode 分支——
+// SKIP 的 skipped 标记由该位点先落、收尾出口并入清理结果）、按同一张退出码表
+// 收束（verify/README 该探针行的退出
 // 码表与此一致）：1＝核心判据有 FAIL；2＝装置故障（fault 位点给定、判级中断
 // 的稳定信号档置 aborted、或清理未证实）；3＝未执行（SKIP——skipped 证据由
 // 该位点先落）；0＝核心判据全过且清理核实。参数阶段（运行目录尚未创建、无
@@ -274,6 +278,25 @@ const reportCleanup = (cleanupResult) => {
 const finalizeExit = (options = {}) => {
   const cleanupResult = reportCleanup(cleanup());
   if (options.faultCode !== undefined) {
+    // L02：FAULT／SKIP 位点也在退出前持久保存当次最小证据（fault 诊断原文已由
+    // die 的 console.error 输出，这里不重复携带）。判级段（evidence／verdicts／
+    // aborted）在这些位点可能仍在暂时性死区、不可引用；以先行落盘的 SKIP 标记
+    // （有则并入）为底，补 fault 收条（退出码＋时间）与三段清理结果。落盘自身
+    // 失败只告警，不掩盖原故障的退出码。
+    try {
+      let prior = null;
+      try { prior = JSON.parse(readFileSync(EVIDENCE, 'utf8')); } catch { prior = null; }
+      writeFileSync(EVIDENCE, JSON.stringify({
+        ...(prior ?? {}),
+        label: LABEL,
+        host: HOST_ROOT,
+        fault: { exitCode: options.faultCode, at: new Date().toISOString() },
+        cleanup: cleanupResult
+      }, null, 2));
+      console.error(`[launcher] fault evidence → ${EVIDENCE}`);
+    } catch (writeError) {
+      console.error(`[launcher] fault evidence 落盘失败（${String(writeError instanceof Error ? writeError.message : writeError)}）——当次清理结果以收尾行为准`);
+    }
     process.exit(options.faultCode);
   }
   // 清理结果先取得再落证据（DOC-06-RESULT）：证据 JSON 附三段结构化清理状态，
@@ -326,7 +349,8 @@ if (ZAI === '' && R !== undefined) {
 }
 if (ZAI === '' && MODEL_PATCH === null) {
   // 未执行≠全过（退出码契约）：专用退出码 3＋skipped 证据，防止无凭据环境的
-  // 批处理把「跳过」读成「核心判据全过」，也避免旧证据文件被误读为本轮结果。
+  // 批处理把「跳过」读成「核心判据全过」，也避免旧证据文件被误读为本轮结果；
+  // 先行落盘的 skipped 标记随后由收尾出口并入 fault 收条与三段清理结果（L02）。
   // SKIP 只属**缺省 ZAI 形态**（§8.3）：自备补丁形态即使无 ZAI 凭据也不 SKIP
   // ——所用凭据由调用方经子进程环境提供，是否足够由会话阶段的实际失败形态
   // 按装置故障（2）如实暴露。

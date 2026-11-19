@@ -25,7 +25,7 @@ import { hostTestByProbe, hostTestFor, loadOfflineSafe } from './_host-gate.mjs'
 import { resolveConfig } from '../lib/config.js';
 import { makeConfigView } from '../lib/config-view.js';
 import { TEXT } from '../lib/text.js';
-import { validateJsonSchemaValue, checkedTool } from './_helpers.mjs';
+import { validateJsonSchemaValue, checkedTool, pinSubagentForm } from './_helpers.mjs';
 
 // 宿主链动态守卫：`lib/agent.js`（→ dsh-tools / dsh-subagent）与 `lib/index.js`
 // （refreshToolDescriptions 所在，经 ask-takeover → dsh-llm 拉进宿主包）在离线
@@ -35,6 +35,13 @@ const hostModule = await loadOfflineSafe('../lib/index.js');
 const { createAgentTool } = agentModule ?? {};
 const { refreshToolDescriptions } = hostModule ?? {};
 const hostTest = await hostTestFor('../lib/agent.js', '../lib/index.js');
+
+// 形态基线（设计 §7.4.1／§7.4.7）：本文件既有断言全部钉 rc.1 嵌套形态——
+// startActivation spec 的 request 形状、supported 键清单、回执行与 effort 预检
+// 的嵌套口径。`node --test --test-isolation=none` 下形态记忆是**进程级单例**，
+// 文件加载即显式 pin，绿读数不依赖 DSAT_HOST_MODULES 锚树版本；扁平形态
+//（rc.2+）的分档锚在 test/host-contract.test.mjs，用例内 pin／复原不串扰本文件。
+pinSubagentForm('nested');
 
 /** 白名单基线：`zai/glm-5.3` 与父路由 `deepseek-official/deepseek-flash` 都在。 */
 const ROUTES = [

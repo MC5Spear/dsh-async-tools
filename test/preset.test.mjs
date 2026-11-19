@@ -1,7 +1,8 @@
 /**
  * 预设补丁校验器的变异测试（对象 `tools/validate-preset.mjs`，判据清单以
- * `tools/validate-preset.mjs` 文件头为准（现行十四条，③b、⑤b、⑧b 各独立计
- * 一条）；变异验收参数化覆盖两份补丁）。
+ * `tools/validate-preset.mjs` 文件头为准（现行十八条，③b、⑤b、⑤c、⑧b 各独立
+ * 计一条；⑫⑬⑭ 为 0.2.2 双档线新增——D1–D5 与分档说明见该文件头）；变异验收
+ * 参数化覆盖两份补丁×两档）。
  *
  * 为什么必须做变异测试而不是只看校验报告：绿读数证明不了校验器拦得住改错。
  * 下面的用例逐类锁死：补丁被改坏时 `validate-preset.mjs` 必须红，报错必须点名
@@ -12,13 +13,20 @@
  * **模块导入**方式在进程内调用（子进程 spawn 在沙箱里 EPERM，且进程内调用让
  * "变异 → 断言"同轮完成）。变异副本写在系统临时目录，用完即删。涉及词典锚句
  * （⑤b/⑦/⑪）的用例把「校验器 + 文案表」成对复制到临时目录再动态导入（保留
- * 相对布局），对 `lib/text.js` 副本做变异。
+ * 相对布局，含校验器新 import 的 lib/host-contract.js），对 `lib/text.js` 副本
+ * 做变异。
+ *
+ * 双档可测（期望集按宿主锚版本分档，边界 0.2.2-rc.2，rc.2 与 rc.3 基线逐字节
+ * 相同、同档）：判据校验经 `tier` 注入在两档各跑（P31–P36）——不依赖同机同时
+ * 存在两棵宿主树；基线对账（P14）按当前锚树档跑真实基线全量，另一档用**构造
+ * 的基线快照**（对真实基线解析结果施加两档间已登记的全部漂移）跑同一套对账
+ * 函数——两档判据都被执行、变异必红，避免"只在单档验证过"的死角。
  *
  * dsh-async-create 专属用例：P1 基线绿、P2/P3 基线行缺/多、P4 派生入口翻活、
  * P5 plugin-manager 回归布尔禁用（⑧b）、P6 词典纪律锚句（⑤b）、P7 pwsh 挂回、
  * P8 tool-bash 表达式、P9 未知 config.id、P10 护栏、P11 互斥判据复合、
- * P12 嵌套行缺失、P13 toolName、P14 期望集与 0.2.2 适配线证据树对账、
- * P15 provider 形态、P16 词典公共纪律段同源。
+ * P12 嵌套行缺失、P13 toolName、P14 双档基线对账（真实锚档＋构造快照档；含
+ * 档位错标必红）、P15 provider 形态、P16 词典公共纪律段同源。
  * 第五行工具与禁用改动专属用例：P17 tool-workflow 翻活、P18 dsh-async 的
  * tool-subagent 翻活、P19 删 async-workflow 行、P20 async-workflow 挪出
  * delegation 组（设计 §3.6 行位）、P21 删 workflow-ptc（create 侧）、P22 门槛锚句。
@@ -32,13 +40,18 @@
  * 通用纪律变体（VERIFY-GENERIC-01，判据 ⑤c）用例：P28 通用锚句表逐锚删除
  * 变异、P29 通用锚句表快照锁、P30 整段置空变异（en/zh 各一次 × 两份补丁——
  * 固化验收受控反例「置空仍通过」修后必不成立）。
+ * 双档分档判据用例（0.2.2 双档线）：P31 锚版本分档边界与读不到版本必红、
+ * P32 两档合法补丁全过（⓪ 报档、③ 双档读数）、P33 D1 表达式改一字符（⑫，
+ * 两档×两补丁）、P34 D2 persona 第二句增删（⑤，两档）、P35 D3 control 行加
+ * interrupt:false（⑬，两档×两补丁）、P36 D4 office 行删/挪/表达式漂移/加
+ * config（⑭+③，两档）、P37 登记分歧表快照锁（D1–D4 对账豁免两侧同改才动）。
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { validatePatch, EXPECTATIONS, GENERIC_DISCIPLINE_ANCHORS, expectedTopFromBaseline, loadYaml } from '../tools/validate-preset.mjs';
+import { validatePatch, EXPECTATIONS, GENERIC_DISCIPLINE_ANCHORS, loadYaml, reconcileBaseline, DESIGNED_DELTAS, tierForVersion, readAnchorHostVersion, resolveAnchorTier } from '../tools/validate-preset.mjs';
 import { candidateModules } from '../tools/_host-resolve.mjs';
 import { t } from '../lib/text.js';
 import { hostTestByProbe } from './_host-gate.mjs';
@@ -56,6 +69,12 @@ try {
   yamlAbsent = true;
 }
 const hostTest = await hostTestByProbe(yamlAbsent);
+
+// 宿主锚档（模块级一次解析；离线形态不解析——整组用例经 hostTest 自跳过）。
+// 锚版本读不到时这里抛错＝环境故障，红是诚实读数（校验器 ⓪ 同样红）。
+const ANCHOR = yamlAbsent ? undefined : resolveAnchorTier();
+const ANCHOR_TIER = ANCHOR?.tier;
+const OTHER_TIER = ANCHOR_TIER === 'rc1' ? 'rc2' : 'rc1';
 
 const PATCH = join(import.meta.dirname, '..', 'presets', 'dsh-async.patch.yml');
 const PATCH_CREATE = join(import.meta.dirname, '..', 'presets', 'dsh-async-create.patch.yml');
@@ -90,13 +109,66 @@ const RECONCILE = [
   baselineFile: WEB_APP_PRESETS === undefined ? undefined : join(WEB_APP_PRESETS, entry.baselineName)
 }));
 
-/** 造一份变异副本并校验它（临时目录，用完即删）。 */
-async function validateMutation(mutation, patchPath = PATCH, baselineText = baseline) {
+/** 构造另一档的基线快照（P14 双档对账用；不依赖同机同时存在两棵宿主树）：
+ *  对当前锚树的真实基线解析结果施加两档间已登记的全部漂移（设计 §7.4 事实
+ *  清单）——standard：skill-filesystem 的 config.customSkillDirs、present 后
+ *  tool-office 行；cordis：persona 第二句；两基线共通：tool-subagent-control
+ *  行 config.interrupt。快照里的锚串为本文件独立持份（与校验器常量、真实基线
+ *  三方一致；真实基线的逐字节事实由 CI 两档锚树矩阵各自主验）。 */
+function synthTierBaseline(doc, toTier) {
+  const clone = structuredClone(doc);
+  const plugins = clone[0].insert[0].config.plugins;
+  const isStandard = clone[0].insert[0].config.id === 'standard';
+  const persona = plugins.find((child) => child?.id === 'persona');
+  const skill = plugins.find((child) => child?.id === 'skill-filesystem');
+  const control = plugins.find((child) => child?.id === 'delegation')
+    .config.find((child) => child?.id === 'tool-subagent-control');
+  const ONE = 'You are a coding agent powered by the {{model}} model.';
+  const TWO = 'You are a coding agent powered by the {{model}} model. You help the user customize DeepSeek Harness itself.';
+  const SKILL_EXPR = "process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')), 'skills')";
+  if (toTier === 'rc2') {
+    control.config = { interrupt: false };
+    if (isStandard) {
+      skill.config = { customSkillDirs: [SKILL_EXPR] };
+      const presentIndex = plugins.findIndex((child) => child?.id === 'present');
+      assert.ok(presentIndex !== -1, 'standard 基线必须有 present 行（快照插入位）');
+      plugins.splice(presentIndex + 1, 0, { id: 'tool-office', name: '@deepseek-ai/dsh-tool-office' });
+    } else {
+      persona.config.prefix = TWO;
+    }
+  } else {
+    delete control.config;
+    if (isStandard) {
+      delete skill.config;
+      const officeIndex = plugins.findIndex((child) => child?.id === 'tool-office');
+      if (officeIndex !== -1) plugins.splice(officeIndex, 1);
+    } else {
+      persona.config.prefix = ONE;
+    }
+  }
+  return clone;
+}
+
+/** 收集一份补丁解析结果的叶子行/组行（P14 基线侧变异探针用；与对账比较器
+ *  同款遍历）。 */
+function walked(doc) {
+  const leaf = new Map(), group = new Map();
+  const walk = (arr) => arr.forEach((child) => {
+    if (Array.isArray(child?.config)) { group.set(child.id, child); walk(child.config); }
+    else leaf.set(child.id, child);
+  });
+  walk(doc[0].insert[0].config.plugins);
+  return { leaf, group };
+}
+
+/** 造一份变异副本并校验它（临时目录，用完即删）。`opts.tier` 注入档位（双档
+ *  变异用；缺省按宿主锚档）。 */
+async function validateMutation(mutation, patchPath = PATCH, baselineText = baseline, { tier } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'async-preset-'));
   try {
     const path = join(dir, 'patch.yml');
     writeFileSync(path, mutation(baselineText), 'utf8');
-    return await validatePatch(path, { quiet: true });
+    return await validatePatch(path, { quiet: true, tier });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -113,9 +185,11 @@ function commonIntro(text) {
 }
 
 /** 把「校验器 + 变异文案表」成对复制到临时目录再动态导入（保留相对布局
- *  tmp/tools/validate-preset.mjs + tmp/lib/text.js + tmp/tools/_host-resolve.mjs），
- *  返回该副本的 validatePatch——词典锚句判据（⑤b/⑦/⑪）的变异通道：锚句住在
- *  `lib/text.js`，不复制成对副本就变异不到校验器实际读取的文案表。 */
+ *  tmp/tools/validate-preset.mjs + tmp/lib/text.js + tmp/lib/host-contract.js +
+ *  tmp/tools/_host-resolve.mjs），返回该副本的 validatePatch——词典锚句判据
+ *  （⑤b/⑦/⑪）的变异通道：锚句住在 `lib/text.js`，不复制成对副本就变异不到
+ *  校验器实际读取的文案表；host-contract 是校验器锚版本分档的新 import，副本
+ *  不带上会在临时目录里 ERR_MODULE_NOT_FOUND。 */
 async function validatorWithText(mutateText) {
   const dir = mkdtempSync(join(tmpdir(), 'async-dict-'));
   try {
@@ -126,6 +200,8 @@ async function validatorWithText(mutateText) {
       readFileSync(join(root, 'tools', 'validate-preset.mjs'), 'utf8'), 'utf8');
     writeFileSync(join(dir, 'tools', '_host-resolve.mjs'),
       readFileSync(join(root, 'tools', '_host-resolve.mjs'), 'utf8'), 'utf8');
+    writeFileSync(join(dir, 'lib', 'host-contract.js'),
+      readFileSync(join(root, 'lib', 'host-contract.js'), 'utf8'), 'utf8');
     const mutated = mutateText(readFileSync(join(root, 'lib', 'text.js'), 'utf8'));
     writeFileSync(join(dir, 'lib', 'text.js'), mutated, 'utf8');
     return {
@@ -442,101 +518,51 @@ hostTest('validate-preset：创造补丁 toolName 写错必须拦住（P13，④
   assert.ok(result.lines.some((l) => l.includes('toolName 五值缺')));
 });
 
-hostTest('validate-preset：期望集必须与 shipped 基线的真实行集合逐条比对（P14，防快照漂移）', async () => {
+hostTest('validate-preset：期望集必须与两档 shipped 基线逐条对账（P14，防快照漂移；真实锚档＋构造快照档）', async () => {
   const { load } = await loadYaml();
-  // 代际检查（P14 按定义只对 0.2.2 适配线证据树对账）：锚宿主的 dsh 版本不是
-  // 0.2.2 线（如误把 0.2.1 兼容线树当锚——其 delegation 组仍挂 list-agents 行、
-  // tool-subagent 行仍是 modelSelectionSettings 旧键，与期望集不同代）时，逐条
-  // 比对会把「基线代际差」误报成快照漂移。显式 NOTE 后跳过整组对账：不静默、
-  // 不冒充对账通过；期望集仍在 0.2.2-rc.1 锚（本机与 CI 的主验锚）上被本用例
-  // 钉死。
-  const anchorDsh = JSON.parse(readFileSync(
-    join(WEB_APP_PRESETS, '..', '..', 'dsh', 'package.json'), 'utf8')).version;
-  if (!anchorDsh.startsWith('0.2.2')) {
-    console.log(`NOTE P14 期望集钉在 0.2.2 适配线基线；当前锚宿主 dsh@${anchorDsh} 的基线为另一代，逐条对账不适用，跳过（防把代际差误报成快照漂移）。`);
+  // 代际检查（对账按定义只认 0.2.2 适配线的两档基线）：锚宿主的 dsh 版本不是
+  // 0.2.2 线时（如误把 0.2.1 兼容线树当锚——其 delegation 组仍挂 list-agents
+  // 行、tool-subagent 行仍是 modelSelectionSettings 旧键），逐条比对会把「基线
+  // 代际差」误报成快照漂移。显式 NOTE 后跳过对账：不静默、不冒充对账通过；
+  // 判据校验（①–⑭）不受此影响、照常跑。
+  if (!ANCHOR.version.startsWith('0.2.2')) {
+    console.log(`NOTE P14 对账钉在 0.2.2 适配线两档基线；当前锚宿主 dsh@${ANCHOR.version} 的基线为另一代，逐条对账不适用，跳过（防把代际差误报成快照漂移）。`);
     return;
   }
   for (const { configId, baselineFile, baselineName } of RECONCILE) {
     if (baselineFile === undefined || !existsSync(baselineFile)) {
       assert.fail(`P14 对账依赖的基线补丁读不到：@deepseek-ai/dsh-web-app/presets/${baselineName}（期望集 ${configId} 的出处就是它）。候选锚 = DSAT_HOST_MODULES → DSH_HOME/profiles → %APPDATA%/npm 全局树；CI 上由 npm install @deepseek-ai/dsh@<精确宿主版本>（支持集合逐宿主）提供。锚缺失不许静默跳过。`);
     }
-    const doc = load(readFileSync(baselineFile, 'utf8'));
-    const exp = EXPECTATIONS[configId];
-    assert.deepEqual(exp.baselineTop, expectedTopFromBaseline(doc),
-      `${configId} 的 baselineTop 必须等于「真实基线 − tool-pwsh + 五行 async（插在 tool-bash 后）」；上游改动基线时这里先红，强迫重建期望集（更新入口）`);
-    const nestedFromBaseline = doc[0].insert[0].config.plugins
-      .filter((child) => Array.isArray(child?.config))
-      .flatMap((child) => child.config)
-      .map((child) => child?.id);
-    // 期望嵌套序列 = 真实基线 + async-workflow 插在 tool-workflow 行后
-    // （delegation 组内第五行，设计 §3.6 行位）。基线侧不插、补丁侧不拔都先红。
-    const wfIdx = nestedFromBaseline.indexOf('tool-workflow');
-    const expectedNested = [...nestedFromBaseline.slice(0, wfIdx + 1), 'async-workflow', ...nestedFromBaseline.slice(wfIdx + 1)];
-    assert.deepEqual(exp.baselineNested, expectedNested,
-      `${configId} 的 baselineNested 必须等于「真实基线嵌套行 + async-workflow（tool-workflow 行后）」；上游改动基线时这里先红，强迫重建期望集（更新入口）`);
-    // **config 正文**逐行对账——改动集之外的每个叶子行与组行必须与真实基线
-    // 深度一致（递归键序规范化后比对；disabled 单列在改动范围外剔除）。改动清单外改一个字
-    // 必须红：只有行 id 比对的判据拦不住 plan-mode 段的措辞漂移。
-    // 改动范围 = 结构性禁用行。persona **不在改动集**——prefix 与基线身份句
-    // 逐字一致（⑤ 锁死），行体比对连 persona 的 config 一并锁成与基线逐字。
-    // 插件管理两行不在改动集——与基线禁用形态逐字同形（⑧b），行体比对连
-    // disabled 面一并锁它们。
-    const surgery = new Set(exp.disabledBoolean);
-    const patchDoc = load(readFileSync(join(import.meta.dirname, '..', exp.patchRel), 'utf8'));
-    const collect = (insertRow) => {
-      const leaf = new Map(), group = new Map();
-      const walk = (arr) => arr.forEach((child) => {
-        if (Array.isArray(child?.config)) { group.set(child.id, child); walk(child.config); }
-        else leaf.set(child.id, child);
-      });
-      walk(insertRow.config.plugins);
-      return { leaf, group };
-    };
-    const fromBaseline = collect(doc[0].insert[0]);
-    const fromPatch = collect(patchDoc[0].insert[0]);
-    const normalize = (value) => {
-      if (Array.isArray(value)) return value.map(normalize);
-      if (value !== null && typeof value === 'object') {
-        return Object.fromEntries(Object.keys(value).sort().map((key) => [key, normalize(value[key])]));
-      }
-      return value;
-    };
-    const stripSurgery = (row, isGroup) => JSON.stringify(normalize(
-      // 组行的 config 是子行数组（子行已单独比对）→ 剥掉只比 id/name/group/isolate；
-      // 叶子行的 config 是正文（sampleOverCapGlobResults、plan-mode 的 section 等）
-      // → **必须保留**；叶子行的 disabled **不剥**（改动集外的行连 disabled
-      // 面也必须与基线一致——基线 codex/claude-code 的 disabled: true 两侧本就逐字）。
-      isGroup ? { ...row, config: undefined } : { ...row }
-    ));
-    const bodyDiffs = [];
-    for (const [id, row] of fromBaseline.leaf) {
-      if (surgery.has(id) || id === 'tool-pwsh') continue; // pwsh 行按改动不挂；async 行只在补丁侧
-      const other = fromPatch.leaf.get(id);
-      if (other === undefined) { bodyDiffs.push(`${id} 仅在基线`); continue; }
-      if (stripSurgery(row, false) !== stripSurgery(other, false)) bodyDiffs.push(`${id} 的 config 正文与基线不一致`);
+    const realDoc = load(readFileSync(baselineFile, 'utf8'));
+    const patchDoc = load(readFileSync(join(import.meta.dirname, '..', EXPECTATIONS[configId].patchRel), 'utf8'));
+    // 两档各自对账：锚档用真实基线；另一档用构造快照（对真实基线解析结果施加
+    // 两档间已登记的全部漂移——见 synthTierBaseline）。同一套 reconcileBaseline
+    // 在两档上都必须通过，且登记差异恰为注册表所列（rc1 档 D1/D2/D4 行级、
+    // rc2 档 D3/D4——见 tools/validate-preset.mjs 的 DESIGNED_DELTAS）。
+    for (const tier of [ANCHOR_TIER, OTHER_TIER]) {
+      const baselineDoc = tier === ANCHOR_TIER ? realDoc : synthTierBaseline(realDoc, tier);
+      const result = reconcileBaseline(configId, { tier, baselineDoc, patchDoc, quiet: true });
+      assert.equal(result.ok, true, `${configId}（${tier} 档）对账失败：\n${result.lines.filter((l) => l.includes('FAIL')).join('\n')}`);
+      assert.deepEqual(result.deltas, DESIGNED_DELTAS[configId][tier].map((entry) => entry.delta).sort(),
+        `${configId}（${tier} 档）登记差异必须恰为注册表所列（表侧快照锁见 P37）`);
     }
-    for (const id of fromPatch.leaf.keys()) {
-      if (!fromBaseline.leaf.has(id) && !id.startsWith('async-')) bodyDiffs.push(`${id} 仅在补丁`);
-    }
-    for (const [id, row] of fromBaseline.group) {
-      const other = fromPatch.group.get(id);
-      if (other === undefined) { bodyDiffs.push(`${id} 组行缺失`); continue; }
-      if (stripSurgery(row, true) !== stripSurgery(other, true)) bodyDiffs.push(`${id} 组行属性与基线不一致`);
-    }
-    assert.deepEqual(bodyDiffs, [],
-      `${configId} 改动清单之外的行必须与真实基线逐字一致；差异：${bodyDiffs.join(' | ')}`);
-    // 反向对照：改动外叶子行的 config 改一个字，同一比较器必须报出来（防恒真）。
-    const driftBase = JSON.parse(stripSurgery(fromPatch.leaf.get('tool-fs-search'), false));
-    driftBase.config.sampleOverCapGlobResults = true;
-    assert.notEqual(JSON.stringify(driftBase), stripSurgery(fromBaseline.leaf.get('tool-fs-search'), false),
-      'config 正文比较器必须能检出单字段漂移');
-    //  反向对照：改动外叶子行**误加 disabled** 也必须被同一比较器报出来
-    // ——disabled 项不许是盲区。（dsh-async 的 tool-subagent 本就按改动禁用，
-    // 该行走 ⑧⑩ 的结构性判据；本对照只证比较器对 disabled 差异敏感。）
-    const wrongDisable = JSON.parse(stripSurgery(fromPatch.leaf.get('tool-subagent'), false));
-    wrongDisable.disabled = true;
-    assert.notEqual(JSON.stringify(wrongDisable), stripSurgery(fromBaseline.leaf.get('tool-subagent'), false),
-      'disabled 项比较器必须能检出补丁行与基线行的 disabled 差异');
+    // 行体比较器灵敏度（防恒真）：基线侧改动清单外的叶子行改一个字段，同一
+    // 比较器必须报出来——否则上面的通过断言恒真。
+    const drifted = structuredClone(realDoc);
+    const fsSearch = walked(drifted).leaf.get('tool-fs-search');
+    fsSearch.config.sampleOverCapGlobResults = true;
+    const driftResult = reconcileBaseline(configId, { tier: ANCHOR_TIER, baselineDoc: drifted, patchDoc, quiet: true });
+    assert.equal(driftResult.ok, false, '行体比较器必须能检出基线侧单字段漂移');
+    // 档位错标必红（分档真实起作用的证明）：rc.1 形态基线按 rc2 档对账 →
+    // tool-office 行豁免错位（rc2 档无 row-only 豁免）；rc.2 形态基线按 rc1 档
+    // 对账 → control 行 config（及 create 的 persona 两句）分歧未被豁免。两方向
+    // 都红，证明对账不是"档位摆设"。
+    const rc1Doc = ANCHOR_TIER === 'rc1' ? realDoc : synthTierBaseline(realDoc, 'rc1');
+    const rc2Doc = ANCHOR_TIER === 'rc2' ? realDoc : synthTierBaseline(realDoc, 'rc2');
+    assert.equal(reconcileBaseline(configId, { tier: 'rc2', baselineDoc: rc1Doc, patchDoc, quiet: true }).ok, false,
+      '把 rc.1 形态基线按 rc2 档对账必须红（tool-office 行登记豁免错位）');
+    assert.equal(reconcileBaseline(configId, { tier: 'rc1', baselineDoc: rc2Doc, patchDoc, quiet: true }).ok, false,
+      '把 rc.2 形态基线按 rc1 档对账必须红（control 行 config 等分歧未被豁免）');
   }
 });
 
@@ -599,16 +625,19 @@ hostTest('validate-preset：workflow-ptc 的 provider 改掉必须拦住（P15�
 });
 
 hostTest('validate-preset：两份补丁的词典公共纪律段必须逐字同源（P16，设计 §3.6）', async () => {
-  // persona prefix 与宿主基线身份句逐字一致（宿主原生身份句不承载本包内容），
-  // 公共异步纪律段住在两语表的两个词典键里，分叉只许发生在委托规则第 1 条。
+  // persona prefix 逐字锚（⑤ 分档形态）：dsh-async 与该档 standard 基线身份句
+  // 逐字一致（两档同串）；create 为 D2 固定两句锚（两档同串——rc1 档较其基线
+  // 多第二句为登记分歧，判据只锁逐字）。公共异步纪律段住在两语表的两个词典
+  // 键里，分叉只许发生在委托规则第 1 条。
   const { load } = await loadYaml();
   const readPrefix = async (path) => {
     const doc = load(readFileSync(path, 'utf8'));
     return doc[0].insert[0].config.plugins.find((child) => child?.id === 'persona').config.prefix;
   };
   const BASELINE_IDENTITY = 'You are a coding agent powered by the {{model}} model.';
-  assert.equal(await readPrefix(PATCH), BASELINE_IDENTITY, 'dsh-async 的 prefix 与基线身份句逐字一致');
-  assert.equal(await readPrefix(PATCH_CREATE), BASELINE_IDENTITY, 'dsh-async-create 的 prefix 与基线身份句逐字一致');
+  const CREATE_IDENTITY_D2 = 'You are a coding agent powered by the {{model}} model. You help the user customize DeepSeek Harness itself.';
+  assert.equal(await readPrefix(PATCH), BASELINE_IDENTITY, 'dsh-async 的 prefix 与该档 standard 基线身份句逐字一致');
+  assert.equal(await readPrefix(PATCH_CREATE), CREATE_IDENTITY_D2, 'dsh-async-create 的 prefix 与 D2 固定两句锚逐字一致（⑤ 逐字判据，P34 变异看守）');
   const introAsync = commonIntro(t('en', 'discipline.preset.dsh-async'));
   const introCreate = commonIntro(t('en', 'discipline.preset.dsh-async-create'));
   assert.equal(introAsync, introCreate,
@@ -685,37 +714,16 @@ hostTest('validate-preset：workflow-ptc 行删掉必须拦住（P21，⑨，R34
 });
 
 hostTest('validate-preset：async_workflow 门槛锚句被删必须拦住（P22，⑪，R34-h）', async () => {
-  // ⑪ 读的是真 text.js，变异用例要把「校验器 + 文案表」成对复制到临时目录再动态导入
-  // （保留相对布局 tmp/tools/validate-preset.mjs + tmp/lib/text.js），证 ⑪ 的检查
-  // 对缺锚句的文案表真的开火——不是恒真。
-  const dir = mkdtempSync(join(tmpdir(), 'async-threshold-'));
-  try {
-    mkdirSync(join(dir, 'tools'), { recursive: true });
-    mkdirSync(join(dir, 'lib'), { recursive: true });
-    const validatorSrc = readFileSync(join(import.meta.dirname, '..', 'tools', 'validate-preset.mjs'), 'utf8');
-    const textSrc = readFileSync(join(import.meta.dirname, '..', 'lib', 'text.js'), 'utf8');
-    // 删句变异：两档 p2 里指向 async_agent 的出路句整体移除。
-    const mutated = textSrc
-      .replace('for one or two delegations prefer async_agent.', '')
-      .replace('一两个委托用 async_agent。', '');
-    assert.notEqual(mutated, textSrc, '变异必须真的改到文案（否则本用例恒真）');
-    writeFileSync(join(dir, 'tools', 'validate-preset.mjs'), validatorSrc, 'utf8');
-    writeFileSync(join(dir, 'lib', 'text.js'), mutated, 'utf8');
-    // 校验器现在的锚候选表来自 tools/_host-resolve.mjs（树根单一来源），副本必须成对带上，
-    // 否则动态导入在临时目录里找不到它——那红的是搬运缺件，不是 ⑪ 判据。
-    writeFileSync(
-      join(dir, 'tools', '_host-resolve.mjs'),
-      readFileSync(join(import.meta.dirname, '..', 'tools', '_host-resolve.mjs'), 'utf8'),
-      'utf8'
-    );
-    const mod = await import(pathToFileURL(join(dir, 'tools', 'validate-preset.mjs')).href);
-    const result = await mod.validatePatch(PATCH, { quiet: true });
-    assert.equal(result.ok, false, '门槛锚句缺失必须被拦（R34-h/R35-g）');
-    assert.ok(result.lines.some((l) => l.includes('门槛锚句')),
-      `报错必须指向 ⑪ 的门槛判据，实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  // ⑪ 读的是真 text.js，变异经成对副本通道（validatorWithText：校验器 + 文案表
+  // + host-contract + _host-resolve 成对复制后动态导入）——证 ⑪ 的检查对缺锚句
+  // 的文案表真的开火，不是恒真。
+  const killed = await validatorWithText((src) => src
+    .replace('for one or two delegations prefer async_agent.', '')
+    .replace('一两个委托用 async_agent。', ''));
+  const result = await killed.validate(PATCH, { quiet: true });
+  assert.equal(result.ok, false, '门槛锚句缺失必须被拦（R34-h/R35-g）');
+  assert.ok(result.lines.some((l) => l.includes('门槛锚句')),
+    `报错必须指向 ⑪ 的门槛判据，实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
 });
 
 // ══════════════════ 提问角色纪律锚句的判据（P23，ASK-01）═══════════════════════
@@ -936,6 +944,157 @@ hostTest('validate-preset：通用纪律段整段置空必红（P30，⑤c，en/
       assert.equal(result.ok, false, `通用纪律段 ${lang} 档整段置空必须被拦（${name}）`);
       assert.ok(result.lines.some((l) => l.includes('discipline.preset.generic') && l.includes(`${lang} 档`)),
         `报错必须点名通用变体（${name}，${lang} 档），实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
+    }
+  }
+});
+
+// ══════════════════ 双档分档判据（P31–P37，D1–D4＋分档；0.2.2 双档线）════════════════
+
+hostTest('validate-preset：锚版本分档边界与失败形态（P31，⓪/tierForVersion）', () => {
+  // 边界语义（比较器 lib/host-contract.js#compareVersions；边界 0.2.2-rc.2）：
+  // 小于 → rc1；大于等于 → rc2（rc.2 与 rc.3 基线逐字节相同、同档）；正式
+  // 0.2.2 高于一切预发布。不可解析 → 明确报错（不许"套不上就放行"）；候选
+  // 全空读不到版本同样报错。
+  assert.equal(tierForVersion('0.2.2-rc.1'), 'rc1');
+  assert.equal(tierForVersion('0.2.2-alpha.2'), 'rc1');
+  assert.equal(tierForVersion('0.2.1'), 'rc1');
+  assert.equal(tierForVersion('0.2.2-rc.2'), 'rc2');
+  assert.equal(tierForVersion('0.2.2-rc.3'), 'rc2');
+  assert.equal(tierForVersion('0.2.2'), 'rc2');
+  assert.throws(() => tierForVersion('not-a-version'), /不可解析/);
+  assert.throws(() => tierForVersion('0.2'), /不可解析/);
+  assert.throws(() => readAnchorHostVersion([]), /读不到宿主锚版本/);
+  // 锚树实读（进程内当前锚）：支持集合成员的档位判定与锚档一致。
+  if (/^0\.2\.2-rc\.[123]$/.test(ANCHOR.version)) {
+    assert.equal(ANCHOR.tier, ANCHOR.version === '0.2.2-rc.1' ? 'rc1' : 'rc2');
+  }
+});
+
+hostTest('validate-preset：两档期望集都执行且合法补丁双档通过（P32，⓪/③）', async () => {
+  for (const tier of ['rc1', 'rc2']) {
+    for (const [name, path] of [['dsh-async', PATCH], ['dsh-async-create', PATCH_CREATE]]) {
+      const result = await validatePatch(path, { quiet: true, tier });
+      assert.equal(result.ok, true, `${name}（${tier} 档）应当通过，失败行：\n${result.lines.filter((l) => l.includes('FAIL')).join('\n')}`);
+      assert.ok(result.lines.some((l) => l.includes(`锚档 ${tier}`)), `⓪ 必须报出所选档位（${name}，${tier} 档）`);
+    }
+  }
+  // dsh-async 两档的 ③ 读数都是 26+10（tool-office 两档都在场——rc1 档为 D4
+  // 登记插入；create 的 26+10 由 P1 锚定）。
+  for (const tier of ['rc1', 'rc2']) {
+    const result = await validatePatch(PATCH, { quiet: true, tier });
+    assert.ok(result.lines.some((l) => l.includes('顶层 26 行 + 嵌套 10 行') && l.includes(tier)),
+      `③ 的读数必须带档位并计入 office 行（${tier} 档），实得：${result.lines.filter((l) => l.includes('③')).join(' | ')}`);
+  }
+});
+
+hostTest('validate-preset：customSkillDirs 表达式改一字符必红（P33，⑫ D1；两档×两补丁）', async () => {
+  const expr = "process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')), 'skills')";
+  const driftedExpr = expr.replace(", 'skills')", ", 'skillz')");
+  assert.notEqual(driftedExpr, expr, '变异必须真的改到表达式（否则本用例恒真）');
+  for (const tier of ['rc1', 'rc2']) {
+    for (const [name, path, text] of [['dsh-async', PATCH, baseline], ['dsh-async-create', PATCH_CREATE, baselineCreate]]) {
+      const result = await validateMutation((src) => src.split(expr).join(driftedExpr), path, text, { tier });
+      assert.equal(result.ok, false, `D1 表达式漂移必须被拦（${name}，${tier} 档）`);
+      assert.ok(result.lines.some((l) => l.includes('customSkillDirs') && l.includes('D1')),
+        `报错必须指向 ⑫ 的 D1 逐字锚（${name}，${tier} 档），实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
+    }
+  }
+});
+
+hostTest('validate-preset：create persona 两句锚增删必红（P34，⑤ D2；两档）', async () => {
+  const two = 'prefix: You are a coding agent powered by the {{model}} model. You help the user customize DeepSeek Harness itself.';
+  for (const tier of ['rc1', 'rc2']) {
+    // 改第二句（加一个词）
+    const edited = await validateMutation((src) => src
+      .replace(two, 'prefix: You are a coding agent powered by the {{model}} model. You help the user customize DeepSeek Harness itself, not other products.'),
+      PATCH_CREATE, baselineCreate, { tier });
+    assert.equal(edited.ok, false, `D2 第二句增改必须被拦（${tier} 档）`);
+    assert.ok(edited.lines.some((l) => l.includes('D2 固定两句锚')),
+      `报错必须指向 ⑤ 的 D2 固定锚（${tier} 档），实得：${edited.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
+    // 删第二句（回落单句＝rc.1 基线形态）——登记分歧不是"退回基线"的许可：
+    // 判据锚的是两句串本身，rc1 档下回落单句同样红。
+    const dropped = await validateMutation((src) => src
+      .replace(two, 'prefix: You are a coding agent powered by the {{model}} model.'),
+      PATCH_CREATE, baselineCreate, { tier });
+    assert.equal(dropped.ok, false, `D2 删第二句必须被拦（${tier} 档——rc1 档回落其基线单句形态也红）`);
+    assert.ok(dropped.lines.some((l) => l.includes('D2 固定两句锚')), '报错必须指向 ⑤ 的 D2 固定锚');
+  }
+});
+
+hostTest('validate-preset：control 行加 interrupt:false 必红（P35，⑬ D3；两档×两补丁）', async () => {
+  const controlBlock = "              - id: tool-subagent-control\n                name: '@deepseek-ai/dsh-tool-subagent-control'\n";
+  const withInterrupt = `${controlBlock}                config:\n                  interrupt: false\n`;
+  for (const tier of ['rc1', 'rc2']) {
+    for (const [name, path, text] of [['dsh-async', PATCH, baseline], ['dsh-async-create', PATCH_CREATE, baselineCreate]]) {
+      const result = await validateMutation((src) => src.replace(controlBlock, withInterrupt), path, text, { tier });
+      assert.equal(result.ok, false, `D3 随迁 interrupt:false 必须被拦（${name}，${tier} 档）`);
+      assert.ok(result.lines.some((l) => l.includes('tool-subagent-control') && l.includes('不得携带 config')),
+        `报错必须指向 ⑬ 的零 config 判据（${name}，${tier} 档），实得：${result.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
+    }
+  }
+});
+
+hostTest('validate-preset：tool-office 行删/挪/表达式漂移/加 config 必红（P36，⑭+③ D4；两档）', async () => {
+  const officeBlock = `          - id: tool-office\n            name: '@deepseek-ai/dsh-tool-office'\n            disabled: !!js "(() => { try { const cr = process.getBuiltinModule('node:module').createRequire; const dshRoot = cr(baseUrl).resolve('@deepseek-ai/dsh/package.json'); cr(dshRoot).resolve('@deepseek-ai/dsh-tool-office/package.json'); return false } catch { return true } })()"\n`;
+  const presentBlock = "          - id: present\n            name: '@deepseek-ai/dsh-tool-present'\n";
+  assert.ok(baseline.includes(officeBlock), '变异锚文本必须与补丁现状逐字一致（否则本用例恒真）');
+  for (const tier of ['rc1', 'rc2']) {
+    // a. 删行：rc.1 树包缺席靠 disabled 探测跳过，整行省略违反 D4。
+    const removed = await validateMutation((src) => src.replace(officeBlock, ''), PATCH, baseline, { tier });
+    assert.equal(removed.ok, false, `删 tool-office 行必须被拦（${tier} 档）`);
+    assert.ok(removed.lines.some((l) => l.includes('tool-office') && (l.includes('必须在场') || l.includes('缺行'))),
+      `报错必须点名 ⑭ 的存在性或 ③ 的缺行（${tier} 档），实得：${removed.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
+    // b. 探测表达式改一字符（逐字锚）。
+    const drifted = await validateMutation((src) => src
+      .replace(officeBlock, officeBlock.replace('return false }', 'return falsx }')), PATCH, baseline, { tier });
+    assert.equal(drifted.ok, false, `D4 探测表达式漂移必须被拦（${tier} 档）`);
+    assert.ok(drifted.lines.some((l) => l.includes('tool-office.disabled') && l.includes('D4')),
+      `报错必须指向 ⑭ 的表达式逐字锚（${tier} 档），实得：${drifted.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
+    // c. 挪位（present 之前）——位置判据。
+    const moved = await validateMutation((src) => src
+      .replace(officeBlock, '')
+      .replace(presentBlock, officeBlock + presentBlock), PATCH, baseline, { tier });
+    assert.equal(moved.ok, false, `tool-office 挪位必须被拦（${tier} 档）`);
+    assert.ok(moved.lines.some((l) => l.includes('tool-office 行必须钉在 present 行之后')),
+      `报错必须点名 ⑭ 的位置判据（${tier} 档），实得：${moved.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
+    // d. 加 config（基线行无 config，D4 仅多 disabled 探测一键）。
+    const withConfig = await validateMutation((src) => src
+      .replace(officeBlock, officeBlock.replace('            disabled:', "            config:\n              anything: true\n            disabled:")), PATCH, baseline, { tier });
+    assert.equal(withConfig.ok, false, `tool-office 加 config 必须被拦（${tier} 档）`);
+    assert.ok(withConfig.lines.some((l) => l.includes('tool-office') && l.includes('不得携带 config')),
+      `报错必须点名 ⑭ 的零 config 判据（${tier} 档），实得：${withConfig.lines.filter((l) => l.includes('FAIL')).join(' | ')}`);
+  }
+});
+
+hostTest('validate-preset：登记分歧表快照锁——表删行、改文案或加行必红（P37，D1–D4 对账豁免）', () => {
+  // P14 的对账断言派生自校验器内的 DESIGNED_DELTAS 注册表，测不出表自身被静默
+  // 弱化（删行后豁免与断言同步缩小、对账照常绿）。这里用测试内独立持份的清单
+  // 逐项 deepEqual 注册表：删行、改文案、加行都必须先改这份锁才过得去——两处
+  // 同改在 diff 评审里可见，静默弱化不再有零红通道。
+  const LOCKED = {
+    'dsh-async': {
+      rc1: [
+        'D1 skill-filesystem config.customSkillDirs：本补丁携带、rc.1 standard 基线无此键（统一携带，cordis 基线先例；表达式串另由 ⑫ 逐字锚）',
+        'D4 tool-office 行在场：rc.1 基线无此行（在场性条件装载，包缺席时行跳过）'
+      ],
+      rc2: [
+        'D3 tool-subagent-control config.interrupt 不随迁：本补丁无 config、rc.2+ 基线有（保留 interrupt_agent 注册，需求 §3.1；另由 ⑬ 守卫）',
+        'D4 tool-office 行 disabled 探测键：本补丁条件装载、rc.2+ 基线行裸（另由 ⑭ 逐字锚）'
+      ]
+    },
+    'dsh-async-create': {
+      rc1: [
+        'D2 persona prefix 第二句：本补丁两句、rc.1 cordis 基线单句（用途陈述对 rc.1 同真；两句串另由 ⑤ 逐字锚）'
+      ],
+      rc2: [
+        'D3 tool-subagent-control config.interrupt 不随迁：本补丁无 config、rc.2+ 基线有（保留 interrupt_agent 注册，需求 §3.1；另由 ⑬ 守卫）'
+      ]
+    }
+  };
+  for (const [configId, tiers] of Object.entries(LOCKED)) {
+    for (const [tier, expected] of Object.entries(tiers)) {
+      assert.deepEqual(DESIGNED_DELTAS[configId][tier].map((entry) => entry.delta).sort(), [...expected].sort(),
+        `登记分歧表与独立期望清单不一致（${configId}，${tier} 档）——表被弱化或锁未同步，两处需同改并过评审`);
     }
   }
 });

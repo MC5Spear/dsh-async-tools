@@ -22,8 +22,9 @@ import { resolveConfig } from '../lib/config.js';
 import { LATE_ANSWER_EVENT } from '../lib/interrupts.js';
 import { JOB_RESULT_EVENT } from '../lib/delivery-sources.js';
 import { t } from '../lib/text.js';
+import { subagentContract } from '../lib/host-contract.js';
 import { AgentTarget, resetAgentBaselines, describeEntry } from '../lib/wait-agent-target.js';
-import { checkedTool, inboxPayload } from './_helpers.mjs';
+import { checkedTool, descendantRows, inboxPayload, unpinSubagentForm } from './_helpers.mjs';
 
 // delivery.js 静态依赖 @deepseek-ai/dsh-llm（宿主链）——离线守卫禁止测试文件
 // 静态闭包触达宿主链，与 workflow/wait 同走 loadOfflineSafe 动态装载。
@@ -97,10 +98,18 @@ async function buildRig(label, childRows = [], options = {}) {
       ? parent
       : (options.agentsGet === undefined ? { id, status: 'running' } : options.agentsGet(id)))
   });
-  // 子代理目录替身（形状行为用例）：childRows 由调用方给（catalog 行／判别联合行／
-  // 诊断行三种形态都从这里进）；options.listChildren 可整替（挂起/抛错/竞速用例）。
+  // 子代理目录替身（形状行为用例，**双键**——设计 §7.4.7）：childRows 由调用方给
+  // （catalog 行／判别联合行／诊断行三种形态都从这里进）；options.listChildren 可
+  // 整替（挂起/抛错/竞速用例）。两键路由到**同一实现**——「恰一次」用例按两键合计
+  // 计数（分派层按记忆化形态只取其一）；listDescendants 行按 rc.2+ 结构派生
+  // parentId/depth（诊断行同样 depth:1）。options.listDescendants 可单独桥接
+  // （T-ZW-1 真栈：rc.2 树无 listChildren，桥在场才造）。
+  const childServiceImpl = options.listChildren === undefined ? async () => childRows : options.listChildren;
   base.provide('subagents', {
-    listChildren: options.listChildren === undefined ? async () => childRows : options.listChildren,
+    listChildren: (owner, signal) => childServiceImpl(owner, signal),
+    listDescendants: options.listDescendants !== undefined
+      ? options.listDescendants
+      : async (owner, signal) => descendantRows(owner, await childServiceImpl(owner, signal)),
     interrupt() {}
   });
   await base.plugin(LocalJobRegistry, {
@@ -2074,10 +2083,14 @@ async function buildWaitRig(label, childRows = [], options = {}) {
       ? parent
       : (options.agentsGet === undefined ? { id, status: 'running' } : options.agentsGet(id)))
   });
-  // 子代理目录：childRows 由调用方给（通知所有者必须在册）；options.listChildren
-  // 可整替（抛错／计数用例）。
+  // 子代理目录（**双键**，设计 §7.4.7）：childRows 由调用方给（通知所有者必须在
+  // 册）；options.listChildren 可整替（抛错／计数用例）——两键路由到同一实现，
+  // 「恰一次」用例按两键合计计数；listDescendants 行按 rc.2+ 结构派生
+  // parentId/depth。
+  const childServiceImpl = options.listChildren === undefined ? async () => childRows : options.listChildren;
   base.provide('subagents', {
-    listChildren: options.listChildren === undefined ? async () => childRows : options.listChildren,
+    listChildren: (owner, signal) => childServiceImpl(owner, signal),
+    listDescendants: async (owner, signal) => descendantRows(owner, await childServiceImpl(owner, signal)),
     interrupt() {}
   });
   await base.plugin(LocalJobRegistry, {
@@ -3575,11 +3588,21 @@ hostTest('REC-D：条目上限对空正文条目同样生效——12 条空输�
     assert.match(text, /did not fit this delivery batch|没有排进当前交付批次/, '延后说明形态');
     assert.match(text, /wait_ms=0/, '延后说明给领取出路');
   }
-  // 关批 → 下一轮窗口补投剩余两条状态行。
+  // 同代清理（WAIT-NOTES-BATCH-01）：关批＋再次让位复查不产生新 send——条目
+  // 由代承载（spentItems=10 → 新批满批）、延后说明去重随代（d11/d12 本代已
+  // 说明过，不重复注入）。
   ledger.closeBatchIfIdle(rig.OWNER);
   const token2 = ledger.claimWait(rig.OWNER);
   await ledger.releaseWait(token2, rig.OWNER);
-  assert.equal(rig.calls.inject.length, 14, '下一批补投剩余两条状态行');
+  assert.equal(rig.calls.inject.length, 12,
+    '同代清理零新 send（条目随代满批＋说明去重随代——修前红＝新批配额重置再注 2 条）');
+  // 换代（E6 真换代装置口径：排空领取＋pre-step——代额度与说明配额随代复位）
+  // 后：剩余两条以状态行补投。
+  rig.claimInbox();
+  await rig.listeners.get('agent/pre-step')({ agent: { id: rig.OWNER } }, () => {});
+  const token3 = ledger.claimWait(rig.OWNER);
+  await ledger.releaseWait(token3, rig.OWNER);
+  assert.equal(rig.calls.inject.length, 14, '换代后补投剩余两条状态行');
   assert.match(textOf(rig.calls.inject[12]), /job-rec-d11/, '第 11 条补投在场');
   assert.match(textOf(rig.calls.inject[13]), /job-rec-d12/, '第 12 条补投在场');
 });
@@ -4101,14 +4124,16 @@ hostTest('CRE-5：注销幂等与主体隔离——未知主体/重复注销 no-
 });
 
 
-// ═══ r16 验收缺陷：完成消息路径延后说明的批级限量（REL-NOTES-01）═══
+// ═══ r16 验收缺陷：完成消息路径延后说明的限量（REL-NOTES-01＋WAIT-NOTES-BATCH-01）═══
 //
 // RN 系列（ledger 级受控回归）：完成消息路径两个超限分支（readFailed 超限与
-// 正文超限）的延后说明每批至多 3 条逐条（delivery.deferredNotice）＋1 条聚合
-// 摘要（delivery.deferredAggregate，不带 targets 的一并领取示例），同批同
-// 作业去重，配额随两处关批点（claimed 监听／closeBatchIfIdle）复位——修前
-// 每个超限候选各投一条说明，条数与字符随同批候选数线性增长（验收受控反例：
-// 100 候选 → 90 条说明、共 100 条物理消息、14949 字符）。
+// 正文超限）的延后说明每个输入代至多 3 条逐条（delivery.deferredNotice）＋1 条
+// 聚合摘要（delivery.deferredAggregate，不带 targets 的一并领取示例），同代同
+// 作业去重，配额与去重随共同输入（代级）记账、只在输入代边界（agent/pre-step）
+// 复位——修前每个超限候选各投一条说明、条数与字符随同批候选数线性增长（验收
+// 受控反例：100 候选 → 90 条说明、共 100 条物理消息、14949 字符），WAIT-
+// NOTES-BATCH-01 之前配额还挂在临时批对象上、同代多次关批即重置（同代重复
+// 注入同一作业的延后提示）。
 
 hostTest('RN-A：12 条空输出结算——10 状态行＋2 逐条延后说明（配额内不投聚合），行为与 REC-D 一致', async () => {
   const rig = sRig({ budget: 4000 });
@@ -4160,15 +4185,16 @@ hostTest('RN-B：100 条空输出结算——物理消息恰 14（10＋3＋1）�
   // 不经 clampNote 截尾，尾部限定词「while budget allows」完整存活（三分支
   // 锚可见段＋末分支完整段同时命中）；弃旧无限定形态仍重复锚定。
   assert.ok(!/[Ll]eftovers follow at turn end/.test(notesText), '弃 turn end 旧表述（DOC-U01）');
-  // 未逐一说明的候选不静默丢失：内容在缓冲（空正文零内容）＋下一批 FIFO 补投。
-  // §2.6 代记账（E6 同款装置口径）：下一批＝消息成为输入后的下一代——关批
-  //＋手工重置代（spent/spentItems 清零；条目配额随代复位，不在关批点即时复位）。
+  // 未逐一说明的候选不静默丢失：内容在缓冲（空正文零内容）＋换代 FIFO 补投。
+  // §2.6 代记账（E6 真换代装置口径）：下一批＝消息成为输入后的下一代——
+  // 排空领取（份额出册）＋pre-step（代额度与说明配额随代复位，WAIT-NOTES-
+  // BATCH-01；不在关批点即时复位）。
   ledger.closeBatchIfIdle(rig.OWNER);
-  ledger.subjects.get(rig.OWNER).generation.spent = 0;
-  ledger.subjects.get(rig.OWNER).generation.spentItems = 0;
+  rig.claimInbox();
+  await rig.listeners.get('agent/pre-step')({ agent: { id: rig.OWNER } }, () => {});
   const token2 = ledger.claimWait(rig.OWNER);
   await ledger.releaseWait(token2, rig.OWNER);
-  assert.equal(rig.calls.inject.length, 28, '下一批再 10 条目＋3 逐条＋1 聚合（配额随下一代复位）');
+  assert.equal(rig.calls.inject.length, 28, '下一代再 10 条目＋3 逐条＋1 聚合（配额随代复位）');
   assert.match(textOf(rig.calls.inject[14]), /job-rn-b011/, 'FIFO：第 11 条最先补投');
   // 真实宿主作业编号形态（async-command-<16hex>＝30 字符）：{jobId} 只在
   // wait 示例出现一次（叙述句无插值），全文 ≤200 且时机句完整存活——
@@ -4553,29 +4579,29 @@ hostTest('RN-F：两处关批点后配额复位——单独触发得新批条目
   // 关批点①：claimed 监听（领取事件）——逐消息形态（生产形态：领取事件携带
   // message.id，份额出册）。裸事件（无 message.id 的兼容形态）只关批、零份额
   // 确认——已注入消息留在尾部、条目照 WAIT-ITEMS-01 由代承载，配额不因裸事件
-  // 复位；测试以「排空领取＋下一代」（E6 同款手工重置代装置口径）构造复位前提。
+  // 复位；测试以「排空领取＋pre-step 真换代」（E6 装置口径——代额度与说明
+  // 配额随代复位，WAIT-NOTES-BATCH-01）构造复位前提。
   const claimed = rig.listeners.get('agent/inbox/claimed');
   assert.ok(typeof claimed === 'function', '前置：claimed 监听已挂（attachClaimedListener）');
   rig.claimInbox(); // 排空领取：14 条消息份额出册
-  ledger.subjects.get(rig.OWNER).generation.spent = 0;
-  ledger.subjects.get(rig.OWNER).generation.spentItems = 0; // 下一代（条目配额随代复位）
+  await rig.listeners.get('agent/pre-step')({ agent: { id: rig.OWNER } }, () => {});
   // 下一代单独再触发一个延后就绪条目：新批 items=0 → 条目交付，不产生说明。
   await rig.readyJob('job-rn-g15', '');
   assert.equal(rig.calls.inject.length, 15, '新批条目交付（一条状态行）');
   assert.match(textOf(rig.calls.inject[14]), /job-rn-g15/, '第 15 条以状态行交付');
   assert.ok(!/did not fit|没有排进/.test(textOf(rig.calls.inject[14])), '不是延后说明（条目分支）');
-  // 关批点②：closeBatchIfIdle（活等待全提交）＋下一代（手工重置代，E6 装置
-  // 口径）——再 17 个就绪条目再次超限：前 10 条（16..25）FIFO 入批，26..28
+  // 关批点②：closeBatchIfIdle（活等待全提交）＋换代（排空领取＋pre-step，E6
+  // 装置口径）——再 17 个就绪条目再次超限：前 10 条（16..25）FIFO 入批，26..28
   // 逐条，29 聚合。结算路径（readSettled）即时冲刷：聚合计数＝冲刷时集合大小
   //（1，恰含 29），30..32 入集合不追加 send——「计数＝最终值」的形态由 RN-G ①
   //（deferFlush 循环）覆盖。
   ledger.closeBatchIfIdle(rig.OWNER);
-  ledger.subjects.get(rig.OWNER).generation.spent = 0;
-  ledger.subjects.get(rig.OWNER).generation.spentItems = 0;
+  rig.claimInbox();
+  await rig.listeners.get('agent/pre-step')({ agent: { id: rig.OWNER } }, () => {});
   for (let i = 16; i <= 32; i += 1) {
     await rig.readyJob(`job-rn-g${String(i).padStart(2, '0')}`, '');
   }
-  assert.equal(rig.calls.inject.length, 29, '再一批：10 条目＋3 逐条＋1 聚合（配额从 0 重计）');
+  assert.equal(rig.calls.inject.length, 29, '再一批：10 条目＋3 逐条＋1 聚合（配额随换代从 0 重计）');
   assert.match(textOf(rig.calls.inject[28]), /1 more settled job|另有 1 个/,
     '新批聚合计数＝冲刷时集合大小（1），旧批成员不并入');
 });
@@ -5512,6 +5538,40 @@ hostTest('ZW-A：混合五目标零等待真时钟 ≤1200 ms；慢/挂起/失�
       '失败查询与挂起同径：unconfirmed（零等待不放大成调用错误）');
   } finally {
     await failing.dispose();
+  }
+});
+
+hostTest('ZW-C2（WAIT-F02）：零等待检查窗口内用户插话先到——立即 interrupted 交回，不等窗口耗尽（修前红＝约一秒后仍以 unconfirmed 返回）', async () => {
+  // WAIT-F02：零等待的统一检查窗口内，用户插话与在途查询竞速——取消已有
+  // 竞速成员（ZW-C），插话修前不在成员之列：共享 listChildren 挂起时窗口
+  // （ZERO_WAIT_CHECK_MS=1000ms）耗尽按 unconfirmed 交回，真实中断原因
+  //（用户已插话）被吞。修后插话先到立即以 interrupted 交回（目标消息不
+  // 切断校验，§3.2.2——竞速成员只认 user 档）。
+  const rig = await buildRig('zw-c2', [], { listChildren: () => new Promise(() => {}) });
+  try {
+    const started = Date.now();
+    const pending = rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'agent', id: 'zw-c2-child' }] },
+      rig.exec()
+    );
+    setTimeout(() => {
+      const { message } = inboxPayload({
+        agent: rig.parent, sourceKind: 'user', form: 'message',
+        summary: 'user steer during zero-wait window', target: 'next-step'
+      });
+      rig.ctx.emit('agent/inbox/inserted', { agent: { id: rig.parent.id }, message });
+    }, 150);
+    const outcome = await pending;
+    const wall = Date.now() - started;
+    assert.equal(outcome.status, 'interrupted',
+      'WAIT-F02：插话先到——检查窗口内立即以 interrupted 交回（修前红＝unconfirmed）');
+    assert.ok(wall < 700,
+      `不等窗口耗尽（实耗 ${String(wall)} ms；修前≈1000ms 窗口后交回）`);
+    const row = (outcome.targets ?? []).find((one) => one.id === 'zw-c2-child');
+    assert.ok(row !== undefined && row.status === 'unknown',
+      '未证实目标行如实标 unknown（挂起查询不猜状态）');
+  } finally {
+    await rig.dispose();
   }
 });
 
@@ -7517,8 +7577,22 @@ hostTest('RC-Y2：同形态 async_workflow 让出——恢复请求不被消费�
 
 // ── T-ZW-1 实测（真 sessionQuery/sessionStore/persistence/subagent 栈）────
 // 设计 §2.1 要求检查窗口 1000 ms 按支持宿主实测确定——本组用真栈量化：
-// ① listChildren 热路径（活会话目录投影）与冷路径（落盘日志读取＋投影）单次
-// 延迟；② 混合五目标（3 作业＋2 子代理）零等待全程真时钟 ≤1200 ms。
+// ① 直接子列举热路径（活会话目录投影）与冷路径（落盘日志读取＋投影）单次延迟
+//（按真栈在场键采样：rc.1 listChildren／rc.2+ listDescendants，§7.4.2 窗口
+// 复核在 rc.2 树重跑本组即取 listDescendants 真实路径）；② 混合五目标
+//（3 作业＋2 子代理）零等待全程真时钟 ≤1200 ms。
+// **语料与预算按形态分档（实现轮裁定）**：rc.2+ `listDescendants` 是全子树
+// 遍历——逐子会话观察，成本线性于子数且两径差异大：真实（在场）子会话实测
+// ~0.2-0.3 ms/子（N=100 热 p95≈26 ms）；仅目录事件无子会话的「幽灵子」走
+// 观察失败路径，实测 ~1.6 ms/子（N=2000 时 p95≈1.7 s，超出 1000 ms 零等待
+// 窗口本身）。该成本属宿主侧，本包分派层只做 depth 过滤；大子树在扁平形态
+// 下零等待按未确认回退是设计内行为，登记于设计 §7.4.8。另实证行形状：幽灵
+// 子呈 depth-1 diagnostic:unavailable 行——分派层按 §7.4.2 排除其关系证据
+// 资格（行为正确），语料因此按形态构造真实子会话。锚按宿主形态取语料与
+// 预算：嵌套 2000 子、热 p95<100 ms／冷<800 ms 原值；扁平 100 子、热
+// p95<800 ms／冷<800 ms——扁平预算的含义是「单次列举须在 1000 ms 零等待
+// 窗口内完成」（留两成余量），不是与嵌套档同值延迟。五目标零等待共享单次
+// 列举（ZW-B 恰一次锚）保证分派层不放大调用数。
 // 离线形态五包缺席自跳过（与 hostTest 同一守卫）。
 const tzwGate = await hostTestFor(
   '@deepseek-ai/dsh-session',
@@ -7536,7 +7610,12 @@ const sessionProjMod = await loadOfflineSafe('@deepseek-ai/dsh-session-projectio
 const sessionQueryMod = await loadOfflineSafe('@deepseek-ai/dsh-session-query');
 const subagentMod = await loadOfflineSafe('@deepseek-ai/dsh-subagent');
 
-tzwGate('T-ZW-1 实测：真栈 listChildren 热/冷路径采样＋混合五目标零等待 ≤1200 ms', async () => {
+tzwGate('T-ZW-1 实测：真栈直接子列举热/冷路径采样＋混合五目标零等待 ≤1200 ms（语料按宿主形态分档）', async () => {
+  // 本锚读**生产形态**（按锚树实析）——先清形态注入记忆：单进程全量跑时，
+  // 更早加载的 host-contract/index 测试文件可能留下 fixture 钉扎残迹，不清
+  // 会在 rc.2+ 锚上按嵌套档取样、走错列举键（T-ZW-1 曾因此实测走 reject 桥
+  // 而非真实 listDescendants 路径）。
+  unpinSubagentForm();
   const SessionStore = sessionMod?.default ?? sessionMod?.SessionStore;
   const jsonlPlugin = sessionJsonlMod?.default ?? sessionJsonlMod;
   const SessionProjectionRegistry = sessionProjMod?.default ?? sessionProjMod?.SessionProjectionRegistry;
@@ -7555,12 +7634,22 @@ tzwGate('T-ZW-1 实测：真栈 listChildren 热/冷路径采样＋混合五目�
     await root.plugin(SessionQueryEngine);
     await root.plugin(SubagentRuntime);
 
-    // 语料：N 条 one-shot 目录事件（与宿主 subagent/catalog 事件同形）。
-    const N = 2000;
-    const buildCorpus = (session) => {
+    // 语料：N 条 one-shot 目录事件（与宿主 subagent/catalog 事件同形）。N 按
+    // 宿主形态分档（见本组头注）：嵌套 2000／扁平 100——预算含义两档不同。
+    const flat = subagentContract() === 'flat';
+    const N = flat ? 100 : 2000;
+    const buildCorpus = (session, prefix = 'tzw-child') => {
+      // 扁平档：目录行要成为 kind:'child'（可证关系），宿主 listDescendants
+      // 须能观察到每个子会话——先建真实（空）子会话再挂目录事件；仅事件无
+      // 会话的「幽灵子」呈 depth-1 diagnostic:unavailable 行，被分派层正确
+      // 排除出关系证据（行形状经探针实证，见头注）。嵌套档 listChildren 只读
+      // 父投影，目录事件即足。
+      if (flat) {
+        for (let i = 0; i < N; i += 1) root.sessions.create(`${prefix}-${i}`, { meta: { cwd: tmp } });
+      }
       for (let i = 0; i < N; i += 1) {
         session.append('subagent/catalog', {
-          version: 0, childId: `tzw-child-${i}`, childCreatedAt: 1000 + i, mode: 'one-shot'
+          version: 0, childId: `${prefix}-${i}`, childCreatedAt: 1000 + i, mode: 'one-shot'
         });
       }
       return session.snapshotEvents();
@@ -7575,25 +7664,30 @@ tzwGate('T-ZW-1 实测：真栈 listChildren 热/冷路径采样＋混合五目�
       // rc.1：prepare 返回未 enter 的会话（append 拒绝「outside a SessionStore」）；
       // 语料容器与热会话统一走 create（= prepare + enter + announce，append 可用）。
       const p = root.sessions.create(`tzw-cold-${k}`, { meta: { cwd: tmp } });
-      const events = buildCorpus(p);
+      const events = buildCorpus(p, `tzw-cold-${k}-child`);
       const handle = await persistence.create(p.header, { inheritedEventCount: 0 });
       await handle.append(events);
       await handle.close();
     }
 
-    // ① 采样：热路径 20 次（活会话目录投影）、冷路径 4 次（各独立会话）。
+    // ① 采样：热路径 20 次（活会话目录投影）、冷路径 4 次（各独立会话）。采样经
+    // 真栈实际在场的直接子列举键（rc.1 listChildren／rc.2+ listDescendants——
+    // §7.4.2 的窗口复核按宿主形态各取其真实路径，不在 rc.2 树上造 listChildren）。
     const subagents = root.subagents;
+    const listDirectOnStack = (id) => (typeof subagents.listChildren === 'function'
+      ? subagents.listChildren(id)
+      : subagents.listDescendants(id));
     const hotSamples = [];
     for (let i = 0; i < 20; i += 1) {
       const t0 = performance.now();
-      const children = await subagents.listChildren('tzw-hot');
+      const children = await listDirectOnStack('tzw-hot');
       hotSamples.push(performance.now() - t0);
       if (i === 0) assert.equal(children.length, N, '热路径目录全量可见');
     }
     const coldSamples = [];
     for (let k = 0; k < 4; k += 1) {
       const t0 = performance.now();
-      const children = await subagents.listChildren(`tzw-cold-${k}`);
+      const children = await listDirectOnStack(`tzw-cold-${k}`);
       coldSamples.push(performance.now() - t0);
       assert.equal(children.length, N, '冷路径目录全量可见');
     }
@@ -7603,11 +7697,22 @@ tzwGate('T-ZW-1 实测：真栈 listChildren 热/冷路径采样＋混合五目�
     const coldMax = Math.max(...coldSamples);
     console.log(`[T-ZW-1] N=${String(N)} hot p50=${hotP50.toFixed(1)}ms p95=${hotP95.toFixed(1)}ms `
       + `cold(max of 4)=${coldMax.toFixed(1)}ms`);
-    assert.ok(hotP95 < 100, `热路径 p95 <100 ms（实得 ${hotP95.toFixed(1)} ms）`);
-    assert.ok(coldMax < 800, `冷路径单次 <800 ms（实得 ${coldMax.toFixed(1)} ms）`);
+    // 预算按形态分档（实现轮裁定，见本组头注）：嵌套档维持原预算（实测
+    // ~0.03 ms/子）；扁平档 listDescendants 实测 ~1.6 ms/子（线性，含逐子
+    // 会话观察；幽灵子呈 depth-1 诊断行）——预算取「单次列举须在 1000 ms
+    // 零等待窗口内完成」（≤800 ms，留两成余量），锚的问题是窗口适配，
+    // 不是与嵌套档的同值延迟。
+    if (flat) {
+      assert.ok(hotP95 < 800, `扁平档热路径 p95 <800 ms（单次列举须盖过 1000 ms 零等待窗口；实得 ${hotP95.toFixed(1)} ms）`);
+      assert.ok(coldMax < 800, `扁平档冷路径单次 <800 ms（实得 ${coldMax.toFixed(1)} ms）`);
+    } else {
+      assert.ok(hotP95 < 100, `嵌套档热路径 p95 <100 ms（实得 ${hotP95.toFixed(1)} ms）`);
+      assert.ok(coldMax < 800, `嵌套档冷路径单次 <800 ms（实得 ${coldMax.toFixed(1)} ms）`);
+    }
 
-    // ② 混合五目标零等待全程真时钟：listChildren 桥到真引擎（主体＝热会话，
-    // 2000 子目录在场），3 个作业目标走真注册表清单。
+    // ② 混合五目标零等待全程真时钟：直接子列举桥到真引擎（**双键按真服务在场
+    // 性搭桥**——rc.1 树 listChildren、rc.2+ 树 listDescendants，缺席不造；主体＝
+    // 热会话，N 子目录在场），3 个作业目标走真注册表清单。
     resetDeliveryLedger();
     const rig = await buildRig('tzw1', [], {
       jobsList: () => [
@@ -7616,7 +7721,12 @@ tzwGate('T-ZW-1 实测：真栈 listChildren 热/冷路径采样＋混合五目�
         { id: 'tzw-job-3', status: 'running' }
       ],
       jobsRead: async () => ({ chunks: [] }),
-      listChildren: (parentId, signal) => root.subagents.listChildren(parentId, signal)
+      listChildren: (parentId, signal) => (typeof root.subagents.listChildren === 'function'
+        ? root.subagents.listChildren(parentId, signal)
+        : Promise.reject(new Error('real stack exposes no listChildren (rc.2+ tree)'))),
+      listDescendants: (rootId, signal) => (typeof root.subagents.listDescendants === 'function'
+        ? root.subagents.listDescendants(rootId, signal)
+        : Promise.reject(new Error('real stack exposes no listDescendants (rc.1 tree)')))
     });
     try {
       rig.parent.id = 'tzw-hot'; // 主体＝热会话：共享目录屏障命中真引擎全量目录
@@ -7627,8 +7737,8 @@ tzwGate('T-ZW-1 实测：真栈 listChildren 热/冷路径采样＋混合五目�
           { kind: 'job', id: 'tzw-job-1' },
           { kind: 'job', id: 'tzw-job-2' },
           { kind: 'job', id: 'tzw-job-3' },
-          { kind: 'agent', id: 'tzw-child-100' },
-          { kind: 'agent', id: 'tzw-child-200' }
+          { kind: 'agent', id: 'tzw-child-50' },
+          { kind: 'agent', id: 'tzw-child-99' }
         ]
       }, rig.exec());
       const wall = Date.now() - started;
@@ -10271,3 +10381,218 @@ hostTest('RA-BASELINE-LIFECYCLE：存在屏障确认查无清除已报告登记'
 
 // RA-BASELINE-LIFECYCLE 的终态保留由 W-GATE-A 覆盖：停止交付后再次等待得到
 // settled 与 targetsSettled「维持已确认静止」，不能把终态交付当作登记清理时机。
+
+// ── WAIT-F03／WAIT-ITEMS-01 残余／WAIT-ID-BOUND-01／WAIT-NOTES-BATCH-01 ──────
+// （022 缺陷轮 B 组＋A 组补完；锚 ID 与修前红判据见各用例注释。）
+
+hostTest('ZW-D（WAIT-F03）：混合目标＝已确认运行作业＋关系查询未确认子代理——保留未知标记并按剩余预算等待已确认工作（修前红＝屏障窗口耗尽即整体 unconfirmed 提前退出、不利用剩余预算）', async () => {
+  // 修前形态锚定必红：屏障校验遍里 timedOutIds 非空（子代理关系查询挂起）时
+  // 无条件整体返回 unconfirmed——已确认运行的作业目标从不进入竞速循环，剩余
+  // 预算（预算 8 s、屏障三周期约 6 s 后仍余约 2 s）被整体丢弃。修复＝保留
+  // unknown 标记（未证实目标不读注册表、全部出口按 unknown 交回），同时按
+  // 要求等待已确认工作：作业在 7 s 结算、竞速循环经作业事件通道按 completed
+  // 交回（修前红＝status unconfirmed、无 job_id、waited_ms ≈ 屏障窗口）。
+  resetAgentBaselines();
+  const rig = await buildRig('zw-d', [], { listChildren: () => new Promise(() => {}) });
+  try {
+    // 运行中的已确认作业目标：workflow 先让出（yield_ms=20），7 s 后 finisher 结算。
+    const started = await rig.workflow.execute(
+      { ...WF_ARGS, meta: { name: 'at-zw-d-run', description: 'ZW-D confirmed running job' } },
+      rig.exec()
+    );
+    assert.equal(started.status, 'running', '前置：作业让出转后台（运行中）');
+    setTimeout(() => rig.finisher(), 7000);
+    const outcome = await rig.waiter.execute(
+      { wait_ms: 8000, targets: [
+        { kind: 'job', id: started.job_id },
+        { kind: 'agent', id: 'zw-d-child' }
+      ] },
+      rig.exec()
+    );
+    assert.equal(outcome.status, 'completed',
+      'WAIT-F03：按剩余预算等待已确认工作——作业结算经竞速循环交回（修前红＝unconfirmed）');
+    assert.equal(outcome.job_id, started.job_id, '触发目标＝已确认作业（修前红＝无 job_id）');
+    assert.match(String(outcome.output ?? ''), /AT_FINAL_PAYLOAD/,
+      '作业正文随返回交付（不是被提前出口吞掉）');
+    const row = (outcome.targets ?? []).find((one) => one.id === 'zw-d-child');
+    assert.ok(row !== undefined && row.status === 'unknown',
+      '未证实目标的行如实标 unknown（不读注册表猜状态）');
+    assert.ok(outcome.waited_ms > 6300,
+      `剩余预算被利用（实耗 ${String(outcome.waited_ms)} ms > 6300；修前红 ≈ 屏障 3×2000 ms 即返回）`);
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('FW-DEFER（WAIT-ITEMS-01 残余）：代内条目已满时编排在首等内结算——真实返回不携带额外完成条目、整条延后并保留领取出口（修前红＝仍直付第 11 条终态条目且记已交付）', async () => {
+  // 修前形态锚定必红：openFirstWaitShare 满批返回 0 份额，但调用方不区分
+  // 「条目满」与「字符预算 0」——份额 0 仍构造并返回终态条目（状态行/结局
+  // 线索照常进模型输入＝第 11 条），且 noteFirstWaitEnded('delivered') 把
+  // 空结果记成已交付。修复＝条目满时真实返回改为「真实结局＋延后句柄」：
+  // 不交付正文与状态行、不置已交付事实，账面按 settled 读取入缓冲，后续
+  // 零等待领取完整交付（覆盖空正文、非零退出、终止与非空正文的同一机制）。
+  resetAgentBaselines();
+  const rig = await buildRig('fw-defer', []);
+  try {
+    const owner = rig.parent.id;
+    const cfg = { agentLang: 'en', maxResultChars: 400 };
+    const token = ledger.claimWait(owner);
+    for (let i = 0; i < 10; i += 1) {
+      const share = ledger.openFirstWaitShare(owner, cfg);
+      ledger.settleFirstWaitShare(owner, cfg, share, 0);
+    }
+    assert.equal(ledger.subjects.get(owner).batch.items, 10, '前置：代内条目已满 10 条');
+    const pending = rig.workflow.execute(
+      { ...WF_ARGS, meta: { name: 'at-fw-defer-run', description: 'FW-DEFER settles inside first wait' } },
+      rig.exec()
+    );
+    setTimeout(() => rig.finisher(), 5);
+    const outcome = await pending;
+    assert.ok(outcome.job_id !== undefined,
+      '真实返回＝延后句柄（携带 job_id；修前红＝直付终态条目、无 job_id）');
+    assert.equal(outcome.result, undefined, '不携带直付正文（result 键缺席；修前红＝在场）');
+    assert.equal(outcome.output, undefined, '不携带直付正文（output 键缺席）');
+    assert.match(String(outcome.note ?? ''), /deferred/i, 'note 说明整条延后与领取出口');
+    const entry = ledger.jobs.get(outcome.job_id);
+    assert.ok(entry !== undefined && entry.deliveredFact === null,
+      '未记已交付（修前红＝deliveredFact 置位——空结果被记已交付而不是整条延后）');
+    // 续取出口：窗口关闭＋手工换代（E6 装置口径）后，显式零等待领取整条交付。
+    await ledger.releaseWait(token, owner);
+    ledger.closeBatchIfIdle(owner);
+    ledger.subjects.get(owner).generation.spent = 0;
+    ledger.subjects.get(owner).generation.spentItems = 0;
+    const pick = await rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: outcome.job_id }] }, rig.exec()
+    );
+    // 续取出口＝入口快照分支（§3.2.3）：正文随 output 字段交付（条目行为
+    // 状态行＋结构化字段）。整份返回里恰一次完整正文即可。
+    assert.ok(/AT_FINAL_PAYLOAD/.test(String(pick.output ?? '')),
+      '延后条目保留可续取路径：零等待领取完整交付（正文随 output 交付）');
+    const wfEntry2 = ledger.jobs.get(outcome.job_id);
+    assert.ok(wfEntry2 !== undefined && wfEntry2.deliveredFact !== null,
+      '领取后交付事实置位（整条延后→显式领取＝唯一交付点）');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('IDB-1（WAIT-ID-BOUND-01）：统一等待渲染的分隔标题与目标行按行预算约束长编号——结构化 ID 原样保留（修前红＝完整原始编号直插行内、行长随编号长度增长）', async () => {
+  // 修前形态锚定必红：renderTargetLines 与 outputs 分隔标题 `── <job_id> ──`
+  // 都直接插值完整原始编号——合法超长 jobKind／外来作业编号（如 293 字符）
+  // 使预算外标识随编号长度增长（附带条目的状态行已 clampNote 裁短，这两处
+  // 渲染却整段裸插）。修复＝渲染行 ≤200（编号裁短保首尾、带省略量标记），
+  // 完整编号的恢复入口＝结构化 job_id／targets[].id（原样不裁）与 job_list。
+  resetAgentBaselines();
+  const rig = await buildRig('idb1', []);
+  try {
+    const longJobId = `foreign-kind-${'x'.repeat(280)}`;
+    const longAgentId = `agent-kind-${'y'.repeat(260)}`;
+    const value = {
+      status: 'running',
+      waited_ms: 5,
+      note: 'note-line',
+      outputs: [{ job_id: longJobId, status_line: 'job settled (0 chars)', text: 'BODY' }],
+      targets: [
+        { kind: 'job', id: longJobId, status: 'running' },
+        { kind: 'agent', id: longAgentId, status: 'unknown' }
+      ]
+    };
+    const text = rig.waiter.output.render(undefined, value).map((p) => p.text).join('\n');
+    for (const line of text.split('\n')) {
+      assert.ok(line.length <= 200,
+        `渲染行 ≤200（实测 ${String(line.length)}）——修前红＝完整原始编号直插`);
+    }
+    assert.ok(text.includes('foreign-kind-') && text.includes('agent-kind-'),
+      '裁短后的编号首段在场（行内仍可辨识目标）');
+    assert.equal(value.outputs[0].job_id, longJobId, '结构化 job_id 不因渲染改写（准确编号恢复入口）');
+    assert.equal(value.targets[0].id, longJobId, '结构化 targets[].id 原样不裁');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('IDB-2（WAIT-ID-BOUND-01）：编排让出渲染的分隔标题同受行预算约束（修前红＝`── <job_id> ──` 完整原始编号直插）', async () => {
+  resetAgentBaselines();
+  const rig = await buildRig('idb2', []);
+  try {
+    const longJobId = `foreign-kind-${'x'.repeat(280)}`;
+    const value = {
+      status: 'running', job_id: 'at-idb2-handle', elapsed_ms: 1, note: 'note-line',
+      outputs: [{ job_id: longJobId, status_line: 'job settled (0 chars)', text: 'BODY' }]
+    };
+    const text = rig.workflow.output.render(undefined, value).map((p) => p.text).join('\n');
+    const sep = text.split('\n').find((line) => line.includes('foreign-kind-'));
+    assert.ok(sep !== undefined, '前置：分隔标题行在场');
+    assert.ok(sep.length <= 200,
+      `分隔标题行 ≤200（实测 ${String(sep.length)}）——修前红＝完整 293 字符编号直插`);
+    assert.ok(/x{6}/.test(sep), '裁短后的编号保留首段（可辨识）');
+    assert.equal(value.outputs[0].job_id, longJobId, '结构化 job_id 原样（准确编号恢复入口）');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('NB-GEN（WAIT-NOTES-BATCH-01）：延后说明的配额与去重随共同输入（代级）记账——同代多次等待清理不重复注入同一作业的延后提示、3＋1 配额不随批重建复位、pre-step 正常复位（修前红＝配额挂批对象、关批即重置）', async () => {
+  // 修前形态锚定必红：#pushBoundedDeferredNote 的配额与去重状态挂在批对象
+  // （subject.batch.deferredNotes），同一输入代内每次等待清理（claim→release→
+  // 关批→下次复查重开批）都重建临时批对象——同一作业的延后提示被重复注入、
+  // 3 条逐条＋1 条聚合的配额随之重置（说明数量与总长随调用数增长）。修复＝
+  // 配额与去重随共同输入记账（代级字段，agent/pre-step 与代额度同一监听器
+  // 复位）：覆盖串行等待与滚动派发（同代多次关批），跨步骤正常复位。
+  const rig = sRig({ budget: 400 });
+  const individualNotes = () => [...rig.calls.followup, ...rig.calls.inject]
+    .map(textOf)
+    .filter((text) => text.includes('did not fit this delivery batch'));
+  const aggregateNotes = () => [...rig.calls.followup, ...rig.calls.inject]
+    .map(textOf)
+    .filter((text) => text.includes('were also deferred'));
+  // 前置：代内条目占满 10 条（份额取得即占名额、空结账只退字符）。
+  for (let i = 0; i < 10; i += 1) {
+    const share = ledger.openFirstWaitShare(rig.OWNER, rig.config);
+    ledger.settleFirstWaitShare(rig.OWNER, rig.config, share, 0);
+  }
+  // 清理①：就绪未交付条目 → 逐条延后说明 1/3。等待返回提交后关批（closeBatchIfIdle，
+  // 真实宿主＝每次等待返回即丢弃批视图——「多次等待关闭并重建临时批对象」）。
+  await rig.readyJob('nb-gen-a', 'NB-GEN-A-BODY');
+  const t1 = ledger.claimWait(rig.OWNER);
+  await ledger.releaseWait(t1, rig.OWNER);
+  ledger.closeBatchIfIdle(rig.OWNER);
+  assert.equal(individualNotes().length, 1, '清理①：延后说明恰一条（逐条 1/3）');
+  // 清理②（同代、批对象已重建）：同一作业仍有未交付内容——去重随代记账，
+  // 不再注入第二条提示（修前红＝新批配额重置、再次注入＝2 条）。
+  const t2 = ledger.claimWait(rig.OWNER);
+  await ledger.releaseWait(t2, rig.OWNER);
+  ledger.closeBatchIfIdle(rig.OWNER);
+  assert.equal(individualNotes().length, 1,
+    '清理②（同代）：同一作业的延后提示不重复注入（修前红＝2）');
+  // 配额腿：同代 3 逐条＋1 聚合合计封顶——b/c 用尽逐条配额、d 进聚合；e 在
+  // 同代不再获得任何说明（修前红＝新批配额重置、e 又得逐条说明）。
+  await rig.readyJob('nb-gen-b', 'NB-GEN-B-BODY');
+  await rig.readyJob('nb-gen-c', 'NB-GEN-C-BODY');
+  await rig.readyJob('nb-gen-d', 'NB-GEN-D-BODY');
+  const t3 = ledger.claimWait(rig.OWNER);
+  await ledger.releaseWait(t3, rig.OWNER);
+  ledger.closeBatchIfIdle(rig.OWNER);
+  assert.equal(individualNotes().length, 3, '清理③：逐条说明合计 3 条（a/b/c——代级配额）');
+  assert.equal(aggregateNotes().length, 1, '清理③：聚合说明合计 1 条（d）');
+  await rig.readyJob('nb-gen-e', 'NB-GEN-E-BODY');
+  const t4 = ledger.claimWait(rig.OWNER);
+  await ledger.releaseWait(t4, rig.OWNER);
+  ledger.closeBatchIfIdle(rig.OWNER);
+  assert.equal(individualNotes().length, 3,
+    '清理④（同代）：逐条配额已满不再追加（修前红＝新批重置后 e 再得 1 条）');
+  assert.equal(aggregateNotes().length, 1, '清理④（同代）：聚合配额已满不再追加');
+  // 复位腿：agent/pre-step（代边界）复位配额与去重——新代内占满条目后，新
+  // 延后作业重新获得逐条说明（防止修复走向「永不再说明」的过度限制）。
+  await rig.listeners.get('agent/pre-step')({ agent: { id: rig.OWNER } }, () => {});
+  ledger.closeBatchIfIdle(rig.OWNER);
+  for (let i = 0; i < 10; i += 1) {
+    const share = ledger.openFirstWaitShare(rig.OWNER, rig.config);
+    ledger.settleFirstWaitShare(rig.OWNER, rig.config, share, 0);
+  }
+  await rig.readyJob('nb-gen-f', 'NB-GEN-F-BODY');
+  const t5 = ledger.claimWait(rig.OWNER);
+  await ledger.releaseWait(t5, rig.OWNER);
+  assert.equal(individualNotes().filter((text) => text.includes('nb-gen-f')).length, 1,
+    'pre-step 复位：新代内延后说明配额重新可用（f 获得逐条说明恰一条）');
+});

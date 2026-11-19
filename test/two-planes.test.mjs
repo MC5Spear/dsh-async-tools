@@ -526,7 +526,7 @@ test('T10：宿主侧的 volatile 提交必须真的到达预设工具的描述'
     jobs: { list: () => [], get: () => undefined, start: () => 'j', wait: async () => ({}), read: () => ({ chunks: [] }) },
     shell: { resolve: (resource) => resource, async execute() { throw new Error('unused'); } },
     shellEnv: { collect: () => Object.freeze({}) },
-    subagents: { listChildren: async () => [] },
+    subagents: { listChildren: async () => [], listDescendants: async () => [] },
     timer: { timeout: () => () => {}, interval: () => () => {} },
     // 模型选择的第七服务：挂载级假件只需"无 policy"初值形态。
     sessionProjections: { stateOf: () => null },
@@ -3555,7 +3555,12 @@ async function makeApplyRig(t, rawConfig) {
   ctx.provide('jobs', { start: () => 'async-command-1', get: () => ({ status: 'running' }), read: () => ({ text: '' }), wait: async () => ({ status: 'running' }), kill: () => 'requested' });
   ctx.provide('shell', { resolve: (request) => request, start: () => { throw new Error('迁移测试不该启动进程'); } });
   ctx.provide('shellEnv', { collect: () => Object.freeze({ DSH_HOME: 'x' }) });
-  ctx.provide('subagents', { listChildren: async () => [], interrupt: () => {}, getProvider: () => undefined });
+  ctx.provide('subagents', {
+    listChildren: async () => [],
+    listDescendants: async () => [],
+    interrupt: () => {},
+    getProvider: () => undefined
+  });
   ctx.provide('timer', { timeout: () => () => {}, interval: () => () => {} });
   ctx.provide('sessionProjections', { stateOf: () => null });
   ctx.provide('agentPresets', { presetForSession: () => null });

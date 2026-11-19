@@ -612,7 +612,7 @@ hostTest('J11-a：运行中投递 → inject 恰一次、通知形（自声明 k
 hostTest('J24（A10）：选项说明进通知正文——同标签异说明不丢差异；无说明选项不拼空', async () => {
   // 互异标签配不同操作/风险说明：只拼 label 会让「重建/重启」这类近似标签的
   // 真实区别消失（通知自含完整题目，不依赖旧工具调用记忆——用户裁定）。同标签
-  // 异说明按联合唯一（产品 2026-11-07 改判）放行，通知保留两条说明不合并。
+  // 异说明按联合唯一放行，通知保留两条说明不合并。
   const agent = fakeAgent();
   const { registry, timer } = makeRegistry({ agentLang: 'zh' });
   const q = Q('qd', {
@@ -1127,7 +1127,7 @@ hostTest('表达干净判据：任一判据不满足 → 整题 #序号 回退�
 // ── 接单入口校验（ASK-DUPLICATE-01 产品决定 + RA-ROBUSTNESS 契约外防御）──────
 
 hostTest('接单入口拒绝——同标签同说明或均无说明整批拒绝并指明重复项；同标签异说明与跨题同标签放行', async () => {
-  // ASK-DUPLICATE-01（产品 2026-11-07 改判：label＋description 联合唯一）：
+  // ASK-DUPLICATE-01（label＋description 联合唯一）：
   // 「标签＋说明」完全相同、或标签相同且均无说明的两条选项无法区分，接单即
   // 拒绝整次载荷并说明重复的是哪些（重复项带说明摘要）；同标签异说明放行
   // （通知语义见证 J24）；跨题同标签不跨题拒绝。
@@ -3312,8 +3312,8 @@ test('J41：状态读取代际——关闭／重开／卸载：迟到成功与�
 });
 
 // ---------------------------------------------------------------------------
-// 新题温和提醒（ASK-ANNOUNCE-01，设计 .local/design/a2/design-ask-ui.md §1/§4.1
-// J1-J8）：复合键集合差的播报、代际配合、失败恢复、生命周期、两语冻结、
+// 新题温和提醒（ASK-ANNOUNCE-01，需求 §4.2 新题温和提醒行／设计 §4.3，J1-J8）：
+// 复合键集合差的播报、代际配合、失败恢复、生命周期、两语冻结、
 // AskAnnouncer 树形状与 wireAskSeats 接线。
 // ---------------------------------------------------------------------------
 
@@ -3508,9 +3508,9 @@ test('J52：wireAskSeats 接线——overlay 槽注册返回 Fragment[AskAnnounc
 });
 
 // ---------------------------------------------------------------------------
-// 组合期提交限制（ASK-IME-SUBMIT-01，设计 .local/design/a2/design-ask-ui.md §2/§4.1
-// J9-J16）：每题组合状态、平台层 disabled、submit 复查、compositionend/onBlur
-// 复位与重校验、不答隔离、多题隔离、多选组合期（评审 M2）、blur 单独复位（M3）。
+// 组合期提交限制（ASK-IME-SUBMIT-01，需求 §4.2.4／设计 §4.3，J9-J16）：每题
+// 组合状态、平台层 disabled、submit 复查、compositionend/onBlur 复位与重校验、
+// 不答隔离、多题隔离、多选组合期、blur 单独复位。
 // ---------------------------------------------------------------------------
 
 test('J53：组合期提交限制——置位/拦截/复查/复位/重校验/不答隔离/多选组合期/blur 复位', async () => {
@@ -3584,7 +3584,7 @@ test('J53：组合期提交限制——置位/拦截/复查/复位/重校验/不
   skipBtn().props.onClick();
   assert.deepEqual(ignored, ['q2'], '组合中可直接不答该题（提交限制不管忽略入口）');
 
-  // ── J15 多选（预设＋自定义）组合期（评审 M2 补）────────────────────────
+  // ── J15 多选（预设＋自定义）组合期────────────────────────────────
   const multi = { ...base, questionId: 'q3', multiSelect: true, options: [{ label: 'a' }, { label: 'b' }] };
   react.render(() => product.AskItem({ item: multi, t, ask, serverNow: 0, fetchedAt: 0 }));
   opts()[0].props.onClick(); // 已选预设 a
@@ -3601,7 +3601,7 @@ test('J53：组合期提交限制——置位/拦截/复查/复位/重校验/不
   assert.deepEqual(submitted[submitted.length - 1], { selected: [0], custom: '多选自定义' },
     '多选组合结束后提交：预设与自定义并列进载荷');
 
-  // ── J16 blur 单独复位（评审 M3 补：历史引擎失焦不派发 compositionend）──
+  // ── J16 blur 单独复位（历史引擎失焦不派发 compositionend——限制不卡死）──
   const blurCase = { ...base, questionId: 'q4', multiSelect: false, options: [{ label: 'a' }] };
   react.render(() => product.AskItem({ item: blurCase, t, ask, serverNow: 0, fetchedAt: 0 }));
   customInput().props.onChange({ target: { value: '失焦复位' } });
