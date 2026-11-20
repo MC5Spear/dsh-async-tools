@@ -34,6 +34,7 @@
  * 固化验收受控反例「置空仍通过」修后必不成立）。
  */
 import assert from 'node:assert/strict';
+import test from 'node:test';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -904,3 +905,40 @@ hostTest('validate-preset：通用纪律段整段置空必红（P30，⑤c，en/
     }
   }
 });
+
+// ── 5.7.3 文案锁（META-COPY-01）─────────────────────────────────────────
+// 认识插件与选择预设的核准原文（需求 5.7.3 表逐字）：插件本地化元数据
+//（locale/{en,zh}.json 的 meta.title/description——宿主管理页经包导出子路径
+// 解析读取；package.json description＝安装前只读入口的英文原文）与两份内置
+// 预设的 name/description（单语规则＝中文原文，名称不变）。旧自拟长文回归、
+// 或元数据文件/导出子路径/files 分发缺席，本锚必红。纯文件读断言——离线形态
+// 也执行（无宿主依赖）。
+test('META-COPY：5.7.3 插件元数据与预设简介逐字锁（locale 双语＋description＋预设单语）', () => {
+  const root = join(import.meta.dirname, '..');
+  const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  assert.equal(manifest.description,
+    'Run long commands and workflows in the background so the agent can keep working. It can retrieve results later and delegate tasks to background subagents.',
+    'package.json description＝5.7.3 英文原文（安装前只读一份包简介的入口）');
+  assert.equal(manifest.exports['./locale/en.json'], './locale/en.json', 'en 元数据子路径可被宿主解析（exports）');
+  assert.equal(manifest.exports['./locale/zh.json'], './locale/zh.json', 'zh 元数据子路径可被宿主解析（exports）');
+  assert.ok(manifest.files.includes('locale'), 'locale 目录随包分发（files）');
+  const en = JSON.parse(readFileSync(join(root, 'locale', 'en.json'), 'utf8'));
+  assert.deepEqual(en, { meta: {
+    title: 'Async tools',
+    description: 'Run long commands and workflows in the background so the agent can keep working. It can retrieve results later and delegate tasks to background subagents.'
+  } }, 'locale/en.json meta 逐字（5.7.3 本地化标题＋英文简介）');
+  const zh = JSON.parse(readFileSync(join(root, 'locale', 'zh.json'), 'utf8'));
+  assert.deepEqual(zh, { meta: {
+    title: '异步工具',
+    description: '长命令和工作流可在后台继续运行。Agent 可以先做其他工作，稍后取得结果，也可以把任务交给后台子代理。'
+  } }, 'locale/zh.json meta 逐字（5.7.3 本地化标题＋中文简介）');
+  const asyncYml = readFileSync(join(root, 'presets', 'dsh-async.patch.yml'), 'utf8');
+  assert.match(asyncYml, /^ {8}name: 异步模式$/m, 'dsh-async 预设名称不变（5.7.3）');
+  assert.match(asyncYml, /^ {8}description: 适合日常编程。命令和子代理可在后台运行。$/m,
+    'dsh-async 简介＝5.7.3 核准中文原文（单语，旧自拟长文回归必红）');
+  const createYml = readFileSync(join(root, 'presets', 'dsh-async-create.patch.yml'), 'utf8');
+  assert.match(createYml, /^ {8}name: 异步创造模式$/m, 'dsh-async-create 预设名称不变（5.7.3）');
+  assert.match(createYml, /^ {8}description: 适合开发 DSH 插件和预设，支持在后台运行任务。$/m,
+    'dsh-async-create 简介＝5.7.3 核准中文原文（单语）');
+});
+

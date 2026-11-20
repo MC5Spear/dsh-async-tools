@@ -1,7 +1,7 @@
 {
   "name": "dsh-async-tools",
   "version": "0.2.9-alpha.6+dsh.0.2.1-rc",
-  "description": "Async execution plugin for DSH: long commands run as background jobs instead of blocking the conversation, and one bounded wait collects results when they are ready. Also delegates tasks to background subagents and runs script-based multi-agent orchestration.",
+  "description": "Run long commands and workflows in the background so the agent can keep working. It can retrieve results later and delegate tasks to background subagents.",
   "license": "MIT",
   "author": "MC5Spear (https://github.com/MC5Spear)",
   "repository": {
@@ -17,11 +17,14 @@
       "default": "./lib/index.js"
     },
     "./client": "./client.js",
+    "./locale/en.json": "./locale/en.json",
+    "./locale/zh.json": "./locale/zh.json",
     "./package.json": "./package.json"
   },
   "files": [
     "lib",
     "presets",
+    "locale",
     "client.js",
     "cordis.patch.yml",
     "README.md",

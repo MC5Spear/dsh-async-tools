@@ -46,7 +46,7 @@
       config:
         id: dsh-async-create
         name: 异步创造模式
-        description: 在创造模式基础上改用异步命令执行与后台委托的插件/预设创作 Agent：async_run 的命令超出首次等待时转入后台并返回作业编号（job_id）；子代理经 async_agent 后台派生并支持按 dsh 模型选择设置指定路由，async_list_subagent_models 只读查询可用路由，用 async_wait 统一等待后台作业与子代理，作业结算时结果正文直接附在返回里；多代理编排经 async_workflow 写成脚本后台执行，进度与结算同样在 async_wait 统一等待之列。用户插话时等待立即结束，后台工作继续运行。
+        description: 适合开发 DSH 插件和预设，支持在后台运行任务。
         order: 6
         plugins:
           # ── 身份（改动项 5：persona prefix 与基线身份句逐字一致，纪律走运行时

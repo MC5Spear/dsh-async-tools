@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Async tools",
+    "description": "Run long commands and workflows in the background so the agent can keep working. It can retrieve results later and delegate tasks to background subagents."
+  }
+}
