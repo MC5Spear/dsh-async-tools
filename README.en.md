@@ -14,11 +14,11 @@ This third-party plugin is unaffiliated with DeepSeek. It is personally maintain
 
 This is an alpha trial version for the `adapt/dsh-0.2.1-alpha` channel used below. **It has not passed stable acceptance.** Try it only in an isolated instance, and read the matching [known issues and verification gaps (Chinese)](<docs/issues.md>) before use.
 
-The table is the package’s declared host admission set, not proof that every behavior has been verified. Check that the remote branch is accessible before installing. For repeatable installation, use a full commit ID or matching artifact and retain the actual source. Branches without `-alpha` are stable channels and are not updated by this alpha delivery.
+The table is the package’s declared host admission set, not proof that every behavior has been verified. The branch may still serve the previous version before this candidate is published. Check the installed package version. For a repeatable installation, use a published full commit ID or a matching artifact. Branches without `-alpha` are stable channels and are not updated by this alpha delivery.
 
 | Component | Current applicable version |
 | --- | --- |
-| Plugin version | `0.2.9-alpha.5+dsh.0.2.1-rc` |
+| Plugin version | `0.2.9-alpha.6+dsh.0.2.1-rc` |
 | Supported dsh host versions | `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4`, `0.2.1-rc.5` |
 
 “Host” means the DSH instance loading the plugin. **Only these four DSH versions can load this package**, not the final `0.2.1` or an unlisted rc. Node.js 24 is recommended; see the [runtime prerequisites](<docs/user-reference.en.md#1-installation-identity-and-prerequisites>) before choosing another runtime.
@@ -27,7 +27,7 @@ Linux command execution and one-shot permission escalation have not been verifie
 
 For IME, screen-reader, or touch-based answers, and recovery after a canceled tool call, read [usage limits and saving results](<docs/user-reference.en.md#usage-limits-and-saving-results>). `async_agent` now reads the host’s delegation-depth setting before creation; real nested-creation and restored-session verification remains incomplete. See [depth limits and refusal handling](<docs/user-reference.en.md#33-async_agent>).
 
-**Trial coverage:** Alpha.4, which contains the same runtime code as this version, was installed and started in a fresh, isolated DSH `0.2.1-rc.5` instance. That check does not cover full operation on the other three hosts or establish the entry allowance in actual model inputs. See the [user reference](<docs/user-reference.en.md#usage-limits-and-saving-results>) for upgrade, recovery, and known limitations.
+This version reorganizes settings and keeps both question locations: the sidebar and the overlay. See the [user reference](<docs/user-reference.en.md#usage-limits-and-saving-results>) for installation, upgrade, and runtime verification coverage. Admission does not mean every feature has been verified.
 
 ## Install and confirm loading
 
@@ -97,7 +97,7 @@ Custom presets can use all features too, but tools must be mounted manually and 
 
 ## Settings, safety, and removal
 
-Open the plugin list → this package's detail page. Save applies edits, including Restore default actions. Ordinary valid saves need no restart. The [settings reference](<docs/user-reference.en.md#2-first-use-and-settings>) explains each field and its default.
+Open the plugin list → this package's detail page. Save applies edits, including **Clear custom value** actions. Ordinary valid saves need no restart. The [settings reference](<docs/user-reference.en.md#2-first-use-and-settings>) explains each field and its default.
 
 The pending-question panel and silent-command-failure warnings are off by default. Both act only on presets in `boundPresets`, which defaults to the two shipped presets. Enable `askTakeover` for the panel or `silentFailureGuard` for command diagnostics. After a missing-output warning, [check exit information and actual effects](<docs/user-reference.en.md#a-command-should-have-produced-output-but-did-not>) before deciding what to do; do not immediately rerun the original command.
 

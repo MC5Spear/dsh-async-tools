@@ -17,7 +17,7 @@ The table is the package’s declared host admission set, not proof that every b
 
 | Component | Current applicable version |
 | --- | --- |
-| Plugin version | `0.2.9-alpha.5+dsh.0.2.1-rc` |
+| Plugin version | `0.2.9-alpha.6+dsh.0.2.1-rc` |
 | Supported dsh host versions | `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4`, `0.2.1-rc.5` |
 
 “Host” means the DSH instance loading the plugin. Only these four versions can load the package, not the final `0.2.1`, `0.2.0`, `0.2.2`, or an unlisted rc.
@@ -34,7 +34,7 @@ Existing profiles can retain old dependency copies, lockfiles, or installation s
 
 ### Usage limits and saving results
 
-**Trial coverage:** Alpha.4, which contains the same runtime code as this version, was installed and started in a fresh, isolated DSH `0.2.1-rc.5` instance. Disabling and re-enabling were tested on this host with an earlier alpha.2, not across this version’s full install lifecycle. A fresh install with automatic peer installation enabled, an upgrade from an exact older source, and a reinstall and recovery after restarting the same instance remain unverified. Follow the host’s reload or restart prompts, and check the features you need in an isolated instance first.
+**Trial coverage:** A fresh, isolated install of this candidate on `0.2.1-rc.5` used GLM-5.3-Flash to verify ordinary questions, on-time answers, continuation after timeout, and a model response after a late answer. These checks covered the service and session results, not the sidebar, the overlay, or the complete browser experience on other hosts. See [current issues (Chinese)](<issues.md>) for exact-source upgrades, same-instance restart and recovery, and other outstanding checks.
 
 Linux command execution and one-shot permission escalation have not been verified on a real machine. There are no verification conclusions for macOS or remote execution environments. Full real-host rechecking on rc.3/rc.4 is also incomplete. Before using those platforms or rc.3/rc.4, check the features needed in a separate test session, particularly command permissions, waiting, and result delivery.
 
@@ -142,14 +142,15 @@ Do independent work while the task runs, and wait when its result is needed. Eve
 ### Edit and save settings
 
 1. Open the plugin list → this package's detail page. The settings form is between the description and component list.
-2. Edit fields and select Save. Leaving discards unsaved drafts; failed saves retain them for correction and retry. Help buttons only expand explanations.
-3. Check the values and Overridden indicators. Valid saved settings apply to subsequent calls without a restart.
+2. Presets, Pending questions, and Language start expanded. Open the relevant group for time limits and extensions, commands and waits, what the agent receives, or advanced settings. Opening a group or its help does not save changes.
+   Use the save area at the bottom of the form. If saving is blocked, read the reasons or choose **Go to first error** to open the group and focus the field. A failed save preserves the draft; save or note unsaved changes before leaving.
+3. Check the values and **Customized** indicators. Valid saved settings apply to subsequent calls without a restart.
 
 Writes are allowed only through the host's local loopback address. If the page is read-only or uses another address, follow its guidance to a writable entry.
 
 Settings can come from three places, in descending priority: **user overrides** saved through the form, preset values in DSH composition files, and plugin factory defaults. A field present in the user layer is an override even if it equals the default.
 
-Restore default stages removal of that field's user override and still needs Save; other fields remain unchanged. The field then takes the composition value, using the factory default only when no composition value exists. For example, a composition value of `45000` overridden with `90000` returns to `45000`, not the factory `20000`.
+**Clear custom value** stages removal of that field's user override and still needs Save; other fields remain unchanged. The field then takes the composition value, using the factory default only when no composition value exists. For example, a composition value of `45000` overridden with `90000` returns to `45000`, not the factory `20000`.
 
 When restoring a wait minimum or maximum, also check the related default duration against the field relationships below. Related fields can be edited and saved together. A failed save retains the draft; correct the fields as prompted, then check the effective values after a successful save.
 
@@ -428,7 +429,7 @@ For a result marked `truncated`, omitted middle sections, or deferred entries, c
 async_wait(wait_ms=0)
 ```
 
-`maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes. Results share the allowance within a delivery batch. The triggering target has priority, followed by readiness order. Completion messages now carry entry usage forward along with character shares, including empty results and read-failure notices; unclaimed messages keep using the 10-entry allowance for a common input. Commands or workflows finishing inside their initial waits can still return additional terminal entries after that allowance is full, and long IDs can add text outside the body budget. Do not estimate total status and diagnostic overhead from the character setting alone. Handle the terminal facts received; do not rerun a task to recreate missing output.
+`maxResultChars` defaults to 12000, measured by JavaScript `String.length`, not bytes. Results share the allowance within a delivery batch. The triggering target has priority, followed by readiness order. Unclaimed completion messages use part of the shared 10-entry allowance, including empty results and read-failure notices. When the entry allowance is full, results can be deferred even for commands and workflows that finish during the initial wait. If a workflow receipt lacks retrieval instructions, use `job_list` to find the original job ID and follow the next section rather than rerunning the task. Status and diagnostics are counted separately. `maxResultChars` is not a cap on the whole model input.
 
 Once the allowance is exhausted, immediately repeating zero-wait may return only another deferral notice. Within one window, an earlier creation call or other result can spend the allowance before a later wait, leaving that wait with only status and deferral information. This does not mean the body is empty or lost.
 
@@ -549,7 +550,7 @@ Answer text and line breaks are delivered unchanged. Unselected options and draf
 
 ### Deadlines, extensions, and late answers
 
-Questions from one call share a deadline, default 60 seconds. At expiry, answered and ignored states remain. Unanswered questions return `selected=[]` to the Agent with a timeout explanation in custom, without choosing an answer. **Timeout is not permission**: if a necessary decision is missing, the Agent must still explain why work cannot continue.
+Questions from one call share a deadline, default 60 seconds. At expiry, answered and ignored states remain. Unanswered questions return `selected=[]` to the Agent with a timeout explanation in custom, without choosing an answer. **Timeout is not permission**: if a necessary decision is missing, the Agent must still explain why work cannot continue. The read-only record may show timeout or skip text in the custom answer field; this is not a user-written answer.
 
 For more time, use the session group's extension action. It adds askExtendMs, default 60 seconds, to each batch still active at click time. New questions are unaffected, and expired calls are not reopened. If confirmation is missing, refresh and check the actual deadline before clicking again.
 
@@ -557,7 +558,7 @@ After expiry, questions can still be answered or ignored in the panel. A notific
 
 ### Missing acknowledgement or failed submission
 
-Check the panel's submission response. Explicit delivery failure reopens the question for retry as instructed; replying directly in the original session is also possible. If the panel reports that the batch or question no longer exists and the answer was not delivered, reply in the original session. If confirmation is merely missing, wait for the panel to refresh before deciding. Do not resubmit when the panel says another client has already answered. An unreadable receipt is also treated as unconfirmed: the question stays pending and retryable, the panel keeps refreshing automatically, and an unknown delivery counts as neither submitted nor failed.
+Check the panel's submission response. Explicit delivery failure reopens the question for retry as instructed; replying directly in the original session is also possible. If the panel reports that the batch or question no longer exists and the answer was not delivered, reply in the original session. If confirmation is merely missing, wait for the panel to refresh before deciding. Do not resubmit when the panel says another client has already answered. An unreadable receipt also leaves delivery unconfirmed. A button that still accepts clicks is not evidence that the original answer failed to arrive.
 
 Panel records are held only in memory. Unhandled records more than 24 hours past expiry are cleared when a new question batch is intercepted. With no new batch, they can last longer, so 24 hours is not a fixed late-answer deadline.
 
@@ -571,7 +572,7 @@ If a question call is rejected as a whole, check that questions is an array and 
 
 Some restricted environments block commands before process startup when they capture output, for example through variable assignments, subexpressions, `2>&1`, or output redirection. An executed command can also leave no visible output because it was captured. Empty output alone proves neither success nor non-execution; a multi-statement command may have executed only its earlier statements.
 
-The current diagnostic reports “execution unconfirmed” when a capture form, empty output, a nonzero or unknown exit code, and the other diagnostic conditions coincide. Exit code 0 does not trigger this warning. The check uses command text and exit information; it cannot establish the actual side effects.
+When the guard is enabled, a command that captures output can report that execution was not confirmed if the output is empty and the other diagnostic conditions are met. A zero exit code does not suppress that warning. The warning is not a failure verdict; check the exit information and actual effects.
 
 Check in this order:
 
