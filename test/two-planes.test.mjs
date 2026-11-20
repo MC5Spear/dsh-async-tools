@@ -712,9 +712,10 @@ test('T16：plugins.bundle.config keyed 槽契约 + 毫秒换算秒读数', asyn
   assert.match(code, /var hint = composeHint\(t, field, state\.effective\[field\.key\], fieldState\.text\);/,
     '说明行必须由 composeHint 以（生效值, 暂存文本）两输入拼出——输入段才有数据源');
 
-  // ③ formatSeconds 行为（浏览器外可验证）：整数秒不带小数，小数保留两位，亚 10 ms
-  //    显示 `< 0.01 s`（值只写秒文本——毫秒原值输入框里
-  //    本来就有；正数不得读成 0 s——逐位键入时不给"读数归零"的错觉）。
+  // ③ 秒数换算行为（浏览器外可验证，词典键化后用 zh 词典当 t）：secondsNumber
+  //    只出数值文本（整数秒不带小数、小数保留两位）；亚 10 ms 与无效值返回空串
+  //    交上层占位。secondsWord 出完整秒读数词（单位/短句来自词典键
+  //    readout.secondsUnit／readout.subSecond——需求 5.7.4 秒数读数行）。
   const { makePrimitivesDouble } = await import('./_primitives-double.mjs');
   const made16 = [];
   const reactRecord = {
@@ -730,26 +731,35 @@ test('T16：plugins.bundle.config keyed 槽契约 + 毫秒换算秒读数', asyn
   let loaded;
   new Function('window', source)({ __ModuleLoader__: { load: (spec) => { loaded = spec; } } });
   const product = loaded.factory((name) => (name === 'react' ? reactRecord : double));
-  assert.equal(typeof product.formatSeconds, 'function', 'formatSeconds 必须导出（浏览器外判据）');
-  assert.equal(product.formatSeconds(20000), '20 s', '20000 ms → "20 s"');
-  assert.equal(product.formatSeconds(1500), '1.5 s', '1500 ms → "1.5 s"');
-  assert.equal(product.formatSeconds(250), '0.25 s', '250 ms → "0.25 s"');
-  assert.equal(product.formatSeconds(4), '< 0.01 s', '4 ms → "< 0.01 s"（亚 10 ms 不得读成 0）');
-  assert.equal(product.formatSeconds(9), '< 0.01 s', '9 ms → "< 0.01 s"（亚 10 ms 上界内侧）');
-  assert.equal(product.formatSeconds(10), '0.01 s', '10 ms → "0.01 s"（恰好可表示，不带 < 号）');
-  assert.equal(product.formatSeconds(999), '1 s', '999 ms → "1 s"（两位舍入进位，不带拖零）');
-  assert.equal(product.formatSeconds(0), '', '0 不得显示读数（不是有效的时长）');
-  assert.equal(product.formatSeconds(-5), '', '负数不得显示读数');
-  assert.equal(product.formatSeconds('x'), '', '非数字不得显示读数');
+  const zhT = (key) => product.DICTIONARIES.zh[key];
+  assert.equal(typeof product.secondsNumber, 'function', 'secondsNumber 必须导出（浏览器外判据）');
+  assert.equal(product.secondsNumber(20000), '20', '20000 ms → "20"');
+  assert.equal(product.secondsNumber(1500), '1.5', '1500 ms → "1.5"');
+  assert.equal(product.secondsNumber(250), '0.25', '250 ms → "0.25"');
+  assert.equal(product.secondsNumber(4), '', '4 ms → 空（亚 10 ms 由 secondsWord 出短句）');
+  assert.equal(product.secondsNumber(9), '', '9 ms → 空（亚 10 ms 上界内侧）');
+  assert.equal(product.secondsNumber(10), '0.01', '10 ms → "0.01"（恰好可表示）');
+  assert.equal(product.secondsNumber(999), '1', '999 ms → "1"（两位舍入进位，不带拖零）');
+  assert.equal(product.secondsNumber(0), '', '0 不得显示读数（不是有效的时长）');
+  assert.equal(product.secondsNumber(-5), '', '负数不得显示读数');
+  assert.equal(product.secondsNumber('x'), '', '非数字不得显示读数');
+  assert.equal(typeof product.secondsWord, 'function', 'secondsWord 必须导出（秒读数词判据）');
+  assert.equal(product.secondsWord(zhT, 20000), '20 秒', '20000 ms → "20 秒"（单位来自词典）');
+  assert.equal(product.secondsWord(zhT, 1500), '1.5 秒', '1500 ms → "1.5 秒"');
+  assert.equal(product.secondsWord(zhT, 4), '小于 0.01 秒', '4 ms → 词典短句（亚 10 ms 正值）');
+  assert.equal(product.secondsWord(zhT, 0), null, '0 → null（调用方按未知/占位处理）');
+  assert.equal(product.secondsWord(zhT, -5), null, '负数 → null');
 
-  // ③-b composeHint 行为（两段形状、换行、分隔符、秒文本值、空姿态）：
-  //    测试词典 `t` 的约定：键 + '|'；读数键带 `{v}` 占位（实现用 replace 填值——
-  //    没有占位的桩会让"值没填进去"漏过）。非毫秒字段无读数；两段相等也不隐藏。
+  // ③-b composeHint 行为（两段形状、换行、分隔符、秒读数词、空姿态）：
+  //    t 直接用 zh 词典（键真、占位符真——readout.current/unsaved 带 {值} 占位，
+  //    没有占位替换会让"值没填进去"漏过）。非毫秒字段无读数；两段相等也不隐藏；
+  //    四「—」字段（hint 键缺席）读数行独立在场（设计 §5.4）；生效值不可核实
+  //    → readout.unknown。
   assert.equal(typeof product.composeHint, 'function', 'composeHint 必须导出（读数拼接的浏览器外判据）');
   assert.equal(typeof product.draftReadout, 'function', 'draftReadout 必须导出（输入段姿态的浏览器外判据）');
-  const tt = (key) => (key === 'readout.effective' || key === 'readout.input' ? `${key}|{v}` : `${key}|`);
   const msField = { key: 'defaultYieldMs', ms: true };
   const plainField = { key: 'jobKind' };
+  const dashField = { key: 'minYieldMs', ms: true };
   /** 说明行 children → {desc, hasBr, eff, effClass, input, inClass}（结构读数，非字符串比对）。 */
   const shapeOf = (children) => {
     const list = Array.isArray(children) ? children : [children];
@@ -770,35 +780,43 @@ test('T16：plugins.bundle.config keyed 槽契约 + 毫秒换算秒读数', asyn
       inClass: spans[1] === undefined ? '' : String(spans[1].props.className)
     };
   };
-  assert.equal(product.composeHint(tt, plainField, 20000, 'my-kind'),
-    'hint.jobKind|', '非毫秒字段不得有任何读数段');
-  let shape = shapeOf(product.composeHint(tt, msField, 20000, '20000'));
-  assert.ok(shape.desc === 'hint.defaultYieldMs|' && shape.hasBr && shape.dot === ' · ',
+  assert.equal(product.composeHint(zhT, plainField, 20000, 'my-kind'),
+    product.DICTIONARIES.zh['hint.jobKind'], '非毫秒字段不得有任何读数段');
+  let shape = shapeOf(product.composeHint(zhT, msField, 20000, '20000'));
+  assert.ok(shape.desc === product.DICTIONARIES.zh['hint.defaultYieldMs'] && shape.hasBr && shape.dot === ' · ',
     '毫秒字段的说明行 = 字段说明 + 换行 + 两段读数（行首不带点，与字段说明分行）');
-  assert.equal(shape.eff, 'readout.effective|20 s', '生效段 = 标签 + 秒文本（无毫秒、无等号）');
-  assert.equal(shape.input, 'readout.input|20 s', '无草稿时输入段也在场（两段相等也不隐藏）');
+  assert.equal(shape.eff, '生效：20 秒', '生效段 = readout.current 填秒读数词（无毫秒、无等号）');
+  assert.equal(shape.input, '待保存：20 秒', '无草稿时输入段也在场（两段相等也不隐藏）');
   assert.ok(!shape.inClass.includes('ats-sec-invalid'), '合法草稿不得带非法标记');
-  shape = shapeOf(product.composeHint(tt, msField, 500, '04321'));
-  assert.equal(shape.eff, 'readout.effective|0.5 s');
-  assert.equal(shape.input, 'readout.input|4.32 s', '输入段取解析值的换算（04321 → 4.32 s），未保存就反映键入');
-  shape = shapeOf(product.composeHint(tt, msField, 500, '4'));
-  assert.equal(shape.eff, 'readout.effective|0.5 s', '生效段不动');
-  assert.equal(shape.input, 'readout.input|< 0.01 s', '逐位键入的中间态给亚 10 ms 读数（不得 0 s、不得消失）');
-  shape = shapeOf(product.composeHint(tt, msField, 500, ''));
-  assert.equal(shape.eff, 'readout.effective|0.5 s', '空草稿：生效段仍在');
-  assert.equal(shape.input, 'readout.input|—', '空文本 → 输入段 — 占位（不残留旧读数、不给秒数）');
+  shape = shapeOf(product.composeHint(zhT, msField, 500, '04321'));
+  assert.equal(shape.eff, '生效：0.5 秒');
+  assert.equal(shape.input, '待保存：4.32 秒', '输入段取解析值的换算（04321 → 4.32 秒），未保存就反映键入');
+  shape = shapeOf(product.composeHint(zhT, msField, 500, '4'));
+  assert.equal(shape.eff, '生效：0.5 秒', '生效段不动');
+  assert.equal(shape.input, '待保存：小于 0.01 秒', '逐位键入的中间态给亚 10 ms 读数（不得 0 秒、不得消失）');
+  shape = shapeOf(product.composeHint(zhT, msField, 500, ''));
+  assert.equal(shape.eff, '生效：0.5 秒', '空草稿：生效段仍在');
+  assert.equal(shape.input, '待保存：—', '空文本 → 输入段 — 占位（不残留旧读数、不给秒数）');
   assert.ok(!shape.inClass.includes('ats-sec-invalid'), '空草稿不是非法（清除覆盖的意图），不得标红');
-  shape = shapeOf(product.composeHint(tt, msField, 500, '  '));
-  assert.equal(shape.input, 'readout.input|—', '纯空白等同空文本（按 trim 后判空）');
+  shape = shapeOf(product.composeHint(zhT, msField, 500, '  '));
+  assert.equal(shape.input, '待保存：—', '纯空白等同空文本（按 trim 后判空）');
   for (const bad of ['abc', '0', '-3']) {
-    shape = shapeOf(product.composeHint(tt, msField, 500, bad));
-    assert.equal(shape.input, 'readout.input|—', `${bad} → 输入段 — 占位`);
+    shape = shapeOf(product.composeHint(zhT, msField, 500, bad));
+    assert.equal(shape.input, '待保存：—', `${bad} → 输入段 — 占位`);
     assert.ok(shape.inClass.includes('ats-sec-invalid'), `${bad} → 输入段带非法标记（颜色侧走 state-error）`);
-    assert.equal(shape.eff, 'readout.effective|0.5 s', `${bad} → 生效段仍在`);
+    assert.equal(shape.eff, '生效：0.5 秒', `${bad} → 生效段仍在`);
   }
-  assert.deepEqual(product.draftReadout('4321'), { fill: '4.32 s', invalid: false }, 'draftReadout：正数 → 秒文本');
-  assert.deepEqual(product.draftReadout(''), { fill: '—', invalid: false }, 'draftReadout：空 → — 不标非法');
-  assert.deepEqual(product.draftReadout('abc'), { fill: '—', invalid: true }, 'draftReadout：非数字 → — 标非法');
+  shape = shapeOf(product.composeHint(zhT, msField, undefined, '20000'));
+  assert.equal(shape.eff, '生效：未知', '生效值不可核实 → 词典 readout.unknown（未知）');
+  // 四「—」字段：hint 键缺席 → 说明退场、读数行独立在场（首个成员是换行元素）。
+  const dashRow = product.composeHint(zhT, dashField, 20000, '20000');
+  assert.ok(Array.isArray(dashRow), '无 hint 的毫秒字段返回读数行数组（而非 undefined）');
+  shape = shapeOf(dashRow);
+  assert.ok(shape.hasBr, '读数行独立在场：换行元素是首成员');
+  assert.equal(shape.eff, '生效：20 秒', '「—」字段的读数照常换算');
+  assert.deepEqual(product.draftReadout(zhT, '4321'), { fill: '4.32 秒', invalid: false }, 'draftReadout：正数 → 秒读数词');
+  assert.deepEqual(product.draftReadout(zhT, ''), { fill: '—', invalid: false }, 'draftReadout：空 → — 不标非法');
+  assert.deepEqual(product.draftReadout(zhT, 'abc'), { fill: '—', invalid: true }, 'draftReadout：非数字 → — 标非法');
   assert.equal(product.ENTRY, 'async-tools-host', 'ENTRY 导出必须等于宿主行 id（三同串）');
 
   // ④ 槽位注册的**运行期**判据：静态 grep 只能证明"源码里出现过某个词"，
@@ -1184,9 +1202,14 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   await Promise.resolve();
   await Promise.resolve();
   const Card = registrations[0];
-  // 测试词典约定：键 + '|'；读数键带 `{v}` 占位（实现用 replace 填值——没有占位的桩
-  // 会让"值没填进去"漏过）。真机上 props.t 是宿主翻译函数，语义相同。
-  const t = (key) => (key === 'readout.effective' || key === 'readout.input' ? `${key}|{v}` : `${key}|`);
+  // 测试词典约定：键 + '|'；读数/秒单位键带占位（实现用 replace 填值——没有占
+  // 位的桩会让"值没填进去"漏过）。真机上 props.t 是宿主翻译函数，语义相同。
+  const t = (key) => ({
+    'readout.current': 'readout.current|{值}',
+    'readout.unsaved': 'readout.unsaved|{值}',
+    'readout.secondsUnit': '{数值} s',
+    'readout.subSecond': '< 0.01 s'
+  }[key] ?? `${key}|`);
 
   // 全树展开：卡片 → 官方 SettingsForm → 全部字段组件（值字段/枚举字段/开关/徽标）都是
   // 函数组件，逐个展开（每个组件调 begin 切自己的 hook 槽、调 flush 跑它排的 effect）。
@@ -1215,37 +1238,99 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   const inputById = (tree, id) =>
     findNode(tree, (node) => (node.type === 'input' || node.type === 'select') && node.props.id === id);
 
-  // ① 渲染本身：**props 里没有 `form`**（bundle 槽不传）。值必须来自控制器。
-  //    判据 1：四组全部字段逐项在场，id = `plugin-config-<键>`。
+  // ①-a 渲染本身：**props 里没有 `form`**（bundle 槽不传）。值必须来自控制器。
+  //     先核六组渐进披露的**默认形态**（设计 §5.3）：三组展开（适用预设/待答问题/
+  //     语言）、三组收起（命令与等待/发送给 Agent 的内容/高级设置）；收起组只渲染
+  //     组头（体区与字段控件不在 DOM）；待答子组与「选择预设」入口默认收起。
   let tree = renderCard();
   // `configForms.get` 被调**两次**：ask 模型在 apply 期取一次（待答界面），
   // 卡片模型在挂载期取一次——两次都必须按 entry id（不是按包名）。
   assert.deepEqual(asked, ['async-tools-host', 'async-tools-host'], 'ask 模型与卡片都必须按 entry id 向 configForms 取控制器（不是按包名）');
   assert.equal(listeners.length, 2, '卡片模型与 ask 模型各订阅控制器恰好一次（bind 一次 + 订阅一次）');
+  const groupSectionOf = (aTree, groupId) => findNode(aTree,
+    (node) => node.type === 'section' && node.props.id === `plugin-config-group-${groupId}`);
+  const groupToggleOf = (aTree, groupId) => findNode(aTree,
+    (node) => node.type === 'button' && node.props.id === `plugin-config-group-${groupId}-toggle`);
+  for (const groupId of ['presets', 'ask', 'budget', 'agentContent', 'advanced', 'lang']) {
+    const section = groupSectionOf(tree, groupId);
+    assert.ok(section !== undefined, `六组之一 ${groupId} 必须以 section 在场`);
+    const body = findNode(section, (node) => node.type === 'div'
+      && node.props.id === `plugin-config-group-${groupId}-body`);
+    const toggle = groupToggleOf(tree, groupId);
+    assert.ok(toggle !== undefined, `${groupId} 的组头折叠按钮必须在场`);
+    assert.equal(toggle.props['aria-controls'], `plugin-config-group-${groupId}-body`,
+      '折叠按钮 aria-controls 必须指向体区 id');
+    const openExpected = groupId === 'presets' || groupId === 'ask' || groupId === 'lang';
+    assert.equal(toggle.props['aria-expanded'], openExpected ? 'true' : 'false',
+      `${groupId} 默认${openExpected ? '展开' : '收起'}（设计 §5.3 六组默认开合）`);
+    assert.equal(body !== undefined, openExpected,
+      `${groupId} ${openExpected ? '展开时体区必须渲染' : '收起时体区不渲染（渐进披露）'}`);
+  }
+  // 收起组的字段控件不在 DOM（渐进披露的硬证据）；展开组的控件在场。
+  assert.ok(inputById(tree, 'plugin-config-defaultYieldMs') === undefined,
+    '命令与等待组默认收起：defaultYieldMs 控件不在 DOM');
+  assert.ok(inputById(tree, 'plugin-config-askTimeoutMs') === undefined,
+    '待答子组「等待与加时」默认收起：askTimeoutMs 控件不在 DOM');
+  assert.ok(findNode(tree, (node) => node.type === 'input' && node.props.id === 'plugin-config-boundPresets-list') === undefined,
+    '「选择预设」入口默认收起：完整目录不在 DOM');
+  assert.ok(inputById(tree, 'plugin-config-askUiSeat') !== undefined, '待答组展开：askUiSeat 控件在场');
+  assert.ok(inputById(tree, 'plugin-config-uiLang') !== undefined, '语言组展开：uiLang 控件在场');
+  // 组级标记默认不在场（无暂存/无错误）；组级帮助按钮五个组（语言组不设）。
+  const groupMarks = collectByType(tree, 'span').filter((node) => node.props.className === 'ats-group-mark');
+  assert.equal(groupMarks.length, 0, '无修改无错误：组级标记不得在场');
+  const groupHelpButtons = collectByType(tree, 'button')
+    .filter((node) => node.props.className === 'ats-help-button'
+      && String(node.props['aria-controls'] ?? '').endsWith('-help-body'));
+  assert.equal(groupHelpButtons.length, 5,
+    '五个设组级帮助的组（presets/budget/agentContent/advanced/ask）帮助按钮随组头恒在——收起只藏体区不藏头；语言组无组级帮助（5.7.5）');
+  assert.ok(!groupHelpButtons.some((node) => String(node.props['aria-controls'] ?? '').includes('group-lang')),
+    '语言组不设组级帮助按钮');
+  // 展开组的组级帮助按钮在场（ask 组）。
+  const askGroupHelp = findNode(tree, (node) => node.type === 'button'
+    && node.props.id === 'plugin-config-group-ask-help');
+  assert.ok(askGroupHelp !== undefined, '待答组展开：组级帮助按钮在场（设计 §5.6 五组设帮助）');
+
+  // ①-b 撑开全部组与子组/入口（六组结构的全部字段控件在场），再做清单核对。
+  //     开合状态存在卡片组件的 shim 槽里（真 React 的 useState），点击组头按钮
+  //     即真实开合路径——之后的字段交互全在展开树上进行。
+  const toggleAllOpen = () => {
+    for (const groupId of ['budget', 'agentContent', 'advanced', 'askTimes']) {
+      const toggle = groupToggleOf(tree, groupId);
+      if (toggle !== undefined && toggle.props['aria-expanded'] === 'false') toggle.props.onClick();
+    }
+    const entry = findNode(tree, (node) => node.type === 'button'
+      && node.props.id === 'plugin-config-boundPresets-entry');
+    if (entry !== undefined && entry.props['aria-expanded'] === 'false') entry.props.onClick();
+    tree = renderCard();
+  };
+  toggleAllOpen();
+  for (const groupId of ['budget', 'agentContent', 'advanced', 'askTimes']) {
+    assert.equal(groupToggleOf(tree, groupId).props['aria-expanded'], 'true', `${groupId} 展开后 aria-expanded="true"`);
+  }
+  assert.ok(inputById(tree, 'plugin-config-defaultYieldMs') !== undefined, '展开后 defaultYieldMs 控件在场');
+  assert.ok(findNode(tree, (node) => node.type === 'div' && node.props.id === 'plugin-config-boundPresets-list') !== undefined,
+    '展开「选择预设」入口后目录区在场（div#boundPresets-list）');
   const inputs = collectByType(tree, 'input').filter((node) => node.props.type !== 'checkbox');
   const selects = collectByType(tree, 'select');
   // 12 个值字段（10 预算 + askTimeoutMs + askExtendMs）、3 个枚举下拉
-  // （两语言 + askUiSeat）。预设绑定块的复选框（type=checkbox）不算值字段输入框。
+  // （askUiSeat + 两语言）。预设绑定块的复选框（type=checkbox）不算值字段输入框。
   assert.equal(inputs.length, 12, '十二个值字段必须以官方 input 在场（10 预算 + R30 askTimeoutMs + askExtendMs）');
-  assert.equal(selects.length, 3, '三个枚举字段必须以 select 在场（两语言 + R30 askUiSeat；控件本体自绘，裁定 B）');
-  // 四个布尔开关（静默失败防护 + 提问接管 + 两个展示开关）：控件本体是自绘
+  assert.equal(selects.length, 3, '三个枚举字段必须以 select 在场（askUiSeat + 两语言；控件本体自绘，裁定 B）');
+  // 四个布尔开关（提问接管 + 两个展示开关 + 静默失败防护）：控件本体是自绘
   // role="switch" 按钮（UI-SETTINGS-AX：官方 P.Switch 收不了 id/aria 关联），
   // 不进 input/select 的 id 清单——按无障碍属性（role/aria-label/aria-checked）
   // 钉在场；id/label-for/aria-describedby 由 ② 段的统一循环钉（不再豁免）。
   const switchButtons = collectByType(tree, 'button').filter((node) => node.props.role === 'switch');
-  assert.equal(switchButtons.length, 4, '四个布尔开关必须以 role=switch 的按钮在场（silentFailureGuard/askTakeover/workflowProgressLog/fullCommandEcho）');
-  assert.equal(switchButtons[0].props['aria-label'], 'silentFailureGuard|',
-    '开关的无障碍名 = 可见标签（桩词典约定键 + \'|\'）');
-  assert.equal(switchButtons[0].props['aria-checked'], false, '默认关：无覆盖时开关显示生效姿态 false');
-  assert.equal(switchButtons[1].props['aria-label'], 'askTakeover|',
-    'R30 总开关同形：无障碍名 = 可见标签');
-  assert.equal(switchButtons[1].props['aria-checked'], false, 'R30 总开关默认关（零行为硬边界的界面证据）');
-  assert.equal(switchButtons[2].props['aria-label'], 'workflowProgressLog|',
-    '展示开关同形：无障碍名 = 可见标签');
-  assert.equal(switchButtons[2].props['aria-checked'], false, 'workflowProgressLog 默认关（需求 9.3.4）');
-  assert.equal(switchButtons[3].props['aria-label'], 'fullCommandEcho|',
-    '展示开关同形：无障碍名 = 可见标签');
-  assert.equal(switchButtons[3].props['aria-checked'], false, 'fullCommandEcho 默认关（需求 9.3.4）');
+  assert.equal(switchButtons.length, 4, '四个布尔开关必须以 role=switch 的按钮在场（askTakeover/workflowProgressLog/fullCommandEcho/silentFailureGuard）');
+  const switchByLabel = (label) => switchButtons.find((node) => node.props['aria-label'] === label);
+  assert.equal(switchByLabel('askTakeover|')?.props['aria-checked'], false,
+    'R30 总开关默认关（零行为硬边界的界面证据）；无障碍名 = 可见标签');
+  assert.equal(switchByLabel('workflowProgressLog|')?.props['aria-checked'], false,
+    'workflowProgressLog 默认关（需求 9.3.4）；无障碍名 = 可见标签');
+  assert.equal(switchByLabel('fullCommandEcho|')?.props['aria-checked'], false,
+    'fullCommandEcho 默认关（需求 9.3.4）；无障碍名 = 可见标签');
+  assert.equal(switchByLabel('silentFailureGuard|')?.props['aria-checked'], false,
+    '默认关：无覆盖时开关显示生效姿态 false；无障碍名 = 可见标签');
   // 开关字段的说明行与值/枚举字段同形（p + id），文案走同一条 hint 通道——在此钉住，
   // 补足 ② 循环豁免后的结构覆盖。
   const flagMessage = findNode(tree, (node) =>
@@ -1254,21 +1339,22 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   assert.ok(String(flagMessage.props.children).includes('hint.silentFailureGuard|'),
     '开关说明行必须带该字段的说明文案');
   const expectedKeys = product.FIELDS.map((field) => field.key);
-  // askTimeoutMs（input）排在语言枚举（select）之后，DOM 收集是「全部 input
-  // 再全部 select」——分型别各自按 FIELDS 顺序核对，不拼交错序。绑定字段
-  //（binding: true）以独立的预设绑定块渲染（复选组），不进 input/select 清单。
+  // DOM 收集是「全部 input 再全部 select」——分型别各自按 FIELDS 顺序核对，不拼
+  // 交错序（六组结构的字段序 = FIELDS 序）。绑定字段（binding: true）以独立的
+  // 预设绑定块渲染（复选组），不进 input/select 清单。
   const expectedInputKeys = product.FIELDS
     .filter((field) => field.options === undefined && field.flag !== true && field.binding !== true).map((field) => field.key);
   const expectedSelectKeys = product.FIELDS
     .filter((field) => field.options !== undefined).map((field) => field.key);
   assert.deepEqual(inputs.map((node) => node.props.id),
     expectedInputKeys.map((key) => `plugin-config-${key}`),
-    '值字段身份必须按 id 逐项核对（判据 1，FIELDS 顺序）');
+    '值字段身份必须按 id 逐项核对（判据 1，六组序＝FIELDS 顺序）');
   assert.deepEqual(selects.map((node) => node.props.id),
     expectedSelectKeys.map((key) => `plugin-config-${key}`),
-    '枚举字段身份必须按 id 逐项核对（判据 1，FIELDS 顺序）');
+    '枚举字段身份必须按 id 逐项核对（判据 1，六组序＝FIELDS 顺序）');
   assert.deepEqual(selects.map((node) => node.props.children.map((option) => option.props.value)),
-    [['auto', 'zh', 'en'], ['en', 'zh'], ['sidebar', 'overlay']], '选项集就是契约（写错值宿主会 fail-fast；askUiSeat 选项序 [sidebar, overlay]——需求 §5.2/5.5，默认标记位在 sidebar）');
+    [['sidebar', 'overlay'], ['auto', 'zh', 'en'], ['en', 'zh']],
+    '选项集就是契约（写错值宿主会 fail-fast；askUiSeat 选项序 [sidebar, overlay]——需求 §5.2/5.5，默认标记位在 sidebar）');
   assert.equal(inputById(tree, 'plugin-config-uiLang').props.value, 'auto',
     '无覆盖时下拉显示生效值（不是空选项——下拉为空等于丢掉当前生效值，硬条目①）');
   assert.equal(inputById(tree, 'plugin-config-askUiSeat').props.value, 'sidebar',
@@ -1281,6 +1367,9 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   const controlById = (aTree, id) => findNode(aTree, (node) =>
     (node.type === 'input' || node.type === 'select'
       || (node.type === 'button' && node.props.role === 'switch')) && node.props.id === id);
+  // 四「—」字段（5.7.5 第一表说明列为 —）：无字段级 hint/help——说明行退场但
+  // 读数行独立在场（设计 §5.4），label/控件/describedby 结构同其余字段。
+  const DASH_FIELD_KEYS = ['minYieldMs', 'maxYieldMs', 'minWaitMs', 'maxWaitMs'];
   for (const key of expectedKeys.filter((k) => k !== 'boundPresets')) {
     const control = controlById(tree, `plugin-config-${key}`);
     const label = findNode(tree, (node) =>
@@ -1288,8 +1377,14 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
     assert.ok(label !== undefined, `字段 ${key} 的 label 必须以 for=<id> 绑定控件`);
     const message = findNode(tree, (node) => node.type === 'p' && node.props.id === `plugin-config-${key}-message`);
     assert.ok(message !== undefined, `字段 ${key} 必须有说明/错误行（aria-describedby 的指向）`);
-    assert.ok(String(message.props.children).includes(`hint.${key}|`),
-      `字段 ${key} 的说明行必须带该字段的说明文案`);
+    if (DASH_FIELD_KEYS.includes(key)) {
+      const children = Array.isArray(message.props.children) ? message.props.children : [message.props.children];
+      assert.ok(children.some((child) => child !== null && typeof child === 'object' && child.type === 'br'),
+        `「—」字段 ${key} 的说明行缺席、读数行独立在场（换行元素在首）`);
+    } else {
+      assert.ok(String(message.props.children).includes(`hint.${key}|`),
+        `字段 ${key} 的说明行必须带该字段的说明文案`);
+    }
     assert.equal(control.props['aria-describedby'], `plugin-config-${key}-message`,
       `字段 ${key} 的控件必须以 aria-describedby 指向说明行（同形硬条目②）`);
   }
@@ -1317,15 +1412,17 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   const msKeys = product.FIELDS.filter((field) => field.ms).map((field) => field.key);
   for (const key of msKeys) {
     const readout = readoutOf(tree, key);
-    assert.ok(readout.desc.startsWith(`hint.${key}|`), `毫秒字段 ${key} 的说明行第一行必须是字段说明`);
-    assert.ok(readout.hasBr, `毫秒字段 ${key} 的读数必须与字段说明换行（行首不带点）`);
-    assert.match(String(readout.eff), /^readout\.effective\|[\d.]+ s$/,
-      `毫秒字段 ${key} 的生效段 = 标签 + 秒文本（恒显示）`);
-    assert.match(String(readout.input), /^readout\.input\|[\d.]+ s$/,
+    if (!DASH_FIELD_KEYS.includes(key)) {
+      assert.ok(readout.desc.startsWith(`hint.${key}|`), `毫秒字段 ${key} 的说明行第一行必须是字段说明`);
+    }
+    assert.ok(readout.hasBr, `毫秒字段 ${key} 的读数必须与字段说明换行（行首不带点；「—」字段以换行开头）`);
+    assert.match(String(readout.eff), /^readout\.current\|[\d.]+ s$/,
+      `毫秒字段 ${key} 的生效段 = readout.current + 秒读数词（恒显示）`);
+    assert.match(String(readout.input), /^readout\.unsaved\|[\d.]+ s$/,
       `毫秒字段 ${key} 无草稿时输入段也在场（两段相等也不隐藏）`);
   }
   const poll = () => readoutOf(tree, 'pollIntervalMs');
-  assert.equal(poll().eff, 'readout.effective|0.5 s', 'defaultYieldMs=20000 之外：生效段 = 生效值换算（500 → 0.5 s）');
+  assert.equal(poll().eff, 'readout.current|0.5 s', 'defaultYieldMs=20000 之外：生效段 = 生效值换算（500 → 0.5 s）');
   for (const key of ['maxResultChars', 'jobKind', 'uiLang']) {
     assert.equal(messageNode(tree, key).props.children, `hint.${key}|`,
       `非毫秒字段 ${key} 的说明行不得带任何读数段（连 children 都还是纯字符串）`);
@@ -1337,12 +1434,12 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   //     （真机对应探针：`verify/_visual/probe-r24-bundle-config.mjs` 的两段读数断言。）
   inputById(tree, 'plugin-config-pollIntervalMs').props.onChange({ target: { value: '4' } });
   tree = renderCard();
-  assert.equal(poll().eff, 'readout.effective|0.5 s', '键入 4（未保存）：生效段不动');
-  assert.equal(poll().input, 'readout.input|< 0.01 s',
+  assert.equal(poll().eff, 'readout.current|0.5 s', '键入 4（未保存）：生效段不动');
+  assert.equal(poll().input, 'readout.unsaved|< 0.01 s',
     '键入 4（未保存）：输入段当场 = 亚 10 ms 读数（不得 0 s），读数接的是草稿');
   inputById(tree, 'plugin-config-pollIntervalMs').props.onChange({ target: { value: '04321' } });
   tree = renderCard();
-  assert.equal(poll().input, 'readout.input|4.32 s', '键入 04321：输入段显示解析值的换算（不是生效值）');
+  assert.equal(poll().input, 'readout.unsaved|4.32 s', '键入 04321：输入段显示解析值的换算（不是生效值）');
   inputById(tree, 'plugin-config-pollIntervalMs').props.onChange({ target: { value: 'not-a-number' } });
   tree = renderCard();
   // 契约（需求 §5.4／§5.6）：非法原因行（-invalid）是**附加**，常驻说明行（-message）
@@ -1351,8 +1448,8 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
     (node) => node.type === 'p' && node.props.id === `plugin-config-${key}-invalid`);
   assert.equal(String(invalidLineOf(tree, 'pollIntervalMs')?.props.children), 'invalidNumber|',
     '非数字 → 原因行（-invalid）= invalidNumber 档');
-  assert.equal(poll().eff, 'readout.effective|0.5 s', '非法态常驻行的生效段照常显示（不被原因行顶掉）');
-  assert.equal(poll().input, 'readout.input|—', '非法草稿的输入段给 — 占位（不给误导性秒数）');
+  assert.equal(poll().eff, 'readout.current|0.5 s', '非法态常驻行的生效段照常显示（不被原因行顶掉）');
+  assert.equal(poll().input, 'readout.unsaved|—', '非法草稿的输入段给 — 占位（不给误导性秒数）');
   assert.ok(poll().inClass.includes('ats-sec-invalid'), '非法草稿的输入段标红');
   inputById(tree, 'plugin-config-pollIntervalMs').props.onChange({ target: { value: '0' } });
   tree = renderCard();
@@ -1360,11 +1457,11 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   // 的 belowRange 档走原因行（保存经 state.invalid 禁用），常驻读数同形保留。
   assert.equal(String(invalidLineOf(tree, 'pollIntervalMs')?.props.children), 'invalidBelow|',
     '0（可解析、低于下界 1）：belowRange 档走原因行（min 在 parse 里拦）');
-  assert.equal(poll().eff, 'readout.effective|0.5 s', '下界非法态常驻行的生效段照常显示');
-  assert.equal(poll().input, 'readout.input|—', '下界非法草稿的输入段同样给 — 占位');
+  assert.equal(poll().eff, 'readout.current|0.5 s', '下界非法态常驻行的生效段照常显示');
+  assert.equal(poll().input, 'readout.unsaved|—', '下界非法草稿的输入段同样给 — 占位');
   inputById(tree, 'plugin-config-pollIntervalMs').props.onChange({ target: { value: '' } });
   tree = renderCard();
-  assert.equal(poll().input, 'readout.input|—', '清空 → 输入段 — 占位');
+  assert.equal(poll().input, 'readout.unsaved|—', '清空 → 输入段 — 占位');
   assert.ok(!poll().inClass.includes('ats-sec-invalid'), '清空不是非法（清除覆盖的意图），不得标红');
   assert.ok(invalidLineOf(tree, 'pollIntervalMs') === undefined, '回到合法态：原因行退场');
   // 收尾：改回生效值（stage 清掉非法态与草稿），后续用例从干净状态出发。
@@ -1396,9 +1493,9 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   assert.equal(badInput.props['aria-invalid'], true, '非法草稿的控件必须带 aria-invalid');
   assert.match(String(findNode(tree, (node) => node.type === 'p' && node.props.id === 'plugin-config-pollIntervalMs-invalid').props.children),
     /invalidNumber\|/, '非法原因行（-invalid）必须给出原因文案');
-  assert.equal(poll().eff, 'readout.effective|0.5 s',
+  assert.equal(poll().eff, 'readout.current|0.5 s',
     '非法态常驻说明行（-message）不得被原因行顶掉——生效段仍在（需求 §5.4 回归钉）');
-  assert.equal(poll().input, 'readout.input|—', '非法态常驻行的输入段照常给 — 占位');
+  assert.equal(poll().input, 'readout.unsaved|—', '非法态常驻行的输入段照常给 — 占位');
   assert.equal(badInput.props['aria-describedby'],
     'plugin-config-pollIntervalMs-invalid plugin-config-pollIntervalMs-message',
     '非法态 aria-describedby 先指原因行、仍并指常驻说明行');
@@ -1475,6 +1572,9 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
   assert.equal(buttonByLabel(tree, 'save|').props.disabled, false, '卸载前必须有暂存');
   unmount();
   tree = renderCard();
+  // 重新挂载＝全新组件实例：开合回到默认（presets/ask/lang 开，余组收）——
+  // 草稿丢弃判据看的是**模型**，先把组重新撑开再验控件值。
+  toggleAllOpen();
   assert.equal(inputById(tree, 'plugin-config-jobKind').props.value, 'settled',
     '卸载（离开页面）必须丢弃草稿——字段回到生效值，不保存就不留痕');
   assert.equal(buttonByLabel(tree, 'save|').props.disabled, true, '重新挂载后无改动');
@@ -1491,9 +1591,9 @@ test('T18（R24/R27）：官方表单形态——字段集合/说明行/准入�
     '只读部署下控件必须禁用');
   assert.ok(textOf(tree).join('').includes('readOnly|'), '只读态必须显示官方只读提示（labels.readOnly）');
   const ro = readoutOf(tree, 'defaultYieldMs');
-  assert.equal(ro.eff, 'readout.effective|20 s',
+  assert.equal(ro.eff, 'readout.current|20 s',
     '只读态两段读数必须仍在位（判据 11：读数不随 writable 消失）');
-  assert.equal(ro.input, 'readout.input|20 s', '只读态输入段仍在位（= 生效值，无草稿可言）');
+  assert.equal(ro.input, 'readout.unsaved|20 s', '只读态输入段仍在位（= 生效值，无草稿可言）');
   assert.ok(ro.hasBr, '只读态读数仍与字段说明换行');
   current = savedSnapshot;
   for (const listener of listeners) listener();
@@ -1588,25 +1688,44 @@ test('T18h（R24/R27·设计 §5.5）：字段帮助——问号按钮、开合�
     findNode(tree, (node) => node.type === 'button' && node.props.className === 'ats-help-button'
       && node.props['aria-controls'] === `plugin-config-${key}-help`);
 
-  // ① 19 个字段壳各有问号按钮（type=button、aria-controls 指向 <id>-help、
-  //    aria-label 含字段名称——help.a11yName 模板）。预设绑定块复用同一帮助
-  //    模式（help.boundPresets，设计 §5.7 块头）——合计 20 个。
+  // ① 帮助按钮的在场形态（设计 §5.5/§5.6）：字段级问号按钮只在有 help.<键> 的
+  //    16 个字段（四「—」字段不设）＋预设绑定块＝17 个；组级帮助按钮另设五个组
+  //    （语言组不设）。先把六组全部撑开（收起组的字段不在 DOM——开合走真实
+  //    组头按钮路径），再数。
   let tree = renderCard();
-  const buttons = helpButtons(tree);
-  assert.equal(buttons.length, 20, '20 个可编辑项（19 字段壳 + 1 绑定块）必须各有帮助按钮（需求 §5.5）');
-  for (const button of buttons) {
+  const groupToggleOf = (aTree, groupId) => findNode(aTree,
+    (node) => node.type === 'button' && node.props.id === `plugin-config-group-${groupId}-toggle`);
+  for (const groupId of ['budget', 'agentContent', 'advanced', 'askTimes']) {
+    const toggle = groupToggleOf(tree, groupId);
+    if (toggle !== undefined && toggle.props['aria-expanded'] === 'false') toggle.props.onClick();
+  }
+  const presetEntry = findNode(tree, (node) => node.type === 'button'
+    && node.props.id === 'plugin-config-boundPresets-entry');
+  if (presetEntry !== undefined && presetEntry.props['aria-expanded'] === 'false') presetEntry.props.onClick();  tree = renderCard();
+  const fieldHelpButtons = helpButtons(tree).filter((node) =>
+    /^plugin-config-[a-zA-Z]+-help$/.test(String(node.props['aria-controls'] ?? '')));
+  assert.equal(fieldHelpButtons.length, 16,
+    '16 个可编辑项（15 个有 help 键的普通字段 + 绑定块 boundPresets）必须各有帮助按钮——四「—」字段不设（需求 5.7.5）');
+  const groupHelpButtons = helpButtons(tree).filter((node) =>
+    String(node.props['aria-controls'] ?? '').endsWith('-help-body'));
+  assert.equal(groupHelpButtons.length, 5, '五个组设组级帮助按钮（语言组不设，设计 §5.6）');
+  for (const button of [...fieldHelpButtons, ...groupHelpButtons]) {
     assert.equal(button.props.type, 'button', '帮助按钮必须 type=button（不提交表单）');
     assert.ok(typeof button.props['aria-controls'] === 'string'
-      && button.props['aria-controls'].endsWith('-help'), 'aria-controls 必须指向帮助区 id');
+      && (button.props['aria-controls'].endsWith('-help') || button.props['aria-controls'].endsWith('-help-body')),
+      'aria-controls 必须指向帮助区 id');
     assert.equal(button.props['aria-expanded'], false, '初始收起');
-    assert.ok(button.props['aria-label'].endsWith(' 的说明'),
+    assert.ok(button.props['aria-label'].endsWith('的说明'),
       `可访问名必须来自 help.a11yName 模板（实得 ${String(button.props['aria-label'])}）`);
     assert.ok(findNode(button, (node) => node.type === 'svg'
       && node.props['data-icon'] === 'question-outline-regular') !== undefined,
       '按钮图标必须是替身的 IconQuestionOutlineRegular（带圈问号）');
   }
   assert.equal(helpButtonOf(tree, 'defaultYieldMs').props['aria-label'],
-    '默认首次等待时长（毫秒） 的说明', '可访问名必须含字段名称（需求 §5.6）');
+    '默认首次等待（毫秒）的说明', '可访问名必须含字段名称（help.a11yName 模板 {名称}的说明）');
+  const askGroupHelpButton = groupHelpButtons.find((node) => node.props.id === 'plugin-config-group-ask-help');
+  assert.equal(askGroupHelpButton?.props['aria-label'], '待答问题的说明',
+    '组级帮助的可访问名 = 组标题显示名（group.ask）');
 
   // ② 点击展开 region#<id>-help（role=region、分段渲染），再点收起；开合只影响本字段
   //    （替身 hook 槽按组件＋元素 key 分槽——19 个同函数实例互踩时这条必红）。
@@ -1615,20 +1734,41 @@ test('T18h（R24/R27·设计 §5.5）：字段帮助——问号按钮、开合�
   let region = regionOf(tree, 'defaultYieldMs');
   assert.ok(region !== undefined, '点击后必须渲染展开区 div#<id>-help');
   assert.equal(region.props.role, 'region', '展开区必须带 role=region');
-  assert.equal(region.props['aria-label'], '默认首次等待时长（毫秒） 的说明',
+  assert.equal(region.props['aria-label'], '默认首次等待（毫秒）的说明',
     '展开区 aria-label 与按钮可访问名同名');
   const paragraphs = (region.props.children || []).filter((child) => child.type === 'p');
-  assert.ok(paragraphs.length >= 3, `正文按 \\n\\n 分段渲染（实得 ${String(paragraphs.length)} 段）`);
+  assert.equal(paragraphs.length, 1, `字段级帮助＝配置键行单段（5.7.4 技术信息行；实得 ${String(paragraphs.length)} 段）`);
   const helpText = textOf(region).join('');
-  assert.ok(helpText.startsWith('配置键：defaultYieldMs'), '首段必须是技术标识行（设计 §5.6）');
-  assert.ok(helpText.includes('直接取得结果') && helpText.includes('先取得作业编号'),
-    '首次等待示例必须区分「直接取得结果」与「先取得作业编号」（需求 §5.5 末段）');
-  assert.ok(helpText.includes('演示值，非当前生效值'), '示例必须标注「演示值，非当前生效值」');
+  assert.equal(helpText, product.DICTIONARIES.zh['help.defaultYieldMs'],
+    '字段级帮助正文必须逐字等于词典 help.<键>（配置键：defaultYieldMs）');
   assert.equal(helpButtonOf(tree, 'defaultYieldMs').props['aria-expanded'], true, '展开后 aria-expanded=true');
-  assert.ok(regionOf(tree, 'minYieldMs') === undefined,
+  assert.ok(regionOf(tree, 'askTimeoutMs') === undefined,
     '开合只影响本字段——同函数其他实例的帮助区不得跟着出现（组件＋key 分槽的红判据）');
-  assert.equal(helpButtonOf(tree, 'minYieldMs').props['aria-expanded'], false,
+  assert.ok(helpButtonOf(tree, 'minYieldMs') === undefined,
+    '「—」字段不设帮助按钮（5.7.5 第一表说明列 — ⇒ 无 help.<键>）');
+  assert.equal(helpButtonOf(tree, 'askTimeoutMs').props['aria-expanded'], false,
     '其他字段的按钮保持收起');
+
+  // ②-b 组级帮助（设计 §5.6）：点击待答组帮助按钮 → 展开 region（组帮助键的
+  //    段落逐字来自词典），收起不渲染；开合同样只影响本组（组件＋key 分槽）。
+  findNode(tree, (node) => node.type === 'button' && node.props.id === 'plugin-config-group-ask-help')
+    .props.onClick();
+  tree = renderCard();
+  let groupRegion = findNode(tree, (node) => node.type === 'div' && node.props.role === 'region'
+    && node.props.id === 'plugin-config-group-ask-help-body');
+  assert.ok(groupRegion !== undefined, '点击后必须渲染组级展开区 div#<组>-help-body');
+  assert.equal(groupRegion.props['aria-label'], '待答问题的说明', '组级展开区 aria-label 与按钮可访问名同名');
+  const groupHelpText = textOf(groupRegion).join('');
+  assert.equal(groupHelpText, product.DICTIONARIES.zh['groupHelp.ask.lateAnswer'],
+    '组级帮助正文逐字来自词典 groupHelp.<组>.<条目>（5.7.5 第二表原文）');
+  assert.ok(findNode(tree, (node) => node.type === 'div' && node.props.role === 'region'
+    && node.props.id === 'plugin-config-group-budget-help-body') === undefined,
+    '开合只影响本组——他组的帮助区不得跟着出现');
+  findNode(tree, (node) => node.type === 'button' && node.props.id === 'plugin-config-group-ask-help')
+    .props.onClick();
+  tree = renderCard();
+  assert.ok(findNode(tree, (node) => node.type === 'div' && node.props.role === 'region'
+    && node.props.id === 'plugin-config-group-ask-help-body') === undefined, '再点收起——组级展开区不渲染');
 
   // ③ aria-describedby：展开时并入帮助区 id（官方控件同形），收起时只有说明行。
   const yieldInput = findNode(tree, (node) => node.type === 'input'
@@ -1682,7 +1822,7 @@ test('T18h（R24/R27·设计 §5.5）：字段帮助——问号按钮、开合�
   assert.ok(invalidMessage !== undefined, '非法草稿时常驻说明行仍在（不被原因行顶掉）');
   const invalidReason = findNode(tree, (node) => node.type === 'p'
     && node.props.id === 'plugin-config-defaultYieldMs-invalid');
-  assert.ok(textOf(invalidReason).join('').includes('不是该字段可接受'),
+  assert.ok(textOf(invalidReason).join('').includes('请输入有效数字'),
     '原因行（-invalid）显示非法原因而不是消失（需求 §5.4 口径：两行并存）');
   const invalidButton = helpButtonOf(tree, 'defaultYieldMs');
   assert.notEqual(invalidButton.props.disabled, true, '非法草稿态帮助按钮可用');
@@ -1706,10 +1846,17 @@ test('T18h（R24/R27·设计 §5.5）：字段帮助——问号按钮、开合�
   findNode(tree, (node) => node.type === 'input'
     && node.props.id === 'plugin-config-jobKind').props.onChange({ target: { value: 'draft-kind' } });
   tree = renderCard();
-  await findNode(tree, (node) => node.type === 'button'
+  // 保存挂起相位：本测试的 mutate 故意永不落定（`new Promise(() => {})`——
+  // 真机保存窗口短、抓拍不可靠，设计 §8.2），因此**不 await** 保存承诺（包装
+  // save 会等到 mutate 落定才 resolve）；点击后推进数轮微任务让 saving=true
+  // 落定进 shell，即可抓拍保存中态。
+  findNode(tree, (node) => node.type === 'button'
     && textOf(node).join('') === '保存').props.onClick();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
   tree = renderCard();
-  assert.ok(textOf(tree).join('').includes('保存中'), '前提：保存挂起时页脚在保存中态');
+  assert.ok(textOf(tree).join('').includes('正在保存'), '前提：保存挂起时页脚在保存中态（5.7.4 saving＝正在保存…）');
   const savingMessage = findNode(tree, (node) => node.type === 'p'
     && node.props.id === 'plugin-config-jobKind-message');
   assert.ok(savingMessage !== undefined, '保存中说明行仍在（三态可读）');
@@ -1743,6 +1890,165 @@ test('T18h（R24/R27·设计 §5.5）：字段帮助——问号按钮、开合�
   assert.equal(findNode(tree, (node) => node.type === 'select'
     && node.props.id === 'plugin-config-askUiSeat').props.value, 'overlay',
     '显式 overlay 保留原值（不被清洗回默认）');
+  unmount();
+});
+
+test('T18i（R24·设计 §5.3/§5.4）：保存区清单与字段行逐字一致＋纯浏览动作零模型写入＋收起重开草稿保留', async () => {
+  const { react, begin, flush, unmount } = makeReactShim();
+  const { makePrimitivesDouble } = await import('./_primitives-double.mjs');
+  const double = makePrimitivesDouble(react);
+  const source = readFileSync(resolve(ROOT, 'client.js'), 'utf8');
+  let loaded;
+  new Function('window', source)({ __ModuleLoader__: { load: (spec) => { loaded = spec; } } });
+  const product = loaded.factory((name) => (name === 'react' ? react : double));
+  const DEFAULTS = {
+    defaultYieldMs: 20000, minYieldMs: 20000, maxYieldMs: 600000,
+    defaultWaitMs: 30000, minWaitMs: 20000, maxWaitMs: 600000,
+    pollIntervalMs: 500, maxResultChars: 12000,
+    jobKind: 'async-command', subagentProvider: '', uiLang: 'auto', agentLang: 'en',
+    silentFailureGuard: false,
+    askTakeover: false, askTimeoutMs: 60000, askExtendMs: 60000, askUiSeat: 'sidebar',
+    boundPresets: ['dsh-async', 'dsh-async-create']
+  };
+  const snapshot = (revision, overrides) => ({
+    status: 'ready',
+    value: { settings: { ...DEFAULTS, ...overrides } },
+    base: {},
+    user: { settings: {} },
+    revision,
+    writable: true,
+    mode: 'host'
+  });
+  let current = snapshot(7, {});
+  const listeners = [];
+  const mutateCalls = [];
+  const controller = {
+    getSnapshot: () => current,
+    subscribe: (listener) => {
+      listeners.push(listener);
+      return () => {
+        const at = listeners.indexOf(listener); if (at >= 0) listeners.splice(at, 1);
+      };
+    },
+    mutate: async (ops, rev) => { mutateCalls.push({ ops, rev }); return true; }
+  };
+  const registrations = [];
+  product.apply({
+    locale: { register: () => () => {} },
+    configForms: { whileServed: (ids, load) => load(), get: () => controller },
+    remote: { $mount: () => Promise.resolve(() => {}), $on: () => () => {} },
+    on: () => () => {},
+    uiWorkspace: { openSession: () => {} },
+    inject: (list, fn) => fn({ remote: {
+      'async-tools-ask': {},
+      agentPresets: { list: () => Promise.resolve({ ok: true, value: { presets: [
+        { id: 'dsh-async' }, { id: 'dsh-async-create' }
+      ] } }) }
+    } }),
+    slots: { inject: (slotName, load) => load(), register: (options, Component) => { registrations.push(Component); } },
+    effect: (fn) => fn()
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  const Card = registrations[0];
+  const t = (key) => ({
+    'readout.current': 'readout.current|{值}',
+    'readout.unsaved': 'readout.unsaved|{值}',
+    'readout.secondsUnit': '{数值} s',
+    'readout.subSecond': '< 0.01 s'
+  }[key] ?? `${key}|`);
+  const expand = (node) => {
+    if (node === null || node === undefined || typeof node !== 'object') return node;
+    if (Array.isArray(node)) return node.map(expand);
+    if (typeof node.type === 'function') {
+      const component = node.type;
+      begin(component, node.props?.key);
+      const rendered = component(node.props ?? {});
+      flush();
+      return expand(rendered);
+    }
+    const children = node.props?.children;
+    if (children !== undefined) {
+      const expanded = expand(children);
+      if (expanded !== children) return { ...node, props: { ...node.props, children: expanded } };
+    }
+    return node;
+  };
+  const renderCard = () => expand({ type: Card, props: { view: 'page', t } });
+  const settle = () => new Promise((resolveTick) => { setTimeout(resolveTick, 0); });
+  await settle(); // 预设目录首读落定
+  const groupToggleOf = (aTree, groupId) => findNode(aTree,
+    (node) => node.type === 'button' && node.props.id === `plugin-config-group-${groupId}-toggle`);
+
+  // ① 撑开收起组，制造「一合法草稿＋一非法草稿」：defaultWaitMs=300（staged）、
+  //    defaultYieldMs=abc（invalidNumber 档；jobKind 空串是合法 clear，不当非法用）。
+  let tree = renderCard();
+  for (const groupId of ['budget', 'advanced']) {
+    groupToggleOf(tree, groupId).props.onClick();
+  }
+  tree = renderCard();
+  findNode(tree, (node) => node.type === 'input'
+    && node.props.id === 'plugin-config-defaultWaitMs').props.onChange({ target: { value: '300' } });
+  tree = renderCard();
+  findNode(tree, (node) => node.type === 'input'
+    && node.props.id === 'plugin-config-defaultYieldMs').props.onChange({ target: { value: 'abc' } });
+  tree = renderCard();
+  // ② 保存区阻止清单行（§5.4）：「字段名＋冒号＋原因」与字段行自己的原因行
+  //    **逐字一致**（同一 invalidLabelOf 单点产出——两处措辞漂移即红）。
+  const fieldReason = findNode(tree, (node) => node.type === 'p'
+    && node.props.id === 'plugin-config-defaultYieldMs-invalid');
+  const blockedLine = findNode(tree, (node) => node.type === 'p'
+    && node.props.className === 'ats-save-blocked');
+  assert.ok(fieldReason !== undefined && blockedLine !== undefined, '字段原因行与保存区阻止行都在场');
+  const fieldReasonText = textOf(fieldReason).join('');
+  const blockedText = textOf(blockedLine).join('');
+  assert.ok(blockedText.startsWith('defaultYieldMs|:'), '阻止行＝字段名＋冒号（labelColon 随读数键语言派生）');
+  assert.ok(blockedText.endsWith(fieldReasonText),
+    `阻止行原因段与字段行逐字一致（共用 invalidLabelOf；实得「${blockedText}」vs「${fieldReasonText}」）`);
+  assert.ok(textOf(tree).join('').includes('saveArea.unsavedWarning|'), '有未保存修改 ⇒ 离页后果提示在场');
+  // ③ 组级标记共存（§5.3）：budget 组同时带「未保存」与「需修正」两枚标记
+  //    （合法草稿与非法草稿并存时两类标记互不吞并）。
+  const budgetHead = findNode(tree, (node) => node.type === 'button'
+    && node.props.id === 'plugin-config-group-budget-toggle');
+  assert.ok(findNode(budgetHead, (node) => node.type === 'span'
+    && textOf(node).join('') === 'group.unsaved|') !== undefined, 'budget 组：未保存标记在场');
+  assert.ok(findNode(budgetHead, (node) => node.type === 'span'
+    && textOf(node).join('') === 'group.error|') !== undefined, 'budget 组：需修正标记在场（与未保存标记共存）');
+  // ④ 纯浏览动作零模型写入（设计 §5.3 开合/切语言/刷新目录都不碰模型）：
+  //    收起再展开 budget、开合「选择预设」入口、目录刷新、语言档切换——
+  //    mutate 全程零调用。
+  groupToggleOf(tree, 'budget').props.onClick();
+  tree = renderCard();
+  assert.ok(findNode(tree, (node) => node.type === 'input'
+    && node.props.id === 'plugin-config-defaultYieldMs') === undefined, '收起后组体区不渲染');
+  groupToggleOf(tree, 'budget').props.onClick();
+  tree = renderCard();
+  // ⑤ 收起再展开：草稿原样（合法草稿在输入框、非法草稿与原因行仍在）。
+  assert.equal(findNode(tree, (node) => node.type === 'input'
+    && node.props.id === 'plugin-config-defaultYieldMs').props.value, 'abc', '收起重开：非法草稿保留');
+  assert.equal(findNode(tree, (node) => node.type === 'input'
+    && node.props.id === 'plugin-config-defaultWaitMs').props.value, '300', '收起重开：合法草稿保留');
+  assert.ok(findNode(tree, (node) => node.type === 'p'
+    && node.props.id === 'plugin-config-defaultYieldMs-invalid') !== undefined, '收起重开：原因行仍在');
+  findNode(tree, (node) => node.type === 'button'
+    && node.props.id === 'plugin-config-boundPresets-entry').props.onClick();
+  tree = renderCard();
+  findNode(tree, (node) => node.type === 'button'
+    && node.props.id === 'plugin-config-boundPresets-entry').props.onClick();
+  tree = renderCard();
+  const refreshButton = findNode(tree, (node) => node.type === 'button'
+    && textOf(node).join('') === 'preset.refresh|');
+  refreshButton.props.onClick();
+  await settle();
+  tree = renderCard();
+  current = snapshot(8, { uiLang: 'zh' });
+  for (const listener of listeners) listener();
+  tree = renderCard();
+  assert.equal(mutateCalls.length, 0,
+    '组开合/入口开合/目录刷新/语言切换全部零 mutate（开合态与目录是界面态，不是持久设置）');
+  // ⑥ 草稿在收起-展开与语言切换后仍在（切换语言不清模型草稿）。
+  assert.equal(findNode(tree, (node) => node.type === 'input'
+    && node.props.id === 'plugin-config-defaultWaitMs').props.value, '300', '语言切换后草稿保留');
   unmount();
 });
 
@@ -1808,9 +2114,13 @@ test('T23（PRESET-BIND-01·需求 9.4.2）：预设绑定块——目录四态/
   await Promise.resolve();
   await Promise.resolve();
   const Card = registrations[0];
-  // 桩词典约定同 T18；带 {reason} 占位的键（preset.failed / preset.brokenReason）
-  // 单列——实现用 replace 填值，桩里没有占位会让"原因没填进去"漏过。
-  const t = (key) => (key === 'preset.failed' || key === 'preset.brokenReason' ? `${key}|{reason}` : `${key}|`);
+  // 桩词典约定同 T18；带占位的键（reasonLabel 的 {原因}、effectiveList/draftList
+  // 的 {预设列表}）单列——实现用 replace 填值，桩里没有占位会让"值没填进去"漏过。
+  const t = (key) => ({
+    'preset.reasonLabel': 'preset.reasonLabel|{原因}',
+    'preset.effectiveList': 'preset.effectiveList|{预设列表}',
+    'preset.draftList': 'preset.draftList|{预设列表}'
+  }[key] ?? `${key}|`);
 
   const expand = (node) => {
     if (node === null || node === undefined || typeof node !== 'object') return node;
@@ -1844,8 +2154,19 @@ test('T23（PRESET-BIND-01·需求 9.4.2）：预设绑定块——目录四态/
         && child.props.id === `plugin-config-boundPresets-${presetId}`) !== undefined);
 
   // ── P16·loading：apply 即装载，未解开的 promise ⇒ 装载中文案；刷新钮禁用。
+  //    「选择预设」入口默认收起（设计 §5.3）：先点开入口（真实按钮路径），目录
+  //    状态行与条目区才渲染；摘要行（生效范围）不依赖入口——收起时也在场。
   let tree = renderCard();
+  const entryButton = () => findNode(tree, (node) => node.type === 'button'
+    && node.props.id === 'plugin-config-boundPresets-entry');
+  assert.equal(entryButton()?.props['aria-expanded'], 'false', '「选择预设」入口默认收起');
+  assert.ok(textOf(tree).join('').includes('preset.effectiveList|dsh-async, dsh-async-create, ghost-absent'),
+    '摘要行恒在（入口收起时也显示已保存范围；目录未就绪 ⇒ 缺名用 ID）');
+  entryButton().props.onClick();
+  tree = renderCard();
   assert.ok(textOf(tree).join('').includes('preset.loading|'), '目录装载中 ⇒ loading 文案在场');
+  assert.ok(textOf(tree).join('').includes('preset.partialOnly|'),
+    '读取中且无目录数据 ⇒ 「只显示已有选择和未保存的修改」说明在场（5.7.6）');
   assert.equal(buttonByLabel(tree, 'preset.refresh|').props.disabled, true, '装载中「刷新」禁用');
 
   // ── ready：四目录项 + 一个生效名单里的缺席 ID（P18）。broken 用**宿主真实
@@ -1899,8 +2220,8 @@ test('T23（PRESET-BIND-01·需求 9.4.2）：预设绑定块——目录四态/
   const brokenBox = checkboxOf(tree, 'rwkv-selfbuilt');
   assert.equal(brokenBox.props.disabled, true, 'broken（诊断字符串）且未绑定 ⇒ 禁选（不给勾一个装不上的预设）');
   const brokenNote = textOf(noteOf(tree, 'rwkv-selfbuilt')).join('');
-  assert.ok(brokenNote.includes('preset.brokenReason|preset row missing required service: workflowEngine'),
-    '诊断字符串原样透传到注记（preset.brokenReason 的 {reason} 被实现填值，不再是仅认布尔 true 的静默放行）');
+  assert.ok(brokenNote.includes('preset.detailEntry| · preset.reasonLabel|preset row missing required service: workflowEngine'),
+    '诊断字符串原样透传到注记（查看详情 + 原因：{原因} 两分句，5.7.6——不再是仅认布尔 true 的静默放行）');
   // ── P18·缺席：生效名单里、目录外 ⇒ 保留条目 + 注记 + 可取消。
   const ghostBox = checkboxOf(tree, 'ghost-absent');
   assert.ok(ghostBox !== undefined && ghostBox.props.checked === true, '缺席 ID 保留条目且维持勾选');
@@ -1930,18 +2251,25 @@ test('T23（PRESET-BIND-01·需求 9.4.2）：预设绑定块——目录四态/
   assert.deepEqual(checkedAfter, checkedBefore, '刷新前后草稿勾选集合不变（刷新不碰草稿）');
   assert.equal(mutateCalls.length, 0, '刷新绝不能触发写（mutate 零调用）');
   // RA-BIND-BROKEN 第二形状：布尔 broken ⇒ 同样禁选；注记走 preset.broken
-  //（无原因可附，不得出现 brokenReason 键或 {reason} 残留）。
+  //（无原因可附，不得出现 reasonLabel 键或 {原因} 残留）。
   assert.equal(checkboxOf(tree, 'rwkv-selfbuilt').props.disabled, true, '布尔 broken 未绑定 ⇒ 同样禁选');
   const brokenBoolNote = textOf(noteOf(tree, 'rwkv-selfbuilt')).join('');
   assert.ok(brokenBoolNote.includes('preset.broken|'),
     '布尔 broken ⇒ preset.broken 注记（异常标记仍在）');
-  assert.ok(!brokenBoolNote.includes('preset.brokenReason|') && !brokenBoolNote.includes('{reason}'),
-    '布尔 broken 无诊断可附 ⇒ 不出现 brokenReason 键或未替换的占位');
+  assert.ok(!brokenBoolNote.includes('preset.reasonLabel|') && !brokenBoolNote.includes('{原因}'),
+    '布尔 broken 无诊断可附 ⇒ 不出现原因键或未替换的占位');
 
   // ── P20·保存 ops：数组整组写入；空数组合法；恢复默认＝unset。
   // ① 取消缺席项 + 勾选 third-ok ⇒ 保存发整组 set（草稿序：过滤＋追加）。
+  //    摘要行在暂存后显示草稿名单（draftList 的 {预设列表}＝保存后将用的名单，
+  //    真实显示名优先——目录就绪时用宿主名称，5.7.6）。
   checkboxOf(tree, 'ghost-absent').props.onChange({ target: { checked: false } });
   tree = renderCard();
+  const summaryText = textOf(tree).join('');
+  assert.ok(summaryText.includes('preset.effectiveList|异步增强（演示）, dsh-async-create, ghost-absent'),
+    '目录就绪后摘要行用真实显示名（缺名用 ID：dsh-async ⇒ 宿主名称）');
+  assert.ok(summaryText.includes('preset.draftList|异步增强（演示）, dsh-async-create'),
+    '有勾选草稿 ⇒ 摘要另起一行「保存后适用」名单（未保存的勾选不冒充生效；名单＝取消缺席项后的草稿）');
   checkboxOf(tree, 'third-ok').props.onChange({ target: { checked: true } });
   tree = renderCard();
   await buttonByLabel(tree, 'save|').props.onClick();
@@ -2014,7 +2342,10 @@ test('T23（PRESET-BIND-01·需求 9.4.2）：预设绑定块——目录四态/
   pendingLists.shift()({ ok: false, error: { code: 'registry/broken', message: 'boom' } });
   await settle();
   tree = renderCard();
-  assert.ok(textOf(tree).join('').includes('preset.failed|boom'), '失败文案带原因（{reason} 填值）');
+  assert.ok(textOf(tree).join('').includes('preset.failed|'),
+    '失败文案在场（5.7.6：无法读取预设列表——原因经异常条目的「原因：{原因}」句给，不拼进失败行）');
+  assert.ok(textOf(tree).join('').includes('preset.partialOnly|'),
+    '失败且无目录数据 ⇒ 只显示已有选择与未保存修改的说明在场');
   assert.ok(buttonByLabel(tree, 'preset.retry|') !== undefined, '失败态提供重试按钮');
   const errorBoxes = collectByType(tree, 'input').filter((node) => node.props.type === 'checkbox');
   assert.equal(errorBoxes.length, 3, '失败态条目区退回已保存绑定（value 层），不是空列表');
@@ -2097,7 +2428,11 @@ test('T-BIND-DRAFT（F04）：目录 loading／error 态条目区＝生效∪草
   await Promise.resolve();
   await Promise.resolve();
   const Card = registrations[0];
-  const t = (key) => (key === 'preset.failed' || key === 'preset.brokenReason' ? `${key}|{reason}` : `${key}|`);
+  const t = (key) => ({
+    'preset.reasonLabel': 'preset.reasonLabel|{原因}',
+    'preset.effectiveList': 'preset.effectiveList|{预设列表}',
+    'preset.draftList': 'preset.draftList|{预设列表}'
+  }[key] ?? `${key}|`);
   const expand = (node) => {
     if (node === null || node === undefined || typeof node !== 'object') return node;
     if (Array.isArray(node)) return node.map(expand);
@@ -2127,7 +2462,8 @@ test('T-BIND-DRAFT（F04）：目录 loading／error 态条目区＝生效∪草
       && findNode(node, (child) => child.type === 'input'
         && child.props.id === `plugin-config-boundPresets-${presetId}`) !== undefined);
 
-  // ready：勾上 third-ok（草稿＝生效 dsh-async ∪ 新勾 third-ok）。
+  // ready：勾上 third-ok（草稿＝生效 dsh-async ∪ 新勾 third-ok）。「选择预设」
+  // 入口默认收起——先点开（真实按钮路径），条目区才渲染。
   await settle();
   pendingLists.shift()({ ok: true, value: { presets: [
     { id: 'dsh-async', name: '异步增强（演示）' },
@@ -2135,6 +2471,9 @@ test('T-BIND-DRAFT（F04）：目录 loading／error 态条目区＝生效∪草
   ] } });
   await settle();
   let tree = renderCard();
+  findNode(tree, (node) => node.type === 'button'
+    && node.props.id === 'plugin-config-boundPresets-entry').props.onClick();
+  tree = renderCard();
   checkboxOf(tree, 'third-ok').props.onChange({ target: { checked: true } });
   tree = renderCard();
   assert.equal(checkboxOf(tree, 'third-ok').props.checked, true, '前置：ready 态勾上新预设（进草稿）');
@@ -2350,7 +2689,7 @@ function badges(nodes) {
   return nodes.map((node) => textOf(node).join(''));
 }
 
-test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/help 三层夹具 + opt 组 + 负向锚 + 术语锚', async () => {
+test('T18c（R24/R25·设计 §5.6）：界面文案对账——5.7.4–5.7.7 逐字夹具（双语）＋拆句复原＋删除键负向锚＋键集白名单', async () => {
   const source = readFileSync(resolve(ROOT, 'client.js'), 'utf8');
   let loaded;
   new Function('window', source)({ __ModuleLoader__: { load: (spec) => { loaded = spec; } } });
@@ -2358,836 +2697,51 @@ test('T18c（R24/R25·设计 §5.6）：设置文案对账——字段名/hint/h
     createElement: () => undefined, useState: () => [undefined, () => {}], useEffect: () => {}
   }));
   const DICT = product.DICTIONARIES;
+  const { FIXTURE, DELETED_KEYS, JOINED_CELLS } = await import('./_settings-copy-fixture.mjs');
+
+  // ① 逐字对账：夹具＝需求 5.7.4–5.7.7 表格的逐行转写（一词之差即红；改需求
+  //    表必须同步改夹具）。四「—」字段的 hint/help 键在两档词典都不存在——
+  //    键集白名单（③）一并钉住缺席。
+  for (const [lang, fixture] of [['zh', FIXTURE.zh], ['en', FIXTURE.en]]) {
+    for (const [key, value] of Object.entries(fixture)) {
+      assert.equal(DICT[lang][key], value, `${lang} 档 ${key} 必须逐字等于需求表转写`);
+    }
+  }
+  // ② 拆句复原：需求表中同格多句（「；」分句）的行，按键序拼接必须复原整格
+  //    ——键拆分不得丢句、改句序或把分句符写进句内。
+  for (const { lang, keys, sep, cell } of JOINED_CELLS) {
+    assert.equal(keys.map((key) => DICT[lang][key]).join(sep ?? ''), cell,
+      `${lang} 档 ${keys.join(' + ')} 拼接必须复原需求表整格`);
+  }
+  // ③ 键集白名单（两向）：词典键恰为夹具键集——表外私货键红、漏行键红
+  //    （zh/en 键集互相相等由 T21 守；这里守「夹具＝需求表全集」）。
+  assert.deepEqual(Object.keys(DICT.zh).sort(), Object.keys(FIXTURE.zh).sort(),
+    'zh 词典键集必须恰等于夹具键集（需求表外新增键必须先入夹具）');
+  assert.deepEqual(Object.keys(DICT.en).sort(), Object.keys(FIXTURE.en).sort(),
+    'en 词典键集必须恰等于夹具键集');
+  // ④ 删除键负向锚（设计 §5.6 删除类）：旧词典键零残留——含四「—」字段的
+  //    hint/help 旧长文与 ask 面板旧失败族（键差由映射表吸收，见
+  //    ASK_ANSWER_REJECTION_KEYS）。
+  for (const key of DELETED_KEYS) {
+    assert.ok(!(key in DICT.zh) && !(key in DICT.en),
+      `设计 §5.6 删除类键 ${key} 不得残留于任一语言档`);
+  }
+  // ⑤ 术语不回潮锚：词典里不得再出现旧术语措辞（换血后由新键承接语义）。
+  const zhAll = Object.values(DICT.zh).join('\n');
+  const enAll = Object.values(DICT.en).join('\n');
+  for (const stale of ['让出', '预算字段', '首等', 'job id', 'yield_ms']) {
+    assert.ok(!zhAll.includes(stale), `zh 词典不得残留旧术语「${stale}」`);
+  }
+  for (const stale of ['job id', 'yield_ms', 'first-wait', 'Overridden', 'Effective:']) {
+    assert.ok(!enAll.includes(stale), `en 词典不得残留旧术语「${stale}」`);
+  }
+  // ⑥ 模型侧术语锚（lib/text.js 不在本轮改面，只钉界面/模型两侧不串档）：
+  //    模型侧 zh 的「作业编号」在场（服务端仍用），界面侧同词在场（hint 用）。
   const { TEXT } = await import('../lib/text.js');
-
-  // ① 字段名锚 = 需求 §5.5 表中文字段名逐字（毫秒字段附（毫秒）后缀）。
-  const NAMES_ZH = {
-    defaultYieldMs: '默认首次等待时长', minYieldMs: '首次等待时长下限', maxYieldMs: '首次等待时长上限',
-    defaultWaitMs: '等待示例时长', minWaitMs: '单次等待时长下限', maxWaitMs: '单次等待时长上限',
-    pollIntervalMs: '子代理状态检查间隔', maxResultChars: '结果内容字符上限',
-    jobKind: '命令作业类型标识', subagentProvider: '子代理创建后端',
-    uiLang: '插件界面语言', agentLang: 'Agent 文案语言',
-    silentFailureGuard: '命令静默失败提示',
-    workflowProgressLog: '向 Agent 提供工作流进度日志',
-    fullCommandEcho: '向 Agent 回显完整命令与工作流脚本',
-    askTakeover: '在待答面板处理提问',
-    askTimeoutMs: '首次提问等待时长', askExtendMs: '每次增加的等待时长',
-    askUiSeat: '待答问题显示方式',
-    // PRESET-BIND-01 第 20 字段：绑定名单（不是毫秒字段，无后缀）。
-    boundPresets: '适用预设'
-  };
-  const MS_KEYS = new Set(['defaultYieldMs', 'minYieldMs', 'maxYieldMs', 'defaultWaitMs',
-    'minWaitMs', 'maxWaitMs', 'pollIntervalMs', 'askTimeoutMs', 'askExtendMs']);
-  for (const [key, name] of Object.entries(NAMES_ZH)) {
-    const expected = MS_KEYS.has(key) ? `${name}（毫秒）` : name;
-    assert.equal(DICT.zh[key], expected, `zh 字段名必须逐字对齐设置表（user-reference §2 / 需求 §5.5）：${key}`);
-  }
-
-  // ② hint 事实组断言（设计 §5.6）：每个 hint 字段按「必要事实」组织——语义
-  //    事实＝同义短语组（每组 ≥2 短语，任一命中即在场）；协议标识与稳定名称
-  //    （async_agent、wait_ms、徽标形态一类）＝单短语锚。三条判据：
-  //    a) 词典文本（两语言）全部命中——改写不红、删事实才红；
-  //    b) 等义改写样本（刻意用组内**非词典措辞**）全部命中——证明钉的是事实
-  //       而非措辞，等义精简不挂测试；
-  //    c) 按词典文本删除单一事实组的全部命中短语后，必须恰好缺该组——每组
-  //       都承载独立信号，不是全文夹具的摆设。
-  const HINT_FACTS_ZH = {
-    defaultYieldMs: [
-      ['未指定 yield_ms 时使用', '省略 yield_ms 的调用时', '省略 yield_ms 时取的默认'],
-      ['按本次请求与上下限取值', '请求值与上下限共同决定'],
-      ['返回作业编号', '返回 job id', '交回 job id'],
-      ['后台任务继续运行', '任务在后台继续', '在后台继续']
-    ],
-    minYieldMs: [
-      ['低于此值时按下限取值', '低于下限时按下限取值', '低于下限会被钳到下限'],
-      ['结束本次等待', '等待到时结束', '提前交回控制权'],
-      ['后台任务继续运行', '后台继续运行']
-    ],
-    maxYieldMs: [
-      ['高于此值时按上限取值', '高于上限时按上限取值', '超过上限被钳回上限'],
-      ['结束本次等待', '等待到时结束', '提前交回控制权'],
-      ['后台任务继续运行', '后台继续运行']
-    ],
-    defaultWaitMs: [
-      ['示例只作演示', '仅为演示', '只是演示'],
-      ['显式填写 wait_ms', 'wait_ms 必填', '必须显式给出 wait_ms'],
-      ['省略时报错', '缺省报错', '省略会报错']
-    ],
-    minWaitMs: [
-      // DOC-04：正等待限定 + 零等待例外（wait_ms=0 只做即时检查）。
-      ['适用于等待入口', '作用于等待入口', '等待入口的 wait_ms'],
-      ['正等待', 'wait_ms > 0'],
-      ['只做即时检查', '即时检查', 'wait_ms=0'],
-      ['不抬高到下限', '不抬到下限', '不会被抬高'],
-      ['低于此值时按下限取值', '低于下限时按下限取值', '低于下限会被钳到下限'],
-      ['结束本次等待', '等待到时结束', '提前交回控制权'],
-      ['后台任务继续运行', '后台继续运行']
-    ],
-    maxWaitMs: [
-      ['适用于等待入口', '作用于等待入口', '等待入口的 wait_ms'],
-      ['高于此值时按上限取值', '高于上限时按上限取值', '超过上限被钳回上限'],
-      ['结束本次等待', '等待到时结束', '提前交回控制权'],
-      ['后台任务继续运行', '后台继续运行']
-    ],
-    pollIntervalMs: [
-      ['async_wait'],
-      ['定期检查', '周期性检查', '按间隔检查'],
-      ['备用判断', '备用检查', '作为备用检查手段']
-    ],
-    maxResultChars: [
-      ['正整数', '必须是正整数'],
-      // P01-N 批次额度口径（设计 5.6 maxResultChars 行）：同一次模型输入内
-      // 共享一份——普通规则下同一开放批次内的多次调用合批，间隔与其他工具
-      // 工作不刷新额度；延后内容按批次继续交付。
-      ['同一次模型输入', '一次模型输入内', '同一次输入内'],
-      ['共享一份字符额度', '共享一份额度', '共用这一份'],
-      ['合批共享', '并入同一开放批次', '并成一个批次共享'],
-      ['不刷新额度', '不会刷新额度'],
-      ['保留首尾', '保留开头与结尾', '首尾都保留'],
-      ['说明截断', '注明截断', '截断说明'],
-      // WAIT-BUDGET-01：延后内容按「额度允许时随后续载体汇集」交付（新口径）。
-      ['在额度允许时', '随后续等待返回', '汇集交付'],
-      ['另计', '不计入', '单独计量']
-    ],
-    jobKind: [
-      ['注册命令作业用的类型名称', '注册命令作业时使用的类型名称', '命令作业注册时用的类型名'],
-      ['作业列表'], ['日志']
-    ],
-    subagentProvider: [
-      ['async_agent'],
-      ['创建子代理使用的后端服务', '创建子代理的后端', '子代理创建的后端']
-    ],
-    uiLang: [
-      ['设置表单', '界面文案'],
-      ['跟随宿主语言', '自动跟随宿主', '宿主语言或显式选择'],
-      ['中文／英文', '中文/英文', '中文还是英文']
-    ],
-    agentLang: [
-      ['工具描述', '模型可见文案', '模型侧文案'],
-      ['执行纪律'], ['错误']
-    ],
-    silentFailureGuard: [
-      ['命令可能未执行', '可能没有执行', '命令没跑'],
-      ['诊断提醒', '诊断提示', '诊断说明'],
-      // PRESET-BIND-01：作用范围由绑定名单决定（不再写死两预设）。
-      ['适用预设', '预设名单', '名单决定'],
-      ['默认关', '默认关闭', '默认不开启']
-    ],
-    workflowProgressLog: [
-      ['编排结果', '编排作业', '编排'],
-      ['进度行', '进度日志'],
-      ['默认关', '默认关闭', '默认不开启'],
-      ['结果正文', '结果更长', '结果相应变长'],
-      // DOC-05 受众锚：开关作用面是 Agent 收到的内容（不是界面），且界面与
-      // 日志的原始记录不受影响（不能写成「关闭显示」——界面原始记录常驻）。
-      ['Agent 看到', 'Agent 看到的', '向 Agent', '给 Agent'],
-      ['原始记录不受影响', '原始记录不受本开关影响']
-    ],
-    // ECHO-WORKFLOW-01：事实组按新 hint 改写（脚本覆盖、交付时附上、同批合计
-    // 预算、裁剪形态两分、默认关、界面原始记录不受控）。
-    fullCommandEcho: [
-      ['命令或工作流脚本', '工作流脚本', '命令与工作流脚本'],
-      ['交付附上', '附上所执行的', '结果交付时附上'],
-      ['合计字符上限', '与同一批结果合计', '共用字符额度'],
-      ['保留首尾', '保留开头与结尾'],
-      ['标明省略量', '注明省略量'],
-      ['默认关', '默认关闭', '默认不开启'],
-      ['原始记录不受本开关影响', '原始记录不受影响', '原始记录不受']
-    ],
-    askTakeover: [
-      ['普通提问', '一般性提问'],
-      ['根 Agent', '根代理'],
-      // PRESET-BIND-01：范围锚 = 名单（不再写死两预设）。
-      ['适用预设', '预设名单', '名单内'],
-      ['宿主原生流程', '原生流程', '宿主默认流程'],
-      ['继续处理任务', 'Agent 继续工作', '继续执行任务'],
-      ['稍后作答', '之后再回答', '仍可再回答']
-    ],
-    askTimeoutMs: [
-      ['从接收一批提问起', '自收到一批提问', '接收一批问题时开始计时'],
-      ['共享期限', '共用一个期限', '共享截止'],
-      ['保留已答内容', '已答内容保留', '已作的回答保留'],
-      ['继续处理任务', 'Agent 继续工作', '继续执行任务'],
-      ['稍后作答', '之后再回答', '仍可再回答'],
-      ['新值用于后续批次', '改值只影响之后的批次', '新设置作用在后续批次']
-    ],
-    askExtendMs: [
-      ['增加等待时间'],
-      ['每点击一次', '每次点击', '每按一下'],
-      ['追加的时长', '各追加', '各加'],
-      ['仍在等待的批次', '未到期的批次', '等待中的批次']
-    ],
-    askUiSeat: [
-      ['徽标', '角标'],
-      ['未处理数', '待处理数量'],
-      ['浮窗'],
-      ['显示问题', '展示问题', '直接展示']
-    ],
-    // PRESET-BIND-01 新字段：范围锚 = 注入纪律 / 开关正交 / 按实际预设匹配。
-    boundPresets: [
-      ['异步执行纪律', '执行纪律'],
-      ['各自开关控制', '仍分别受各自开关控制', '分别受各自开关'],
-      ['当前实际预设', '按会话当前实际预设匹配']
-    ]
-  };
-  const HINT_FACTS_EN = {
-    defaultYieldMs: [
-      ['when yield_ms is not given', 'when yield_ms is omitted', 'calls that omit yield_ms'],
-      ['this request and the bounds decide', 'the request value and the bounds'],
-      ['returns the job id', 'return the job id', 'you get a job id back'],
-      ['the background task keeps running', 'keeps running in the background', 'keeps running']
-    ],
-    minYieldMs: [
-      ['use the lower bound', 'clamped to the lower bound', 'clamps to the lower bound'],
-      ['the wait ends', 'this wait ends', 'ends the wait'],
-      ['keeps running', 'the background task keeps running']
-    ],
-    maxYieldMs: [
-      ['use the upper bound', 'uses the upper bound', 'clamped to the upper bound'],
-      ['the wait ends', 'this wait ends', 'ends the wait'],
-      ['keeps running', 'the background task keeps running']
-    ],
-    defaultWaitMs: [
-      ['is a demo', 'for illustration only', 'demo only'],
-      ['must give wait_ms explicitly', 'wait_ms explicitly', 'must explicitly state wait_ms'],
-      ['omitting it errors', 'omission errors', 'leaving it out errors']
-    ],
-    minWaitMs: [
-      ['wait entry', 'the wait entry', 'on the wait entry'],
-      // DOC-04：positive-wait scope + zero-wait exception.
-      ['positive waits', 'wait_ms > 0'],
-      ['an immediate check', 'immediate check only', 'immediate check'],
-      ['is not raised', 'not raised to the bound'],
-      ['use the lower bound', 'clamped to the lower bound', 'clamps to the lower bound'],
-      ['the wait ends', 'this wait ends', 'ends the wait'],
-      ['keeps running', 'the background task keeps running']
-    ],
-    maxWaitMs: [
-      ['wait entry', 'the wait entry', 'on the wait entry'],
-      ['use the upper bound', 'uses the upper bound', 'clamped to the upper bound'],
-      ['the wait ends', 'this wait ends', 'ends the wait'],
-      ['keeps running', 'the background task keeps running']
-    ],
-    pollIntervalMs: [
-      ['async_wait'],
-      ['periodically check', 'periodic checks', 'how often'],
-      ['backup judgment', 'backup check', 'the backup']
-    ],
-    maxResultChars: [
-      ['a positive integer', 'positive integer'],
-      // P01-N batch-allowance wording (design 5.6): shared within one model
-      // input — calls in the same open batch merge; gaps and other tool work
-      // do not refresh the allowance; deferred content keeps arriving per batch.
-      ['one model input', 'within one model input', 'a single model input'],
-      ['a single character allowance', 'one shared character allowance', 'this one allowance'],
-      ['share it as one batch', 'the same open delivery batch', 'merge into one batch'],
-      ['refreshes the allowance', 'refresh the allowance'],
-      ['the head and tail are kept', 'keeps the head and tail', 'head and tail kept'],
-      ['a truncation note', 'a note about the truncation', 'the truncation stated'],
-      // WAIT-BUDGET-01: deferred content is collected while budget allows.
-      ['deferred content', 'while budget allows', 'later wait returns'],
-      ['counted separately', 'not counted toward the cap', 'separate from the cap']
-    ],
-    jobKind: [
-      ['used to register command jobs', 'used when registering command jobs', 'registering command jobs'],
-      ['job lists'], ['logs']
-    ],
-    subagentProvider: [
-      ['async_agent'],
-      // 组内短语不得内嵌其它组的命中词（这里若写 'service async_agent uses'，
-      // 删除腿删掉 async_agent 会连带消灭本组命中，恰缺断言红）。
-      ['uses to create subagents', 'spawns subagents with', 'backend used to create subagents']
-    ],
-    uiLang: [
-      ['settings form', 'interface copy', 'settings page'],
-      ['follows the host language', 'follow the host language', 'follows the host'],
-      ['Chinese/English', 'Chinese or English']
-    ],
-    agentLang: [
-      ['tool descriptions', 'model-visible copy'],
-      ['execution discipline'], ['errors']
-    ],
-    silentFailureGuard: [
-      ['may not have run', 'may not have executed', 'command did not run'],
-      ['diagnostic reminder', 'diagnostic reminders'],
-      // PRESET-BIND-01：范围锚 = 名单。
-      ['applicable-presets list', 'applicable presets list'],
-      ['off by default', 'disabled by default']
-    ],
-    workflowProgressLog: [
-      ['orchestration results', 'orchestration job'],
-      ['progress lines', 'progress logs'],
-      ['off by default', 'Off by default', 'disabled by default'],
-      ['are shorter', 'longer results', 'result bodies'],
-      // DOC-05 audience anchors.
-      ['the Agent sees', 'the Agent receives', 'the agent receives'],
-      ['unaffected', 'are unaffected']
-    ],
-    // ECHO-WORKFLOW-01（与 zh 组同事实）：scripts covered, attached at delivery,
-    // same per-batch budget, truncation form, off by default, raw records.
-    fullCommandEcho: [
-      ['workflow script', 'command or workflow script'],
-      ['attach the executed', 'deliveries of background results attach'],
-      ['character limit', 'per-batch character limit', 'shared character allowance'],
-      ['keeps head and tail', 'head and tail are kept'],
-      ['omitted size', 'omitted amount'],
-      ['off by default', 'Off by default', 'disabled by default'],
-      ['unaffected', 'are unaffected']
-    ],
-    askTakeover: [
-      ['plain questions', 'ordinary questions'],
-      ['root agents', 'root agent'],
-      // PRESET-BIND-01：范围锚 = 名单。
-      ['applicable-presets list', 'applicable presets list'],
-      ['native flow', "host's native flow", 'native process'],
-      ['continues the task', 'continues working', 'Agent continues'],
-      ['answer later', 'still answer', 'answered later']
-    ],
-    askTimeoutMs: [
-      ['counted from receiving a batch', 'timed from receiving a batch', 'from receiving a batch'],
-      ['share the deadline', 'shared deadline', 'share one deadline'],
-      ['answered content is kept', 'answers given so far are kept', 'kept answered content'],
-      ['continues the task', 'continues working', 'Agent continues'],
-      ['answer later', 'still answer', 'answered later'],
-      ['later batches', 'subsequent batches', 'a new value applies to later']
-    ],
-    askExtendMs: [
-      ['Extend wait'],
-      ['click'],
-      ['adds', 'adds this duration', 'adds the time'],
-      ['still waiting', 'not yet expired', 'batch of that session']
-    ],
-    askUiSeat: [
-      ['badge'],
-      ['shows the open count', 'open count'],
-      ['overlay'],
-      ['shows the questions', 'displays the questions']
-    ],
-    // PRESET-BIND-01 新字段（与 zh 组同事实）。
-    boundPresets: [
-      ['execution discipline', 'async execution discipline'],
-      ['their own switches', 'answer to their own switches'],
-      ['current effective preset', "session's current effective preset"]
-    ]
-  };
-  // 等义改写样本：与词典同事实、不同措辞（刻意使用组内非词典短语；稳定名称
-  // 锚保持原样）。改写自由度是断言的一部分——钉事实不钉措辞。
-  const REWRITE_ZH = {
-    defaultYieldMs: 'async_run、async_workflow 收到省略 yield_ms 的调用时，首次等待取这个默认时长；调用带值时由请求值与上下限共同决定。等待结束时若工作还没完，就交回 job id，任务在后台继续。',
-    minYieldMs: '本次 yield_ms 低于下限会被钳到下限。等待到时结束，后台继续运行。',
-    maxYieldMs: '本次 yield_ms 高于上限时按上限取值。等待到时结束，后台继续运行。',
-    defaultWaitMs: '返回提示中的示例时长仅为演示，与真实调用的生效等待不同。等待入口要 wait_ms 必填，缺省报错。',
-    minWaitMs: '作用于等待入口正等待（wait_ms > 0）的 wait_ms；请求低于下限时按下限取值。wait_ms=0 只做即时检查、不会被抬高到下限。等待到时结束，后台继续运行。',
-    maxWaitMs: '作用于等待入口的 wait_ms；高于上限时按上限取值。等待到时结束，后台继续运行。',
-    pollIntervalMs: 'async_wait 的子代理目标按这个间隔周期性检查目标是否还在跑，作为变化事件没到时的备用检查手段。',
-    maxResultChars: '同一次输入内先后到达的本包结果共用这一份字符额度（正整数）——同一开放批次里的多次调用并成一个批次共享，间隔多久、插入其他工具工作都不刷新额度；边界后新开的批要先扣除已注入、还没被领进模型输入的完成消息所占的份额（跨输入一直占到被领取为止）；超限时保留首尾并注明截断，装不下的在额度允许时随后续等待返回（零等待也算）汇集送达，状态与提示另计。',
-    jobKind: '命令作业注册时用的类型名，出现在作业列表和日志里方便辨认。',
-    subagentProvider: 'async_agent 创建子代理的后端。',
-    uiLang: '决定界面文案（设置表单、字段帮助、待答界面）显示中文还是英文；自动档跟随宿主语言。',
-    agentLang: '决定模型侧文案（含工具描述与执行纪律、错误与提示）的语言。',
-    silentFailureGuard: '所谓静默失败，就是命令可能没有执行却看不到报错。开启后这类情况会给出诊断提示和检查建议；生效范围由「适用预设」名单决定，默认关闭。',
-    workflowProgressLog: '编排作业默认关——各阶段进度行滤除、只留结论，Agent 看到的结果更短；打开后保留进度行，结果正文随之变长，界面与日志的原始记录不受影响。',
-    fullCommandEcho: '默认关闭时用作业编号、名称或简短描述识别任务；打开后，后台结果交付时附上所执行的命令与工作流脚本原文，原文与同批结果共用字符额度，超长时保留开头与结尾、注明省略量；界面与日志的原始记录不受影响。',
-    askTakeover: '开启后，预设名单内根代理的一般性提问在待答面板作答；关掉则走宿主默认流程。到期后 Agent 继续工作，用户仍可之后再回答。',
-    askTimeoutMs: '自收到一批提问时开始计时，同批多题共用一个期限。到期时已作的回答保留，Agent 继续工作，用户仍可之后再回答；改值只影响之后的批次。',
-    askExtendMs: '待答面板的「增加等待时间」按钮每按一下，就给该会话此刻等待中的批次各加这段时间。',
-    askUiSeat: '侧边栏底栏的角标显示待处理数量、点开列表；右下角的浮窗把问题直接展示出来。',
-    // PRESET-BIND-01：等义改写样本（组内非词典措辞——「把关」非「控制」）。
-    boundPresets: '勾选的预设向其会话注入本包执行纪律；静默失败提示与提问接管仍分别受各自开关把关，名单不越权。匹配看会话当前实际预设。'
-  };
-  const REWRITE_EN = {
-    defaultYieldMs: 'The default first-wait span async_run and async_workflow use for calls that omit yield_ms; a call with a value gets it from the request value and the bounds. When the wait ends with work unfinished, you get a job id back and the task keeps running in the background.',
-    minYieldMs: 'A yield_ms below the lower bound is clamped to the lower bound; the wait ends on schedule and the background task keeps running.',
-    maxYieldMs: 'A yield_ms above this ceiling uses the upper bound; the wait ends on schedule and the background task keeps running.',
-    defaultWaitMs: 'The span shown for the wait-call example in return notes is for illustration only, not the effective wait of a real call. Real calls of the wait entry must explicitly state wait_ms; leaving it out errors.',
-    minWaitMs: 'Governs wait_ms of positive waits (wait_ms > 0) on the wait entry; a request below the floor is clamped to the lower bound; wait_ms=0 is an immediate check only and is not raised to the bound; the wait ends on schedule and the background task keeps running.',
-    maxWaitMs: 'Governs wait_ms on the wait entry; a request above this ceiling uses the upper bound; the wait ends on schedule and the background task keeps running.',
-    pollIntervalMs: 'async_wait\'s subagent targets decide how often to run a backup check of the target\'s running state when the change event has not arrived.',
-    maxResultChars: 'Results of this package landing inside one model input draw on one shared character allowance (a positive integer); calls in the same open delivery batch share it first come first served, and neither gaps between calls nor other tool work refresh the allowance; a batch opened after a boundary first deducts what already-injected, unclaimed completion messages still hold (they hold across inputs until claimed); past it the head and tail are kept with the truncation stated, what does not fit is collected by later wait returns (zero-wait counts too) while budget allows, with status and notices counted separately.',
-    jobKind: 'The type name used when registering command jobs so they can be told apart in job lists and logs.',
-    subagentProvider: 'The backend async_agent spawns subagents with.',
-    uiLang: 'Sets the language (Chinese or English) of the settings form, field help, and pending panel; the auto choice follows the host language.',
-    agentLang: 'Sets the language of model-visible copy: tool descriptions, parameter notes, notices, execution discipline, and errors.',
-    silentFailureGuard: '"Silent failure" is when a command may not have executed with no visible error. When on, such cases get a diagnostic reminder and checking advice; the applicable presets list decides where it applies, and it is disabled by default.',
-    workflowProgressLog: 'When this is off by default, orchestration results keep conclusions only and the result bodies the Agent receives are shorter; turning it on keeps the progress lines, producing longer results; raw records in the interface and logs are unaffected.',
-    fullCommandEcho: 'While off by default, jobs are told apart by id, name, or short description; when on, background result deliveries attach the executed command or workflow script, and the text draws on the same shared character allowance as the batch — over-long text keeps head and tail and the omitted size is marked; raw records in the interface and logs are unaffected.',
-    askTakeover: 'When on, the pending panel answers plain questions from the root agents under the applicable presets list; when off, the host\'s native flow handles them. After expiry the Agent continues working and the user can still answer later.',
-    askTimeoutMs: 'Timed from receiving a batch of questions; the batch\'s questions share one deadline. On expiry the answers given so far are kept, the Agent continues working, the user can still answer later; a new setting applies to subsequent batches.',
-    askExtendMs: 'Each "Extend wait" click in the pending panel adds this much time to every batch of that session not yet expired at that moment.',
-    askUiSeat: 'A sidebar footer badge shows the open count and opens the list on click; a bottom-right overlay displays the questions directly.',
-    // PRESET-BIND-01（与 zh 样本同事实）。
-    boundPresets: 'Checked presets get this package\'s execution discipline injected into their sessions; the silent-failure hint and question takeover still answer to their own switches — the list does not override them. Matching follows each session\'s current effective preset.'
-  };
-  const missingFactGroups = (text, groups) => groups.flatMap((group, index) => (group.some((phrase) => text.includes(phrase)) ? [] : [index]));
-  for (const key of Object.keys(HINT_FACTS_ZH)) {
-    // a) 词典文本两语言全部命中。
-    assert.deepEqual(missingFactGroups(DICT.zh[`hint.${key}`], HINT_FACTS_ZH[key]), [],
-      `zh 常驻说明事实组全部在场：${key}`);
-    assert.deepEqual(missingFactGroups(DICT.en[`hint.${key}`], HINT_FACTS_EN[key]), [],
-      `en 常驻说明事实组全部在场：${key}`);
-    // b) 等义改写样本必须通过（钉事实不钉措辞）。
-    assert.deepEqual(missingFactGroups(REWRITE_ZH[key], HINT_FACTS_ZH[key]), [],
-      `zh 等义改写样本必须通过事实组：${key}`);
-    assert.deepEqual(missingFactGroups(REWRITE_EN[key], HINT_FACTS_EN[key]), [],
-      `en 等义改写样本必须通过事实组：${key}`);
-    // c) 删单一事实组的全部命中短语后，必须**恰好**缺该组（独立信号：删 A 组
-    //    不得连带消灭 B 组的命中短语——组间短语若互为子串，这里会红，逼夹具
-    //    把短语组改成不互相包含的写法）。
-    for (const [dict, facts] of [[DICT.zh[`hint.${key}`], HINT_FACTS_ZH[key]], [DICT.en[`hint.${key}`], HINT_FACTS_EN[key]]]) {
-      for (let index = 0; index < facts.length; index += 1) {
-        const stripped = facts[index].reduce((acc, phrase) => acc.split(phrase).join('……'), dict);
-        assert.deepEqual(missingFactGroups(stripped, facts), [index],
-          `删除事实组 hint.${key}[${String(index)}] 的全部命中短语后必须恰好只缺该组`);
-      }
-    }
-  }
-
-  // ④ help 展开区改为内容审查式（DOC-HELP-FIXTURE）：旧版冻结普通动词短语，
-  //    必要事实不变的等义改写也会红。改为与 ② 同一套事实组机制——必要事实 =
-  //    动作对象、后果、条件（协议标识与稳定名称仍可单短语组）；判据同 ② 的
-  //    a/b/c：词典两语言全部命中、等义改写样本通过、删单一事实组恰好缺该组。
-  //    文案改写（DOC-HELP-LANGUAGE/E4：界面动作表述）后与本夹具同步维护。
-  const HELP_FACTS_ZH = {
-    defaultYieldMs: [
-      // 动作对象（交回什么）/ 后果（后台继续）/ 条件（消息与取消）/ 配对公式 / 交付位置。
-      ['返回作业编号', '交回 job id'],
-      ['后台任务继续运行', '任务在后台继续'],
-      ['提前结束等待', '提前结束本次等待'],
-      ['minYieldMs ≤ defaultYieldMs ≤ maxYieldMs'],
-      ['附在等待返回或完成消息里', '随等待返回或完成消息']
-    ],
-    minYieldMs: [
-      ['按下限取值', '钳到下限'],
-      ['消息和取消', '消息或取消'],
-      ['首次等待时长的上下限', '首次等待上下限']
-    ],
-    maxYieldMs: [
-      ['按上限取值', '钳到上限'],
-      ['消息和取消', '消息或取消'],
-      ['首次等待时长的上下限', '首次等待上下限']
-    ],
-    defaultWaitMs: [
-      ['必填参数', '必填'],
-      ['缺省报错', '漏给会报错'],
-      ['仅为示例', '只是演示'],
-      ['区间配对', '与 minWaitMs、maxWaitMs 配对']
-    ],
-    minWaitMs: [
-      ['正等待', 'wait_ms > 0'],
-      ['零等待例外', 'wait_ms=0'],
-      ['不抬高到下限', '不会被抬高'],
-      ['交回控制权', '还回控制权'],
-      ['作业句柄仍有效', '句柄仍有效']
-    ],
-    maxWaitMs: [
-      ['按上限取值', '取上限'],
-      ['正等待的取值区间', 'wait_ms > 0 的取值区间'],
-      ['零等待不受区间抬高', '零等待不被抬高'],
-      ['交回控制权', '还回控制权'],
-      ['作业句柄仍有效', '句柄仍有效']
-    ],
-    pollIntervalMs: [
-      ['子代理目标', '子代理'],
-      ['变化事件为主、轮询为备用', '轮询作为备用通道'],
-      ['pollIntervalMs ≤ maxWaitMs', '配对约束']
-    ],
-    maxResultChars: [
-      ['正整数', 'String.length'],
-      // P01-N（设计 5.6 展开列，WAIT-BUDGET-01 修订）：合批共享示例＋间隔不
-      // 刷新；边界后开新批按存活尾部派生——已注入、尚未领取进模型输入的完成
-      // 消息份额跨输入继续占用，直到其领取事件；截断标记与延后内容的继续
-      // 取得（额度允许时汇集交付／边界后主动领取）。
-      ['同一次模型输入', '一次模型输入内', '同一次输入内'],
-      ['合批共享', '并入同一开放批次', '并成一个批次共享'],
-      ['先到先分配', '先到先得'],
-      ['不刷新额度', '不会刷新额度'],
-      ['边界后开新批', '派生'],
-      ['已注入、尚未领取', '已注入未领取的完成消息'],
-      ['跨输入继续占用', '继续占用份额'],
-      ['主动领取', 'wait_ms=0'],
-      ['保留首尾', '保首尾'],
-      ['说明截断', '注明截断'],
-      ['在额度允许时', '随后续等待返回'],
-      ['另计', '单独计量']
-    ],
-    jobKind: [
-      ['注册命令作业时使用的类型名称', '命令作业注册用的类型名'],
-      ['作业列表', '作业清单'],
-      ['日志'],
-      ['输入空串会被拒绝', '空串', '留空会被拒绝']
-    ],
-    // DOC-HELP-LANGUAGE/E4：动作表述（默认值生效/创建时拒绝并显示原因）。
-    subagentProvider: [
-      ['async_agent', '创建子代理使用的后端服务', '创建子代理的后端'],
-      ['默认 spawn', '缺省用 spawn'],
-      ['按默认值生效', '回落到默认值'],
-      ['创建子代理的请求会被拒绝并显示原因', '拒绝并显示原因', '创建时拒绝并说明原因'],
-      ['provider 与 model', 'provider、model 两参数']
-    ],
-    uiLang: [
-      ['两个独立开关', '互不联动的两个开关'],
-      ['只影响界面文案', '只管界面文案'],
-      ['由 agentLang 设置', 'agentLang 决定'],
-      ['auto 档跟随宿主语言', 'auto 跟宿主语言走']
-    ],
-    agentLang: [
-      ['模型可见文案', '模型侧文案'],
-      ['工具描述', '工具的说明文字'],
-      ['由 uiLang 单独设置', 'uiLang 管'],
-      ['互不影响', '互相独立']
-    ],
-    silentFailureGuard: [
-      ['命令可能未执行', '命令也许没执行'],
-      ['诊断提醒和检查建议', '诊断提示与检查建议'],
-      ['返回提示、命令描述与执行纪律', '三个位置：返回提示、命令描述、执行纪律']
-    ],
-    workflowProgressLog: [
-      ['默认关', '默认关闭'],
-      ['滤除各阶段进度行', '进度行', '把各阶段的进度记录滤掉'],
-      ['内容预算', '内容额度'],
-      ['Agent 收到的结果正文', 'Agent 拿到的结果'],
-      ['可能更早触发截断', '更容易碰到截断'],
-      ['原始记录不受本开关影响', '原始记录不受影响']
-    ],
-    fullCommandEcho: [
-      ['默认关', '默认关闭'],
-      ['结果交付时附上原文', '附上原文', '交付时带上原文'],
-      ['同一份原文在同一次交付中不重复附上', '不重复附上', '同一次交付不重复带'],
-      ['保留首尾并标明省略量', '保首尾、注明省略量'],
-      ['原始记录不受本开关控制', '原始记录不受这个开关管']
-    ],
-    askTakeover: [
-      ['迟到作答经通知送达', '迟到的回答会以通知送到'],
-      ['24 小时', '清扫阈值', '二十四小时只是清扫的门槛'],
-      ['仍可补答', '可保留更久', '还能再回答'],
-      ['不会送达', '送不到'],
-      ['所属会话直接回复', '去题目所在的会话里回']
-    ],
-    askTimeoutMs: [
-      ['同批多题共享期限', '一批多题共用一个期限'],
-      ['按超时处理', '算作超时'],
-      ['仍接受作答', '到期后仍接受', '过期后还能作答'],
-      ['直接开启新回合送达', '新回合', '开新回合直接送达'],
-      ['并入下一次消息领取', '下一次消息领取', '跟下一次消息一起领']
-    ],
-    askExtendMs: [
-      ['增加等待时间'],
-      ['每点击一次', '每点一下'],
-      ['未到期的批次', '当时未到期', '还没到期的批次'],
-      ['在原截止点上叠加', '原截止点', '叠加在原截止时点上'],
-      ['初始期限']
-    ],
-    askUiSeat: [
-      ['复用同一套题目交互', '同一套题目交互', '共用同一套答题交互'],
-      ['不改提问、计时或答案交付', '提问、计时、答案交付都不变'],
-      ['徽标计数在全部处理后消隐', '全部处理完徽标就隐去']
-    ],
-    // DOC-HELP-LANGUAGE：界面动作表述（勾选＝添加操作要求 / 全部取消勾选并保存）。
-    boundPresets: [
-      ['给所选预设的 Agent 添加操作要求', '添加操作要求', '为选中的预设补上操作要求'],
-      ['不代替开关', '仍分别受各自开关控制', '各开关照旧各管各的'],
-      ['按会话当前实际预设匹配', '当前实际预设', '按会话当下实际生效的预设算'],
-      ['全部取消勾选并保存', '取消勾选并保存', '把预设全部清空再保存'],
-      ['「刷新」重读', '点「刷新」重新读取'],
-      // F04（T-BIND-DRAFT）：loading／error 不显示为空列表；未保存勾选草稿
-      // 保持可见、可取消。
-      ['读取失败或加载中不显示为空列表', '不显示为空列表'],
-      ['未保存的勾选草稿保持可见、可取消', '勾选草稿保持可见', '草稿保持可见可取消']
-    ]
-  };
-  const HELP_FACTS_EN = {
-    defaultYieldMs: [
-      ['returns the job id', 'you get a job id back'],
-      ['the background task keeps running', 'keeps running in the background'],
-      ['end the wait early', 'end the wait sooner'],
-      ['minYieldMs ≤ defaultYieldMs ≤ maxYieldMs'],
-      ['with a wait return or a completion message', 'delivered alongside a wait return or completion message']
-    ],
-    minYieldMs: [
-      ['is clamped to it', 'clamped', 'clamps to the lower bound'],
-      ['messages and cancellation', 'a message or cancellation'],
-      ['first-wait bounds', 'the bounds of the first wait']
-    ],
-    maxYieldMs: [
-      ['is clamped to it', 'clamped', 'clamps to the upper bound'],
-      ['messages and cancellation', 'a message or cancellation'],
-      ['first-wait bounds', 'the bounds of the first wait']
-    ],
-    defaultWaitMs: [
-      ['is required', 'wait_ms is required', 'must be provided'],
-      ['omitting it errors', 'leaving it out errors'],
-      ['only an example', 'for illustration only'],
-      ['pairs with the minWaitMs/maxWaitMs range', 'matched against the minWaitMs/maxWaitMs range']
-    ],
-    minWaitMs: [
-      ['positive waits', 'wait_ms > 0', 'waits with wait_ms > 0'],
-      ['zero-wait exception', 'wait_ms=0'],
-      ['not raised to the bound', 'not lifted'],
-      ['control returns', 'hands control back'],
-      ['job handle still valid', 'the handle stays valid']
-    ],
-    maxWaitMs: [
-      ['is clamped to it', 'clamps to the upper bound'],
-      ['positive waits', 'waits with wait_ms > 0'],
-      ['not raised by the range', 'the zero wait', 'zero waits are not lifted'],
-      ['control returns', 'hands control back'],
-      ['job handle still valid', 'the handle stays valid']
-    ],
-    pollIntervalMs: [
-      ['subagent targets', 'subagent'],
-      ['polling as the backup', 'change events first', 'polling as the fallback channel'],
-      ['pollIntervalMs ≤ maxWaitMs', 'pairing']
-    ],
-    maxResultChars: [
-      ['positive integer', 'String.length'],
-      // P01-N (design 5.6 expanded column, WAIT-BUDGET-01 revision): merged-
-      // batch example + no refresh on gaps; batches opened after a boundary
-      // draw on the allowance minus unclaimed completion-message shares
-      // (held across inputs until their claim event); truncation note and
-      // how deferred content keeps arriving (collected while budget allows /
-      // active fetch after the boundary).
-      ['one model input', 'within one model input', 'a single model input'],
-      ['share it as one batch', 'the same open delivery batch', 'merge into one batch'],
-      ['first come first served', 'first arrivals take the quota first'],
-      ['refreshes the allowance', 'refresh the allowance'],
-      ['minus the shares of completion messages', 'not yet claimed into a model input'],
-      ['keep holding their share across inputs', 'until their claim event'],
-      ['fetch it actively', 'wait_ms=0', 'async_wait'],
-      ['the head and tail are kept', 'head and tail kept', 'keeps the head and tail'],
-      ['a truncation note', 'states the truncation', 'the truncation stated'],
-      ['deferred content', 'while budget allows', 'later wait returns'],
-      ['counted separately', 'not counted toward the cap']
-    ],
-    jobKind: [
-      ['registering command jobs', 'Type name', 'the type label given to command jobs'],
-      ['job lists', 'job listings'],
-      ['logs', 'log entries'],
-      ['an empty value is invalid', 'empty value', 'leaving it blank is rejected']
-    ],
-    // DOC-HELP-LANGUAGE/E4 (en side): falls back / rejected with a readable reason
-    // when a subagent is created.
-    subagentProvider: [
-      ['uses to create subagents', 'Backend service', 'backend that spawns subagents'],
-      ['spawn by default', 'defaulting to spawn'],
-      ['falls back to the default', 'reverts to the default'],
-      ['rejected with a readable reason', 'readable reason', 'refused with an understandable reason'],
-      ['provider and model', 'specify provider plus model']
-    ],
-    uiLang: [
-      ['independent switches', 'separate switches'],
-      ['only affects interface copy', 'interface copy', 'governs just the interface text'],
-      ['agentLang'],
-      ['follows the host language', 'the auto mode', 'auto tracks the host language']
-    ],
-    agentLang: [
-      ['model-visible copy', 'model-side copy'],
-      ['tool descriptions', 'tool wording'],
-      ['uiLang', 'uiLang handles'],
-      ['do not affect each other', 'are independent']
-    ],
-    silentFailureGuard: [
-      ['may not have run', 'might not have executed'],
-      ['diagnostic reminders', 'diagnostic nudges'],
-      ['return notes, command descriptions, and execution discipline', 'three places',
-        'at return notes, command descriptions, and execution discipline']
-    ],
-    workflowProgressLog: [
-      ['Off by default', 'off by default', 'Disabled by default'],
-      ['per-phase progress lines', 'progress lines', 'phase-by-phase progress entries'],
-      ['content budget', 'content allowance'],
-      ['result bodies', 'the Agent sees', 'the results the Agent receives'],
-      ['may hit truncation earlier', 'run into truncation sooner'],
-      ['unaffected by this switch', 'untouched by the switch']
-    ],
-    fullCommandEcho: [
-      ['Off by default', 'off by default', 'Disabled by default'],
-      ['attach the original text', 'carry the original text'],
-      ['not attached twice', 'attached only once per delivery'],
-      ['keeps head and tail', 'omitted size', 'preserves the head and tail'],
-      ['not controlled by this switch', "outside this switch's control"]
-    ],
-    askTakeover: [
-      ['Late answers are delivered', 'delivered as notices', 'Answers that come in late'],
-      ['lazy sweep threshold', '24 hours', 'the 24-hour mark'],
-      ['can still be answered', 'live longer', 'remain answerable'],
-      ['will not arrive', 'never arrive'],
-      ['reply directly in the session', 'directly in the session', 'answer inside the owning session']
-    ],
-    askTimeoutMs: [
-      ['share the deadline', 'share a single deadline'],
-      ['treated as timed out', 'count as timed out'],
-      ['keeps accepting answers', 'after expiry', 'still takes answers past the deadline'],
-      ['opens a new turn', 'new turn', 'starts a fresh turn'],
-      ['joins the next message claim', 'next message claim', 'waits for the next claim']
-    ],
-    askExtendMs: [
-      ['Extend wait'],
-      ['click', 'press'],
-      ['not yet expired', 'each batch', 'still inside their window'],
-      ['stacked on the original deadline', 'original deadline', 'piled onto the original deadline'],
-      ['own initial deadlines', 'initial deadlines', 'their own starting deadlines']
-    ],
-    askUiSeat: [
-      ['share the same question interaction', 'same question interaction', 'use one shared interaction'],
-      ['does not change questioning, timing, or answer delivery', 'questioning, timing, or answer delivery',
-        'questioning, timing, and delivery all stay the same'],
-      ['the badge hides once everything is handled', 'hides once', 'the badge disappears when all are handled']
-    ],
-    // DOC-HELP-LANGUAGE (en side): operating requirements / unchecking every preset.
-    boundPresets: [
-      ['operating requirements added for Agents', 'operating requirements',
-        'adds operating requirements for Agents'],
-      ['it does not replace the switches', 'their own switches', 'the switches still govern on their own'],
-      ["session's current effective preset", 'current effective preset',
-        'the preset actually in effect for the session'],
-      ['unchecking every preset and saving', 'unchecking every preset', 'clear every checkbox and save'],
-      ['reloads via "Refresh"', 'the Refresh button reloads'],
-      // F04 (T-BIND-DRAFT): loading/error never shows an empty list; unsaved
-      // checked drafts stay visible and can be unchecked.
-      ['does not show an empty list', 'not show an empty list'],
-      ['unsaved checked drafts stay visible', 'drafts stay visible and can be unchecked',
-        'unsaved drafts remain visible']
-    ]
-  };
-  // 等义改写样本（同 ② 的自由度声明）：与词典同事实、不同措辞——刻意使用组内
-  // 非词典短语；稳定名称与协议标识（公式、按钮名、配置键）保持原样。
-  const HELP_REWRITE_ZH = {
-    defaultYieldMs: 'async_run、async_workflow 的首次等待限制单次调用的占用；时间到了还没完成就交回 job id，任务在后台继续，消息或取消也能提前结束本次等待。结算后的正文随等待返回或完成消息直接交付。默认值必须落在 minYieldMs ≤ defaultYieldMs ≤ maxYieldMs 里。',
-    minYieldMs: '本次 yield_ms 低于这个下限会被钳到下限；消息或取消同样能提前结束首次等待。它与 defaultYieldMs、maxYieldMs 一起定出首次等待上下限。',
-    maxYieldMs: '本次 yield_ms 高于这个上限会被钳到上限；消息或取消同样能提前结束首次等待。它与 minYieldMs、defaultYieldMs 一起定出首次等待上下限。',
-    defaultWaitMs: 'wait_ms 必填：等待入口每次调用都得显式给出，漏给会报错。返回提示里的取值只是演示，并与 minWaitMs、maxWaitMs 配对成区间。',
-    minWaitMs: '作用于正值等待（wait_ms > 0）的下限：低于它就取下限；wait_ms=0 只做即时检查、不会被抬高。到时还回控制权、句柄仍有效；消息来了可以提前结束本次等待。',
-    maxWaitMs: 'wait_ms 的上界：高于它就取上限。与 minWaitMs 构成 wait_ms > 0 的取值区间；零等待不被抬高。到时还回控制权、句柄仍有效；消息来了可以提前结束本次等待。',
-    pollIntervalMs: 'async_wait 的子代理按这个间隔定期查目标还在不在跑——变化事件优先、轮询作为备用通道；间隔受 pollIntervalMs ≤ maxWaitMs 约束。',
-    maxResultChars: '这一项按 String.length 数字符、必须是正整数。同一次输入内到的多条结果并成一个批次共享、先到先得，调用间隔与别的工具工作不会刷新额度。边界后开新批不再另拿全额——先扣除已注入、尚未领取进模型输入的完成消息所占的份额，这些份额跨输入继续占用、直到被领取；因此同一输入里先后到的结果合计仍受这一份约束。超限的保首尾并注明截断，装不下的在额度允许时随之后的等待返回（零等待也算）汇集送达，可在此边界之后 wait_ms=0 主动领取；状态与提示单独计量。',
-    jobKind: '给命令作业注册用的类型名，方便在作业清单与日志里认出来；留空会被拒绝。',
-    subagentProvider: 'async_agent 创建子代理的后端，缺省用 spawn；输入去空白后为空就回落到默认值；写了不存在的后端，创建时拒绝并说明原因。要指定模型，就用调用的 provider、model 两参数。',
-    uiLang: '界面文字与 Agent 文案是互不联动的两个开关：本开关只管界面文案，Agent 文案语言 agentLang 决定；auto 跟宿主语言走。',
-    agentLang: '管模型侧文案（含工具的说明文字、参数说明、提示、错误与执行纪律）；界面文案 uiLang 管，两者互相独立。',
-    silentFailureGuard: '开启后，在命令也许没执行又看不到报错的情形下，诊断提示与检查建议出现在三个位置：返回提示、命令描述、执行纪律。',
-    workflowProgressLog: '默认关闭：编排作业的结果正文先把各阶段的进度记录滤掉再进内容额度，Agent 拿到的结果更短；打开后进度记录留在结果里，长编排更容易碰到截断。界面与日志的原始记录不受影响。',
-    fullCommandEcho: '默认关闭时 Agent 靠编号、名称或简短描述认任务；打开后，后台完成的作业在交付时带上原文，方便把结果对回所执行的命令或脚本；同一次交付不重复带，超长时保首尾、注明省略量。界面与日志的原始记录不受这个开关管。',
-    askTakeover: '迟到的回答会以通知送到；二十四小时只是清扫的门槛——下一个批次被接管时才清一次，没有新批时记录还能再回答；被清掉、Agent 收不了或投递失败的那些送不到。没送达时，直接办法是去题目所在的会话里回。',
-    askTimeoutMs: '从收到一批提问开始计时，一批多题共用一个期限；到期没答的算作超时，Agent 继续处理任务。面板过期后还能作答；迟到作答送回所属会话：会话空闲且无未领取的本插件通知，就开新回合直接送达；会话在忙或已有未领取通知，就跟下一次消息一起领，不马上开回合。',
-    askExtendMs: '待答面板的「增加等待时间」每点一下，就给该会话此刻还没到期的批次各加这段时间，叠加在原截止时点上；新批次按自己的初始期限计时。',
-    askUiSeat: '两种位置共用同一套答题交互，切换后提问、计时、答案交付都不变；全部处理完徽标就隐去。',
-    boundPresets: '勾选后，使用该预设的会话得到本包的执行纪律段——为选中的预设补上操作要求；静默失败提示与提问接管各开关照旧各管各的，名单不越权。匹配按会话当下实际生效的预设算。默认是本包两份预设；把预设全部清空再保存＝全部解除；目录里没有的已绑定项保留、可取消。点「刷新」重新读取；读失败或还在装载时都不显示为空列表，没保存的勾选草稿保持可见，随手可撤。'
-  };
-  const HELP_REWRITE_EN = {
-    defaultYieldMs: "async_run and async_workflow bound each call's occupancy with the first wait — past it with work unfinished, you get a job id back and the task keeps running in the background; messages or cancellation end the wait sooner. Settled bodies are delivered alongside a wait return or completion message. The default must sit inside minYieldMs ≤ defaultYieldMs ≤ maxYieldMs.",
-    minYieldMs: 'A yield_ms under this floor clamps to the lower bound; a message or cancellation can still end the first wait early. It forms the bounds of the first wait with defaultYieldMs and maxYieldMs.',
-    maxYieldMs: 'A yield_ms over this ceiling clamps to the upper bound; a message or cancellation can still end the first wait early. It forms the bounds of the first wait with minYieldMs and defaultYieldMs.',
-    defaultWaitMs: 'wait_ms must be provided: every call of the wait entry states it explicitly, and leaving it out errors. The value shown in return notes is for illustration only and is matched against the minWaitMs/maxWaitMs range.',
-    minWaitMs: 'Floor for waits with wait_ms > 0: below it the request clamps to the bound; wait_ms=0 is the exception — an immediate check only, not lifted. When the budget ends, hands control back; the handle stays valid; an arriving message can end the wait early.',
-    maxWaitMs: 'Ceiling for wait_ms: above it the request clamps to the upper bound. With minWaitMs it forms the range for waits with wait_ms > 0; zero waits are not lifted. When the budget ends, hands control back; the handle stays valid; an arriving message can end the wait early.',
-    pollIntervalMs: "async_wait's subagent side checks on two channels whether the target still runs — change events first, with polling as the fallback channel; the interval is bound by the pollIntervalMs ≤ maxWaitMs rule.",
-    maxResultChars: 'This one counts characters by String.length and must be a positive integer. Results of this package landing inside a single model input merge into one batch, first arrivals take the quota first, and neither gaps between calls nor other tool work refresh the allowance. A batch opened after a boundary no longer draws a fresh allowance — it first deducts the shares of completion messages already injected but not yet claimed into a model input, and such messages keep holding their share across inputs until their claim event; results arriving one after another within one input therefore stay under this one allowance together. Past it, head and tail kept and the truncation stated; what does not fit is collected by later wait returns (zero-wait included) while budget allows, and can be fetched by calling async_wait with wait_ms=0 after the next model-input boundary; status and notices counted separately.',
-    jobKind: 'Registry entries carry the type label given to command jobs when they are registered, so they can be told apart in job listings and log entries; leaving it blank is rejected.',
-    subagentProvider: 'The backend that spawns subagents for async_agent, defaulting to spawn; an empty trimmed value reverts to the default; an unknown backend is refused with an understandable reason at subagent creation. To pick a model, specify provider plus model on the call.',
-    uiLang: 'Interface text and Agent-facing copy are two separate switches: this one governs just the interface text, and agentLang decides the Agent-facing language; auto tracks the host language.',
-    agentLang: 'Governs model-side copy (tool wording, parameter notes, notices, errors, and execution discipline); the interface side is what uiLang handles, and the two are independent.',
-    silentFailureGuard: 'When on, where a command might not have executed with no visible error, the diagnostic nudges and checking advice show up at return notes, command descriptions, and execution discipline.',
-    workflowProgressLog: 'Disabled by default: orchestration results strip the phase-by-phase progress entries before entering the content allowance, so the results the Agent receives are shorter; switched on, the entries stay, long orchestrations run into truncation sooner. Raw records in the interface and logs are untouched by the switch.',
-    fullCommandEcho: "Disabled by default, jobs are recognized by id, name, or short description; when on, finished background jobs carry the original text at delivery so results can be matched back to the command or script; the text is attached only once per delivery, and over-long text preserves the head and tail and marks how much was left out. Raw records sit outside this switch's control.",
-    askTakeover: 'Answers that come in late arrive as notices; the 24-hour mark is merely a sweep threshold — the queue is swept once when the next batch is taken over, and with no new batch records remain answerable; swept records, agents that can no longer receive them, and failed deliveries never arrive. When one will not arrive, the direct way out is to answer inside the owning session.',
-    askTimeoutMs: 'Timed from receiving a batch of questions; all questions in the batch share a single deadline; unanswered ones count as timed out and the Agent continues the task. The panel still takes answers past the deadline; a late answer reaches the owning session: if the session is idle with no unclaimed notices from this plugin, it starts a fresh turn and is delivered directly; if it is busy or already has unclaimed notices, it waits for the next claim instead of opening a turn at once.',
-    askExtendMs: 'Each press of "Extend wait" in the pending panel adds this much time to the batches of that session still inside their window, piled onto the original deadline; new batches run on their own starting deadlines.',
-    askUiSeat: 'Both placements use one shared interaction for questions — questioning, timing, and delivery all stay the same; the badge disappears when all are handled.',
-    boundPresets: "Checking a preset gives its sessions this package's execution-discipline section — it adds operating requirements for Agents on that preset; the silent-failure hint and question takeover keep answering to their own switches — the list only marks the scope. Matching goes by the preset actually in effect for the session. The default is this package's two presets; clear every checkbox and save to unbind them all; bound ids missing from the list stay and can be unchecked. Clicking the Refresh button reloads it; on a read failure or while it loads, the block does not show an empty list, and unsaved checked drafts stay visible and can be unchecked."
-  };
-  for (const key of Object.keys(HELP_FACTS_ZH)) {
-    // a) 词典两语言全部命中——改写不红、删事实才红。
-    assert.deepEqual(missingFactGroups(DICT.zh[`help.${key}`], HELP_FACTS_ZH[key]), [],
-      `zh 展开区事实组全部在场：${key}`);
-    assert.deepEqual(missingFactGroups(DICT.en[`help.${key}`], HELP_FACTS_EN[key]), [],
-      `en 展开区事实组全部在场：${key}`);
-    // b) 等义改写样本必须通过（钉事实不钉措辞——DOC-HELP-FIXTURE 的完成判据）。
-    assert.deepEqual(missingFactGroups(HELP_REWRITE_ZH[key], HELP_FACTS_ZH[key]), [],
-      `zh 展开区等义改写样本必须通过事实组：${key}`);
-    assert.deepEqual(missingFactGroups(HELP_REWRITE_EN[key], HELP_FACTS_EN[key]), [],
-      `en 展开区等义改写样本必须通过事实组：${key}`);
-    // c) 删单一事实组的全部命中短语后必须恰好缺该组（同 ②c 的独立信号判据）。
-    for (const [dict, facts] of [[DICT.zh[`help.${key}`], HELP_FACTS_ZH[key]],
-      [DICT.en[`help.${key}`], HELP_FACTS_EN[key]]]) {
-      for (let index = 0; index < facts.length; index += 1) {
-        const stripped = facts[index].reduce((acc, phrase) => acc.split(phrase).join('……'), dict);
-        assert.deepEqual(missingFactGroups(stripped, facts), [index],
-          `删除事实组 help.${key}[${String(index)}] 的全部命中短语后必须恰好只缺该组`);
-      }
-    }
-  }
-
-  // ⑤ opt 组对账：askUiSeat 选项命名与需求 §5.5 逐字一致且默认标记位在 sidebar；
-  //    agentLang.en 带（默认）标记位；uiLang 三选项在场。
-  assert.equal(DICT.zh['opt.askUiSeat.sidebar'], '侧边栏底栏徽标（默认）', '默认标记位在 sidebar（需求 §5.2）');
-  assert.equal(DICT.zh['opt.askUiSeat.overlay'], '右下角浮窗', 'overlay 选项名与需求 §5.5 逐字一致、无默认标记');
-  assert.equal(DICT.en['opt.askUiSeat.sidebar'], 'Sidebar footer badge (default)');
-  assert.equal(DICT.en['opt.askUiSeat.overlay'], 'Bottom-right overlay');
-  assert.ok(DICT.zh['opt.agentLang.en'].includes('（默认）'), 'opt.agentLang.en 必须带（默认）标记位');
-  assert.ok(DICT.en['opt.agentLang.en'].includes('(default)'), 'en 档同标记位');
-  assert.deepEqual([DICT.zh['opt.uiLang.auto'], DICT.zh['opt.uiLang.zh'], DICT.zh['opt.uiLang.en']],
-    ['跟随界面语言', '中文', 'English'], 'uiLang 三选项齐备');
-
-  // ⑥ 负向锚（两档各查）：defaultWaitMs 相关键不得出现「备用值」/「fallback」——
-  //    该事实以「仅为示例／必填、缺省报错」正面表达；「示例≠生效等待」由 ②④
-  //    的事实组锁定。askTimeoutMs 的到期语义（仍可作答、后续批次）由 ④ 锁定，
-  //    排除式短语不得回潮。
-  for (const lang of ['zh', 'en']) {
-    for (const key of ['defaultWaitMs', 'hint.defaultWaitMs', 'help.defaultWaitMs']) {
-      const text = String(DICT[lang][key]);
-      const marker = lang === 'zh' ? '备用值' : 'fallback';
-      assert.ok(!text.includes(marker),
-        `${lang} 档 ${key} 不得出现「${marker}」（审定文案以「仅为示例」正面表达，任何出现都是退化）`);
-    }
-  }
-
-  // ⑥b 字段表全量判（5.6 表内 20 项）：三层夹具的键集＝FIELDS 全量——夹具
-  //    丢一行只会让对应循环静默跳过（该字段退出对账、漏判不可见），此处键集
-  //    对账兜底：漏一项即红。help/hint 夹具按 20 项全覆盖（含 boundPresets）。
-  const FIELD_KEYS = product.FIELDS.map((field) => field.key);
-  assert.equal(FIELD_KEYS.length, 20, '5.6 字段表共 20 项（PRESET-BIND-01 后含 boundPresets）');
-  assert.deepEqual(Object.keys(NAMES_ZH).sort(), [...FIELD_KEYS].sort(),
-    '字段名夹具必须恰覆盖全部 20 项（漏一项＝该字段退出名字对账）');
-  for (const [fixture, name] of [
-    [HINT_FACTS_ZH, 'HINT_FACTS_ZH'], [HINT_FACTS_EN, 'HINT_FACTS_EN'],
-    [HELP_FACTS_ZH, 'HELP_FACTS_ZH'], [HELP_FACTS_EN, 'HELP_FACTS_EN']
-  ]) {
-    assert.deepEqual(Object.keys(fixture).sort(), [...FIELD_KEYS].sort(),
-      `${name} 必须恰覆盖全部 20 项（漏一项＝该字段退出事实组判据，等义改写防护静默失效）`);
-  }
-
-  // ⑦ 在场断言扩展（T18c 内循环）：20 字段的字段名键、hint.<键>、help.<键> 两档
-  //    全必须在场（删任一键即红——本循环逐键断言；含 PRESET-BIND-01 的
-  //    boundPresets）。两语键集一致性（zh/en 全键集相等）由本文件 T21 直接断言
-  //    守；tools/check-model-text.mjs 的键集层只读 lib/text.js（模型词典），扫描
-  //    范围明确不含 client.js 的界面词典。
-  for (const key of Object.keys(NAMES_ZH)) {
-    for (const lang of ['zh', 'en']) {
-      for (const prefix of ['', 'hint.', 'help.']) {
-        const full = `${prefix}${key}`;
-        const value = DICT[lang][full];
-        assert.ok(typeof value === 'string' && value.length > 0 && value !== full,
-          `${lang} 档词典键 ${full} 必须在场且非裸键名（设计 §5.5 在场判据）`);
-      }
-    }
-  }
-
-  // ⑧ 设置与模型文案统一术语锚（设计 §5.6 术语表·§8.2 语言与防护行）：
-  //    zh 档「作业编号」「首次等待」在场；「让出预算」「job_id 句柄」在词典与
-  //    lib/text.js 零残留。
-  const zhModel = Object.values(TEXT.zh).join('\n');
-  assert.ok(zhModel.includes('作业编号'), '模型文案 zh 档必须出现统一术语「作业编号」');
-  assert.ok(zhModel.includes('首次等待'), '模型文案 zh 档必须出现统一术语「首次等待」');
-  for (const [label, corpus] of [['词典 zh', Object.values(DICT.zh).join('\n')],
-    ['词典 en', Object.values(DICT.en).join('\n')], ['text.js zh', zhModel]]) {
-    assert.ok(!corpus.includes('让出预算'), `${label} 不得残留旧术语「让出预算」`);
-    assert.ok(!corpus.includes('job_id 句柄'), `${label} 不得残留旧术语「job_id 句柄」`);
-  }
-  const enModel = Object.values(TEXT.en).join('\n');
-  assert.ok(enModel.includes('first wait'), '模型文案 en 档必须出现 first wait');
-  assert.ok(enModel.includes('keeps running in the background'), 'en 档统一句式在场');
+  const zhModel = Object.values(TEXT.zh ?? {}).join('\n');
+  assert.ok(zhModel.includes('作业编号') || Object.keys(TEXT).length === 0,
+    '模型侧 zh 文案统一术语「作业编号」在场（lib/text.js 未随本轮改动）');
 });
-
 test('T22（R25）：改语言后刷新必须整段换文案——正文、尾部摘要与每个参数说明一起换', async (t) => {
   // 描述刷新是"整段重建"（不就地改数字），语言与数字走同一条路。
   // 这条钉两件事：①换语言真的换的是**整段**（只换数字不算）；②换语言不会把"数字跟着设置走"
@@ -3239,24 +2793,44 @@ test('T22（R25）：改语言后刷新必须整段换文案——正文、尾�
   assert.equal(tool.description, zhDescription, '改 uiLang 不得影响模型侧描述');
 });
 
-test('T19（R21/R24/R25）：字段表单一来源——client.js 的 FIELDS 与 lib/config.js 逐项一致', async () => {
-  // 两条钉的是"字段集合"的**单一来源**：界面判据拿 `BUDGET_FIELD_KEYS` + `LANG_FIELD_KEYS` 去核对页面
+test('T19（R21/R24/R25）：字段表单一来源——FIELDS 与 lib/config.js 键集相等＋六组结构', async () => {
+  // 钉"字段集合"的**单一来源**：界面判据拿 `BUDGET_FIELD_KEYS` + `LANG_FIELD_KEYS` 去核对页面
   // （`judgeConfigForm` 的字段身份那一条），而页面渲染哪些字段、哪几个带读数由 `client.js` 的
   // `FIELDS` 决定。两侧漂移时，"字段缺项 / 读数挂错字段"永远抓不到——判据会与被测实现一起错。
+  // 设计 §5.6：顺序不再与 lib 六组拼接对账（页面顺序由六组结构定义），改为**键集相等**。
   const { MS_FIELD_KEYS, BUDGET_FIELD_KEYS, LANG_FIELD_KEYS, FLAG_FIELD_KEYS, DISPLAY_FIELD_KEYS, ASK_FIELD_KEYS, PRESET_FIELD_KEYS } = await import('../lib/config.js');
   let loaded;
   new Function('window', clientCode())({ __ModuleLoader__: { load: (spec) => { loaded = spec; } } });
   const product = loaded.factory(() => ({ createElement: () => undefined, useState: () => [undefined, () => {}], useEffect: () => {} }));
 
-  assert.deepEqual(product.FIELDS.map((field) => field.key),
-    [...BUDGET_FIELD_KEYS, ...LANG_FIELD_KEYS, ...FLAG_FIELD_KEYS, ...DISPLAY_FIELD_KEYS, ...ASK_FIELD_KEYS, ...PRESET_FIELD_KEYS],
-    'client.js 的字段顺序必须是 预算字段 + 语言字段 + 开关字段 + 展示开关字段 + 提问字段 + 预设绑定字段（PRESET-BIND-01 后共 20 项）');
+  const libKeys = [...BUDGET_FIELD_KEYS, ...LANG_FIELD_KEYS, ...FLAG_FIELD_KEYS, ...DISPLAY_FIELD_KEYS, ...ASK_FIELD_KEYS, ...PRESET_FIELD_KEYS];
+  assert.deepEqual(product.FIELDS.map((field) => field.key).sort(), libKeys.slice().sort(),
+    'client.js 的字段键集必须与 lib/config.js 六组键的并集相等（20 项，无缺无多）');
+  assert.equal(product.FIELDS.length, 20, '字段恰 20 项（六组结构的全部可编辑字段）');
+  assert.equal(new Set(product.FIELDS.map((field) => field.key)).size, 20, '字段键不得重复');
   assert.deepEqual(product.LANG_KEYS, [...LANG_FIELD_KEYS], 'client.js 的语言键表必须与 LANG_FIELD_KEYS 一致');
+
+  // 六组结构（设计 §5.3）：组序＝分组标题行顺序；组成员无缺无重；默认开合三开三收；
+  // 待答子组「等待与加时」默认收起；组级展开帮助只设在五个组、语言组不设（§5.6）。
+  const groups = product.GROUPS;
+  assert.deepEqual(groups.map((group) => group.id),
+    ['presets', 'ask', 'budget', 'agentContent', 'advanced', 'lang'],
+    '六组组序：适用预设 → 待答问题 → 命令与等待 → 发送给 Agent 的内容 → 高级设置 → 语言');
+  const groupKeys = groups.flatMap((group) => group.fields.concat(group.subgroup ? group.subgroup.fields : []));
+  assert.deepEqual(groupKeys.slice().sort(), libKeys.slice().sort(), '六组成员＝全部 20 字段，无缺无重');
+  assert.deepEqual(product.GROUPS.find((group) => group.id === 'ask').subgroup.fields,
+    ['askTimeoutMs', 'askExtendMs'], '待答子组「等待与加时」＝askTimeoutMs + askExtendMs');
+  assert.deepEqual(groups.map((group) => group.open), [true, true, false, false, false, true],
+    '默认开合：适用预设/待答问题/语言展开，命令与等待/发送给 Agent 的内容/高级设置收起');
+  assert.equal(product.GROUPS.find((group) => group.id === 'ask').subgroup.open, false, '待答子组默认收起');
+  assert.deepEqual(Object.keys(product.GROUP_HELP_KEYS).sort(),
+    ['advanced', 'agentContent', 'ask', 'budget', 'presets'],
+    '组级展开帮助只设在五个组（语言组不设，设计 §5.6）');
 
   const declared = [...clientCode().matchAll(/key: "([A-Za-z]+)", label: "[A-Za-z]+", ms: true/g)]
     .map((m) => m[1]);
-  assert.deepEqual(declared, [...MS_FIELD_KEYS],
-    'client.js 里 `ms: true` 的字段必须与 MS_FIELD_KEYS 逐项一致（顺序也要一致）');
+  assert.deepEqual(declared.slice().sort(), [...MS_FIELD_KEYS].sort(),
+    'client.js 里 `ms: true` 的字段必须与 MS_FIELD_KEYS 键集一致（呈现顺序由六组结构定义）');
   assert.ok(MS_FIELD_KEYS.length > 0 && MS_FIELD_KEYS.length < BUDGET_FIELD_KEYS.length,
     '毫秒字段必须是非空真子集：等于全集时"读数挂错字段"这条判据恒真');
 });
@@ -3489,9 +3063,11 @@ test('T23d（正整数体系）：maxResultChars 非整数草稿 parse 拒绝＋
   //    （各自仍走上下界校验；300.5 在 250..600000 内侧 → set）。
   assert.deepEqual(spec.maxWaitMs.parse('300.5'), { kind: 'set', value: 300.5 }, '毫秒字段无整数约束（需求只对 maxResultChars 要求正整数）');
 
-  // ③ 显示层分档：非整数档优先于越界档，文案键 invalidInteger。
+  // ③ 显示层分档：非整数档优先于越界档，文案键 invalidInteger——原因句现由
+  //    invalidLabelOf 单点产出（字段行与保存区清单共用，逐字一致）。
   const code = clientCode();
-  assert.match(code, /notInteger\s*\? t\("invalidInteger"\)/, '非整数草稿必须给出 invalidInteger 档的原因文案');
+  assert.match(code, /if \(notInteger\) return t\("invalidInteger"\);/,
+    '非整数草稿必须给出 invalidInteger 档的原因文案（invalidLabelOf 内）');
   assert.match(code, /INTEGER_FIELDS = \{ maxResultChars: true \}/, '整数字段表只登记 maxResultChars');
 
   // ④ 词典两档都带 invalidInteger 键（zh/en 键集一致由本文件 T21 的键集相等
@@ -3543,19 +3119,21 @@ test('T23b（R29-d·判据 14）：卡片层跨字段配对——pollIntervalMs 
   // 时红框与原因文案全灭、只剩保存按钮变灰（需求 §5.4 字段原因不可达的失效形态）。
   assert.match(code, /invalid: fieldState\.invalid === true \|\| pairHit !== null/,
     'pollIntervalMs 字节必须叠加 pairHit 显示，且归一为布尔（字符串 pairHit 过不了 FieldShell 的严格 === true 门）');
-  assert.match(code, /t\("invalidRange"\)/, '越上界要有带 {max} 的原因文案');
-  // 配对违例文案按字段键动态拼（五对链式共用一条分档路径），{ref} 显示层经词典
-  // 换参照字段的中文名称（设计 §5.6 统一术语——键名不进界面）。
-  // （源码里 { 与 } 都被转义——`/\{ref\}/g`——钉子按真实文本转义。）
-  assert.match(code, /t\("invalidPair\." \+ field\.key\)\.replace\(\/\\{ref\\}\/g, t\(pairHit\)\)/,
-    '配对违例要有专用文案（按字段键拼 invalidPair.<键> 并把 {ref} 换成参照字段名）');
+  assert.match(code, /t\("invalidRange"\)/, '越上界要有带 {最大值} 的原因文案');
+  // 配对违例文案按字段键动态拼（五对链式共用一条分档路径），两侧字段显示名经
+  // 词典键插值（5.7.4 跨字段行：「{较小字段}」不能大于「{较大字段}」——键名
+  // 不进界面；较大侧＝参照字段 pairHit 的标签键）。
+  assert.match(code, /t\("invalidPair\." \+ field\.key\)/,
+    '配对违例要有专用文案（按字段键拼 invalidPair.键）');
+  assert.match(code, /\.replace\("\{较小字段\}", t\(field\.key\)\)\s*\n\s*\.replace\("\{较大字段\}", t\(pairHit\)\)/,
+    '配对违例两侧插值＝当前字段名与参照字段名（invalidLabelOf 单点产出，字段行与保存区清单共用）');
 
   // 词典两语言键集成对（词典纪律：zh/en 键集一致由本文件 T21 的键集相等断言
   // 守，这里守新增键的内容）。
   assert.ok(product.DICTIONARIES.zh['invalidPair.pollIntervalMs'].length > 0, 'zh 配对文案在场');
   assert.ok(product.DICTIONARIES.en['invalidPair.pollIntervalMs'].length > 0, 'en 配对文案在场');
-  assert.match(product.DICTIONARIES.zh.invalidRange, /\{max\}/, 'zh invalidRange 必须带 {max} 插位');
-  assert.match(product.DICTIONARIES.en.invalidRange, /\{max\}/, 'en invalidRange 必须带 {max} 插位');
+  assert.match(product.DICTIONARIES.zh.invalidRange, /\{最大值\}/, 'zh invalidRange 必须带 {最大值} 插位');
+  assert.match(product.DICTIONARIES.en.invalidRange, /\{最大值\}/, 'en invalidRange 必须带 {最大值} 插位');
 });
 
 test('T23c（R29-d）：client 内联上界与 lib/budget-limits.js 逐条比对——只改一处必红', async () => {

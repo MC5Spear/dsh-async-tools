@@ -132,7 +132,7 @@ test('R28 判据1：捕获形四模式任一命中，管道一票否决，多语
   assert.equal(hasCaptureForm('npm run x -- --flag=1'), false, '参数内等号不误中');
 });
 
-test('R28 判据2：签名 1 条件逐一缺失即无产出；退出码 0＝合法空输出不出 note（ACCEPT-SILENT-01 第一步机器侧核对）', () => {
+test('R28 判据2：签名 1 条件逐一缺失即无产出；exitCode=0 同样出条件提示（SF-01 反转，ACCEPT-SILENT-01 第一步机器侧核对）', () => {
   const hit = {
     proc: { sandbox: { mode: 'workspace-write' } },
     collector: collector(''),
@@ -144,9 +144,13 @@ test('R28 判据2：签名 1 条件逐一缺失即无产出；退出码 0＝合�
     lang: 'en'
   };
   assert.equal(silentFailureNotes(hit).length, 1, '全条件齐（退出码非 0）⇒ 命中');
-  // 第一步核对的机器侧形态：exitCode===0＝合法空输出——直接不出 note。
-  assert.deepEqual(silentFailureNotes({ ...hit, exitCode: 0 }), [],
-    '退出码 0 ⇒ 合法空输出，不出 note、不诱导任何核实');
+  // SF-01（需求 §6.3 四条件无退出码例外）：exitCode===0 同样出条件提示——
+  // 受限沙箱下捕获形空输出的「合法空输出」与「命令未真正执行」不可凭退出码
+  // 区分，原「退出码 0 不出 note」判据按 SF-01 反转；提示保持条件式、不指使重跑。
+  const exitZero = silentFailureNotes({ ...hit, exitCode: 0 });
+  assert.equal(exitZero.length, 1, '退出码 0 ⇒ 同样出 note（SF-01：四条件无退出码例外）');
+  assert.match(exitZero.join('\n'), /Two readings remain possible|两种解释都成立/,
+    '提示保持条件式（两种解释并陈、不指使重跑）');
   // 退出码未知（缺省 undefined/null）保持提示——保守方向。
   assert.equal(silentFailureNotes({ ...hit, exitCode: undefined }).length, 1,
     '退出码未知 ⇒ 仍提示（note 内含 $LASTEXITCODE 核实指引）');
@@ -359,6 +363,9 @@ hostTest('R28 判据8：开关关 ⇒ 三防线同断（行为差异，不是存
 
 hostTest('R28 判据9：前台出口——note 拼在标记之后且居尾；无值不写 note 键', async () => {
   const conf = confinedCtx();
+  // 专属主体（WAIT-ITEMS-01 后共享 exec 的同主体批会被前序用例占满——首等
+  // 满批整条延后时前台诊断不在直付返回里；本判据断言的就是直付 note 形态）。
+  const c9Exec = { agent: fakeAgent('sf-c9'), callId: 'call_R28_9', signal: new AbortController().signal };
   // 工具行的归属声明值与 confinedCtx 的会话预设（dsh-async）全等——结果诊断
   // 的运行时归属判定（设计 §6.2）通过。
   const config = resolveConfig({ toolName: 'async_run', silentFailureGuard: true, owningPreset: 'dsh-async' });
@@ -367,7 +374,7 @@ hostTest('R28 判据9：前台出口——note 拼在标记之后且居尾；无
   denied.proc.sandbox = { mode: 'workspace-write', denied: true };
   conf.installShellExecute(() => Promise.resolve(denied.proc));
   const pending = createRunTool(conf.ctx, config)
-    .execute({ command: 'node x.mjs 2>&1', description: 'run node' }, exec);
+    .execute({ command: 'node x.mjs 2>&1', description: 'run node' }, c9Exec);
   denied.settle();
   const result = await pending;
   const lines = result.note.split('\n');
@@ -384,7 +391,7 @@ hostTest('R28 判据9：前台出口——note 拼在标记之后且居尾；无
   const conf2 = confinedCtx();
   conf2.installShellExecute(() => Promise.resolve(quiet.proc));
   const pending2 = createRunTool(conf2.ctx, config)
-    .execute({ command: 'node x.mjs 2>&1', description: 'run node' }, exec);  quiet.settle();
+    .execute({ command: 'node x.mjs 2>&1', description: 'run node' }, c9Exec);  quiet.settle();
   const r2 = await pending2;
   assert.match(r2.note, /killed at process creation/, '签名 1 提醒（两解释并陈形）到达模型可见文本');
 
@@ -395,7 +402,7 @@ hostTest('R28 判据9：前台出口——note 拼在标记之后且居尾；无
   conf3.installShellExecute(() => Promise.resolve(quiet2.proc));
   const off = resolveConfig({ toolName: 'async_run', silentFailureGuard: false });
   const pending3 = createRunTool(conf3.ctx, off)
-    .execute({ command: 'node x.mjs 2>&1', description: 'run node' }, exec);
+    .execute({ command: 'node x.mjs 2>&1', description: 'run node' }, c9Exec);
   quiet2.settle();
   const r3 = await pending3;
   assert.equal('note' in r3, false, '空 note 数组 ⇒ 键不出现，不是 note: ""');
@@ -452,12 +459,15 @@ hostTest('F3（范围判定·前台）：调用主体不在本包预设 ⇒ 结�
   // confinedCtx('standard')：sessions.get 命中但 agentPreset 不是本包两预设——
   // guardActiveFor 的实际预设判定不通过，前台 note 不拼静默行（无行声明值时
   // 判定同样关——下一条用例补行声明值比对的三形态）。
+  // 专属主体：共享 exec 的同主体批已被前序用例占满（WAIT-ITEMS-01 整条延后
+  // 路径带 note＝延后说明，会污染「键都不出现」断言）。
   const conf = confinedCtx('standard');
   const quiet = fakeProc({ text: '', exitCode: 1, status: 'running', autoResolve: false });
   quiet.proc.sandbox = { mode: 'workspace-write' };
   conf.installShellExecute(() => Promise.resolve(quiet.proc));
   const pending = createRunTool(conf.ctx, resolveConfig({ toolName: 'async_run', silentFailureGuard: true }))
-    .execute({ command: 'node x.mjs 2>&1', description: 'run node' }, exec);
+    .execute({ command: 'node x.mjs 2>&1', description: 'run node' },
+      { agent: fakeAgent('sf-f3front'), callId: 'call_F3f', signal: new AbortController().signal });
   quiet.settle();
   const result = await pending;
   assert.equal('note' in result, false, '非归属主体的前台返回不得拼静默行（键都不出现）');
@@ -568,6 +578,11 @@ hostTest('R28 判据11：b 段三门组合矩阵 + 会话遮蔽投影增删（�
 
 hostTest('F3b（§6.2 归属比对→名单匹配→PRESET-ISOLATION-02 会话遮蔽）：会话预设∉名单 ⇒ 警示与诊断都不产生；∈名单 ⇒ 产生；读取失败 ⇒ 失效安全', async () => {
   const warnAnchor = /can die silently at process creation/;
+  // 独立主体（WAIT-ITEMS-01 后首等直付占同主体批条目——与文件头共享 exec 的
+  // 既有用例同窗会挤满 10 条配额、首等整条延后，前台诊断不在直付里）：三场景
+  // 各取新 agent id（fakeAgent 缺省同名 session-1 会落回同主体批），批从零起，
+  // 断言不受前序用例的批占用影响。
+  const f3bExec = (id) => ({ agent: fakeAgent(id), callId: 'call_F3b', signal: new AbortController().signal });
   const quiet = fakeProc({ text: '', exitCode: 1, status: 'running', autoResolve: false });
   quiet.proc.sandbox = { mode: 'workspace-write' };
   const owned = { toolName: 'async_run', silentFailureGuard: true, boundPresets: ['dsh-async'] };
@@ -579,7 +594,7 @@ hostTest('F3b（§6.2 归属比对→名单匹配→PRESET-ISOLATION-02 会话�
   mismatch.installShellExecute(() => Promise.resolve(quiet.proc));
   const mismatchTool = buildRunTool(mismatch.ctx, resolveConfig({ ...owned }));
   const pending1 = mismatchTool
-    .execute({ command: 'node x.mjs 2>&1', description: 'run node' }, exec);
+    .execute({ command: 'node x.mjs 2>&1', description: 'run node' }, f3bExec('f3b-mismatch'));
   quiet.settle();
   const r1 = await pending1;
   assert.equal('note' in r1, false, '会话预设∉名单 ⇒ 前台诊断不拼（键都不出现）');
@@ -603,7 +618,7 @@ hostTest('F3b（§6.2 归属比对→名单匹配→PRESET-ISOLATION-02 会话�
   assert.match(matchShadow.registered[0].description,
     warnAnchor, '绑定会话 ⇒ 首次投影警示在场（未执行也在场）');
   const pending2 = matchTool
-    .execute({ command: 'node x.mjs 2>&1', description: 'run node' }, exec);
+    .execute({ command: 'node x.mjs 2>&1', description: 'run node' }, f3bExec('f3b-match'));
   quiet2.settle();
   const r2 = await pending2;
   assert.match(r2.note, /Silent-failure guard \(execution unconfirmed\):/, '会话预设∈名单 ⇒ 前台诊断在场');
@@ -619,7 +634,7 @@ hostTest('F3b（§6.2 归属比对→名单匹配→PRESET-ISOLATION-02 会话�
   broken.installShellExecute(() => Promise.resolve(quiet3.proc));
   const brokenTool = buildRunTool(broken.ctx, resolveConfig({ ...owned }));
   const pending3 = brokenTool
-    .execute({ command: 'node x.mjs 2>&1', description: 'run node' }, exec);
+    .execute({ command: 'node x.mjs 2>&1', description: 'run node' }, f3bExec('f3b-broken'));
   quiet3.settle();
   const r3 = await pending3;
   assert.equal('note' in r3, false, '读取失败 ⇒ 不产生诊断（失效安全＝关）');
@@ -1097,16 +1112,28 @@ realLayerTest('执行纪律 section：注册落在宿主组稿会收集的 globa
 });
 
 test('R28 判据13：设置界面 20 字段逐项在场 + flag spec 矩阵 + resolveConfig 归一', async () => {
-  // —— 键集身份核对：FIELDS = 预算 + 语言 + 开关 + 展示 + 提问 + 预设绑定六组之和
-  //（顺序也一致；开关组 2 枚、展示组 2 枚、ASK 组 3 枚、预设组 1 枚，合计 20）。
-  const expectedKeys = [...BUDGET_FIELD_KEYS, ...LANG_FIELD_KEYS, ...FLAG_FIELD_KEYS, ...DISPLAY_FIELD_KEYS, ...ASK_FIELD_KEYS, ...PRESET_FIELD_KEYS];
-  assert.equal(expectedKeys.length, 20, '20 = 10 预算 + 2 语言 + 2 开关 + 2 展示 + 3 提问 + 1 绑定');
+  // —— 键集身份核对：20 字段＝预算 10 + 语言 2 + 开关 2 + 展示 2 + 提问 3 + 绑定 1
+  //（键集不变）；FIELDS 顺序改按设计 §5.3 六组渐进披露序（presets → ask〔含
+  //    askTimes 子组〕→ budget → agentContent → advanced → lang）——设置页字段
+  //    序、spec 序、组标记「按 FIELDS 序找首个问题」都吃这份顺序。
+  const expectedKeys = [...PRESET_FIELD_KEYS, FLAG_FIELD_KEYS[1], ...ASK_FIELD_KEYS.slice(2), ...ASK_FIELD_KEYS.slice(0, 2),
+    BUDGET_FIELD_KEYS[0], BUDGET_FIELD_KEYS[1], BUDGET_FIELD_KEYS[2],
+    BUDGET_FIELD_KEYS[4], BUDGET_FIELD_KEYS[5], BUDGET_FIELD_KEYS[3], BUDGET_FIELD_KEYS[6],
+    'maxResultChars', ...DISPLAY_FIELD_KEYS,
+    'subagentProvider', 'jobKind', ...FLAG_FIELD_KEYS.slice(0, 1), ...LANG_FIELD_KEYS];
+  assert.equal(expectedKeys.length, 20, '20 = 1 绑定 + 1 提问接管开关 + 1 座位 + 2 加时 + 7 命令与等待 + 3 Agent 内容 + 3 高级 + 2 语言');
   assert.equal(FLAG_FIELD_KEYS.length, 2);
   assert.equal(FLAG_FIELD_KEYS[0], 'silentFailureGuard');
   assert.equal(FLAG_FIELD_KEYS[1], 'askTakeover');
   assert.deepEqual(DISPLAY_FIELD_KEYS, ['workflowProgressLog', 'fullCommandEcho']);
   assert.deepEqual(ASK_FIELD_KEYS, ['askTimeoutMs', 'askExtendMs', 'askUiSeat']);
   assert.deepEqual(PRESET_FIELD_KEYS, ['boundPresets']);
+  assert.deepEqual(expectedKeys, ['boundPresets', 'askTakeover', 'askUiSeat',
+    'askTimeoutMs', 'askExtendMs',
+    'defaultYieldMs', 'minYieldMs', 'maxYieldMs', 'minWaitMs', 'maxWaitMs', 'defaultWaitMs', 'pollIntervalMs',
+    'maxResultChars', 'workflowProgressLog', 'fullCommandEcho',
+    'subagentProvider', 'jobKind', 'silentFailureGuard',
+    'uiLang', 'agentLang'], '六组序显式锚（防常量错位拼出偶然通过）');
 
   // —— 加载 client.js（CJS 包裹，浏览器侧无转译器——two-planes 的装载成例）。
   const ROOT = resolve(import.meta.dirname, '..');

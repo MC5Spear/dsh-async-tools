@@ -103,13 +103,21 @@ function fakeEngine({ onStart } = {}) {
  *   `clock` 给定时，引擎启动阶段按 `STARTUP_COST_MS` 推进可控时钟——让出窗口
  *   用例以此获得**确定性的启动前后差**（见 `controllableClock`）。
  */
+/**
+ * rig 计数器：每个 rig 取独立 agent id（fakeAgent 缺省同名 session-1——
+ * WAIT-ITEMS-01 后首等直付占同主体批条目，跨测试共享 owner 会挤满 10 条配额、
+ * 预算内完成的首等整条延后（直付形态不再返回）。同一 rig 内多次 execute 仍同
+ * owner，账本连续性（让出后领取等）不受影响。
+ */
+let rigSeq = 0;
+
 function rig(configOverrides = {}, { clock } = {}) {
   const f = fakeCtx();
   const { engine, calls, runs } = fakeEngine({
     onStart: clock === undefined ? undefined : () => clock.advance(STARTUP_COST_MS)
   });
   f.ctx.get = (key) => (key === 'workflowEngine' ? engine : undefined);
-  const agent = fakeAgent();
+  const agent = fakeAgent(`wf-rig-${++rigSeq}`);
   const appends = [];
   agent.session.append = (type, data) => { appends.push([type, data]); };
   const config = resolveConfig({ toolName: 'async_workflow', ...configOverrides });

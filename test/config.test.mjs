@@ -797,7 +797,7 @@ test('Config 根接受委托行级键：agentOptions／agentPreset／allowedAgen
   assert.equal(treeForm.subagentProvider, 'fork');
 });
 
-test('internal/config 原料层：本包候选的显式空允许集合抛错拒绝；缺席与外来候选照常续链（S01，设计 §5.1）', () => {
+test('internal/config 原料层：本包候选的显式空允许集合抛错拒绝；缺席与外来候选照常续链（S01＋N-CFG-01，设计 §5.1）', () => {
   setConfigValidationArmed(false);
   // 原料层＝cordis `Fiber._resolveConfig` 每次 resolve（装载、重挂、volatile
   // 就地提交）先流经的 internal/config waterfall——原始候选在 schema 解析
@@ -806,6 +806,13 @@ test('internal/config 原料层：本包候选的显式空允许集合抛错拒�
   // （config-editor 落盘前 resolve、客户端草稿校验）。抛错 → resolve 中断：
   // 装载／重挂 fiber 置 inactive，volatile 提交 loader 捕获记 warn、refs
   // 不动（提交被拒）；这与 resolve 侧的降级登记（只告警不拒绝）不同通道。
+  //
+  // 归属甄别（N-CFG-01，设计 §5.1 双判据）：cordis waterfall 以 `this` 传行
+  // fiber（监听器经 `callback.bind(thisArg)` 绑定）——本包行的自检须同时满足
+  // 「`isOwnRowFiber(this)`＝runtime.name 是 dsh-async-tools」与「候选形状
+  // `isOwnConfigCandidate`」。监听器是非箭头函数、this 由调用方提供；下列
+  // 断言全部经 `.call(fiber, …)` 直呼（进程内真实链的对应覆盖在同文件
+  // 「进程内（真实链）」组——真实链上 cordis 本身绑对 this）。
   const listeners = new Map();
   const ctx = {
     on(event, fn) { listeners.set(event, fn); return () => {}; },
@@ -816,27 +823,47 @@ test('internal/config 原料层：本包候选的显式空允许集合抛错拒�
   assert.ok(typeof listener === 'function', '接线注册 internal/config 监听');
   const SENTINEL = Symbol('next');
   const next = () => SENTINEL;
+  // 本包行 fiber（runtime.name = 'dsh-async-tools'）与外来行 fiber（同名形状
+  // 之别的行——外来模块行的 runtime.name 是它自己的模块名）。
+  const ownFiber = { runtime: { name: 'dsh-async-tools' } };
+  const foreignFiber = { runtime: { name: 'someone-elses-module' } };
 
-  // 本包候选＋显式空数组 → 抛错（可读文案＝词典英文档）。
+  // 本包候选＋本包行 → 抛错（可读文案＝词典英文档）。
   assert.throws(
-    () => listener({ toolName: 'async_agent', settings: {}, allowedAgentPresets: [] }, next),
+    () => listener.call(ownFiber, { toolName: 'async_agent', settings: {}, allowedAgentPresets: [] }, next),
     /allowedAgentPresets must contain at least one preset id when present/
   );
   // 「空数组＋默认预设并存」同拒——不存在折叠后单独接受默认预设的形态。
   assert.throws(
-    () => listener({ toolName: 'async_agent', settings: {}, allowedAgentPresets: [], agentPreset: 'reviewer' }, next),
+    () => listener.call(ownFiber, { toolName: 'async_agent', settings: {}, allowedAgentPresets: [], agentPreset: 'reviewer' }, next),
     /at least one preset id when present/
   );
   // 缺席键（未配置）与合法非空集合照常放行续链。
-  assert.equal(listener({ toolName: 'async_agent', settings: {} }, next), SENTINEL, '缺席＝未配置，放行续链');
+  assert.equal(listener.call(ownFiber, { toolName: 'async_agent', settings: {} }, next), SENTINEL, '缺席＝未配置，放行续链');
   assert.equal(
-    listener({ toolName: 'async_agent', settings: {}, allowedAgentPresets: ['reviewer'] }, next),
+    listener.call(ownFiber, { toolName: 'async_agent', settings: {}, allowedAgentPresets: ['reviewer'] }, next),
     SENTINEL, '非空集合放行续链'
   );
-  // 外来候选不进本包判据（归属甄别先于空数组判据）。
+  // 外来候选不进本包判据（候选形状判据先行）。
   assert.equal(
-    listener({ toolName: 'subagent', allowedAgentPresets: [] }, next),
-    SENTINEL, '外来候选直接续链（不是我们的行）'
+    listener.call(ownFiber, { toolName: 'subagent', allowedAgentPresets: [] }, next),
+    SENTINEL, '外来候选直接续链（不是我们的形状）'
+  );
+  // N-CFG-01 双判据第一支：外来**行**（fiber 归属不是本包）即使携带与本包
+  // 同名的 settings 形状候选也零写入直接续链——单凭候选形状不得把他行候选
+  // 折进本包自检（否则误登记他行的降级状态）。
+  assert.equal(
+    listener.call(foreignFiber, { toolName: 'async_agent', settings: {}, allowedAgentPresets: [] }, next),
+    SENTINEL, '外来行携带同名形状候选：零写入直接续链（N-CFG-01）'
+  );
+  // 根 fiber／合成调用（this 缺席或无 runtime）不自检——同判据的自然边界。
+  assert.equal(
+    listener.call(undefined, { toolName: 'async_agent', settings: {}, allowedAgentPresets: [] }, next),
+    SENTINEL, 'this 缺席（合成直呼）：不自检（N-CFG-01 边界）'
+  );
+  assert.equal(
+    listener.call({}, { toolName: 'async_agent', settings: {}, allowedAgentPresets: [] }, next),
+    SENTINEL, '无 runtime 的 fiber 形态：不自检（N-CFG-01 边界）'
   );
 
   wiring.dispose();

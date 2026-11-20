@@ -1161,8 +1161,14 @@ hostTest('R29-f（判据 11·注册失败单行化）：宿主原文多行超长
     .filter(([level]) => level === 'warn')
     .map(([, message]) => message)
     .find((message) => message.includes('full detail'));
-  assert.ok(full !== undefined && full.includes(rawDetail),
-    '完整原文（含换行）必须留在操作者日志——单行化只作用于模型侧，不丢线索');
+  // WAIT-F04：日志注入防线——宿主原文也经 escapeLogValue 单行化（CR/LF/TAB
+  // 转字面 \r\n\t），全文以转义形态留在操作者日志：不丢任何字符线索，
+  // 同时不能以真实换行伪造多行日志。
+  const escapedDetail = rawDetail.replace(/\r/g, '\\r').replace(/\n/g, '\\n').replace(/\t/g, '\\t');
+  assert.ok(full !== undefined && full.includes(escapedDetail),
+    '完整原文（换行转义后的字面序列）必须留在操作者日志——单行化只作用于模型侧，不丢线索');
+  assert.ok(full !== undefined && !/[\r\n]/.test(full),
+    '操作者日志同样不得被真实换行注入（WAIT-F04）');
 });
 
 // ---------------------------------------------------------------------------

@@ -1820,27 +1820,31 @@ test('J23（失败三分）：明确拒绝 ≠ 未收到确认；延长失败先
   await Promise.resolve();
   assert.equal(extended, true, '重复点击仍真实请求（累计行为在服务端，客户端不拦截）');
 
-  // ⑦ 中英文提示三分措辞：未确认档不得断定"未送达"；明确拒绝档说"没有生效"；
-  //    延长未确认档提示"每次点击都会累加"（重试指引诚实）。
+  // ⑦ 中英文提示三分措辞（5.7.7 新键族）：未确认档不得断定"未送达"；明确拒绝档
+  //    说"没有生效"；延长未确认档提示防重复加时（重试指引诚实）。旧聚合键
+  //    （callFailed/answerRejected/undelivered/extendFailed/extendRejected）已按
+  //    设计 §5.6 删除——语义迁移到 submitUnconfirmed/extendDenied/undeliveredPanel
+  //    /extendUnconfirmed 等分档键（T18c 负向锚守零残留）。
   const zh = product.DICTIONARIES.zh, en = product.DICTIONARIES.en;
-  assert.match(zh['ask.callFailed'], /可能已送达，也可能没有/, 'zh 未确认档：不确定执行与否');
-  assert.match(en['ask.callFailed'], /may or may not have arrived/, 'en 未确认档同');
-  assert.doesNotMatch(zh['ask.callFailed'], /没有送达/, 'zh 未确认档不得断定未送达');
-  assert.match(zh['ask.answerRejected'], /明确拒绝[\s\S]*没有生效/, 'zh 明确拒绝档：可断定未执行');
-  assert.match(en['ask.answerRejected'], /explicitly refused[\s\S]*did not take effect/, 'en 明确拒绝档同');
-  assert.doesNotMatch(zh['ask.answerRejected'], /内容无效|状态已变/, 'zh 明确拒绝档：静态文案不预判原因（原因由回执 error 透传）');
-  assert.doesNotMatch(en['ask.answerRejected'], /invalid|state changed/, 'en 明确拒绝档同');
-  assert.match(zh['ask.undelivered'], /未送达[\s\S]*未被接受/, 'zh 未送达档：直说未送达且不称已接受');
-  assert.match(zh['ask.undelivered'], /在所属会话中直接回复/, 'zh 未送达档：带可行的下一步（需求 §5.7.2）');
-  assert.match(en['ask.undelivered'], /Not delivered[\s\S]*not accepted/, 'en 未送达档同');
-  assert.match(en['ask.undelivered'], /reply directly in the session/, 'en 未送达档：下一步同');
-  assert.match(zh['ask.extendFailed'], /可能已生效，也可能没有/, 'zh 延长未确认：不确定执行与否');
-  assert.match(zh['ask.extendFailed'], /每次点击都会累加/, 'zh 延长未确认：累加语义诚实（不伪幂等）');
-  assert.match(en['ask.extendFailed'], /each click adds up/, 'en 同');
-  assert.match(zh['ask.extendRejected'], /明确拒绝[\s\S]*没有生效/, 'zh 延长明确拒绝档');
-  assert.match(en['ask.extendRejected'], /explicitly refused[\s\S]*did not take effect/, 'en 延长明确拒绝档');
-  assert.match(zh['ask.extendRejected'], /面板自动刷新/, 'zh 延长明确拒绝档：带面板自刷新出路（三要素齐全）');
-  assert.match(en['ask.extendRejected'], /refreshes automatically/, 'en 延长明确拒绝档：自刷新出路同');
+  assert.match(zh['ask.submitUnconfirmed'], /无法确认.*是否送达/, 'zh 提交未确认档：不确定执行与否');
+  assert.match(en['ask.submitUnconfirmed'], /Couldn’t confirm whether the answer was delivered/, 'en 提交未确认档同');
+  assert.doesNotMatch(zh['ask.submitUnconfirmed'], /未送达/, 'zh 提交未确认档不得断定未送达');
+  assert.match(zh['ask.unconfirmedWaitRefresh'], /等面板刷新/, 'zh 未确认档：重试前先等刷新（诚实指引）');
+  assert.match(zh['ask.notSubmitted'], /回答未提交/, 'zh 明确拒绝后果档：可断定未执行');
+  assert.match(en['ask.notSubmitted'], /wasn’t submitted/, 'en 明确拒绝后果档同');
+  assert.doesNotMatch(zh['ask.notSubmitted'], /内容无效|状态已变/, 'zh 拒绝后果档：静态文案不预判原因（原因由 reject.* 键族按回执给）');
+  assert.match(zh['ask.undeliveredPanel'], /回答未送达/, 'zh 未送达档：直说未送达');
+  assert.match(zh['ask.retryInPanel'], /在面板中重试/, 'zh 未送达档：带可行的下一步');
+  assert.match(zh['ask.replyOriginal'], /在原会话直接回复/, 'zh 未送达档：下一步同（需求 §5.7.2）');
+  assert.match(en['ask.undeliveredPanel'], /wasn’t delivered/, 'en 未送达档同');
+  assert.match(en['ask.replyOriginal'], /reply in the original session/, 'en 未送达档：下一步同');
+  assert.match(zh['ask.extendUnconfirmed'], /无法确认是否已加时/, 'zh 延长未确认：不确定执行与否');
+  assert.match(zh['ask.extendUnconfirmedHint'], /避免重复加时/, 'zh 延长未确认：累加语义诚实（不伪幂等）');
+  assert.match(en['ask.extendUnconfirmedHint'], /before extending again/, 'en 同');
+  assert.match(zh['ask.extendDenied'], /未能增加等待时间/, 'zh 延长明确拒绝档：可断定未生效');
+  assert.match(en['ask.extendDenied'], /No time was added/, 'en 延长明确拒绝档同');
+  assert.match(zh['ask.extendDeniedHint'], /刷新后的剩余时间/, 'zh 延长明确拒绝档：带复查剩余时间的出路（三要素齐全）');
+  assert.match(en['ask.extendDeniedHint'], /after the panel refreshes/, 'en 延长明确拒绝档：出路同');
   model.dispose();
 });
 
@@ -2004,8 +2008,8 @@ test('座位显形计入 callFailed=state（§4.3 失败档）——读取失败
   // ② 面板失败行常驻：读取失败与零题可区分（零题时座位本就消隐）。
   const failedPanel = renderComp(() => product.AskList({ ask: model }));
   const failedLine = failedPanel.children.find((child) => child?.props?.className === 'ats-ask-failed');
-  assert.ok(failedLine !== undefined && String(failedLine.children).includes(product.DICTIONARIES.en['ask.stateFailed']),
-    '面板失败行在场且走词典 ask.stateFailed（不冒充空目录成功态）');
+  assert.ok(failedLine !== undefined && String(failedLine.children).includes(product.DICTIONARIES.en['ask.refreshFailed']),
+    '面板失败行在场且走词典 ask.refreshFailed（不冒充空目录成功态；5.7.7 旧 stateFailed 键已删除）');
 
   // ③ 徽标最小在场：图标在场、计数泡缺席（零题显示 0 会冒充已证实的零题）、
   // aria-label 改载失败说明（不虚构题目数）。
@@ -2018,9 +2022,9 @@ test('座位显形计入 callFailed=state（§4.3 失败档）——读取失败
   assert.equal(badgeButton.children.find((child) => child?.props?.className === 'ats-ask-count'), undefined,
     '失败档不呈现计数泡（零题≠已证实的零题）');
   const labelText = String(badgeButton.props['aria-label']);
-  assert.ok(labelText.includes(product.DICTIONARIES.en['ask.stateFailed']),
+  assert.ok(labelText.includes(product.DICTIONARIES.en['ask.refreshFailed']),
     'aria-label 载失败说明（无障碍树可知重试语义）');
-  assert.ok(!labelText.includes(product.DICTIONARIES.en['ask.count'].replace('{n}', '0')),
+  assert.ok(!labelText.includes(product.DICTIONARIES.en['ask.count'].replace('{题数}', '0')),
     'aria-label 不虚构题目数');
 
   // ④ 恢复：读取成功清 'state' 档（applyRead 只清自己的失败档）——名单仍空 ⇒
@@ -2086,24 +2090,25 @@ test('面板标题计数三态（§4.3）——未知／旧缓存／确证与 ar
     '首读失败：计数词＝ask.countUnknown（修前红＝「0 pending」冒充确证零题）');
   assert.equal(String(title.props['aria-label']), `${D['ask.title']} · ${D['ask.countUnknown']}`,
     '标题 aria-label 独立组装同一构造（未知态携带 countUnknown）');
-  assert.ok(!String(title.props['aria-label']).includes(D['ask.stateFailed']),
+  assert.ok(!String(title.props['aria-label']).includes(D['ask.refreshFailed']),
     '计数词后不拼失败说明（失败说明由 .ats-ask-failed 专行承载）');
-  // ② 确证态：成功读取 2 题 →「2 pending」；确证零题同构造（0 待答是已证实的 0）。
+  // ② 确证态：成功读取 2 题 →「2 questions pending」；确证零题同构造（0 待答是已证实的 0）。
   current = { ok: true, value: { serverNow: 5, items: [item('q1'), item('q2')], lost: [] } };
   intervals[0].fn();
   await tick();
   title = titleOf();
-  assert.equal(String(title.children), `${D['ask.title']} · ${D['ask.count'].replace('{n}', '2')}`,
-    '成功读取：确证计数（最近一次成功读取的 items 数）');
-  // ③ 旧缓存态：再次失败但有上次成功计数 →「last read: 2 pending」，不冒充当前值。
+  assert.equal(String(title.children), `${D['ask.title']} · ${D['ask.count'].replace('{题数}', '2')}`,
+    '成功读取：确证计数（最近一次成功读取的 items 数；en 复数形态 5.7.7）');
+  // ③ 旧缓存态：再次失败但有上次成功计数 →「Last refresh: 2 questions pending.」，
+  //    不冒充当前值（旧 countStale 键已删，语义迁至 lastRefreshCount，5.7.7）。
   current = { ok: false };
   intervals[0].fn();
   await tick();
   title = titleOf();
-  assert.equal(String(title.children), `${D['ask.title']} · ${D['ask.countStale'].replace('{n}', '2')}`,
-    '读取失败但有上次计数：ask.countStale（如实标注读取时点；修前红＝仍渲染当前计数形态）');
-  assert.equal(String(title.props['aria-label']), `${D['ask.title']} · ${D['ask.countStale'].replace('{n}', '2')}`,
-    '旧缓存态 aria 同构造（携带 countStale，不拼失败长句）');
+  assert.equal(String(title.children), `${D['ask.title']} · ${D['ask.lastRefreshCount'].replace('{题数}', '2')}`,
+    '读取失败但有上次计数：ask.lastRefreshCount（如实标注读取时点；修前红＝仍渲染当前计数形态）');
+  assert.equal(String(title.props['aria-label']), `${D['ask.title']} · ${D['ask.lastRefreshCount'].replace('{题数}', '2')}`,
+    '旧缓存态 aria 同构造（携带 lastRefreshCount，不拼失败长句）');
   model.dispose();
 });
 
@@ -2218,7 +2223,7 @@ test('AskItem 作答选择与提交（需求 §4.2.1–§4.2.4）——单选互
   react.render(() => product.AskItem({ item: single, t, ask, serverNow: 0, fetchedAt: 0 }));
   assert.deepEqual(optionStates(), [false, false], '初始无选择（不默认选推荐项）');
   assert.equal(submitBtn().props.disabled, true, '无选择禁用提交（就近说明在场）');
-  assert.equal(reason()?.children[0], 'ask.needAnswer', '就近说明：需要选择答案');
+  assert.equal(reason()?.children[0], 'ask.needSelect.one', '就近说明：需要选择答案（单选档，5.7.7）');
   assert.notEqual(row().children[1].props.disabled, true, '忽略不受有效性限制（独立于作答）');
   opts()[0].props.onClick();
   assert.deepEqual(optionStates(), [true, false], '单选：点 a 只选 a');
@@ -2246,7 +2251,7 @@ test('AskItem 作答选择与提交（需求 §4.2.1–§4.2.4）——单选互
   assert.equal(customCtl().props['aria-checked'], 'true', '清空文本保持自定义选中');
   assert.deepEqual(optionStates(), [false, false], '不自动恢复预设选择');
   assert.equal(submitBtn().props.disabled, true, '选中的自定义空白：禁用提交');
-  assert.equal(reason()?.children[0], 'ask.needCustom', '就近说明换档：自定义空白');
+  assert.equal(reason()?.children[0], 'ask.customBlankInline', '就近说明换档：自定义空白');
   // 多行输入（§4.2.2）：Enter 是换行、不是提交快捷键（提交走按钮）；输入法
   // 组合期确认不误提交由 textarea/IME 默认行为承担。无效状态下提交仍被禁。
   assert.equal(customInput().props.onKeyDown, undefined, 'Enter 不再绑定为提交快捷键（换行语义）');
@@ -2279,7 +2284,7 @@ test('AskItem 作答选择与提交（需求 §4.2.1–§4.2.4）——单选互
   assert.deepEqual(optionStates(), [false, true], '多选：自定义选中不清预设');
   customInput().props.onChange({ target: { value: ' ' } });
   assert.equal(submitBtn().props.disabled, true, '多选：空白自定义仍禁用提交（已选预设不能掩盖）');
-  assert.equal(reason()?.children[0], 'ask.needCustom', '就近说明指向自定义空白');
+  assert.equal(reason()?.children[0], 'ask.customBlankInline', '就近说明指向自定义空白');
   customInput().props.onChange({ target: { value: '又一条' } });
   assert.equal(submitBtn().props.disabled, false, '填回有效文本可提交');
   submitBtn().props.onClick();
@@ -2345,7 +2350,10 @@ test('AskItem 本地走秒——轮询挂起时读数照走，不冻结在最后
     setInterval: (fn, ms) => { localTicks.push({ fn, ms }); return localTicks.length; },
     clearInterval: (id) => { clearIntervalSeen.push(id); }
   });
-  const t = (key) => (key === 'ask.windowLeft' ? '{s}' : key);
+  const t = (key) => ({
+    'ask.windowLeft': '{时间}',
+    'readout.secondsUnit': '{数值} s'
+  }[key] ?? key);
   const ask = { actions: { answer() {}, ignore() {}, jump() {}, dismissLost() {} }, store: null };
 
   // 伪钟：倒计时文本按 Date.now() 现算，用可拨的钟避免真实等待与秒界抖动。
@@ -3456,7 +3464,8 @@ test('E7：客户端组头延长按钮——extend 裸传 {sessionId}、失败�
   const panel2 = renderComp(() => product.AskList({ ask: model }));
   const failedLine = panel2.children.find((child) => child?.props?.className === 'ats-ask-failed');
   assert.ok(failedLine !== undefined, '失败文案渲染在面板顶');
-  assert.equal(failedLine.children[0], product.DICTIONARIES.en['ask.extendRejected'], '明确拒绝用专属文案（不与其他失败混用）');
+  assert.equal(failedLine.children[0], product.DICTIONARIES.en['ask.extendDenied'] + ' ' + product.DICTIONARIES.en['ask.extendDeniedHint'],
+    '明确拒绝用专属文案 ask.extendDenied＋复查出路 hint（单子节点拼接；旧 extendRejected 键已删）');
 
   // ④ 未确认路径：RPC 拒绝（响应丢失，执行与否未知）→ 'extend' 档。
   extendResult = 'reject';
@@ -3639,7 +3648,7 @@ test('J50：新题温和提醒——首查合并计数、增量、乱序/旧代�
   await flush();
   let announce = model.store.getSnapshot().announce;
   assert.ok(announce !== null, '首查生成播报（重载/重开视角：在场待答都是新事实）');
-  assert.equal(announce.text, zhText.replace('{n}', '3'), '3 题合并成一条（zh 词典值）');
+  assert.equal(announce.text, zhText.replace('{题数}', '3'), '3 题合并成一条（zh 词典值）');
   assert.equal(announce.seq, 1, '播报序号从 1 起');
   await intervals[0].fn();
   await flush();
@@ -3653,7 +3662,7 @@ test('J50：新题温和提醒——首查合并计数、增量、乱序/旧代�
   pending[2]({ ok: true, value: { serverNow: 11_000, items: [it('b1', 'q1'), it('b2', 'q4'), it('b2', 'q5')] } });
   await flush();
   announce = model.store.getSnapshot().announce;
-  assert.equal(announce.text, zhText.replace('{n}', '2'), '增量只计新键（2），已播旧题不重播');
+  assert.equal(announce.text, zhText.replace('{题数}', '2'), '增量只计新键（2），已播旧题不重播');
   assert.equal(announce.seq, 2, '播报序号递增');
 
   // J3 乱序：同代较旧回执后到→代际检查丢弃，不产生播报、不把旧键漏进已播集合。
@@ -3672,7 +3681,7 @@ test('J50：新题温和提醒——首查合并计数、增量、乱序/旧代�
   await flush();
   pending[5]({ ok: true, value: { serverNow: 12_500, items: [it('b0', 'q0'), it('b2', 'q4'), it('b2', 'q5')] } });
   await flush();
-  assert.equal(model.store.getSnapshot().announce.text, zhText.replace('{n}', '1'), '旧键未被乱序回执吞掉（漏进已播集合会这里少播）');
+  assert.equal(model.store.getSnapshot().announce.text, zhText.replace('{题数}', '1'), '旧键未被乱序回执吞掉（漏进已播集合会这里少播）');
 
   // J4 读失败恢复：失败夹在两次成功之间→已播集合保留，恢复读取只播新增。
   await intervals[0].fn();
@@ -3685,18 +3694,19 @@ test('J50：新题温和提醒——首查合并计数、增量、乱序/旧代�
   pending[7]({ ok: true, value: { serverNow: 13_000, items: [it('b0', 'q0'), it('b2', 'q4'), it('b2', 'q5'), it('b3', 'q6')] } });
   await flush();
   announce = model.store.getSnapshot().announce;
-  assert.equal(announce.text, zhText.replace('{n}', '1'), '恢复后只播断线期间新增（b3/q6），断线前旧题不重播');
+  assert.equal(announce.text, zhText.replace('{题数}', '1'), '恢复后只播断线期间新增（b3/q6），断线前旧题不重播');
 
   // J6 两语与冻结：切 en 后已冻结 text 不重写；下一次新键才用新语言。
   setSnap({ status: 'ready', value: { askTakeover: true, askUiSeat: 'sidebar', uiLang: 'en' }, user: {} });
   const frozen = model.store.getSnapshot().announce;
-  assert.equal(frozen.text, zhText.replace('{n}', '1'), '语言切换不重写已冻结文本（不触发旧消息重播）');
+  assert.equal(frozen.text, zhText.replace('{题数}', '1'), '语言切换不重写已冻结文本（不触发旧消息重播）');
   await intervals[0].fn();
   await flush();
   pending[8]({ ok: true, value: { serverNow: 14_000, items: [it('b0', 'q0'), it('b2', 'q4'), it('b2', 'q5'), it('b3', 'q6'), it('b4', 'q7')] } });
   await flush();
   announce = model.store.getSnapshot().announce;
-  assert.equal(announce.text, enText.replace('{n}', '1'), '新键播报用切换后的语言（en 词典值）');
+  assert.equal(announce.text, product.DICTIONARIES.en['ask.announceNewOne'],
+    '新键播报用切换后的语言（en 词典值；计数 1 走单数变体键 announceNewOne，5.7.7）');
 
   // J5 生命周期：关闭→announce 置空、已播集合清空；重开首查重新播报；旧代迟到回执不播。
   const openPending = pending.length;
@@ -3712,7 +3722,7 @@ test('J50：新题温和提醒——首查合并计数、增量、乱序/旧代�
   pending[openPending + 1]({ ok: true, value: { serverNow: 16_000, items: [it('b1', 'q1'), it('b2', 'q4')] } });
   await flush();
   announce = model.store.getSnapshot().announce;
-  assert.equal(announce.text, zhText.replace('{n}', '2'), '重开首查按首查口径重新播报（已播集合已清空）');
+  assert.equal(announce.text, zhText.replace('{题数}', '2'), '重开首查按首查口径重新播报（已播集合已清空）');
   assert.ok(announce.seq > 4, '播报序号跨生命周期单调递增');
   model.dispose();
 });
@@ -3836,7 +3846,7 @@ test('J53：组合期提交限制——置位/拦截/复查/复位/重校验/不
   assert.equal(submitBtn().props.disabled, false, '前置：有效自定义可提交');
   customInput().props.onCompositionStart();
   assert.equal(submitBtn().props.disabled, true, '组合开始：平台层 disabled（鼠标/触屏/键盘三入口同拦）');
-  assert.equal(reason()?.children[0], 'ask.composing', '就近原因=组合中（优先于有效性档）');
+  assert.equal(reason()?.children[0], 'ask.imeBlocked', '就近原因=输入法组合中（优先于有效性档）');
   assert.equal(root().props['data-composing'], 'true', 'data-composing=true（探针锚点）');
   // 组合中 onChange 输入非空白：自定义保持选中，仍禁用。
   customInput().props.onChange({ target: { value: '拼音组合中续' } });
@@ -3853,15 +3863,15 @@ test('J53：组合期提交限制——置位/拦截/复查/复位/重校验/不
   submitBtn().props.onClick();
   assert.equal(submitted.length, 1, '组合结束后显式提交成功一次');
   assert.deepEqual(submitted[0], { selected: [], custom: '拼音组合中续' }, '载荷＝组合确认后的草稿原文');
-  // J11b 无效恢复档：组合结束后空白自定义→disabled＋needCustom；无选择→needAnswer。
+  // J11b 无效恢复档：组合结束后空白自定义→disabled＋customBlankInline；无选择→needSelect。
   customInput().props.onChange({ target: { value: ' ' } });
   assert.equal(submitBtn().props.disabled, true, '组合结束后空白自定义：按有效性禁用');
-  assert.equal(reason()?.children[0], 'ask.needCustom', '就近原因回到有效性档：自定义空白');
+  assert.equal(reason()?.children[0], 'ask.customBlankInline', '就近原因回到有效性档：自定义空白');
   customInput().props.onClick(); // 重新选中后清空
   customInput().props.onChange({ target: { value: '' } });
   react.render(() => product.AskItem({ item: single, t, ask, serverNow: 0, fetchedAt: 0 }));
   assert.equal(submitBtn().props.disabled, true, '新实例无选择：禁用');
-  assert.equal(reason()?.children[0], 'ask.needAnswer', '就近原因：需要选择答案');
+  assert.equal(reason()?.children[0], 'ask.needSelect.one', '就近原因：需要选择答案');
 
   // ── J12 不答隔离 ───────────────────────────────────────────────────────
   const skipCase = { ...base, questionId: 'q2', multiSelect: false, options: [{ label: 'a' }] };
@@ -3880,7 +3890,7 @@ test('J53：组合期提交限制——置位/拦截/复查/复位/重校验/不
   assert.equal(submitBtn().props.disabled, false, '前置：预设＋有效自定义可提交');
   customInput().props.onCompositionStart();
   assert.equal(submitBtn().props.disabled, true, '多选组合期：整题禁提交（disabled 是题级判定）');
-  assert.equal(reason()?.children[0], 'ask.composing', '多选组合期就近原因');
+  assert.equal(reason()?.children[0], 'ask.imeBlocked', '多选组合期就近原因');
   submitBtn().props.onClick();
   assert.equal(submitted.filter((s) => s.custom === '多选自定义').length, 0, '多选组合中被拒动作零调用');
   customInput().props.onCompositionEnd();
@@ -3929,11 +3939,12 @@ test('J53：组合期提交限制——置位/拦截/复查/复位/重校验/不
 
   // ── J14 词典两语值 ─────────────────────────────────────────────────────
   const zh = product.DICTIONARIES.zh, en = product.DICTIONARIES.en;
-  assert.match(zh['ask.composing'], /组词/, 'zh ask.composing 含组合语义');
-  assert.doesNotMatch(zh['ask.composing'], /compos|ref|state/i, 'zh 不含内部术语');
-  assert.match(en['ask.composing'], /composition/i, 'en ask.composing 含 composition 语义');
-  assert.match(zh['ask.announceNew'], /新增 \{n\} 题/, 'zh ask.announceNew 数量句式（与 ask.count 同风格）');
-  assert.match(en['ask.announceNew'], /\{n\} new/, 'en ask.announceNew 数量句式');
+  assert.match(zh['ask.imeBlocked'], /输入法/, 'zh ask.imeBlocked 含输入法组合语义');
+  assert.doesNotMatch(zh['ask.imeBlocked'], /compos|ref|state|IME/i, 'zh 不含内部术语');
+  assert.match(en['ask.imeBlocked'], /composing/i, 'en ask.imeBlocked 含 composition 语义');
+  assert.match(zh['ask.announceNew'], /新增 \{题数\} 个待答问题/, 'zh ask.announceNew 数量句式（5.7.7 原文）');
+  assert.match(en['ask.announceNew'], /\{题数\} new questions/, 'en ask.announceNew 数量句式（复数形态；单数另有 announceNewOne）');
+  assert.equal(en['ask.announceNewOne'], '1 new question', 'en 单数变体键（zh 侧注册同值键保键集相等）');
 });
 
 // ASK-UI-REJECTION-LANG：真实服务拒绝 → gateway 错误字段 → 客户端模型 → 面板。
@@ -3996,8 +4007,21 @@ for (const [uiLang, agentLang] of [['zh', 'en'], ['en', 'zh']]) {
           '同一回执的模型侧错误文案仍由 agentLang 管理');
         assert.equal(model.store.getSnapshot().answerRejectReasonKey, reasonKey);
         assert.equal(model.store.getSnapshot().answerRejectReason, receipt.error.message, '原串同时保留');
-        assert.equal(product.DICTIONARIES[uiLang][reasonKey], t(uiLang, reasonKey), '两套词典语义一致');
-        assert.equal(banner(), product.DICTIONARIES[uiLang]['ask.answerRejected'] + ' · ' + t(uiLang, reasonKey));
+        // 界面侧原因键经 ASK_ANSWER_REJECTION_KEYS 映射（设计 §5.6：模型侧旧键
+        // rejectBlankCustom/rejectSingleBoth → 界面 customBlankInline/rejectSingleMultiple；
+        // 其余恒等）。两通道独立的判据：横幅用界面语言词典的映射键值，另一语言
+        // 的原因句不得混入。
+        const uiReasonKey = {
+          'ask.rejectUnknownOption': 'ask.rejectUnknownOption',
+          'ask.rejectSingleMultiple': 'ask.rejectSingleMultiple',
+          'ask.rejectBlankCustom': 'ask.customBlankInline',
+          'ask.rejectSingleBoth': 'ask.rejectSingleMultiple',
+          'ask.rejectNothing': 'ask.rejectNothing'
+        }[reasonKey];
+        assert.equal(typeof product.DICTIONARIES[uiLang][uiReasonKey], 'string',
+          `界面词典在映射后的原因键上必须有值：${uiReasonKey}`);
+        assert.equal(banner(), product.DICTIONARIES[uiLang]['ask.notSubmitted'] + ' ' + product.DICTIONARIES[uiLang][uiReasonKey],
+          '横幅＝未提交句＋界面语言的原因句（5.7.7 分档拼接）');
         assert.ok(!banner().includes(t(agentLang, reasonKey)), '界面不混入另一语言的原因句');
       }
       assert.equal(registry.stateItems().items.length, 1, '所有拒绝均不记已答');
@@ -4033,17 +4057,17 @@ test('ASK-UI-REJECTION-LANG：无键或未知键保留原串，忽略拒绝不�
   try {
     await flush();
     await submit();
-    assert.equal(banner(), product.DICTIONARIES.zh['ask.answerRejected'] + ' · unchanged diagnostic');
+    assert.equal(banner(), product.DICTIONARIES.zh['ask.notSubmitted'] + ' unchanged diagnostic');
     result.error.details.reasonKey = 'ask.futureReason';
     await submit();
-    assert.equal(banner(), product.DICTIONARIES.zh['ask.answerRejected'] + ' · unchanged diagnostic');
+    assert.equal(banner(), product.DICTIONARIES.zh['ask.notSubmitted'] + ' unchanged diagnostic');
     result.error.details.reasonKey = 'ask.rejectNothing';
     await submit();
     assert.ok(banner().includes(product.DICTIONARIES.zh['ask.rejectNothing']));
     result = { ok: false, error: { message: 'ignore diagnostic' } };
     await new Promise((resolve) => model.actions.ignore(item, resolve));
     assert.equal(model.store.getSnapshot().answerRejectReasonKey, null);
-    assert.equal(banner(), product.DICTIONARIES.zh['ask.answerRejected'] + ' · ignore diagnostic');
+    assert.equal(banner(), product.DICTIONARIES.zh['ask.notSubmitted'] + ' ignore diagnostic');
   } finally {
     model.dispose();
   }
