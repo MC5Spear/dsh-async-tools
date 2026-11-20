@@ -5365,6 +5365,113 @@ hostTest('T5 等待返回结构化字段：已知才有、未知则无键；stat
   }
 });
 
+// ── WAIT-ID-BOUND-01（设计 §2.4/8.2）────────────────────────────────────
+// 合法超长 jobKind 与超长外来编号的渲染预算：分隔标题、目标行、状态行整行
+// ≤200（MAX_ID_LINE_CHARS），超长编号保首尾＋`…(+省略量)` 标记中段；结构化
+// job_id／targets[].id 原样不裁（完整编号的恢复入口）。修前红＝整行随编号
+// 长度无界增长、全文内插（line ≤200 与「全文不在场」两断言必红其一）。
+hostTest('WAIT-ID-BOUND：超长 jobKind 与超长外来编号——行 ≤200 保首尾＋省略量标记，结构化 id 原样不裁', async () => {
+  // ① 超长 jobKind：真注册表按 kind 前缀铸造作业 id（async_run 同款
+  // ctx.jobs.start({kind: config.jobKind, ...})）——kind ≥200 直接进 id。
+  const longKind = `KINDHEAD-${'k'.repeat(190)}-TAILKIND`; // 196 字符＋随机后缀 ⇒ id >200
+  const kindRig = await buildRig('idbound1', []);
+  try {
+    const jobId = kindRig.ctx.jobs.start({
+      kind: longKind,
+      label: 'long-kind-bound',
+      owner: kindRig.parent.id,
+      outputLimitBytes: 30000,
+      output: [],
+      run: () => ({ cancel() {}, done: Promise.resolve({ status: 'completed', exitCode: 0 }) })
+    });
+    // 注册表经自身泵（pumpPollMs）异步收 done——留一拍让它落到终态再等待。
+    await new Promise((resolveBeat) => { setTimeout(resolveBeat, 50); });
+    assert.ok(jobId.length > 200, `前置：长 kind 铸出超长编号（实得 ${String(jobId.length)} 字符）`);
+    assert.ok(jobId.startsWith('KINDHEAD-') && jobId.includes('TAILKIND-'), '前置：id 保带首尾标记');
+    const outcome = await kindRig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: jobId }] }, kindRig.exec()
+    );
+    assert.equal(outcome.status, 'completed', '前置：目标已终态，零等待即完成');
+    // 结构化恢复入口原样不裁：顶层 job_id／delivered[].job_id 逐字等于完整编号
+    //（完成出口的编号恢复入口；targets 行是运行/切断类出口的附面）。
+    assert.equal(outcome.job_id, jobId, 'job_id 原样（结构化恢复入口）');
+    const row = (outcome.delivered ?? []).find((item) => item.job_id === jobId);
+    assert.ok(row !== undefined && row.job_id === jobId, 'delivered[].job_id 原样不裁');
+    // 渲染面（判据点名的载体＝分隔标题／目标行／状态行；note 说明行家族走
+    // 可裁剪说明预算另册，不入本判据的整行断言）：分隔标题行 ≤200、保首尾＋
+    // 省略量标记、全文编号不在该行。
+    const rendered = kindRig.waiter.output.render(undefined, outcome).map((part) => part.text).join('\n');
+    const separator = rendered.split('\n').find((line) => line.startsWith('──'));
+    assert.ok(separator !== undefined, '批次条目分隔标题在场（── <编号> ──）');
+    assert.ok(separator.length <= 200,
+      `分隔标题整行 ≤200（实得 ${String(separator.length)}；修前红＝随编号无界增长）`);
+    assert.ok(!separator.includes(jobId), '完整编号不内插分隔标题行（只在结构化字段）');
+    assert.match(separator, /KINDHEAD-/, '首段保留（可辨识）');
+    assert.match(separator, /TAILKIND-/, '尾段保留（可辨识）');
+    assert.match(separator, /…\(\+\d+\)/, '中段省略量标记在场（不静默截断）');
+    const statusLine = String((outcome.outputs ?? []).find((item) => item.job_id === jobId)?.status_line ?? '');
+    for (const line of statusLine.split('\n')) {
+      assert.ok(line.length <= 200, `状态行整行 ≤200（实得 ${String(line.length)}）`);
+    }
+    assert.ok(!statusLine.includes(jobId), '完整编号不内插状态行');
+    assert.match(statusLine, /…\(\+\d+\)/, '状态行中段省略量标记在场');
+  } finally {
+    await kindRig.dispose();
+  }
+  // ② 超长外来编号：受控外来行（宿主注册表可见、本包账本不在册）——运行中
+  // 行走目标行渲染（renderTargetLines），终态行走批次条目（捎带发现）。
+  const longForeign = `FOREIGNHEAD-${'f'.repeat(190)}-FOREIGNTAIL`;
+  let rows = [
+    { id: longForeign, status: 'running' },
+    { id: 'ext-idbound-trig', status: 'running' }
+  ];
+  const foreignRig = await buildRig('idbound2', [], {
+    jobsList: () => rows,
+    jobsRead: async (jobId) => ({ chunks: [{ channel: 'stdout', text: `BODY-${String(jobId).slice(0, 12)}` }] })
+  });
+  try {
+    // ②-a 运行中目标行：目标行渲染单独一面（wait.targetLine.job 模板）。
+    const runningOutcome = await foreignRig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: longForeign }] }, foreignRig.exec()
+    );
+    assert.equal(runningOutcome.status, 'running', '前置：运行中目标，零等待主出口');
+    assert.equal(runningOutcome.targets?.[0]?.id, longForeign, '运行中 targets[].id 原样不裁');
+    const runningRendered = foreignRig.waiter.output.render(undefined, runningOutcome).map((part) => part.text).join('\n');
+    const targetLine = runningRendered.split('\n').find((line) => line.includes('FOREIGNHEAD-'));
+    assert.ok(targetLine !== undefined, '目标行在场（含裁短编号）');
+    assert.ok(targetLine.length <= 200, `目标行整行 ≤200（实得 ${String(targetLine.length)}）`);
+    assert.ok(!targetLine.includes(longForeign), '完整外来编号不内插目标行');
+    assert.match(targetLine, /FOREIGNHEAD-/, '目标行首段保留');
+    assert.match(targetLine, /FOREIGNTAIL/, '目标行尾段保留');
+    assert.match(targetLine, /…\(\+\d+\)/, '目标行中段省略量标记在场');
+    // ②-b 终态批次条目：触发目标＋捎带发现各一条超长/常规条目，分隔标题与
+    // 状态行同预算。
+    rows = [
+      { id: longForeign, status: 'completed', exitCode: 0 },
+      { id: 'ext-idbound-trig', status: 'completed', exitCode: 0 }
+    ];
+    const doneOutcome = await foreignRig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'job', id: 'ext-idbound-trig' }] }, foreignRig.exec()
+    );
+    assert.equal(doneOutcome.status, 'completed', '前置：触发目标终态即完成');
+    const ride = (doneOutcome.delivered ?? []).find((item) => item.job_id === longForeign);
+    assert.ok(ride !== undefined && ride.job_id === longForeign, '捎带条目 job_id 原样不裁');
+    const doneRendered = foreignRig.waiter.output.render(undefined, doneOutcome).map((part) => part.text).join('\n');
+    const rideSep = doneRendered.split('\n').find((line) => line.startsWith('──') && line.includes('FOREIGNHEAD-'));
+    assert.ok(rideSep !== undefined, '超长外来条目分隔标题在场');
+    assert.ok(rideSep.length <= 200, `外来分隔标题整行 ≤200（实得 ${String(rideSep.length)}）`);
+    assert.ok(!rideSep.includes(longForeign), '完整外来编号不内插分隔标题行');
+    assert.match(rideSep, /…\(\+\d+\)/, '外来分隔标题中段省略量标记在场');
+    const rideOut = (doneOutcome.outputs ?? []).find((item) => item.job_id === longForeign);
+    for (const line of String(rideOut?.status_line ?? '').split('\n')) {
+      assert.ok(line.length <= 200, `外来状态行整行 ≤200（实得 ${String(line.length)}）`);
+    }
+    assert.ok(!String(rideOut?.status_line ?? '').includes(longForeign), '完整外来编号不内插状态行');
+  } finally {
+    await foreignRig.dispose();
+  }
+});
+
 hostTest('RA-FOREIGN-DISCOVERY：账本外终态作业读取失败 → 状态行＋readFailed 注记随批交回（可重试，不冒充空结果）', async () => {
   // 发现路径的失败形态：入账成功、jobs.read 抛错——readSettled 按读取失败
   // 定论（不写成空结果），条目以状态行＋结构化结局＋readFailed 注记（重试
@@ -6222,6 +6329,80 @@ hostTest('ZW-D：窗口耗尽后迟到完成的查询被丢弃——无状态回
       { wait_ms: 0, targets: [{ kind: 'agent', id: 'zw-d-child' }] }, rig.exec()
     );
     assert.equal(after.status, 'unconfirmed', '迟到结果不回填状态（新一轮查询重新发起）');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('ZW-F2a：零等待检查窗内用户插话先到——按插话口径及时交回、真实结束原因在场（WAIT-F02）', async () => {
+  // 修前红＝竞速对象没有 user 档视图：插话在窗内到达也不切断在途查询，
+  // 等满 1000 ms 检查窗按 unconfirmed 交回（wall≈1000 ms 且无插话口径）。
+  const rig = await buildRig('zw-f2a', [], { listChildren: () => new Promise(() => {}) });
+  try {
+    const started = Date.now();
+    const pending = rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'agent', id: 'zw-f2a-child' }] }, rig.exec()
+    );
+    // 共享目录查询在途（永不结算）时经真实事件总线注入用户插话：150 ms 落点在
+    // 1000 ms 检查窗内、且晚于入口订阅（watchWakeSignal 已武装）。
+    const payload = inboxPayload({
+      agent: rig.parent, sourceKind: 'user', form: 'message',
+      summary: 'user interjects', text: 'ZW-F2A stop and report'
+    });
+    setTimeout(() => {
+      rig.parent.inbox.nextStep.push(payload.message);
+      rig.ctx.emit('agent/inbox/inserted', payload);
+    }, 150);
+    const outcome = await pending;
+    const wall = Date.now() - started;
+    assert.equal(outcome.status, 'interrupted', '窗内用户插话切断在途查询、按插话口径交回（不等窗口耗尽）');
+    assert.ok(wall < 700, `及时交回（实耗 ${String(wall)} ms；修前红＝等满窗口）`);
+    // 真实结束原因在场：note 写明用户消息到达（waitedMs 与 waited_ms 同源、
+    // 真实时长），且插话去向（下一条输入）与恢复出路同段可见。
+    assert.ok(typeof outcome.waited_ms === 'number' && outcome.waited_ms >= 0 && outcome.waited_ms < 700,
+      'waited_ms 报真实等待时长（不冒报 0、不冒报窗口全额）');
+    assert.match(outcome.note, /user message|用户消息/, '结束原因＝用户消息到达（真实口径）');
+    assert.match(outcome.note, /next input|下一条输入/, '插话去向可见');
+    // 被切断的查询不留假状态：目标行如实 unknown（W-UNPROVEN-EXIT 同判）。
+    const row = (outcome.targets ?? []).find((target) => target.id === 'zw-f2a-child');
+    assert.equal(row?.status, 'unknown', '在途查询被切断：目标行如实 unknown');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+hostTest('ZW-F2b（对照）：非用户消息先到不切断校验——窗口耗尽按 unconfirmed、唤醒信号未被消费（WAIT-F02）', async () => {
+  // 与 ZW-F2a 同装置，唯一变量＝消息档位：sender 命中目标的 notice 通过目标
+  // 过滤、唤醒信号确实 resolve——但零等待竞速只认 user 档（userWakeView 对非
+  // user 档永不 settle），校验不被切断；信号不被本出口消费（通知留在收件箱，
+  // 后续等待仍可见——「不消费」的行为证据）。
+  const rig = await buildRig('zw-f2b', [], { listChildren: () => new Promise(() => {}) });
+  try {
+    const started = Date.now();
+    const pending = rig.waiter.execute(
+      { wait_ms: 0, targets: [{ kind: 'agent', id: 'zw-f2b-child' }] }, rig.exec()
+    );
+    const payload = inboxPayload({
+      agent: rig.parent, sourceKind: 'subagent-settled', form: 'notice',
+      summary: 'zw-f2b child settled notice', senderSessionId: 'zw-f2b-child'
+    });
+    setTimeout(() => {
+      rig.parent.inbox.nextStep.push(payload.message);
+      rig.ctx.emit('agent/inbox/inserted', payload);
+    }, 150);
+    const outcome = await pending;
+    const wall = Date.now() - started;
+    assert.equal(outcome.status, 'unconfirmed', 'notice 不切断校验：窗口耗尽按未确认交回（§3.2.2 目标消息不切断校验）');
+    assert.ok(wall >= 900 && wall <= 1200,
+      `按窗口节奏交回、不为通知提前（实耗 ${String(wall)} ms）`);
+    // 唤醒信号未被消费：通知原样留在收件箱（未被领取、未被吞）。
+    assert.ok(rig.parent.inbox.nextStep.some((message) => message?.id === payload.message.id),
+      '通知仍在 next-step 收件箱（本出口零消费）');
+    // 行为证据：紧接着的无目标零等待经入口扫描按 message 出口交回同一条通知
+    //（R58-j 同判定）——第一出口若误消费了唤醒信号/消息，这里就无消息可交。
+    const after = await rig.waiter.execute({ wait_ms: 0 }, rig.exec());
+    assert.equal(after.status, 'message', '后续无目标等待交回该通知（唤醒信号未被消费的行为证据）');
+    assert.match(after.note, /zw-f2b child settled notice/, '交回的就是同一条通知（summary 透传）');
   } finally {
     await rig.dispose();
   }
